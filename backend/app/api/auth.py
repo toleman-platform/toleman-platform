@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
+from app.core.rate_limit import enforce_rate_limit
 from app.core.security import create_session_token, verify_password, verify_session_token
 from app.models.models import User
+
+LOGIN_RATE_LIMIT = 5
+LOGIN_RATE_WINDOW_SECONDS = 60
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -39,7 +43,15 @@ def current_user(
 
 
 @router.post("/login", response_model=UserOut)
-def login(payload: LoginRequest, response: Response, session: Session = Depends(get_session)):
+def login(payload: LoginRequest, request: Request, response: Response, session: Session = Depends(get_session)):
+    # Pre-auth endpoint -- rate-limit by client IP to blunt password
+    # brute-forcing. This is the most important limit in the app since it's
+    # the only unauthenticated attack surface for credential guessing.
+    client_ip = request.client.host if request.client else "unknown"
+    enforce_rate_limit(
+        key=f"login:{client_ip}", limit=LOGIN_RATE_LIMIT, window_seconds=LOGIN_RATE_WINDOW_SECONDS
+    )
+
     user = session.exec(select(User).where(User.email == payload.email)).first()
     if not user or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="invalid email or password")

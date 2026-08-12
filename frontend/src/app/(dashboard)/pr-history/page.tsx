@@ -5,6 +5,8 @@ import { api, Target, PullRequest } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { TargetPicker } from "@/components/target-picker";
+import { PrScanAction } from "@/components/pr-scan-action";
+import { PrGuardrailLog } from "@/components/pr-guardrail-log";
 
 export default function PrHistoryPage() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -36,8 +38,8 @@ export default function PrHistoryPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">PR History</h1>
         <p className="text-sm text-muted-foreground">
-          Live pull requests from GitHub. Diff-scan status ("not scanned") reflects that the PR
-          Guardrail flow isn't wired up yet — this lists real PRs without fabricating scan results.
+          Live pull requests from GitHub. Trigger a PR Guardrail diff-scan on any open PR to
+          surface net-new vulnerabilities before merge.
         </p>
       </div>
 
@@ -59,11 +61,15 @@ export default function PrHistoryPage() {
                   {pr.merged_at ? ` · merged ${new Date(pr.merged_at).toLocaleDateString()}` : ""}
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <Badge variant="outline">{pr.state}</Badge>
-                <Badge variant="outline" className="text-muted-foreground">
-                  {pr.scan_status}
-                </Badge>
+                {pr.state === "open" && targetId !== null ? (
+                  <PrScanAction targetId={targetId} prNumber={pr.number} />
+                ) : (
+                  <Badge variant="outline" className="text-muted-foreground">
+                    {pr.scan_status}
+                  </Badge>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -72,6 +78,8 @@ export default function PrHistoryPage() {
           <p className="text-sm text-muted-foreground">No pull requests found for this target.</p>
         )}
       </div>
+
+      <PrGuardrailLog targetId={targetId} />
     </div>
   );
 }

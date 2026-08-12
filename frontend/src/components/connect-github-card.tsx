@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Github, CheckCircle2 } from "lucide-react";
+import { Github, CheckCircle2, XCircle } from "lucide-react";
 
 export function ConnectGithubCard() {
   const router = useRouter();
@@ -15,12 +15,15 @@ export function ConnectGithubCard() {
     app_slug: string | null;
     installed: boolean;
     account_login: string | null;
+    webhook_secret_set: boolean;
   } | null>(null);
   const [org, setOrg] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [savingSecret, setSavingSecret] = useState(false);
 
   function refresh() {
     api.githubAppStatus().then(setStatus);
@@ -63,6 +66,18 @@ export function ConnectGithubCard() {
       setSyncResult(e instanceof Error ? e.message : "sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function saveWebhookSecret() {
+    if (!webhookSecret.trim()) return;
+    setSavingSecret(true);
+    try {
+      await api.updateWebhookSecret(webhookSecret.trim());
+      setWebhookSecret("");
+      refresh();
+    } finally {
+      setSavingSecret(false);
     }
   }
 
@@ -125,6 +140,38 @@ export function ConnectGithubCard() {
               {syncing ? "Syncing..." : "Sync Repos Now"}
             </Button>
             {syncResult && <p className="text-xs text-muted-foreground">{syncResult}</p>}
+
+            <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3">
+              <div className="flex items-center gap-2 text-xs">
+                {status.webhook_secret_set ? (
+                  <>
+                    <CheckCircle2 className="h-3.5 w-3.5 text-chart-5" />
+                    <span className="text-muted-foreground">
+                      Webhook secret set — real-time PR scanning active if the App's webhook is configured
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-muted-foreground">
+                      No webhook secret set — PRs only scan on-demand (PR History page), not automatically
+                    </span>
+                  </>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  type="password"
+                  className="bg-secondary"
+                  placeholder="Webhook secret (must match GitHub App settings)"
+                  value={webhookSecret}
+                  onChange={(e) => setWebhookSecret(e.target.value)}
+                />
+                <Button size="sm" variant="outline" onClick={saveWebhookSecret} disabled={savingSecret || !webhookSecret.trim()} className="shrink-0">
+                  {savingSecret ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </CardContent>

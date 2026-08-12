@@ -139,12 +139,21 @@ export const api = {
     jsonFetch<AuthUser>(`/api/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
   githubAppStatus: () =>
-    jsonFetch<{ app_configured: boolean; app_slug: string | null; installed: boolean; account_login: string | null }>(
-      "/api/github-app/status"
-    ),
+    jsonFetch<{
+      app_configured: boolean;
+      app_slug: string | null;
+      installed: boolean;
+      account_login: string | null;
+      webhook_secret_set: boolean;
+    }>("/api/github-app/status"),
   githubAppManifestData: (org?: string) =>
     jsonFetch<{ manifest: object; post_url: string }>(`/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`),
   githubAppSync: () => jsonFetch<{ created: number }>("/api/github-app/sync", { method: "POST" }),
+  updateWebhookSecret: (webhook_secret: string) =>
+    jsonFetch<{ webhook_secret_set: boolean }>("/api/github-app/webhook-secret", {
+      method: "PATCH",
+      body: JSON.stringify({ webhook_secret }),
+    }),
   getConfig: () => jsonFetch<{ anthropic_api_key_set: boolean }>("/api/config"),
   updateConfig: (anthropic_api_key: string) =>
     jsonFetch<{ anthropic_api_key_set: boolean }>("/api/config", { method: "POST", body: JSON.stringify({ anthropic_api_key }) }),

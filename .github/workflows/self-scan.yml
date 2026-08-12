@@ -1,10 +1,13 @@
 name: Self Scan (dogfooding)
 
 # Runs the same open-source tools OSP wraps (Semgrep, Gitleaks, Trivy) against
-# this repo itself, uploading SARIF to GitHub's native code scanning (Security
-# tab) rather than to our own backend - GitHub's cloud runners can't reach a
-# local-dev-only OSP instance. gosec is intentionally excluded: it's Go-specific
-# and this repo has no Go source.
+# this repo itself. Results go to workflow artifacts + the job summary, not
+# GitHub code scanning: SARIF-to-Security-tab upload requires GitHub Advanced
+# Security, which isn't available on private repos on this plan (confirmed by
+# a real failed run - "Code scanning is not enabled for this repository").
+# Also can't push to our own OSP backend from here: it's local-dev-only and
+# unreachable from GitHub's cloud runners. gosec is intentionally excluded:
+# it's Go-specific and this repo has no Go source.
 
 on:
   push:
@@ -15,9 +18,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
-  pull-requests: read # gitleaks-action lists PR commits when triggered by pull_request
-  actions: read # upload-sarif's wait-for-processing polls the run status API
 
 jobs:
   semgrep:
@@ -27,11 +27,23 @@ jobs:
       - name: Install Semgrep
         run: pip install semgrep
       - name: Run Semgrep
-        run: semgrep scan --config=auto --sarif --output=semgrep.sarif || true
-      - uses: github/codeql-action/upload-sarif@v3
+        run: semgrep scan --config=auto --json --output=semgrep.json || true
+      - name: Summarize
+        run: |
+          echo "## Semgrep" >> "$GITHUB_STEP_SUMMARY"
+          python3 -c "
+          import json
+          d = json.load(open('semgrep.json'))
+          results = d.get('results', [])
+          with open('$GITHUB_STEP_SUMMARY', 'a') as f:
+              f.write(f'{len(results)} findings\n\n')
+              for r in results[:20]:
+                  f.write(f\"- **{r['extra']['severity']}** {r['check_id']}: {r['path']}:{r['start']['line']}\n\")
+          "
+      - uses: actions/upload-artifact@v4
         with:
-          sarif_file: semgrep.sarif
-          category: semgrep
+          name: semgrep-results
+          path: semgrep.json
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -39,11 +51,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
-          GITLEAKS_ENABLE_SUMMARY: true
+      - name: Install Gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+      - name: Run Gitleaks
+        run: |
+          ./gitleaks detect --report-format json --report-path gitleaks.json --no-git --exit-code 0
+          echo "## Gitleaks" >> "$GITHUB_STEP_SUMMARY"
+          python3 -c "
+          import json
+          d = json.load(open('gitleaks.json'))
+          with open('$GITHUB_STEP_SUMMARY', 'a') as f:
+              f.write(f'{len(d)} findings\n\n')
+              for r in d[:20]:
+                  f.write(f\"- {r['RuleID']}: {r['File']}:{r['StartLine']}\n\")
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results
+          path: gitleaks.json
 
   trivy:
     runs-on: ubuntu-latest
@@ -53,10 +79,20 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
-          format: sarif
-          output: trivy.sarif
+          format: json
+          output: trivy.json
           scan-ref: .
-      - uses: github/codeql-action/upload-sarif@v3
+      - name: Summarize
+        run: |
+          echo "## Trivy" >> "$GITHUB_STEP_SUMMARY"
+          python3 -c "
+          import json
+          d = json.load(open('trivy.json'))
+          count = sum(len(r.get('Vulnerabilities') or []) + len(r.get('Misconfigurations') or []) for r in d.get('Results', []))
+          with open('$GITHUB_STEP_SUMMARY', 'a') as f:
+              f.write(f'{count} findings across {len(d.get(\"Results\", []))} targets\n')
+          "
+      - uses: actions/upload-artifact@v4
         with:
-          sarif_file: trivy.sarif
-          category: trivy
+          name: trivy-results
+          path: trivy.json

@@ -6,11 +6,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { SkeletonList } from "@/components/ui/skeleton";
 
 const ROLES = ["admin", "user", "viewer"];
 
 export function UserManagement() {
-  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [users, setUsers] = useState<AuthUser[] | null>(null);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -78,6 +79,9 @@ export function UserManagement() {
         </CardContent>
       </Card>
 
+      {users === null && <SkeletonList count={3} />}
+
+      {users !== null && (
       <div className="flex flex-col gap-2">
         {users.map((u) => (
           <Card key={u.id} className="border-border bg-card">
@@ -107,6 +111,7 @@ export function UserManagement() {
           </Card>
         ))}
       </div>
+      )}
     </div>
   );
 }

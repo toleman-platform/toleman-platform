@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Github, CheckCircle2, XCircle } from "lucide-react";
 
 export function ConnectGithubCard() {
@@ -96,7 +97,12 @@ export function ConnectGithubCard() {
           </div>
         </div>
 
-        {status === null && <p className="text-sm text-muted-foreground">Checking status...</p>}
+        {status === null && (
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-9 w-40" />
+          </div>
+        )}
 
         {status && !status.app_configured && (
           <div className="flex flex-col gap-2">

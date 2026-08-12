@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { CheckCircle2, XCircle } from "lucide-react";
 
 type Health = { tool: string; installed: boolean; version: string | null; response_ms: number | null };
@@ -36,6 +37,18 @@ export function ToolsHealth() {
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
+        {health === null &&
+          Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i} className="border-border bg-card">
+              <CardContent className="flex items-center justify-between px-4 py-3">
+                <div className="flex flex-col gap-2">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+                <Skeleton className="h-5 w-16" />
+              </CardContent>
+            </Card>
+          ))}
         {health?.map((h) => (
           <Card key={h.tool} className="border-border bg-card">
             <CardContent className="flex items-center justify-between px-4 py-3">

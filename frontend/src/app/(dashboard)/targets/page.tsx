@@ -2,6 +2,7 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { NewTargetForm } from "./new-target-form";
+import { ConnectGithubCard } from "@/components/connect-github-card";
 
 export default async function TargetsPage() {
   const targets = await api.targets().catch(() => []);
@@ -9,9 +10,11 @@ export default async function TargetsPage() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Targets</h1>
+        <h1 className="text-2xl font-bold text-foreground">Repo Sync</h1>
         <p className="text-sm text-muted-foreground">Repositories under management</p>
       </div>
+
+      <ConnectGithubCard />
 
       <NewTargetForm />
 

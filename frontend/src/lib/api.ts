@@ -110,4 +110,11 @@ export const api = {
   updateUserRole: (id: number, role: string) =>
     jsonFetch<AuthUser>(`/api/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
+  githubAppStatus: () =>
+    jsonFetch<{ app_configured: boolean; app_slug: string | null; installed: boolean; account_login: string | null }>(
+      "/api/github-app/status"
+    ),
+  githubAppManifestData: (org?: string) =>
+    jsonFetch<{ manifest: object; post_url: string }>(`/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`),
+  githubAppSync: () => jsonFetch<{ created: number }>("/api/github-app/sync", { method: "POST" }),
 };

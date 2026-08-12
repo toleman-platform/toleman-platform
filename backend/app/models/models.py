@@ -121,6 +121,28 @@ class Finding(SQLModel, table=True):
     mitigated_at: Optional[datetime] = None
 
 
+class GitHubAppConfig(SQLModel, table=True):
+    """Created once via the App Manifest flow. Single row for this MVP (single-tenant)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    app_id: str
+    slug: str
+    client_id: str
+    client_secret: str
+    private_key_pem: str
+    webhook_secret: str
+    html_url: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class GitHubInstallation(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    installation_id: int = Field(unique=True, index=True)
+    account_login: str
+    account_type: str
+    workspace_id: int = Field(foreign_key="workspace.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class FindingStateLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     finding_id: int = Field(foreign_key="finding.id")

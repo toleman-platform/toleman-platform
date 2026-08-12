@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
+import { SkeletonList } from "@/components/ui/skeleton";
 
 export default function ApiDiscoveryPage() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -55,7 +56,9 @@ export default function ApiDiscoveryPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {endpoints && (
+      {running && <SkeletonList count={3} />}
+
+      {!running && endpoints && (
         <div className="flex flex-col gap-2">
           <p className="text-sm text-muted-foreground">{endpoints.length} endpoints found</p>
           {endpoints.map((e, i) => (

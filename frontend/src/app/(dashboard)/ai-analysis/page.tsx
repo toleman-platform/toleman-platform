@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SEVERITY_COLOR } from "@/lib/severity";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function AiAnalysisPage() {
   const [configured, setConfigured] = useState<boolean | null>(null);
@@ -41,6 +42,13 @@ export default function AiAnalysisPage() {
         <h1 className="text-2xl font-bold text-foreground">AI Analysis</h1>
         <p className="text-sm text-muted-foreground">Claude-generated remediation guidance for a selected finding</p>
       </div>
+
+      {configured === null && (
+        <div className="flex flex-col gap-3">
+          <Skeleton className="h-9 w-full max-w-md" />
+          <Skeleton className="h-9 w-32" />
+        </div>
+      )}
 
       {configured === false && (
         <Card className="border-border bg-card">

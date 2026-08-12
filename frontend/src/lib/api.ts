@@ -47,6 +47,8 @@ export type PullRequest = {
 export type Endpoint = { framework: string; method: string; route: string; file: string; line: number };
 export type AuditEvent = { type: string; timestamp: string; actor: string; summary: string; reason: string };
 
+export type SearchResults = { findings: Finding[]; targets: Target[] };
+
 export type PrGuardrailFinding = {
   tool: string;
   rule_id: string;
@@ -173,4 +175,5 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
+  search: (q: string) => jsonFetch<SearchResults>(`/api/search?q=${encodeURIComponent(q)}`),
 };

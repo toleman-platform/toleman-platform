@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, AuthUser } from "@/lib/api";
+import { GlobalSearch } from "@/components/global-search";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -93,6 +94,10 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
             <span className="text-[10px] text-muted-foreground">Security Dashboard</span>
           </div>
         )}
+      </div>
+
+      <div className={cn("border-b border-sidebar-border p-2", collapsed && "flex justify-center")}>
+        <GlobalSearch collapsed={collapsed} />
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">

@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 
 from app.core.config import settings
@@ -21,11 +22,24 @@ TOOL_COMMANDS = {
 }
 
 
-def clone_repo(repo_url: str, branch: str, github_token: str = "") -> Path:
+def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int | str | None = None) -> Path:
+    """Clone repo_url@branch into a scan-scoped workdir.
+
+    The destination is keyed by repo name AND a unique suffix (the caller's
+    scan_id when available, otherwise a fresh UUID) so that two concurrent
+    scans of the same target -- or of different targets that happen to
+    share a repo name -- never resolve to the same directory. Previously
+    the dir was keyed by repo name alone and unconditionally rmtree'd +
+    recloned on every call, which let one scan's rmtree delete files while
+    another scan's clone/tool run was still reading them (a race that could
+    corrupt or blow up a concurrent scan). Cleaning up old scan workdirs is
+    a separate ops concern, intentionally out of scope here.
+    """
     workdir = Path(settings.scan_workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     repo_name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
-    dest = workdir / repo_name
+    unique = str(scan_id) if scan_id is not None else uuid.uuid4().hex
+    dest = workdir / f"{repo_name}-{unique}"
     if dest.exists():
         shutil.rmtree(dest)
 

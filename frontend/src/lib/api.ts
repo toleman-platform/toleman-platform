@@ -1,0 +1,69 @@
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+export type Target = {
+  id: number;
+  workspace_id: number;
+  name: string;
+  repo_url: string;
+  default_branch: string;
+  label: string;
+  criticality_weight: number;
+};
+
+export type Finding = {
+  id: number;
+  target_id: number;
+  tool: string;
+  rule_id: string;
+  title: string;
+  description: string;
+  file_path: string;
+  line_start: number | null;
+  line_end: number | null;
+  severity: "Critical" | "High" | "Medium" | "Low" | "Informational";
+  priority_score: number;
+  branch: string;
+  state: string;
+  cve_id: string | null;
+  first_seen: string;
+  last_seen: string;
+};
+
+export type Summary = { total: number; open: number; mitigated: number };
+
+async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...init,
+    cache: "no-store",
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+  });
+  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  return res.json();
+}
+
+export const api = {
+  targets: () => jsonFetch<Target[]>("/api/targets"),
+  target: (id: number) => jsonFetch<Target>(`/api/targets/${id}`),
+  createTarget: (t: Partial<Target>) =>
+    jsonFetch<Target>("/api/targets", { method: "POST", body: JSON.stringify(t) }),
+  findings: (targetId?: number, state?: string) => {
+    const params = new URLSearchParams();
+    if (targetId) params.set("target_id", String(targetId));
+    if (state) params.set("state", state);
+    return jsonFetch<Finding[]>(`/api/findings?${params.toString()}`);
+  },
+  triage: (findingId: number, toState: string, reason: string) =>
+    jsonFetch<Finding>(
+      `/api/findings/${findingId}/triage?to_state=${encodeURIComponent(toState)}&reason=${encodeURIComponent(reason)}`,
+      { method: "POST" }
+    ),
+  summary: () => jsonFetch<Summary>("/api/dashboard/summary"),
+  posture: () => jsonFetch<{ target: Target; breakdown: Record<string, Record<string, number>> }[]>(
+    "/api/dashboard/posture"
+  ),
+  runScan: (targetId: number, tool: string) =>
+    jsonFetch<{ scan_id: number; ingested: number } | { error: string }>(
+      `/api/scans/run?target_id=${targetId}&tool=${tool}`,
+      { method: "POST" }
+    ),
+};

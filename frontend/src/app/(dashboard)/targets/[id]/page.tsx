@@ -9,10 +9,11 @@ export default async function TargetDetailPage({
 }) {
   const { id } = await params;
   const targetId = Number(id);
-  const [target, findings] = await Promise.all([
+  const [target, findingsResult] = await Promise.all([
     api.target(targetId),
-    api.findings(targetId),
+    api.findings({ target_id: targetId, page_size: 500 }),
   ]);
+  const findings = findingsResult.items;
 
   return (
     <div className="flex flex-col gap-8">

@@ -17,7 +17,7 @@ export default function AiAnalysisPage() {
 
   useEffect(() => {
     api.aiStatus().then((s) => setConfigured(s.configured));
-    api.findings(undefined, "Open").then(setFindings);
+    api.findings({ state: "Open", page_size: 500 }).then((r) => setFindings(r.items));
   }, []);
 
   async function analyze() {

@@ -31,6 +31,18 @@ export type Finding = {
 
 export type Summary = { total: number; open: number; mitigated: number };
 
+export type FindingListResult = { items: Finding[]; total: number };
+
+export type FindingsQuery = {
+  target_id?: number;
+  state?: string;
+  severity?: string;
+  tool?: string;
+  search?: string;
+  page?: number;
+  page_size?: number;
+};
+
 export type AuthUser = { id: number; email: string; name: string; role: string };
 
 export type CommitEvent = { sha: string; message: string; author: string; date: string; url: string };
@@ -95,17 +107,28 @@ export const api = {
   target: (id: number) => jsonFetch<Target>(`/api/targets/${id}`),
   createTarget: (t: Partial<Target>) =>
     jsonFetch<Target>("/api/targets", { method: "POST", body: JSON.stringify(t) }),
-  findings: (targetId?: number, state?: string) => {
+  findings: (query: FindingsQuery = {}) => {
     const params = new URLSearchParams();
-    if (targetId) params.set("target_id", String(targetId));
-    if (state) params.set("state", state);
-    return jsonFetch<Finding[]>(`/api/findings?${params.toString()}`);
+    if (query.target_id) params.set("target_id", String(query.target_id));
+    if (query.state) params.set("state", query.state);
+    if (query.severity) params.set("severity", query.severity);
+    if (query.tool) params.set("tool", query.tool);
+    if (query.search) params.set("search", query.search);
+    if (query.page) params.set("page", String(query.page));
+    if (query.page_size) params.set("page_size", String(query.page_size));
+    return jsonFetch<FindingListResult>(`/api/findings?${params.toString()}`);
   },
   triage: (findingId: number, toState: string, reason: string) =>
     jsonFetch<Finding>(
       `/api/findings/${findingId}/triage?to_state=${encodeURIComponent(toState)}&reason=${encodeURIComponent(reason)}`,
       { method: "POST" }
     ),
+  bulkTriage: (findingIds: number[], toState: string, reason: string) =>
+    jsonFetch<{ updated: number; items: Finding[] }>("/api/findings/bulk-triage", {
+      method: "POST",
+      body: JSON.stringify({ finding_ids: findingIds, to_state: toState, reason }),
+    }),
+  findingTools: () => jsonFetch<string[]>("/api/findings/facets/tools"),
   summary: () => jsonFetch<Summary>("/api/dashboard/summary"),
   stats: () =>
     jsonFetch<{ open: number; by_severity: Record<string, number>; by_tool: Record<string, number> }>(

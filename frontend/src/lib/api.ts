@@ -33,6 +33,20 @@ export type Summary = { total: number; open: number; mitigated: number };
 
 export type AuthUser = { id: number; email: string; name: string; role: string };
 
+export type CommitEvent = { sha: string; message: string; author: string; date: string; url: string };
+export type PullRequest = {
+  number: number;
+  title: string;
+  author: string;
+  state: string;
+  created_at: string;
+  merged_at: string | null;
+  url: string;
+  scan_status: string;
+};
+export type Endpoint = { framework: string; method: string; route: string; file: string; line: number };
+export type AuditEvent = { type: string; timestamp: string; actor: string; summary: string; reason: string };
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -77,4 +91,23 @@ export const api = {
       `/api/scans/run?target_id=${targetId}&tool=${tool}`,
       { method: "POST" }
     ),
+  updateTarget: (id: number, patch: Partial<Target>) =>
+    jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  workspaceKey: (targetId: number) =>
+    jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(`/api/targets/${targetId}/workspace-key`),
+  activity: (targetId: number) => jsonFetch<CommitEvent[]>(`/api/github/activity/${targetId}`),
+  orgActivity: () => jsonFetch<(CommitEvent & { target: string })[]>("/api/github/org-activity"),
+  prs: (targetId: number) => jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`),
+  runDiscovery: (targetId: number) =>
+    jsonFetch<{ target_id: number; count: number; endpoints: Endpoint[] }>(`/api/discovery/${targetId}`, { method: "POST" }),
+  aiStatus: () => jsonFetch<{ configured: boolean }>("/api/ai/status"),
+  analyzeFinding: (findingId: number) =>
+    jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),
+  auditLog: () => jsonFetch<AuditEvent[]>("/api/audit/log"),
+  users: () => jsonFetch<AuthUser[]>("/api/admin/users"),
+  createUser: (u: { email: string; name: string; password: string; role: string }) =>
+    jsonFetch<AuthUser>("/api/admin/users", { method: "POST", body: JSON.stringify(u) }),
+  updateUserRole: (id: number, role: string) =>
+    jsonFetch<AuthUser>(`/api/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
 };

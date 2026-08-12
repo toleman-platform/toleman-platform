@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery
 
 app = FastAPI(title="OSP - DevSecOps Vulnerability Management Platform")
 
@@ -40,6 +40,11 @@ app.include_router(findings.router)
 app.include_router(ingest.router)
 app.include_router(scans.router)
 app.include_router(dashboard.router)
+app.include_router(github.router)
+app.include_router(ai.router)
+app.include_router(audit.router)
+app.include_router(admin.router)
+app.include_router(discovery.router)
 
 
 @app.get("/health")

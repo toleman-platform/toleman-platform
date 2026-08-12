@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     admin_email: str = "admin@rikugan.io"
     admin_password: str = "changeme123"
     admin_name: str = "Admin"
+    anthropic_api_key: str = ""
 
     class Config:
         env_file = ".env"

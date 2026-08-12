@@ -11,7 +11,7 @@ export default async function PosturePage() {
   const [summary, posture, stats] = await Promise.all([
     api.summary().catch(() => ({ total: 0, open: 0, mitigated: 0 })),
     api.posture().catch(() => []),
-    api.stats().catch(() => ({ open: 0, by_severity: {}, by_tool: {} })),
+    api.stats().catch(() => ({ open: 0, by_severity: {} as Record<string, number>, by_tool: {} as Record<string, number> })),
   ]);
 
   const critical = stats.by_severity["Critical"] ?? 0;

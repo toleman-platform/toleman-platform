@@ -3,6 +3,7 @@ import secrets
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.auth import current_user
@@ -64,7 +65,27 @@ def status(session: Session = Depends(get_session)):
         "app_slug": config.slug if config else None,
         "installed": installation is not None,
         "account_login": installation.account_login if installation else None,
+        "webhook_secret_set": bool(config and config.webhook_secret),
     }
+
+
+class UpdateWebhookSecretRequest(BaseModel):
+    webhook_secret: str
+
+
+@router.patch("/webhook-secret")
+def update_webhook_secret(payload: UpdateWebhookSecretRequest, session: Session = Depends(get_session)):
+    """Pairs with the webhook secret set manually in the App's GitHub settings
+    page (Settings > Developer settings > GitHub Apps > <app> > Webhook) -
+    there's no API to configure a GitHub App's webhook URL/secret post-creation,
+    only the Settings UI, so this just needs to match what's entered there."""
+    config = session.exec(select(GitHubAppConfig)).first()
+    if not config:
+        raise HTTPException(status_code=400, detail="GitHub App not configured yet")
+    config.webhook_secret = encrypt_secret(payload.webhook_secret)
+    session.add(config)
+    session.commit()
+    return {"webhook_secret_set": bool(payload.webhook_secret)}
 
 
 @public_router.get("/callback")

@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery, github_app, config as config_api, tools, pr_guardrail
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks
 from app.api.auth import current_user, require_admin
 
 app = FastAPI(title="OSP - DevSecOps Vulnerability Management Platform")
@@ -40,6 +40,7 @@ admin_required = [Depends(require_admin)]
 app.include_router(auth.router)
 app.include_router(ingest.router)  # own auth: Workspace API key, not a login session
 app.include_router(github_app.public_router)  # GitHub calls these directly, no session cookie available
+app.include_router(webhooks.router)  # GitHub webhook deliveries, verified via HMAC signature instead of a session
 
 app.include_router(workspaces.router, dependencies=login_required)
 app.include_router(targets.router, dependencies=login_required)

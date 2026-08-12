@@ -17,6 +17,7 @@ permissions:
   contents: read
   security-events: write
   pull-requests: read # gitleaks-action lists PR commits when triggered by pull_request
+  actions: read # upload-sarif's wait-for-processing polls the run status API
 
 jobs:
   semgrep:

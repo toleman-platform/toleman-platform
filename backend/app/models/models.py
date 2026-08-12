@@ -42,6 +42,7 @@ class User(SQLModel, table=True):
     name: str
     password_hash: str
     role: UserRole = UserRole.ADMIN
+    token_version: int = Field(default=1)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -81,7 +82,7 @@ class Project(SQLModel, table=True):
 
 class Scan(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    target_id: int = Field(foreign_key="target.id")
+    target_id: int = Field(foreign_key="target.id", index=True)
     tool: str
     branch: str
     status: str = "running"  # running, completed, failed
@@ -92,7 +93,7 @@ class Scan(SQLModel, table=True):
 
 class Finding(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
-    target_id: int = Field(foreign_key="target.id")
+    target_id: int = Field(foreign_key="target.id", index=True)
     project_id: Optional[int] = Field(default=None, foreign_key="project.id")
     scan_id: Optional[int] = Field(default=None, foreign_key="scan.id")
 
@@ -106,10 +107,10 @@ class Finding(SQLModel, table=True):
     line_end: Optional[int] = None
 
     severity: Severity
-    priority_score: int = 0
+    priority_score: int = Field(default=0, index=True)
 
-    branch: str = "main"
-    state: FindingState = FindingState.OPEN
+    branch: str = Field(default="main", index=True)
+    state: FindingState = Field(default=FindingState.OPEN, index=True)
     state_reason: str = ""
 
     cve_id: Optional[str] = None

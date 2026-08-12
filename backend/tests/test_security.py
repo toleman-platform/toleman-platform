@@ -1,7 +1,12 @@
 import time
 
+import pytest
+from fastapi.testclient import TestClient
+from sqlmodel import Session, select
+
 from app.core.security import (
     create_session_token,
+    decode_session_token,
     hash_password,
     verify_password,
     verify_session_token,
@@ -56,3 +61,122 @@ def test_expired_session_token_rejected(monkeypatch):
     monkeypatch.setattr(security_module.time, "time", real_time)
 
     assert verify_session_token(token) is None
+
+
+def test_create_session_token_defaults_to_token_version_one():
+    token = create_session_token(user_id=7)
+    payload = decode_session_token(token)
+    assert payload["uid"] == 7
+    assert payload["tv"] == 1
+
+
+def test_session_token_embeds_given_token_version():
+    token = create_session_token(user_id=7, token_version=3)
+    payload = decode_session_token(token)
+    assert payload["uid"] == 7
+    assert payload["tv"] == 3
+
+
+def test_token_rejected_after_logout_bumps_token_version():
+    """Simulates the revocation flow used by app.api.auth.current_user:
+    a token issued before "logout" carries the token_version that was
+    current at issuance; after logout bumps the user's DB token_version,
+    the embedded version no longer matches and the caller must reject it.
+    """
+    user_token_version = 1
+
+    # Token issued while logged in (pre-logout).
+    token = create_session_token(user_id=99, token_version=user_token_version)
+    payload = decode_session_token(token)
+    assert payload is not None
+    assert payload["tv"] == user_token_version  # still valid: versions match
+
+    # Logout bumps the DB-stored token_version, invalidating all
+    # previously-issued tokens for this user.
+    user_token_version += 1
+
+    payload = decode_session_token(token)
+    assert payload is not None  # signature/expiry still valid...
+    assert payload["tv"] != user_token_version  # ...but version mismatches, so a caller must reject it
+
+    # A freshly issued token, created with the new version, still works.
+    fresh_token = create_session_token(user_id=99, token_version=user_token_version)
+    fresh_payload = decode_session_token(fresh_token)
+    assert fresh_payload is not None
+    assert fresh_payload["tv"] == user_token_version
+
+
+@pytest.fixture()
+def logout_test_user():
+    """End-to-end fixture against the real app + DB for the /logout revocation tests below."""
+    from app.core.db import engine, init_db
+    from app.models.models import User
+
+    init_db()
+    email = "session-hardening-test-user@example.test"
+    password = "correct horse battery staple"
+    with Session(engine) as session:
+        existing = session.exec(select(User).where(User.email == email)).first()
+        if existing:
+            session.delete(existing)
+            session.commit()
+        user = User(email=email, name="Test User", password_hash=hash_password(password))
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        user_id = user.id
+
+    yield email, password
+
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        if user:
+            session.delete(user)
+            session.commit()
+
+
+def test_token_issued_before_logout_is_rejected_after_logout(logout_test_user):
+    from app.main import app
+
+    email, password = logout_test_user
+    client = TestClient(app)
+
+    login_resp = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert login_resp.status_code == 200
+    old_cookie = login_resp.cookies.get("osp_session")
+    assert old_cookie
+
+    # The token works before logout.
+    me_resp = client.get("/api/auth/me", cookies={"osp_session": old_cookie})
+    assert me_resp.status_code == 200
+
+    # Logging out bumps the user's token_version server-side.
+    logout_resp = client.post("/api/auth/logout", cookies={"osp_session": old_cookie})
+    assert logout_resp.status_code == 200
+
+    # The pre-logout token is now rejected, even though its signature and
+    # expiry are still valid, because its embedded token_version no longer
+    # matches the (bumped) DB value.
+    stale_resp = client.get("/api/auth/me", cookies={"osp_session": old_cookie})
+    assert stale_resp.status_code == 401
+
+
+def test_fresh_login_after_logout_still_works(logout_test_user):
+    from app.main import app
+
+    email, password = logout_test_user
+    client = TestClient(app)
+
+    first_login = client.post("/api/auth/login", json={"email": email, "password": password})
+    old_cookie = first_login.cookies.get("osp_session")
+    client.post("/api/auth/logout", cookies={"osp_session": old_cookie})
+
+    # A brand new login issues a token stamped with the post-logout version.
+    second_login = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert second_login.status_code == 200
+    new_cookie = second_login.cookies.get("osp_session")
+    assert new_cookie
+
+    me_resp = client.get("/api/auth/me", cookies={"osp_session": new_cookie})
+    assert me_resp.status_code == 200
+    assert me_resp.json()["email"] == email

@@ -29,14 +29,17 @@ def _sign(payload: str) -> str:
     return hmac.new(settings.session_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
 
 
-def create_session_token(user_id: int) -> str:
-    payload = json.dumps({"uid": user_id, "exp": int(time.time()) + SESSION_TTL_SECONDS})
+def create_session_token(user_id: int, token_version: int = 1) -> str:
+    payload = json.dumps(
+        {"uid": user_id, "tv": token_version, "exp": int(time.time()) + SESSION_TTL_SECONDS}
+    )
     payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode()
     signature = _sign(payload_b64)
     return f"{payload_b64}.{signature}"
 
 
-def verify_session_token(token: str) -> int | None:
+def decode_session_token(token: str) -> dict | None:
+    """Verify signature/expiry and return the full payload (uid, tv, exp), or None if invalid."""
     try:
         payload_b64, signature = token.split(".")
     except ValueError:
@@ -49,4 +52,13 @@ def verify_session_token(token: str) -> int | None:
         return None
     if payload.get("exp", 0) < time.time():
         return None
-    return payload.get("uid")
+    if payload.get("uid") is None:
+        return None
+    # Tokens issued before token_version existed are treated as version 1.
+    payload.setdefault("tv", 1)
+    return payload
+
+
+def verify_session_token(token: str) -> int | None:
+    payload = decode_session_token(token)
+    return payload["uid"] if payload else None

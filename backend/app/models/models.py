@@ -159,3 +159,31 @@ class FindingStateLog(SQLModel, table=True):
     reason: str = ""
     actor: str = "system"
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PRGuardrailStatus(str, Enum):
+    RUNNING = "running"
+    PASSED = "passed"
+    BLOCKED = "blocked"
+    ERROR = "error"
+    OVERRIDDEN = "overridden"
+
+
+class PRGuardrailScan(SQLModel, table=True):
+    """A PR Guardrail diff-scan run (architecture doc Flow C).
+
+    Ephemeral/comparative by design: findings surfaced here are NOT persisted
+    as platform Finding rows (that would pollute default-branch posture with
+    PR-branch-only noise). Only the scan summary is stored.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    pr_number: int
+    pr_title: str = ""
+    branch: str  # PR head branch
+    status: PRGuardrailStatus = PRGuardrailStatus.RUNNING
+    new_findings_count: int = 0
+    highest_new_severity: str | None = None  # "Critical"/"High"/etc, or None
+    override_reason: str = ""
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: datetime | None = None

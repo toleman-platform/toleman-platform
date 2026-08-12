@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery, github_app, config as config_api, tools
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery, github_app, config as config_api, tools, pr_guardrail
 from app.api.auth import current_user, require_admin
 
 app = FastAPI(title="OSP - DevSecOps Vulnerability Management Platform")
@@ -52,6 +52,7 @@ app.include_router(audit.router, dependencies=login_required)
 app.include_router(discovery.router, dependencies=login_required)
 app.include_router(github_app.router, dependencies=login_required)
 app.include_router(tools.router, dependencies=login_required)
+app.include_router(pr_guardrail.router, dependencies=login_required)
 
 app.include_router(admin.router, dependencies=admin_required)
 app.include_router(config_api.router, dependencies=admin_required)

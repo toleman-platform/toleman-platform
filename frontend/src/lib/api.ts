@@ -47,6 +47,34 @@ export type PullRequest = {
 export type Endpoint = { framework: string; method: string; route: string; file: string; line: number };
 export type AuditEvent = { type: string; timestamp: string; actor: string; summary: string; reason: string };
 
+export type PrGuardrailFinding = {
+  tool: string;
+  rule_id: string;
+  title: string;
+  file_path: string;
+  line_start: number | null;
+  severity: string;
+};
+export type PrGuardrailScanResult = {
+  pr_scan_id: number;
+  status: "passed" | "blocked" | "error";
+  new_findings_count: number;
+  highest_new_severity: string | null;
+  new_findings: PrGuardrailFinding[];
+};
+export type PrGuardrailLogEntry = {
+  id: number;
+  pr_number: number;
+  pr_title: string;
+  branch: string;
+  status: "running" | "passed" | "blocked" | "error" | "overridden";
+  new_findings_count: number;
+  highest_new_severity: string | null;
+  override_reason: string;
+  created_at: string;
+  completed_at: string | null;
+};
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
@@ -124,4 +152,16 @@ export const api = {
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(
       "/api/tools/health"
     ),
+  runPrGuardrailScan: (targetId: number, prNumber: number) =>
+    jsonFetch<PrGuardrailScanResult>(
+      `/api/pr-guardrail/scan?target_id=${targetId}&pr_number=${prNumber}`,
+      { method: "POST" }
+    ),
+  getPrGuardrailLog: (targetId: number) =>
+    jsonFetch<PrGuardrailLogEntry[]>(`/api/pr-guardrail/log?target_id=${targetId}`),
+  overridePrGuardrail: (prScanId: number, reason: string) =>
+    jsonFetch<PrGuardrailLogEntry>(`/api/pr-guardrail/${prScanId}/override`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
 };

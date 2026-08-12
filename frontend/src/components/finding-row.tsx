@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Finding, api } from "@/lib/api";
-import { SEVERITY_COLOR, STATE_COLOR } from "@/lib/severity";
+import { SEVERITY_BORDER_COLOR, SEVERITY_COLOR, STATE_COLOR } from "@/lib/severity";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,17 @@ import { Input } from "@/components/ui/input";
 
 const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
-export function FindingRow({ finding }: { finding: Finding }) {
+export function FindingRow({
+  finding,
+  selectable = false,
+  selected = false,
+  onSelectChange,
+}: {
+  finding: Finding;
+  selectable?: boolean;
+  selected?: boolean;
+  onSelectChange?: (checked: boolean) => void;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -30,19 +40,33 @@ export function FindingRow({ finding }: { finding: Finding }) {
   }
 
   return (
-    <Card className="border-border bg-card">
+    <Card className={`border-border bg-card border-l-4 ${SEVERITY_BORDER_COLOR[finding.severity]}`}>
       <CardContent className="px-4 py-3">
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className={`shrink-0 ${SEVERITY_COLOR[finding.severity]}`}>
-                {finding.severity}
-              </Badge>
-              <span className="truncate text-sm font-medium text-foreground">{finding.title}</span>
-            </div>
-            <div className="mt-1 truncate text-xs text-muted-foreground">
-              {finding.tool} · {finding.file_path}
-              {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
+          <div className="flex min-w-0 items-start gap-3">
+            {selectable && (
+              <input
+                type="checkbox"
+                aria-label={`Select finding ${finding.title}`}
+                className="mt-1 h-4 w-4 shrink-0 accent-primary"
+                checked={selected}
+                onChange={(e) => onSelectChange?.(e.target.checked)}
+              />
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Badge
+                  variant="outline"
+                  className={`shrink-0 px-2 py-0.5 text-sm font-bold uppercase tracking-wide ${SEVERITY_COLOR[finding.severity]}`}
+                >
+                  {finding.severity}
+                </Badge>
+                <span className="truncate text-sm font-medium text-foreground">{finding.title}</span>
+              </div>
+              <div className="mt-1 truncate text-xs text-muted-foreground">
+                {finding.tool} · {finding.file_path}
+                {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
+              </div>
             </div>
           </div>
           <div className="shrink-0 text-right">

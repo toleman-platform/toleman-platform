@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { Button } from "@/components/ui/button";
 
 const TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"];
 
@@ -30,20 +31,15 @@ export function ScanButtons({ targetId }: { targetId: number }) {
   }
 
   return (
-    <div className="text-right space-y-2">
+    <div className="space-y-2 text-right">
       <div className="flex gap-2">
         {TOOLS.map((tool) => (
-          <button
-            key={tool}
-            onClick={() => run(tool)}
-            disabled={running !== null}
-            className="text-xs border border-neutral-700 rounded px-3 py-1.5 hover:border-neutral-500 disabled:opacity-50"
-          >
+          <Button key={tool} size="sm" variant="outline" disabled={running !== null} onClick={() => run(tool)}>
             {running === tool ? "Running..." : `Run ${tool}`}
-          </button>
+          </Button>
         ))}
       </div>
-      {result && <p className="text-xs text-neutral-400">{result}</p>}
+      {result && <p className="text-xs text-muted-foreground">{result}</p>}
     </div>
   );
 }

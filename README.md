@@ -63,7 +63,9 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. All pages read live data from the backend API — no mock data.
+Open http://localhost:3000 — redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@rikugan.io` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API — no mock data.
+
+Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
 
 ## Architecture decisions made during build (deltas from the design doc)
 

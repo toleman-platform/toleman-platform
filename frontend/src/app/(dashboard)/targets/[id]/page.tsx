@@ -15,12 +15,12 @@ export default async function TargetDetailPage({
   ]);
 
   return (
-    <div className="space-y-8">
+    <div className="flex flex-col gap-8">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-xl font-semibold">{target.name}</h1>
-          <p className="text-neutral-400 text-sm mt-1">{target.repo_url}</p>
-          <p className="text-neutral-500 text-xs mt-1">
+          <h1 className="text-2xl font-bold text-foreground">{target.name}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{target.repo_url}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
             {target.label} · criticality weight {target.criticality_weight} · branch {target.default_branch}
           </p>
         </div>
@@ -28,17 +28,13 @@ export default async function TargetDetailPage({
       </div>
 
       <div>
-        <h2 className="text-sm font-medium text-neutral-400 mb-3">
-          Findings ({findings.length})
-        </h2>
-        <div className="space-y-2">
+        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Findings ({findings.length})</h2>
+        <div className="flex flex-col gap-2">
           {findings.map((f) => (
             <FindingRow key={f.id} finding={f} />
           ))}
           {findings.length === 0 && (
-            <p className="text-neutral-500 text-sm">
-              No findings yet. Run a scan above.
-            </p>
+            <p className="text-sm text-muted-foreground">No findings yet. Run a scan above.</p>
           )}
         </div>
       </div>

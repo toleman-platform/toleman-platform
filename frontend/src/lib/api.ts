@@ -31,10 +31,13 @@ export type Finding = {
 
 export type Summary = { total: number; open: number; mitigated: number };
 
+export type AuthUser = { id: number; email: string; name: string; role: string };
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     cache: "no-store",
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
   });
   if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
@@ -42,6 +45,10 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  login: (email: string, password: string) =>
+    jsonFetch<AuthUser>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  logout: () => jsonFetch<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  me: () => jsonFetch<AuthUser>("/api/auth/me"),
   targets: () => jsonFetch<Target[]>("/api/targets"),
   target: (id: number) => jsonFetch<Target>(`/api/targets/${id}`),
   createTarget: (t: Partial<Target>) =>
@@ -58,6 +65,10 @@ export const api = {
       { method: "POST" }
     ),
   summary: () => jsonFetch<Summary>("/api/dashboard/summary"),
+  stats: () =>
+    jsonFetch<{ open: number; by_severity: Record<string, number>; by_tool: Record<string, number> }>(
+      "/api/dashboard/stats"
+    ),
   posture: () => jsonFetch<{ target: Target; breakdown: Record<string, Record<string, number>> }[]>(
     "/api/dashboard/posture"
   ),

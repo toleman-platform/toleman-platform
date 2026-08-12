@@ -1,16 +1,24 @@
 export const SEVERITY_COLOR: Record<string, string> = {
-  Critical: "bg-red-950 text-red-300 border-red-800",
-  High: "bg-orange-950 text-orange-300 border-orange-800",
-  Medium: "bg-yellow-950 text-yellow-300 border-yellow-800",
-  Low: "bg-blue-950 text-blue-300 border-blue-800",
-  Informational: "bg-neutral-900 text-neutral-400 border-neutral-700",
+  Critical: "border-destructive/20 bg-destructive/10 text-destructive",
+  High: "border-chart-3/20 bg-chart-3/10 text-chart-3",
+  Medium: "border-chart-1/20 bg-chart-1/10 text-chart-1",
+  Low: "border-border bg-muted text-muted-foreground",
+  Informational: "border-border bg-muted text-muted-foreground",
+};
+
+export const SEVERITY_HEX: Record<string, string> = {
+  Critical: "#ef4444",
+  High: "#f59e0b",
+  Medium: "#3b82f6",
+  Low: "#6b7280",
+  Informational: "#6b7280",
 };
 
 export const STATE_COLOR: Record<string, string> = {
-  Open: "text-red-300",
-  "Accepted Risk": "text-yellow-300",
-  "False Positive": "text-neutral-400",
-  "Won't Fix": "text-neutral-400",
-  Mitigated: "text-green-400",
-  Reopened: "text-orange-300",
+  Open: "text-destructive",
+  "Accepted Risk": "text-chart-3",
+  "False Positive": "text-muted-foreground",
+  "Won't Fix": "text-muted-foreground",
+  Mitigated: "text-chart-5",
+  Reopened: "text-chart-3",
 };

@@ -7,6 +7,27 @@ from app.models.models import Finding, FindingState, Target
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
+@router.get("/stats")
+def stats(session: Session = Depends(get_session)):
+    """Aggregate counts for dashboard charts. Default-branch, Open findings only."""
+    targets = {t.id: t for t in session.exec(select(Target)).all()}
+
+    open_findings = session.exec(select(Finding).where(Finding.state == FindingState.OPEN)).all()
+    open_default_branch = [f for f in open_findings if targets.get(f.target_id) and f.branch == targets[f.target_id].default_branch]
+
+    severity_counts: dict[str, int] = {}
+    tool_counts: dict[str, int] = {}
+    for f in open_default_branch:
+        severity_counts[f.severity] = severity_counts.get(f.severity, 0) + 1
+        tool_counts[f.tool] = tool_counts.get(f.tool, 0) + 1
+
+    return {
+        "open": len(open_default_branch),
+        "by_severity": severity_counts,
+        "by_tool": tool_counts,
+    }
+
+
 @router.get("/posture")
 def posture(session: Session = Depends(get_session)):
     """Main Posture Dashboard: org health, default branches only."""

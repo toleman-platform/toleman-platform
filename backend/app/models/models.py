@@ -30,6 +30,21 @@ class FindingState(str, Enum):
     REOPENED = "Reopened"
 
 
+class UserRole(str, Enum):
+    ADMIN = "admin"
+    USER = "user"
+    VIEWER = "viewer"
+
+
+class User(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email: str = Field(unique=True, index=True)
+    name: str
+    password_hash: str
+    role: UserRole = UserRole.ADMIN
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Organization(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str

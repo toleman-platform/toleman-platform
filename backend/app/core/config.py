@@ -7,6 +7,10 @@ class Settings(BaseSettings):
     github_token: str = ""
     workspace_api_key: str = "dev-local-key"
     scan_workdir: str = "/tmp/osp-scans"
+    session_secret: str = "dev-local-session-secret-change-me"
+    admin_email: str = "admin@rikugan.io"
+    admin_password: str = "changeme123"
+    admin_name: str = "Admin"
 
     class Config:
         env_file = ".env"

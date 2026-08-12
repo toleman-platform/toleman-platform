@@ -3,6 +3,7 @@ import time
 import httpx
 import jwt
 
+from app.core.crypto import decrypt_secret
 from app.models.models import GitHubAppConfig
 
 
@@ -33,7 +34,8 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str) -> dict:
 def generate_app_jwt(config: GitHubAppConfig) -> str:
     now = int(time.time())
     payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": config.app_id}
-    return jwt.encode(payload, config.private_key_pem, algorithm="RS256")
+    private_key_pem = decrypt_secret(config.private_key_pem)
+    return jwt.encode(payload, private_key_pem, algorithm="RS256")
 
 
 def get_installation_token(config: GitHubAppConfig, installation_id: int) -> str:

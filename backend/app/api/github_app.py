@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import current_user
 from app.api.deps import get_session
+from app.core.crypto import encrypt_secret
 from app.core.github_app import (
     build_manifest,
     get_installation_account,
@@ -90,9 +91,9 @@ def callback(code: str, state: str | None = None, session: Session = Depends(get
         app_id=str(data["id"]),
         slug=data["slug"],
         client_id=data["client_id"],
-        client_secret=data["client_secret"],
-        private_key_pem=data["pem"],
-        webhook_secret=data.get("webhook_secret") or "",
+        client_secret=encrypt_secret(data["client_secret"]),
+        private_key_pem=encrypt_secret(data["pem"]),
+        webhook_secret=encrypt_secret(data.get("webhook_secret") or ""),
         html_url=data["html_url"],
     )
     session.add(config)

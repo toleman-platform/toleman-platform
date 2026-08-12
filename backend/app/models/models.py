@@ -121,6 +121,13 @@ class Finding(SQLModel, table=True):
     mitigated_at: Optional[datetime] = None
 
 
+class PlatformConfig(SQLModel, table=True):
+    """Single-row runtime configuration, editable via Admin > Global Integrations."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    anthropic_api_key: Optional[str] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class GitHubAppConfig(SQLModel, table=True):
     """Created once via the App Manifest flow. Single row for this MVP (single-tenant)."""
     id: Optional[int] = Field(default=None, primary_key=True)

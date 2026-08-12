@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -17,9 +17,8 @@ export function ConnectGithubCard() {
   const [org, setOrg] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const [manifestValue, setManifestValue] = useState("");
-  const [postUrl, setPostUrl] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   function refresh() {
     api.githubAppStatus().then(setStatus);
@@ -28,10 +27,27 @@ export function ConnectGithubCard() {
   useEffect(refresh, []);
 
   async function connect() {
-    const { manifest, post_url } = await api.githubAppManifestData(org || undefined);
-    setManifestValue(JSON.stringify(manifest));
-    setPostUrl(post_url);
-    requestAnimationFrame(() => formRef.current?.submit());
+    setConnecting(true);
+    setError(null);
+    try {
+      const { manifest, post_url } = await api.githubAppManifestData(org || undefined);
+      // Built and submitted imperatively (not via React state -> JSX -> ref) so
+      // there's no render-timing race between setting the value and submitting.
+      const form = document.createElement("form");
+      form.action = post_url;
+      form.method = "post";
+      form.style.display = "none";
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "manifest";
+      input.value = JSON.stringify(manifest);
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to start GitHub connect flow");
+      setConnecting(false);
+    }
   }
 
   async function sync() {
@@ -76,13 +92,11 @@ export function ConnectGithubCard() {
                 value={org}
                 onChange={(e) => setOrg(e.target.value)}
               />
-              <Button onClick={connect} className="shrink-0">
-                Connect GitHub
+              <Button onClick={connect} disabled={connecting} className="shrink-0">
+                {connecting ? "Redirecting..." : "Connect GitHub"}
               </Button>
             </div>
-            <form ref={formRef} action={postUrl} method="post" className="hidden">
-              <input type="hidden" name="manifest" value={manifestValue} />
-            </form>
+            {error && <p className="text-xs text-destructive">{error}</p>}
           </div>
         )}
 

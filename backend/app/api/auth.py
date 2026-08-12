@@ -65,3 +65,9 @@ def logout(response: Response):
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(current_user)):
     return UserOut(id=user.id, email=user.email, name=user.name, role=user.role)
+
+
+def require_admin(user: User = Depends(current_user)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin role required")
+    return user

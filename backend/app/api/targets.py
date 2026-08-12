@@ -1,11 +1,38 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
 from app.models.models import Target, Workspace
 
 router = APIRouter(prefix="/api/targets", tags=["targets"])
+
+# Scan execution clones this URL and runs local tools against the checkout, so
+# an unrestricted repo_url is an SSRF / local-file-read primitive (file://,
+# internal hosts, cloud metadata IPs). Only allow real GitHub HTTPS clone URLs.
+_ALLOWED_REPO_URL = re.compile(r"^https://github\.com/[\w.\-]+/[\w.\-]+(\.git)?/?$")
+
+
+def _validate_repo_url(url: str) -> str:
+    if not _ALLOWED_REPO_URL.match(url):
+        raise HTTPException(status_code=400, detail="repo_url must be an https://github.com/<org>/<repo> URL")
+    return url
+
+
+class CreateTargetRequest(BaseModel):
+    workspace_id: int
+    name: str
+    repo_url: str
+    default_branch: str = "main"
+    label: str = "Dev"
+    criticality_weight: int = 1
+
+    @field_validator("repo_url")
+    @classmethod
+    def _check_repo_url(cls, v: str) -> str:
+        return _validate_repo_url(v)
 
 
 class UpdateTargetRequest(BaseModel):
@@ -21,7 +48,8 @@ def list_targets(session: Session = Depends(get_session)):
 
 
 @router.post("")
-def create_target(target: Target, session: Session = Depends(get_session)):
+def create_target(payload: CreateTargetRequest, session: Session = Depends(get_session)):
+    target = Target(**payload.model_dump())
     session.add(target)
     session.commit()
     session.refresh(target)

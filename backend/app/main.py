@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
@@ -6,7 +6,8 @@ from app.core.config import settings
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery, github_app
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery, github_app, config as config_api, tools
+from app.api.auth import current_user, require_admin
 
 app = FastAPI(title="OSP - DevSecOps Vulnerability Management Platform")
 
@@ -33,19 +34,27 @@ def on_startup():
             session.commit()
 
 
+login_required = [Depends(current_user)]
+admin_required = [Depends(require_admin)]
+
 app.include_router(auth.router)
-app.include_router(workspaces.router)
-app.include_router(targets.router)
-app.include_router(findings.router)
-app.include_router(ingest.router)
-app.include_router(scans.router)
-app.include_router(dashboard.router)
-app.include_router(github.router)
-app.include_router(ai.router)
-app.include_router(audit.router)
-app.include_router(admin.router)
-app.include_router(discovery.router)
-app.include_router(github_app.router)
+app.include_router(ingest.router)  # own auth: Workspace API key, not a login session
+app.include_router(github_app.public_router)  # GitHub calls these directly, no session cookie available
+
+app.include_router(workspaces.router, dependencies=login_required)
+app.include_router(targets.router, dependencies=login_required)
+app.include_router(findings.router, dependencies=login_required)
+app.include_router(scans.router, dependencies=login_required)
+app.include_router(dashboard.router, dependencies=login_required)
+app.include_router(github.router, dependencies=login_required)
+app.include_router(ai.router, dependencies=login_required)
+app.include_router(audit.router, dependencies=login_required)
+app.include_router(discovery.router, dependencies=login_required)
+app.include_router(github_app.router, dependencies=login_required)
+app.include_router(tools.router, dependencies=login_required)
+
+app.include_router(admin.router, dependencies=admin_required)
+app.include_router(config_api.router, dependencies=admin_required)
 
 
 @app.get("/health")

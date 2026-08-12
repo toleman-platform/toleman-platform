@@ -1,10 +1,11 @@
 import secrets
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlmodel import Session, select
 
+from app.api.auth import current_user
 from app.api.deps import get_session
 from app.core.github_app import (
     build_manifest,
@@ -14,10 +15,17 @@ from app.core.github_app import (
 )
 from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, Workspace
 
-router = APIRouter(prefix="/api/github-app", tags=["github-app"])
-
 FRONTEND_URL = "http://localhost:3000"
 BACKEND_URL = "http://localhost:8000"
+
+# CSRF-binding for the manifest flow: state issued in /manifest-data must come
+# back on /callback before we trust the code exchange. In-memory is fine for
+# this single-process dev/OSS deployment; a multi-worker production deploy
+# would need this in Redis/DB instead (module state isn't shared across workers).
+_pending_states: set[str] = set()
+
+router = APIRouter(prefix="/api/github-app", tags=["github-app"], dependencies=[Depends(current_user)])
+public_router = APIRouter(prefix="/api/github-app", tags=["github-app"])
 
 
 def _get_or_create_workspace(session: Session) -> Workspace:
@@ -37,11 +45,13 @@ def _get_or_create_workspace(session: Session) -> Workspace:
 
 @router.get("/manifest-data")
 def manifest_data(org: str | None = None):
-    """Frontend uses this to build the hidden form it POSTs to GitHub."""
+    """Frontend uses this to build the hidden form it POSTs to GitHub. Requires login."""
     suffix = secrets.token_hex(3)
     manifest = build_manifest(FRONTEND_URL, BACKEND_URL, suffix)
-    target = f"https://github.com/organizations/{org}/settings/apps/new" if org else "https://github.com/settings/apps/new"
-    return {"manifest": manifest, "post_url": target}
+    state = secrets.token_urlsafe(24)
+    _pending_states.add(state)
+    base = f"https://github.com/organizations/{org}/settings/apps/new" if org else "https://github.com/settings/apps/new"
+    return {"manifest": manifest, "post_url": f"{base}?state={state}"}
 
 
 @router.get("/status")
@@ -56,9 +66,18 @@ def status(session: Session = Depends(get_session)):
     }
 
 
-@router.get("/callback")
-def callback(code: str, session: Session = Depends(get_session)):
-    """GitHub redirects here after the manifest form is submitted, with a one-time code."""
+@public_router.get("/callback")
+def callback(code: str, state: str | None = None, session: Session = Depends(get_session)):
+    """GitHub redirects here after the manifest form is submitted, with a one-time code.
+
+    Unauthenticated by necessity (GitHub, not our frontend, calls this) - the
+    `state` param round-tripped from /manifest-data is what proves this request
+    traces back to a login session that initiated the flow, not a forged one.
+    """
+    if not state or state not in _pending_states:
+        raise HTTPException(status_code=400, detail="missing or invalid state")
+    _pending_states.discard(state)
+
     res = httpx.post(
         f"https://api.github.com/app-manifests/{code}/conversions",
         headers={"Accept": "application/vnd.github+json"},
@@ -82,9 +101,11 @@ def callback(code: str, session: Session = Depends(get_session)):
     return RedirectResponse(f"https://github.com/apps/{config.slug}/installations/new")
 
 
-@router.get("/setup-callback")
+@public_router.get("/setup-callback")
 def setup_callback(installation_id: int, setup_action: str | None = None, session: Session = Depends(get_session)):
-    """GitHub redirects here after the app is installed on an account/org."""
+    """GitHub redirects here after the app is installed on an account/org. Unauthenticated
+    by necessity (GitHub calls this directly) - installation_id is GitHub-issued and only
+    usable together with our app's private key, so there's nothing forgeable to gate here."""
     config = session.exec(select(GitHubAppConfig)).first()
     if not config:
         return RedirectResponse(f"{FRONTEND_URL}/targets?error=app_not_configured")

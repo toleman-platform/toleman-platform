@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Github, CheckCircle2 } from "lucide-react";
 
 export function ConnectGithubCard() {
+  const router = useRouter();
   const [status, setStatus] = useState<{
     app_configured: boolean;
     app_slug: string | null;
@@ -56,6 +58,7 @@ export function ConnectGithubCard() {
     try {
       const res = await api.githubAppSync();
       setSyncResult(`${res.created} new repo(s) added as targets`);
+      router.refresh();
     } catch (e) {
       setSyncResult(e instanceof Error ? e.message : "sync failed");
     } finally {

@@ -9,3 +9,4 @@ frontend/.next/
 frontend/.env.local
 
 .DS_Store
+.claude/worktrees/

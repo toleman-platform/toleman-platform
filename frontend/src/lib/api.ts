@@ -90,11 +90,30 @@ export type PrGuardrailLogEntry = {
 };
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) };
+
+  // Server Components/route handlers run on the Node server, not in the
+  // browser — `credentials: "include"` is a no-op there since there's no
+  // browser cookie jar to draw from. Without forwarding the incoming
+  // request's session cookie explicitly, every server-side call 401s and
+  // gets silently swallowed by callers' .catch(() => []), which is exactly
+  // what made every server-rendered page look like "no data" once the
+  // backend started requiring auth (Sprint 1). Dynamic import so this
+  // server-only module is never pulled into the client bundle.
+  if (typeof window === "undefined") {
+    const { cookies } = await import("next/headers");
+    const cookieStore = await cookies();
+    const session = cookieStore.get("osp_session");
+    if (session) {
+      headers["Cookie"] = `osp_session=${session.value}`;
+    }
+  }
+
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     cache: "no-store",
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers,
   });
   if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
   return res.json();

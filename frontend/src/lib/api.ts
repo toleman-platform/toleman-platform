@@ -117,4 +117,11 @@ export const api = {
   githubAppManifestData: (org?: string) =>
     jsonFetch<{ manifest: object; post_url: string }>(`/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`),
   githubAppSync: () => jsonFetch<{ created: number }>("/api/github-app/sync", { method: "POST" }),
+  getConfig: () => jsonFetch<{ anthropic_api_key_set: boolean }>("/api/config"),
+  updateConfig: (anthropic_api_key: string) =>
+    jsonFetch<{ anthropic_api_key_set: boolean }>("/api/config", { method: "POST", body: JSON.stringify({ anthropic_api_key }) }),
+  toolsHealth: () =>
+    jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(
+      "/api/tools/health"
+    ),
 };

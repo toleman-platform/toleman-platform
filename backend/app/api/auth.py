@@ -6,7 +6,7 @@ from app.api.deps import get_session
 from app.core.config import settings
 from app.core.rate_limit import enforce_rate_limit
 from app.core.security import create_session_token, decode_session_token, verify_password
-from app.models.models import User
+from app.models.models import WORKSPACE_ROLE_RANK, Finding, Target, User, WorkspaceMembership, WorkspaceRole
 
 LOGIN_RATE_LIMIT = 5
 LOGIN_RATE_WINDOW_SECONDS = 60
@@ -108,3 +108,101 @@ def require_security_reviewer(user: User = Depends(current_user)) -> User:
     if user.role not in ("admin", "security_engineer"):
         raise HTTPException(status_code=403, detail="security engineer or admin role required")
     return user
+
+
+def _resolve_workspace_id(
+    session: Session,
+    *,
+    workspace_id: int | None,
+    target_id: int | None,
+    finding_id: int | None,
+) -> int | None:
+    """Resolve the workspace a request operates on from whichever
+    identifying parameter the route actually carries. Most workspace-scoped
+    routers (targets/PR guardrail/SBOM/discovery) take target_id; findings
+    routes take finding_id one hop further out."""
+    if workspace_id is not None:
+        return workspace_id
+    if target_id is not None:
+        target = session.get(Target, target_id)
+        return target.workspace_id if target else None
+    if finding_id is not None:
+        finding = session.get(Finding, finding_id)
+        if not finding:
+            return None
+        target = session.get(Target, finding.target_id)
+        return target.workspace_id if target else None
+    return None
+
+
+def enforce_workspace_role(
+    session: Session,
+    user: User,
+    min_role: WorkspaceRole,
+    *,
+    workspace_id: int | None = None,
+    target_id: int | None = None,
+    finding_id: int | None = None,
+) -> None:
+    """Issue #32: gate a workspace-scoped action on the caller holding at
+    least `min_role` for that workspace via WorkspaceMembership. A global
+    admin always passes -- the workspace role model layers on top of the
+    existing global admin/user/viewer role, it doesn't replace it. Callers
+    that already resolved a User/Target upstream can reuse it directly;
+    otherwise pass whichever of workspace_id/target_id/finding_id the route
+    has (see _resolve_workspace_id).
+
+    Used both as the body of require_workspace_role (for routes where the
+    resolving id is a plain path/query param FastAPI can bind by name) and
+    called directly inside handlers whose id lives inside a JSON body
+    (e.g. POST /api/targets' workspace_id), where a Depends-based dependency
+    can't see it.
+    """
+    if user.role == "admin":
+        return
+    resolved = _resolve_workspace_id(
+        session, workspace_id=workspace_id, target_id=target_id, finding_id=finding_id
+    )
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    membership = session.exec(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.user_id == user.id,
+            WorkspaceMembership.workspace_id == resolved,
+        )
+    ).first()
+    if not membership or WORKSPACE_ROLE_RANK[membership.role] < WORKSPACE_ROLE_RANK[min_role]:
+        raise HTTPException(
+            status_code=403,
+            detail=f"{min_role.value} role or higher required for this workspace",
+        )
+
+
+def require_workspace_role(min_role: WorkspaceRole):
+    """Dependency factory for routes that operate on one workspace's
+    resources. FastAPI binds sub-dependency parameters to the request's
+    path/query params by name, so this works unmodified on any route that
+    takes target_id, workspace_id, or finding_id as a plain (non-body)
+    parameter -- e.g.:
+
+        @router.post("/{target_id}")
+        def generate_sbom(target_id: int, user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)), ...):
+
+    Routes where the resolving id is nested in a JSON body instead (e.g.
+    CreateTargetRequest.workspace_id) can't use this form -- call
+    enforce_workspace_role directly in the handler body instead.
+    """
+
+    def _dependency(
+        target_id: int | None = None,
+        workspace_id: int | None = None,
+        finding_id: int | None = None,
+        user: User = Depends(current_user),
+        session: Session = Depends(get_session),
+    ) -> User:
+        enforce_workspace_role(
+            session, user, min_role, workspace_id=workspace_id, target_id=target_id, finding_id=finding_id
+        )
+        return user
+
+    return _dependency

@@ -62,6 +62,44 @@ class Workspace(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class WorkspaceRole(str, Enum):
+    """Per-workspace role vocabulary (issue #32). Deliberately a subset of
+    the global UserRole values -- 'admin' isn't here because admin-ness is
+    global (see WorkspaceMembership docstring), and 'user' isn't here
+    because it carries no meaning at the workspace-scoped resource layer
+    (targets/findings/PR guardrail/SBOM/discovery); every non-admin who
+    needs to act within a workspace needs at least viewer."""
+    VIEWER = "viewer"
+    DEVELOPER = "developer"
+    SECURITY_ENGINEER = "security_engineer"
+
+
+# Ordering used by app.api.auth.enforce_workspace_role to compare a caller's
+# membership role against a route's minimum required role. Mirrors the
+# real permission shape already enforced globally by require_security_reviewer
+# (admin/security_engineer > everyone else) plus a viewer < developer step.
+WORKSPACE_ROLE_RANK = {
+    WorkspaceRole.VIEWER: 1,
+    WorkspaceRole.DEVELOPER: 2,
+    WorkspaceRole.SECURITY_ENGINEER: 3,
+}
+
+
+class WorkspaceMembership(SQLModel, table=True):
+    """Per-workspace role assignment (issue #32), layered on top of the
+    existing global User.role rather than replacing it: a global admin
+    still manages everything everywhere (see enforce_workspace_role), and
+    this table is what determines a *non-admin's* permissions within one
+    specific workspace. One row per (user, workspace) -- re-assigning a
+    user's role for a workspace updates this row rather than adding a
+    second one (see app/api/admin_workspace_roles.py)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    role: WorkspaceRole = WorkspaceRole.VIEWER
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Target(SQLModel, table=True):
     """A repository / cluster being scanned."""
     id: Optional[int] = Field(default=None, primary_key=True)

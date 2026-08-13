@@ -17,7 +17,7 @@ This builds and starts five containers:
 
 - `postgres` (16) and `redis` (7), each gated by a real healthcheck (`pg_isready`, `redis-cli ping`)
 - `backend` — FastAPI on port 8000, with Semgrep/Trivy/Gitleaks/gosec installed in the image (same versions/install method proven in `.github/workflows/`); waits for Postgres and Redis to report healthy before starting, and exposes its own healthcheck (`curl` against `/health`)
-- `celery-worker` — same image as `backend`, running `celery -A app.tasks.celery_app worker -Q scans`; waits for the backend to be healthy first (backend's startup hook is what creates the DB schema — no Alembic migrations yet, see #58)
+- `celery-worker` — same image as `backend`, running `celery -A app.tasks.celery_app worker -Q scans`; waits for the backend to be healthy first (backend's startup hook runs `alembic upgrade head` against `DATABASE_URL` before serving, so the schema is always current — see `backend/alembic/`)
 - `frontend` — Next.js on port 3000, waits for the backend to be healthy
 
 Once it's up:
@@ -86,6 +86,19 @@ curl -X POST "http://localhost:8000/api/scans/run?target_id=1&tool=semgrep"
 ```
 
 Private repos are cloned using whatever git credential helper is already configured locally (e.g. `gh auth setup-git`) — set `GITHUB_TOKEN` in `.env` as an alternative.
+
+### Database migrations (Alembic)
+
+The backend's startup hook (`app/core/db.py:init_db`, called from `app/main.py`) runs `alembic upgrade head` automatically against `DATABASE_URL` every time it starts — both `uvicorn app.main:app` above and the Docker Compose `backend` service. There's no separate manual migration step for the common case of running the app.
+
+You only need to touch Alembic directly when you change `app/models/models.py`:
+
+```bash
+cd backend
+alembic revision --autogenerate -m "describe the schema change"
+```
+
+Review the generated file under `alembic/versions/` before committing — autogenerate is a starting point, not a guarantee (it can miss things like column renames, which it sees as a drop+add). `alembic upgrade head` (or just starting the app) applies it. See `alembic/env.py` for how migrations read `DATABASE_URL` from `app.core.config.settings`, the same source the app itself uses, so they can never disagree about which DB they're pointed at.
 
 ### Frontend
 

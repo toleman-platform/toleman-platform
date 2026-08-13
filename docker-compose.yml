@@ -85,10 +85,11 @@ services:
       redis:
         condition: service_healthy
       backend:
-        # Only the backend's startup hook (app/main.py -> init_db()) creates
-        # the DB schema (no Alembic migrations yet - see #58). Waiting on its
-        # healthcheck means the worker never races a scan against tables
-        # that don't exist yet.
+        # The backend's startup hook (app/main.py -> init_db(), see
+        # app/core/db.py) runs `alembic upgrade head` against DATABASE_URL
+        # before the app starts serving (#58). Waiting on its healthcheck
+        # means the worker never races a scan against tables that don't
+        # exist yet or are mid-migration.
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-osp}:${POSTGRES_PASSWORD:-osp}@postgres:5432/${POSTGRES_DB:-osp}

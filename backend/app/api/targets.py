@@ -4,8 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
+from app.api.auth import current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
-from app.models.models import Target, Workspace
+from app.models.models import Target, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/targets", tags=["targets"])
 
@@ -48,7 +49,15 @@ def list_targets(session: Session = Depends(get_session)):
 
 
 @router.post("")
-def create_target(payload: CreateTargetRequest, session: Session = Depends(get_session)):
+def create_target(
+    payload: CreateTargetRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    # workspace_id lives inside the JSON body here, not a path/query param,
+    # so require_workspace_role's name-binding trick can't see it -- check
+    # explicitly instead (see enforce_workspace_role's docstring).
+    enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
     target = Target(**payload.model_dump())
     session.add(target)
     session.commit()
@@ -62,7 +71,12 @@ def get_target(target_id: int, session: Session = Depends(get_session)):
 
 
 @router.patch("/{target_id}")
-def update_target(target_id: int, payload: UpdateTargetRequest, session: Session = Depends(get_session)):
+def update_target(
+    target_id: int,
+    payload: UpdateTargetRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
     target = session.get(Target, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")

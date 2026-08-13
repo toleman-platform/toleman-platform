@@ -15,11 +15,11 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app.api.auth import current_user, require_security_reviewer
+from app.api.auth import current_user, require_security_reviewer, require_workspace_role
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, set_commit_status
-from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User
+from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User, WorkspaceRole
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,12 @@ def _finding_out(f: PRGuardrailFinding) -> dict:
 
 
 @router.post("/scan")
-def run_pr_guardrail_scan(target_id: int, pr_number: int, session: Session = Depends(get_session)):
+def run_pr_guardrail_scan(
+    target_id: int,
+    pr_number: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
     """Diff-only scan, triggered on-demand. Runs synchronously (same pattern
     as POST /api/scans/run) for MVP simplicity."""
     target = _get_target(target_id, session)

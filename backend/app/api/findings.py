@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, func, or_, select
 
+from app.api.auth import current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
-from app.models.models import Finding, FindingState, FindingStateLog, Severity
+from app.models.models import Finding, FindingState, FindingStateLog, Severity, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/findings", tags=["findings"])
 
@@ -87,12 +88,21 @@ def get_finding(finding_id: int, session: Session = Depends(get_session)):
 
 
 @router.post("/bulk-triage")
-def bulk_triage_findings(payload: BulkTriageRequest, session: Session = Depends(get_session)):
+def bulk_triage_findings(
+    payload: BulkTriageRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     updated = []
     for finding_id in payload.finding_ids:
         finding = session.get(Finding, finding_id)
         if not finding:
             continue
+        # finding_id is inside the request body's finding_ids list, and each
+        # one can belong to a different target/workspace -- check per finding
+        # rather than once, the same reason create_target checks explicitly
+        # instead of using require_workspace_role (see its comment).
+        enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, finding_id=finding_id)
         updated.append(_apply_triage(finding, payload.to_state, payload.reason, payload.actor, session))
     session.commit()
     for finding in updated:
@@ -101,7 +111,14 @@ def bulk_triage_findings(payload: BulkTriageRequest, session: Session = Depends(
 
 
 @router.post("/{finding_id}/triage")
-def triage_finding(finding_id: int, to_state: FindingState, reason: str = "", actor: str = "user", session: Session = Depends(get_session)):
+def triage_finding(
+    finding_id: int,
+    to_state: FindingState,
+    reason: str = "",
+    actor: str = "user",
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
     finding = session.get(Finding, finding_id)
     if not finding:
         return {"error": "not found"}

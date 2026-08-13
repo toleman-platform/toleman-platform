@@ -3,9 +3,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
+from app.api.auth import require_workspace_role
 from app.api.deps import get_session
 from app.core.config import settings
-from app.models.models import ApiEndpoint, Target
+from app.models.models import ApiEndpoint, Target, User, WorkspaceRole
 from app.scanners import runner
 from app.scanners.discovery import discover_endpoints
 
@@ -63,7 +64,11 @@ def upsert_endpoints(session: Session, target_id: int, branch: str, discovered: 
 
 
 @router.post("/{target_id}")
-def run_discovery(target_id: int, session: Session = Depends(get_session)):
+def run_discovery(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
     """Run discovery against the target's default branch, upsert results, and
     report which endpoints are new since the last run."""
     target = _get_target(target_id, session)

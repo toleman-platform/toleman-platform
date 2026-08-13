@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom
 from app.api.auth import current_user, require_admin
 
 app = FastAPI(title="OSP - DevSecOps Vulnerability Management Platform")
@@ -58,6 +58,7 @@ app.include_router(search.router, dependencies=login_required)
 app.include_router(sbom.router, dependencies=login_required)
 
 app.include_router(admin.router, dependencies=admin_required)
+app.include_router(admin_workspace_roles.router, dependencies=admin_required)
 app.include_router(config_api.router, dependencies=admin_required)
 # Policy rules can silently suppress real findings / widen PR Guardrail's
 # blocking threshold platform-wide -- there's no per-workspace membership

@@ -77,6 +77,107 @@ def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]
     ]
 
 
+def _aggregate_org_components(session: Session) -> tuple[list[dict], dict, list[Target], dict[int, Target]]:
+    """Group every persisted SbomComponent (default branch, per target) by
+    (name, version, purl) across all targets -- read-only, no scans triggered.
+    Mirrors the per-target GET's persisted-state-only pattern, just widened to
+    every Target row (this app has no workspace-scoping on list_targets() yet,
+    so 'org-wide' here means every Target in the DB, matching that)."""
+    targets = session.exec(select(Target)).all()
+    targets_by_id = {t.id: t for t in targets}
+
+    # Only the target's own default branch counts as "current" SBOM state,
+    # same as the per-target GET/export -- fetch per target rather than one
+    # unscoped query so a stale non-default-branch row never leaks in.
+    groups: dict[tuple[str, str, str], dict] = {}
+    targets_with_sbom: set[int] = set()
+    for target in targets:
+        components = session.exec(
+            select(SbomComponent).where(
+                SbomComponent.target_id == target.id, SbomComponent.branch == target.default_branch
+            )
+        ).all()
+        if components:
+            targets_with_sbom.add(target.id)
+        for c in components:
+            key = (c.name, c.version, c.purl)
+            group = groups.get(key)
+            if group is None:
+                group = {
+                    "name": c.name,
+                    "version": c.version,
+                    "purl": c.purl,
+                    "package_type": c.package_type,
+                    "target_ids": [],
+                }
+                groups[key] = group
+            if target.id not in group["target_ids"]:
+                group["target_ids"].append(target.id)
+
+    ordered = sorted(groups.values(), key=lambda g: (g["name"], g["version"]))
+    summary = {
+        "targets_with_sbom_count": len(targets_with_sbom),
+        "total_targets_count": len(targets),
+        "unique_component_count": len(ordered),
+    }
+    return ordered, summary, targets, targets_by_id
+
+
+# NOTE: these two literal routes ("/org", "/org/export") MUST be registered
+# before the "/{target_id}" routes below. The path is declared as a bare
+# "/{target_id}" (no ":int" converter in the path itself), so Starlette's
+# routing matches it against ANY string first -- "org" would otherwise match
+# "/{target_id}" and only fail afterwards, at FastAPI's int-parsing
+# validation step, returning a 422 instead of ever reaching this handler.
+@router.get("/org")
+def get_org_sbom(session: Session = Depends(get_session)):
+    """Aggregate ALREADY-PERSISTED SbomComponent rows across every target's
+    default branch -- read-only, does not trigger any scan. Lets a security
+    engineer answer 'which of my repos still use package X@version' across
+    the whole account at once."""
+    ordered, summary, _targets, targets_by_id = _aggregate_org_components(session)
+    components = [
+        {
+            "name": g["name"],
+            "version": g["version"],
+            "purl": g["purl"],
+            "package_type": g["package_type"],
+            "targets": [
+                {"id": tid, "name": targets_by_id[tid].name} for tid in g["target_ids"] if tid in targets_by_id
+            ],
+        }
+        for g in ordered
+    ]
+    return {**summary, "components": components}
+
+
+@router.get("/org/export")
+def export_org_sbom(session: Session = Depends(get_session)):
+    """Downloadable JSON of the org-wide aggregation -- same persisted data as
+    GET /api/sbom/org, just as a file. Not CycloneDX since it spans multiple
+    repos; a custom schema is reasonable here."""
+    ordered, summary, targets, _targets_by_id = _aggregate_org_components(session)
+    document = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "targets": [{"id": t.id, "name": t.name} for t in targets],
+        "components": [
+            {
+                "name": g["name"],
+                "version": g["version"],
+                "purl": g["purl"],
+                "package_type": g["package_type"],
+                "target_ids": g["target_ids"],
+            }
+            for g in ordered
+        ],
+        **summary,
+    }
+    return JSONResponse(
+        content=document,
+        headers={"Content-Disposition": 'attachment; filename="sbom-org-wide.json"'},
+    )
+
+
 @router.post("/{target_id}")
 def generate_sbom(target_id: int, session: Session = Depends(get_session)):
     """Clone the target's default branch, run trivy's CycloneDX SBOM scan,

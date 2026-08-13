@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
+from app.core.enforcement import VALID_ENFORCEMENT_MODES, resolve_enforcement_mode_with_source
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
 from app.models.models import (
@@ -56,6 +57,18 @@ class UpdateTargetRequest(BaseModel):
     default_branch: str | None = None
     label: str | None = None
     criticality_weight: int | None = None
+    # PR Guardrail enforcement mode override (issue #62). Explicit null
+    # clears the override (falls back to inheriting from the target's
+    # group(s)/workspace) -- exclude_unset in update_target below means
+    # simply omitting the field leaves the existing value untouched.
+    enforcement_mode: str | None = None
+
+    @field_validator("enforcement_mode")
+    @classmethod
+    def _check_enforcement_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_ENFORCEMENT_MODES:
+            raise ValueError(f"enforcement_mode must be one of {sorted(VALID_ENFORCEMENT_MODES)} or null")
+        return v
 
 
 def _groups_by_target(session: Session, target_ids: list[int]) -> dict[int, list[dict]]:
@@ -131,7 +144,15 @@ def get_target(target_id: int, session: Session = Depends(get_session), user: Us
         # already used across this codebase for missing resources).
         raise HTTPException(status_code=404, detail="target not found")
     groups_by_target = _groups_by_target(session, [target.id])
-    return _with_groups(target, groups_by_target)
+    out = _with_groups(target, groups_by_target)
+    # Issue #62: surface the *effective* resolved enforcement mode (and
+    # where it came from) alongside the target's own raw override, so the
+    # frontend can show "Enforcement: Block (inherited from workspace)"
+    # without re-implementing the resolution logic client-side.
+    effective_mode, source = resolve_enforcement_mode_with_source(session, target)
+    out["effective_enforcement_mode"] = effective_mode
+    out["enforcement_mode_source"] = source
+    return out
 
 
 @router.patch("/{target_id}")

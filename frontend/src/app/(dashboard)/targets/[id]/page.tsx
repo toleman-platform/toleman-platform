@@ -3,6 +3,7 @@ import { ScanButtons } from "./scan-buttons";
 import { FindingRow } from "@/components/finding-row";
 import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
+import { TargetEnforcement } from "./target-enforcement";
 
 export default async function TargetDetailPage({
   params,
@@ -33,6 +34,16 @@ export default async function TargetDetailPage({
       <div>
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">Groups</h2>
         <TargetGroups targetId={targetId} workspaceId={target.workspace_id} />
+      </div>
+
+      <div>
+        <h2 className="mb-3 text-sm font-medium text-muted-foreground">PR Guardrail</h2>
+        <TargetEnforcement
+          targetId={targetId}
+          initialMode={target.enforcement_mode}
+          initialEffectiveMode={target.effective_enforcement_mode ?? "block"}
+          initialSource={target.enforcement_mode_source ?? "default"}
+        />
       </div>
 
       <PipelineIntegration

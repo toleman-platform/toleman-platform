@@ -61,6 +61,14 @@ class Workspace(SQLModel, table=True):
     name: str
     api_key: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # PR Guardrail enforcement mode (issue #62): "block" (fail the build on
+    # policy-blocking findings), "alert" (still scan + comment, but the
+    # commit status is non-blocking), or "disabled" (skip PR Guardrail
+    # entirely). None means "no workspace-level override configured" -- NOT
+    # "alert" -- see app.core.enforcement.resolve_enforcement_mode for the
+    # workspace -> group -> target most-specific-wins resolution and the
+    # hardcoded "block" default when nothing is set anywhere.
+    enforcement_mode: Optional[str] = None
 
 
 class WorkspaceRole(str, Enum):
@@ -118,6 +126,11 @@ class Target(SQLModel, table=True):
     # happened -- not re-checked live against GitHub's PR state).
     pipeline_integrated: bool = False
     pipeline_pr_url: Optional[str] = None
+    # PR Guardrail enforcement mode (issue #62), same "block"/"alert"/
+    # "disabled" vocabulary as Workspace.enforcement_mode/Group.enforcement_mode.
+    # None means "inherit" (from this target's group(s), then its workspace,
+    # then the hardcoded "block" default) -- see app.core.enforcement.
+    enforcement_mode: Optional[str] = None
 
 
 class Group(SQLModel, table=True):
@@ -138,6 +151,10 @@ class Group(SQLModel, table=True):
     name: str
     color: str = "#6366f1"  # hex color for UI badges
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # PR Guardrail enforcement mode (issue #62), same vocabulary/inheritance
+    # role as Target.enforcement_mode/Workspace.enforcement_mode -- None
+    # means "no group-level override configured". See app.core.enforcement.
+    enforcement_mode: Optional[str] = None
 
 
 class TargetGroup(SQLModel, table=True):

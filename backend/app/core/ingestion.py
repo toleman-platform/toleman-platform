@@ -2,12 +2,13 @@ import logging
 from datetime import datetime
 from sqlmodel import Session, select
 
-from app.models.models import Finding, FindingState, FindingStateLog, PlatformConfig, Scan, Severity, Target
+from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, Severity, Target
 from app.core.dedup import compute_dedup_hash
 from app.core.scoring import compute_priority_score
 from app.core.epss import fetch_epss_scores
 from app.core.kev import fetch_kev_cve_set
 from app.core.jira_integration import create_jira_ticket_for_finding, jira_configured
+from app.core.notifications import dispatch_notification
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,39 @@ def _maybe_auto_create_jira_ticket(session: Session, finding: Finding) -> None:
 
     if not ok:
         logger.warning("Auto-create Jira ticket failed for finding %s: %s", finding.id, result)
+
+
+def _maybe_notify_new_finding(session: Session, target: Target, finding: Finding) -> None:
+    """Issue #73 notification dispatch, same hook point as #74's Jira
+    auto-create above: fires for every net-new Finding right after it gets a
+    real id. Two independent triggers can both fire for the same finding
+    (e.g. a Critical finding that's also KEV-listed) -- each is its own
+    NotificationEventType/preference, not a single combined event, so a user
+    can opt into "tell me about KEV CVEs" without also getting every
+    Critical SAST finding. Best-effort, same as the Jira hook: a delivery
+    failure must never break ingestion.
+    """
+    try:
+        if finding.severity == Severity.CRITICAL:
+            dispatch_notification(
+                session,
+                workspace_id=target.workspace_id,
+                event_type=NotificationEventType.CRITICAL_FINDING,
+                subject=f"New critical finding: {finding.title or finding.rule_id}",
+                detail=f"{target.name} · {finding.tool} · {finding.file_path}"
+                + (f":{finding.line_start}" if finding.line_start else ""),
+            )
+        if finding.kev_listed:
+            dispatch_notification(
+                session,
+                workspace_id=target.workspace_id,
+                event_type=NotificationEventType.KEV_CVE,
+                subject=f"KEV-listed CVE affects {target.name}: {finding.cve_id}",
+                detail=f"{finding.title or finding.rule_id} · {finding.tool} · {finding.file_path}"
+                + (f":{finding.line_start}" if finding.line_start else ""),
+            )
+    except Exception:
+        logger.exception("Notification dispatch failed for finding %s", finding.id)
 
 
 def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, branch: str, parsed: list[dict]) -> int:
@@ -129,6 +163,7 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
     for finding in newly_created:
         session.refresh(finding)
         _maybe_auto_create_jira_ticket(session, finding)
+        _maybe_notify_new_finding(session, target, finding)
 
     # mark findings absent from this run (same target+branch+tool, still Open) as Mitigated
     stale = session.exec(

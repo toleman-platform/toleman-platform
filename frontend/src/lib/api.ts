@@ -254,6 +254,15 @@ export type FindingsQuery = {
 
 export type AuthUser = { id: number; email: string; name: string; role: string };
 
+// Issue #73: notification preferences. `slack` posts to the single
+// platform-wide webhook (#74) -- opting in means being named in that
+// message, not a private DM. `email` is a real saveable preference but has
+// no delivery yet (no SMTP infra in this codebase) -- see the backend's
+// NotificationChannel docstring.
+export type NotificationChannel = "email" | "slack";
+export type NotificationEventType = "critical_finding" | "kev_cve" | "sla_breach" | "scan_failure";
+export type NotificationPreference = { channel: NotificationChannel; event_type: NotificationEventType; enabled: boolean };
+
 export type WorkspaceSummary = {
   id: number;
   name: string;
@@ -580,6 +589,19 @@ export const api = {
     jsonFetch<AuthUser>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => jsonFetch<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   me: () => jsonFetch<AuthUser>("/api/auth/me"),
+  updateMe: (name: string) =>
+    jsonFetch<AuthUser>("/api/auth/me", { method: "PATCH", body: JSON.stringify({ name }) }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    jsonFetch<{ ok: boolean }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+  notificationPreferences: () => jsonFetch<NotificationPreference[]>("/api/notification-preferences"),
+  setNotificationPreferences: (preferences: NotificationPreference[]) =>
+    jsonFetch<NotificationPreference[]>("/api/notification-preferences", {
+      method: "PUT",
+      body: JSON.stringify({ preferences }),
+    }),
   targets: (query: { group_id?: number } = {}) => {
     const params = new URLSearchParams();
     if (query.group_id) params.set("group_id", String(query.group_id));

@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.rate_limit import enforce_rate_limit
-from app.core.security import create_session_token, decode_session_token, verify_password
+from app.core.security import create_session_token, decode_session_token, hash_password, verify_password
 from app.models.models import WORKSPACE_ROLE_RANK, Finding, Target, User, WorkspaceMembership, WorkspaceRole
 
 LOGIN_RATE_LIMIT = 5
@@ -91,6 +91,62 @@ def logout(
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(current_user)):
     return UserOut(id=user.id, email=user.email, name=user.name, role=user.role)
+
+
+class UpdateMeRequest(BaseModel):
+    name: str
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(payload: UpdateMeRequest, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    user.name = name
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return UserOut(id=user.id, email=user.email, name=user.name, role=user.role)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/change-password")
+def change_password(
+    payload: ChangePasswordRequest,
+    response: Response,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="current password is incorrect")
+    if len(payload.new_password) < 8:
+        raise HTTPException(status_code=400, detail="new password must be at least 8 characters")
+
+    user.password_hash = hash_password(payload.new_password)
+    # Same revocation pattern as logout: bump token_version so every
+    # previously-issued session token (this device and any other) is
+    # immediately invalid, not just the current cookie.
+    user.token_version += 1
+    session.add(user)
+    session.commit()
+
+    # Re-issue a fresh session for THIS request/device so the user isn't
+    # logged out by their own password change, matching login()'s cookie.
+    token = create_session_token(user.id, user.token_version)
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 7,
+        path="/",
+    )
+    return {"ok": True}
 
 
 def require_admin(user: User = Depends(current_user)) -> User:

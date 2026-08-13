@@ -1,3 +1,4 @@
+import logging
 import subprocess
 from datetime import datetime
 
@@ -5,17 +6,37 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import engine
+from app.core.notifications import dispatch_notification
 from app.core.sbom_ingestion import upsert_components
-from app.models.models import SbomComponent, SbomRun, Target
+from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
 from app.scanners.parsers import parse_trivy_sbom
 from app.tasks.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 # Same retry rationale as app/tasks/scan_tasks.py's RETRYABLE_EXCEPTIONS:
 # only a `git clone` failure (transient network/remote issue) is worth
 # retrying. RepoCloneError (bad repo_url/branch) and anything else are
 # deterministic and will fail identically on retry.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
+
+
+def _notify_scan_failure(session: Session, target: Target, tool: str, error: str) -> None:
+    """Issue #73 scan_failure trigger -- see app.tasks.scan_tasks for the
+    same helper's full rationale; SBOM generation runs are one of the three
+    "Scan/DiscoveryRun/SbomRun row transitions to failed" cases the issue
+    calls out."""
+    try:
+        dispatch_notification(
+            session,
+            workspace_id=target.workspace_id,
+            event_type=NotificationEventType.SCAN_FAILURE,
+            subject=f"SBOM generation failed: {target.name} ({tool})",
+            detail=error,
+        )
+    except Exception:
+        logger.exception("scan_failure notification dispatch failed for target %s", target.id)
 
 
 @celery_app.task(

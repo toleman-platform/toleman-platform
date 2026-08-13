@@ -1,3 +1,4 @@
+import logging
 import subprocess
 
 from sqlmodel import Session
@@ -5,11 +6,14 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.core.db import engine
 from app.core.ingestion import ingest_findings
-from app.models.models import Scan, Target
+from app.core.notifications import dispatch_notification
+from app.models.models import NotificationEventType, Scan, Target
 from app.scanners import parsers, runner
 from app.tasks.celery_app import celery_app
 
 PARSER_MAP = parsers.PARSER_MAP
+
+logger = logging.getLogger(__name__)
 
 # Only subprocess.CalledProcessError is auto-retried: today it can only come from
 # runner.clone_repo()'s `git clone` (the only subprocess call in this path that uses
@@ -25,6 +29,23 @@ PARSER_MAP = parsers.PARSER_MAP
 #     as the ValueError/KeyError cases above.
 #   - json parsing issues are already swallowed inside runner.run_tool.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
+
+
+def _notify_scan_failure(session: Session, target: Target, tool: str, error: str) -> None:
+    """Issue #73 scan_failure trigger: fires once a Scan row is permanently
+    marked "failed" (after retries are exhausted, or on a non-transient
+    error) -- never on a transient failure that's about to be retried, since
+    that isn't really "failed" yet from a user's perspective."""
+    try:
+        dispatch_notification(
+            session,
+            workspace_id=target.workspace_id,
+            event_type=NotificationEventType.SCAN_FAILURE,
+            subject=f"Scan failed: {target.name} ({tool})",
+            detail=error,
+        )
+    except Exception:
+        logger.exception("scan_failure notification dispatch failed for target %s", target.id)
 
 
 @celery_app.task(
@@ -85,6 +106,7 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                 scan.status = "failed"
                 session.add(scan)
                 session.commit()
+                _notify_scan_failure(session, target, tool, "git clone failed after retries")
             raise
         except Exception as exc:
             # Non-transient failure -- retrying would fail the same way, so fail now.
@@ -93,4 +115,6 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             session.commit()
             # runner.clone_error_message avoids echoing raw subprocess argv/paths
             # (and, historically, an embedded GitHub token) back into scan state.
-            return {"error": runner.clone_error_message(exc), "scan_id": scan.id}
+            error_message = runner.clone_error_message(exc)
+            _notify_scan_failure(session, target, tool, error_message)
+            return {"error": error_message, "scan_id": scan.id}

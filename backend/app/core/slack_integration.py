@@ -16,9 +16,14 @@ import httpx
 SLACK_TIMEOUT_SECONDS = 15.0
 
 
-def test_slack_webhook(webhook_url: str, text: str = "OSP test connection: this webhook is configured correctly.") -> tuple[bool, str]:
-    """POST a real test message to `webhook_url`. Returns (success, message)
-    -- message is Slack's real response body either way."""
+def send_slack_message(webhook_url: str, text: str) -> tuple[bool, str]:
+    """POST a real message to `webhook_url`. Returns (success, message) --
+    message is Slack's real response body either way. This is the shared
+    low-level sender: test_slack_webhook() (below) and
+    app.core.notifications.dispatch_notification (issue #73's real
+    notification dispatch) both call this instead of each making their own
+    HTTP request, so there is exactly one place that knows Slack's incoming-
+    webhook contract."""
     try:
         response = httpx.post(webhook_url, json={"text": text}, timeout=SLACK_TIMEOUT_SECONDS)
     except httpx.HTTPError as exc:
@@ -28,3 +33,9 @@ def test_slack_webhook(webhook_url: str, text: str = "OSP test connection: this 
         return True, response.text or "ok"
 
     return False, f"Slack returned {response.status_code}: {response.text[:500]}"
+
+
+def test_slack_webhook(webhook_url: str, text: str = "OSP test connection: this webhook is configured correctly.") -> tuple[bool, str]:
+    """POST a real test message to `webhook_url`. Returns (success, message)
+    -- message is Slack's real response body either way."""
+    return send_slack_message(webhook_url, text)

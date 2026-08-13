@@ -222,6 +222,13 @@ class Finding(SQLModel, table=True):
     first_seen: datetime = Field(default_factory=datetime.utcnow)
     last_seen: datetime = Field(default_factory=datetime.utcnow)
     mitigated_at: Optional[datetime] = None
+    # SLA-breach notification dedup (issue #73): set the first time this
+    # finding is observed to be sla_violated at a query-time check (see
+    # app.api.findings._maybe_notify_sla_breach), so the same violation
+    # doesn't re-fire a Slack message on every subsequent GET. Reset to None
+    # if the finding is later mitigated/reopened past its SLA again would be
+    # a fresh breach -- see _maybe_notify_sla_breach for the reset rule.
+    sla_breach_notified_at: Optional[datetime] = None
 
 
 class CveEnrichment(SQLModel, table=True):
@@ -590,6 +597,55 @@ class SlaRule(SQLModel, table=True):
     group_id: Optional[int] = Field(default=None, foreign_key="groups.id", index=True)
     severity: Severity
     days_to_fix: int
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class NotificationChannel(str, Enum):
+    """Delivery channel for a NotificationPreference (issue #73). `slack`
+    posts to the single platform-wide webhook configured in
+    PlatformConfig.slack_webhook_url (#74) -- there's no per-user Slack
+    OAuth/DM capability in this project, so a user "enabling Slack" means
+    "mention me in the message posted to the platform's configured Slack
+    channel", not a private DM. `email` has a preference row so a user's
+    intent is recorded, but there is deliberately no real SMTP/email-sending
+    infrastructure anywhere in this codebase yet -- see
+    app.core.notifications.dispatch_notification, which no-ops (with a clear
+    log line) for this channel rather than fabricating a delivery."""
+    EMAIL = "email"
+    SLACK = "slack"
+
+
+class NotificationEventType(str, Enum):
+    """What can trigger a notification (issue #73). See
+    app.core.notifications for where each of these actually fires:
+    critical_finding/kev_cve at ingestion time (app.core.ingestion, same
+    hook point as #74's Jira auto-create), sla_breach at the query-time
+    point #70 already computes SLA violation (app.api.findings), and
+    scan_failure when a Scan/DiscoveryRun/SbomRun transitions to status
+    "failed" (app.tasks.*)."""
+    CRITICAL_FINDING = "critical_finding"
+    KEV_CVE = "kev_cve"
+    SLA_BREACH = "sla_breach"
+    SCAN_FAILURE = "scan_failure"
+
+
+class NotificationPreference(SQLModel, table=True):
+    """One user's opt-in for one (channel, event_type) pair (issue #73).
+    Absence of a row means "not enabled" -- there's no default-on behavior,
+    matching this project's "never fabricate a default a user didn't set"
+    philosophy (see SlaRule/enforcement_mode docstrings). The unique
+    constraint keeps PUT /api/notification-preferences an idempotent
+    upsert rather than accumulating duplicate rows on repeated saves."""
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "channel", "event_type", name="uq_notification_pref_user_channel_event"
+        ),
+    )
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    channel: NotificationChannel
+    event_type: NotificationEventType
+    enabled: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

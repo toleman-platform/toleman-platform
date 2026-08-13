@@ -1,3 +1,4 @@
+import logging
 import subprocess
 from datetime import datetime
 
@@ -6,16 +7,35 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import engine
 from app.core.discovery_ingestion import upsert_endpoints
-from app.models.models import ApiEndpoint, DiscoveryRun, Target
+from app.core.notifications import dispatch_notification
+from app.models.models import ApiEndpoint, DiscoveryRun, NotificationEventType, Target
 from app.scanners import runner
 from app.scanners.discovery import discover_endpoints
 from app.tasks.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 # Same retry rationale as app/tasks/scan_tasks.py's RETRYABLE_EXCEPTIONS:
 # only a `git clone` failure (transient network/remote issue) is worth
 # retrying. RepoCloneError (bad repo_url/branch) and anything else are
 # deterministic and will fail identically on retry.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
+
+
+def _notify_discovery_failure(session: Session, target: Target, error: str) -> None:
+    """Issue #73 scan_failure trigger, same pattern as
+    app.tasks.scan_tasks._notify_scan_failure: fires once a DiscoveryRun is
+    permanently marked "failed", never on a transient retry."""
+    try:
+        dispatch_notification(
+            session,
+            workspace_id=target.workspace_id,
+            event_type=NotificationEventType.SCAN_FAILURE,
+            subject=f"API discovery failed: {target.name}",
+            detail=error,
+        )
+    except Exception:
+        logger.exception("scan_failure notification dispatch failed for target %s", target.id)
 
 
 @celery_app.task(
@@ -81,6 +101,7 @@ def run_discovery(self, target_id: int, run_id: int):
                 run.completed_at = datetime.utcnow()
                 session.add(run)
                 session.commit()
+                _notify_discovery_failure(session, target, run.error)
             raise
         except Exception as exc:
             run.status = "failed"
@@ -90,4 +111,5 @@ def run_discovery(self, target_id: int, run_id: int):
             run.completed_at = datetime.utcnow()
             session.add(run)
             session.commit()
+            _notify_discovery_failure(session, target, run.error)
             return {"error": run.error, "run_id": run.id}

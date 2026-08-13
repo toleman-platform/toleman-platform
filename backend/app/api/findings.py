@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,8 +9,21 @@ from sqlmodel import Session, func, or_, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
 from app.core.cve_enrichment import get_cve_enrichment
+from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
-from app.models.models import Finding, FindingState, FindingStateLog, Severity, Target, TargetGroup, User, WorkspaceRole
+from app.models.models import (
+    Finding,
+    FindingState,
+    FindingStateLog,
+    NotificationEventType,
+    Severity,
+    Target,
+    TargetGroup,
+    User,
+    WorkspaceRole,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/findings", tags=["findings"])
 
@@ -30,7 +44,54 @@ class FindingOut(Finding):
 
 def _to_finding_out(session: Session, finding: Finding) -> FindingOut:
     sla_days, sla_violated = compute_sla_status(session, finding)
+    _maybe_notify_sla_breach(session, finding, sla_violated)
     return FindingOut(**finding.model_dump(), sla_days=sla_days, sla_violated=sla_violated)
+
+
+def _maybe_notify_sla_breach(session: Session, finding: Finding, sla_violated: bool) -> None:
+    """Issue #73 sla_breach trigger, fired at the same query-time point #70
+    already computes sla_violated (see module docstring in app.core.sla --
+    there's no background job for this). Dedup via
+    Finding.sla_breach_notified_at: set the first time a finding is
+    observed violating, never re-fired on subsequent reads while it stays
+    violated. Reset to None once no longer violated (mitigated, or SLA rule
+    changed) so a later re-violation -- e.g. reopened past its SLA again --
+    is treated as a fresh breach and notifies again, per the field's
+    docstring in app.models.models.Finding."""
+    if sla_violated and finding.sla_breach_notified_at is None:
+        finding.sla_breach_notified_at = datetime.utcnow()
+        session.add(finding)
+        session.commit()
+        # commit() expires every attribute on `finding` by default -- without
+        # this refresh, the caller's subsequent finding.model_dump() (in
+        # _to_finding_out) triggers an implicit per-attribute reload that
+        # SQLAlchemy/pydantic can mishandle mid-request (observed as a
+        # "cannot pickle 'module' object" crash from deep inside pydantic's
+        # default-value deepcopy machinery). Explicitly refreshing here keeps
+        # the instance in a clean, fully-loaded state before it's read again.
+        session.refresh(finding)
+        workspace_id = _target_workspace_id(session, finding.target_id)
+        if workspace_id is not None:
+            try:
+                dispatch_notification(
+                    session,
+                    workspace_id=workspace_id,
+                    event_type=NotificationEventType.SLA_BREACH,
+                    subject=f"SLA breach: {finding.title}",
+                    detail=f"{finding.severity} finding open past its SLA window (file: {finding.file_path}).",
+                )
+            except Exception:
+                logger.exception("sla_breach notification dispatch failed for finding %s", finding.id)
+    elif not sla_violated and finding.sla_breach_notified_at is not None:
+        finding.sla_breach_notified_at = None
+        session.add(finding)
+        session.commit()
+        session.refresh(finding)
+
+
+def _target_workspace_id(session: Session, target_id: int) -> int | None:
+    target = session.get(Target, target_id)
+    return target.workspace_id if target else None
 
 
 class FindingListResponse(BaseModel):

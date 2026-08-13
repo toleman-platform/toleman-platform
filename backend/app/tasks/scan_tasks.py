@@ -9,12 +9,7 @@ from app.models.models import Scan, Target
 from app.scanners import parsers, runner
 from app.tasks.celery_app import celery_app
 
-PARSER_MAP = {
-    "semgrep": parsers.parse_semgrep,
-    "gitleaks": parsers.parse_gitleaks,
-    "trivy": parsers.parse_trivy,
-    "gosec": parsers.parse_gosec,
-}
+PARSER_MAP = parsers.PARSER_MAP
 
 # Only subprocess.CalledProcessError is auto-retried: today it can only come from
 # runner.clone_repo()'s `git clone` (the only subprocess call in this path that uses

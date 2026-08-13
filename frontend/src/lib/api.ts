@@ -75,7 +75,10 @@ export type PolicyRule = {
   active: boolean;
 };
 
-export type PrGuardrailFinding = {
+// The ephemeral (non-persisted-id) shape returned inline in a scan's
+// response body -- distinct from PrGuardrailFinding below, which is the
+// persisted row with its own id and ignore-request lifecycle.
+export type PrGuardrailFindingSummary = {
   tool: string;
   rule_id: string;
   title: string;
@@ -88,7 +91,23 @@ export type PrGuardrailScanResult = {
   status: "passed" | "blocked" | "error";
   new_findings_count: number;
   highest_new_severity: string | null;
-  new_findings: PrGuardrailFinding[];
+  new_findings: PrGuardrailFindingSummary[];
+};
+export type IgnoreStatus = "none" | "requested" | "approved" | "rejected";
+export type PrGuardrailFinding = {
+  id: number;
+  pr_scan_id: number;
+  tool: string;
+  rule_id: string;
+  title: string;
+  file_path: string;
+  line_start: number | null;
+  severity: string;
+  ignore_status: IgnoreStatus;
+  ignore_requested_by: string;
+  ignore_requested_reason: string;
+  ignore_reviewed_by: string;
+  ignore_reviewed_at: string | null;
 };
 export type PrGuardrailLogEntry = {
   id: number;
@@ -98,6 +117,7 @@ export type PrGuardrailLogEntry = {
   status: "running" | "passed" | "blocked" | "error" | "overridden";
   new_findings_count: number;
   highest_new_severity: string | null;
+  new_endpoints_count: number;
   override_reason: string;
   created_at: string;
   completed_at: string | null;
@@ -231,6 +251,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
+  getPrGuardrailFindings: (prScanId: number) =>
+    jsonFetch<PrGuardrailFinding[]>(`/api/pr-guardrail/${prScanId}/findings`),
+  requestIgnoreFinding: (findingId: number, reason: string) =>
+    jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/request-ignore`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    }),
+  getPendingIgnoreRequests: () =>
+    jsonFetch<PrGuardrailFinding[]>("/api/pr-guardrail/ignore-requests/pending"),
+  approveIgnore: (findingId: number) =>
+    jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/approve-ignore`, { method: "POST" }),
+  rejectIgnore: (findingId: number) =>
+    jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/reject-ignore`, { method: "POST" }),
   search: (q: string) => jsonFetch<SearchResults>(`/api/search?q=${encodeURIComponent(q)}`),
   listPolicies: (workspaceId: number) => jsonFetch<PolicyRule[]>(`/api/policies?workspace_id=${workspaceId}`),
   createPolicy: (p: { workspace_id: number; rule_type: PolicyRuleType; value: string; reason?: string }) =>

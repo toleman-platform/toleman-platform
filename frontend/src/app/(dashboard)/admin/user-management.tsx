@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 
-const ROLES = ["admin", "user", "viewer"];
+const ROLES = ["admin", "user", "viewer", "developer", "security_engineer"];
 
 export function UserManagement() {
   const [users, setUsers] = useState<AuthUser[] | null>(null);

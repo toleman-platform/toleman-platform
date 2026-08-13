@@ -206,6 +206,7 @@ class PRGuardrailScan(SQLModel, table=True):
     status: PRGuardrailStatus = PRGuardrailStatus.RUNNING
     new_findings_count: int = 0
     highest_new_severity: str | None = None  # "Critical"/"High"/etc, or None
+    new_endpoints_count: int = 0  # API Discovery: endpoints newly appearing in the PR diff
     override_reason: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None

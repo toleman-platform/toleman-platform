@@ -97,3 +97,14 @@ def require_admin(user: User = Depends(current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="admin role required")
     return user
+
+
+def require_security_reviewer(user: User = Depends(current_user)) -> User:
+    """Reviewing/approving an ignore request on a real vulnerability finding
+    is a security-team action - security_engineer or admin, not any
+    authenticated user (matches the admin-only gate already applied to
+    policy-as-code, for the same reason: both can make a real finding stop
+    blocking a merge)."""
+    if user.role not in ("admin", "security_engineer"):
+        raise HTTPException(status_code=403, detail="security engineer or admin role required")
+    return user

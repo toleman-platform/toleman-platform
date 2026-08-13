@@ -48,6 +48,36 @@ export type PipelineIntegrateResult = {
   branch: string;
 };
 
+// Issue #68: bulk "Add Pipeline" -- multi-select wrapper around #66's
+// per-target mechanism above. POST /api/targets/bulk-pipeline-integrate
+// dispatches a Celery task (#59-style async job) and returns immediately;
+// poll GET /api/targets/bulk-pipeline-integrate/{batch_id} until status
+// leaves "running".
+export type PipelineBatchItemStatus = "pending" | "running" | "succeeded" | "failed" | "already_integrated";
+
+export type PipelineBatchItem = {
+  target_id: number;
+  target_name: string | null;
+  repo_url: string | null;
+  status: PipelineBatchItemStatus;
+  error: string;
+  pr_url: string | null;
+  pr_number: number | null;
+  completed_at: string | null;
+};
+
+export type PipelineIntegrationBatch = {
+  batch_id: number;
+  status: RunStatus; // batch itself only ever reaches "running" or "completed" -- per-item outcomes (including failures) live in `items`
+  total: number;
+  succeeded: number;
+  failed: number;
+  already_integrated: number;
+  started_at: string;
+  completed_at: string | null;
+  items: PipelineBatchItem[];
+};
+
 export type Group = {
   id: number;
   workspace_id: number;
@@ -448,6 +478,16 @@ export const api = {
     jsonFetch<PipelineIntegrateResult | { error: string }>(`/api/targets/${targetId}/pipeline-integrate`, {
       method: "POST",
     }),
+  // Issue #68: multi-select "Add Pipeline" -- dispatches a Celery batch and
+  // returns immediately (#59-style async job); poll
+  // getPipelineIntegrationBatch(batch_id) until status leaves "running".
+  bulkPipelineIntegrate: (targetIds: number[]) =>
+    jsonFetch<{ batch_id: number; total: number; status: RunStatus }>("/api/targets/bulk-pipeline-integrate", {
+      method: "POST",
+      body: JSON.stringify({ target_ids: targetIds }),
+    }),
+  getPipelineIntegrationBatch: (batchId: number) =>
+    jsonFetch<PipelineIntegrationBatch>(`/api/targets/bulk-pipeline-integrate/${batchId}`),
   activity: (targetId: number) => jsonFetch<CommitEvent[]>(`/api/github/activity/${targetId}`),
   orgActivity: () => jsonFetch<(CommitEvent & { target: string })[]>("/api/github/org-activity"),
   prs: (targetId: number) => jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`),

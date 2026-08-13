@@ -449,6 +449,47 @@ class PRGuardrailFinding(SQLModel, table=True):
     ignore_reviewed_at: datetime | None = None
 
 
+class PipelineIntegrationBatch(SQLModel, table=True):
+    """Tracks a single async bulk "Add Pipeline" run dispatched via Celery
+    (issue #68, the multi-select wrapper around #66's single-target
+    pipeline-integration mechanism). Mirrors the DiscoveryRun/SbomRun
+    async-job-tracking pattern from #59: POST
+    /api/targets/bulk-pipeline-integrate creates this row (status="running"),
+    dispatches app.tasks.pipeline_tasks.run_pipeline_integration_batch via
+    .delay(), and returns immediately with this row's id -- the frontend
+    polls GET /api/targets/pipeline-integration-batches/{batch_id} until
+    status leaves "running". No workspace_id here: a caller (e.g. a global
+    admin) may select targets spanning several workspaces in one batch, so
+    per-target access is checked per target at dispatch time (POST handler)
+    instead of once at the batch level.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    created_by_user_id: int = Field(foreign_key="user.id")
+    status: str = "running"  # running, completed
+    total: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    already_integrated: int = 0
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+
+
+class PipelineIntegrationBatchItem(SQLModel, table=True):
+    """One target's outcome within a PipelineIntegrationBatch (#68). Each
+    item involves a real GitHub API call (branch create + content write +
+    PR open, via #66's open_pipeline_pr) -- the Celery task processes items
+    sequentially with a small delay between them rather than firing them
+    all concurrently, to stay polite to GitHub's rate limits."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    batch_id: int = Field(foreign_key="pipelineintegrationbatch.id", index=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    status: str = "pending"  # pending, running, succeeded, failed, already_integrated
+    error: str = ""
+    pr_url: Optional[str] = None
+    pr_number: Optional[int] = None
+    completed_at: Optional[datetime] = None
+
+
 class PolicyRuleType(str, Enum):
     """ROADMAP Sprint 4 (Policy-as-code): workspace-configurable rules that
     adjust PR Guardrail's default blocking behavior."""

@@ -56,6 +56,23 @@ export type Finding = {
   last_seen: string;
 };
 
+// No-AI enrichment (issue #71) -- real CVE/CWE/CVSS/fix-version data sourced
+// from NVD + OSV.dev, cached server-side. Fields are null when not
+// applicable (no cve_id on the finding) or when the upstream source had no
+// data for this CVE. Distinct from AiStatus/analyzeFinding below -- this
+// always works with zero AI provider configured.
+export type FindingEnrichment = {
+  finding_id: number;
+  cve_id: string | null;
+  cve_description: string | null;
+  cvss_score: number | null;
+  cvss_vector: string | null;
+  cwe_ids: string[] | null;
+  references: string[] | null;
+  fix_versions: { package: string | null; ecosystem: string | null; fixed: string }[] | null;
+  fetched_at: string | null;
+};
+
 export type AiProvider = "anthropic" | "openai_compatible";
 
 export type AiStatus = {
@@ -455,6 +472,7 @@ export const api = {
     if (!res.ok) throw new Error(`report export failed: ${res.status}`);
     return res.blob();
   },
+  findingEnrichment: (findingId: number) => jsonFetch<FindingEnrichment>(`/api/findings/${findingId}/enrichment`),
   aiStatus: () => jsonFetch<AiStatus>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),

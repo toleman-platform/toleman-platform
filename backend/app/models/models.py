@@ -200,6 +200,40 @@ class Finding(SQLModel, table=True):
     mitigated_at: Optional[datetime] = None
 
 
+class CveEnrichment(SQLModel, table=True):
+    """Locally-cached, AI-free enrichment for a single CVE ID (issue #71),
+    sourced from NVD (description/CVSS/CWE) and OSV.dev (known fixed
+    versions) -- explicitly *not* the AI Analysis feature (`app/api/ai.py`),
+    so this must work with zero AI provider configured.
+
+    NVD/OSV data for a given published CVE is effectively immutable, unlike
+    KEV's whole-catalog daily refresh (`core/kev.py`) or EPSS's score that
+    genuinely changes over time -- a real DB row cached "forever" (fetched
+    once, never re-fetched) is the right shape here, not the in-process TTL
+    cache pattern used for KEV/EPSS batch lookups.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cve_id: str = Field(unique=True, index=True)
+
+    # NVD (https://nvd.nist.gov/developers/vulnerabilities)
+    nvd_description: Optional[str] = None
+    cvss_score: Optional[float] = None
+    cvss_vector: Optional[str] = None
+    cwe_ids: Optional[str] = None  # JSON-encoded list[str], e.g. '["CWE-444"]'
+    nvd_references: Optional[str] = None  # JSON-encoded list[str] of URLs
+    nvd_found: bool = Field(default=False)
+
+    # OSV.dev (https://osv.dev/docs) -- queried directly by CVE ID via
+    # GET /v1/vulns/{cve_id}, which resolves CVE as an alias without needing
+    # package/ecosystem context.
+    osv_id: Optional[str] = None
+    fixed_versions: Optional[str] = None  # JSON-encoded list[dict] (package/ecosystem/fixed)
+    osv_references: Optional[str] = None  # JSON-encoded list[str] of URLs
+    osv_found: bool = Field(default=False)
+
+    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PlatformConfig(SQLModel, table=True):
     """Single-row runtime configuration, editable via Admin > Global Integrations."""
     id: Optional[int] = Field(default=None, primary_key=True)

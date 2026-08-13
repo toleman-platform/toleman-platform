@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ExternalLink } from "lucide-react";
-import { Finding, api, githubBlobUrl } from "@/lib/api";
+import { ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
+import { Finding, FindingEnrichment, api, githubBlobUrl } from "@/lib/api";
 import {
   EPSS_BADGE_COLOR,
   EPSS_NOTABLE_THRESHOLD,
@@ -18,6 +18,131 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
+
+// GET /api/findings/{id}/enrichment (issue #71) -- real CVE/CWE/CVSS/fix-
+// version data sourced from NVD + OSV.dev, no AI provider involved. Lazily
+// fetched the first time a finding's details are expanded, then cached in
+// component state so re-expanding doesn't re-hit the network.
+function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
+  const [enrichment, setEnrichment] = useState<FindingEnrichment | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .findingEnrichment(finding.id)
+      .then((data) => {
+        if (!cancelled) setEnrichment(data);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "enrichment lookup failed");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [finding.id]);
+
+  if (loading) {
+    return <p className="text-xs text-muted-foreground">Loading enrichment...</p>;
+  }
+  if (error) {
+    return <p className="text-xs text-destructive">{error}</p>;
+  }
+  if (!enrichment || !enrichment.cve_id) {
+    // No CVE on this finding (SAST/secrets finding) -- nothing to show here.
+    return null;
+  }
+
+  const hasData =
+    enrichment.cve_description || enrichment.cvss_score !== null || (enrichment.cwe_ids && enrichment.cwe_ids.length > 0) ||
+    (enrichment.fix_versions && enrichment.fix_versions.length > 0) || (enrichment.references && enrichment.references.length > 0);
+
+  return (
+    <div className="mt-3 rounded-md border border-border bg-secondary/40 p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vulnerability Details</span>
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground" title="Sourced from public data (NVD/OSV.dev) -- no AI involved">
+          no AI · MITRE/NVD/OSV.dev
+        </Badge>
+      </div>
+
+      {!hasData && (
+        <p className="text-xs text-muted-foreground">No additional public data found for {enrichment.cve_id} yet.</p>
+      )}
+
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {enrichment.cvss_score !== null && (
+          <div>
+            <span className="text-xs font-medium text-foreground">CVSS Score: </span>
+            <span className="text-xs text-muted-foreground">{enrichment.cvss_score.toFixed(1)}</span>
+            {enrichment.cvss_vector && (
+              <span className="ml-1 font-mono text-[11px] text-muted-foreground">({enrichment.cvss_vector})</span>
+            )}
+          </div>
+        )}
+        {enrichment.cwe_ids && enrichment.cwe_ids.length > 0 && (
+          <div>
+            <span className="text-xs font-medium text-foreground">CWE: </span>
+            {enrichment.cwe_ids.map((cwe) => (
+              <a
+                key={cwe}
+                href={`https://cwe.mitre.org/data/definitions/${cwe.replace("CWE-", "")}.html`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="mr-1 text-xs text-primary underline"
+              >
+                {cwe}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {enrichment.cve_description && (
+        <p className="mt-2 text-xs text-muted-foreground">{enrichment.cve_description}</p>
+      )}
+
+      {enrichment.fix_versions && enrichment.fix_versions.length > 0 && (
+        <div className="mt-2">
+          <span className="text-xs font-medium text-foreground">Fixed in: </span>
+          <span className="text-xs text-muted-foreground">
+            {enrichment.fix_versions
+              .map((f) => {
+                const pkg = f.package ? `${f.package}${f.ecosystem ? ` (${f.ecosystem})` : ""} ` : "";
+                return `${pkg}≥ ${f.fixed}`;
+              })
+              .join(", ")}
+          </span>
+        </div>
+      )}
+
+      {enrichment.references && enrichment.references.length > 0 && (
+        <div className="mt-2">
+          <span className="text-xs font-medium text-foreground">References: </span>
+          <div className="mt-1 flex flex-col gap-0.5">
+            {enrichment.references.slice(0, 5).map((url) => (
+              <a
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="truncate text-xs text-primary underline"
+              >
+                {url}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function FindingRow({
   finding,
@@ -36,6 +161,7 @@ export function FindingRow({
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
   async function triage(toState: string) {
     setSubmitting(true);
@@ -89,7 +215,18 @@ export function FindingRow({
                     EPSS {(finding.epss_score * 100).toFixed(0)}%
                   </Badge>
                 )}
-                <span className="truncate text-sm font-medium text-foreground">{finding.title}</span>
+                <button
+                  onClick={() => setDetailsOpen((v) => !v)}
+                  className="flex min-w-0 items-center gap-1 truncate text-left text-sm font-medium text-foreground hover:underline"
+                  title="Show details"
+                >
+                  {detailsOpen ? (
+                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="truncate">{finding.title}</span>
+                </button>
               </div>
               <div className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
                 <span className="truncate">
@@ -116,6 +253,13 @@ export function FindingRow({
             <div className={`text-xs ${STATE_COLOR[finding.state] || "text-muted-foreground"}`}>{finding.state}</div>
           </div>
         </div>
+
+        {detailsOpen && (
+          <div className="mt-2">
+            {finding.description && <p className="text-xs text-muted-foreground">{finding.description}</p>}
+            <FindingEnrichmentPanel finding={finding} />
+          </div>
+        )}
 
         <div className="mt-2">
           {!open ? (

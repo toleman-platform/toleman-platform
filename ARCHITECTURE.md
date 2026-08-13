@@ -36,7 +36,7 @@ frontend/src/lib/poll.ts        shared polling helper for async job status (scan
 | `workspaces` | `/api/workspaces` | login (bootstrap: admin) | org/workspace creation, API key |
 | `admin_workspace_roles` | `/api/admin/workspace-roles` | admin | assign `WorkspaceMembership` |
 | `targets` | `/api/targets` | login, workspace-scoped reads | repo CRUD |
-| `findings` | `/api/findings` | login, workspace-scoped reads | list/triage/history/bulk-triage |
+| `findings` | `/api/findings` | login, workspace-scoped reads | list/triage/history/bulk-triage/no-AI enrichment (`/{id}/enrichment`, #71) |
 | `scans` | `/api/scans` | login | trigger scan (async via Celery), poll status |
 | `discovery` | `/api/discovery` | login | API-route discovery (async), persisted + org-wide aggregate |
 | `sbom` | `/api/sbom` | login | SBOM generation (async), per-target + org-wide + export |
@@ -75,6 +75,7 @@ Single file, ~380 lines, every table + enum. Key relationships:
 - **Persisted-scan pattern**: `POST` triggers a real (now async) scan and upserts results; `GET` reads persisted state without re-scanning. Net-new items get an `is_new`/`first_seen`/`last_seen` treatment (see `upsert_endpoints()`/`upsert_components()` — extracted to `backend/app/core/discovery_ingestion.py`/`sbom_ingestion.py` to avoid an api↔tasks import cycle).
 - **Dedup**: `compute_dedup_hash()` in `backend/app/core/dedup.py` — fingerprints on `(rule_id, file_path, tool, normalized_snippet)`, survives line-shift refactors. `file_path` must be normalized (relative to repo root, not the scan-scoped clone dir) via `normalize_file_path()` in `runner.py` before hashing, or dedup silently breaks.
 - **Priority scoring**: `backend/app/core/scoring.py` — `severity_weight × criticality_weight × 40`, boosted by real-time EPSS (`core/epss.py`) and CISA KEV (`core/kev.py`, cached 1hr) lookups.
+- **No-AI finding enrichment** (#71): `core/nvd.py`/`core/osv.py` fetch real CVE description/CVSS/CWE (NVD) and known fixed versions (OSV.dev, queried directly by CVE ID via `/v1/vulns/{cve_id}`, which resolves CVE as an alias) — both free, no API key. `core/cve_enrichment.py` caches the result **forever** in the `CveEnrichment` DB table (unlike EPSS/KEV's short in-process TTL cache above — a single CVE's data is effectively immutable, so this is a real forever-cache, not a refresh-on-interval one). Exposed via `GET /api/findings/{id}/enrichment`; returns null fields for findings with no `cve_id` (SAST/secrets findings) rather than fabricating a CWE/CVSS. Deliberately separate from the AI Analysis feature (`api/ai.py`) — works with zero AI provider configured.
 - **Downloadable exports**: `Content-Disposition: attachment` header pattern, see `sbom.py`'s `/export`/`org/export` and `reports.py` — frontend downloads via `fetch(..., {credentials:"include"})` → blob → `URL.createObjectURL` → synthetic `<a>` click (see `exportSbom`/`exportOrgSbom` in `frontend/src/lib/api.ts`).
 - **Admin page tabs**: `frontend/src/app/(dashboard)/admin/page.tsx` — a `TABS` array + one component file per tab in the same directory (`user-management.tsx`, `workspace-roles.tsx`, `global-integrations.tsx`, `tools-health.tsx`, `policies.tsx`, `approval-queue.tsx`). Add a new tab by adding one entry + one file, not by editing the others.
 

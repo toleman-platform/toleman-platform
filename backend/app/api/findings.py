@@ -1,9 +1,13 @@
+import json
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, func, or_, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
+from app.core.cve_enrichment import get_cve_enrichment
 from app.models.models import Finding, FindingState, FindingStateLog, Severity, Target, TargetGroup, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/findings", tags=["findings"])
@@ -21,6 +25,25 @@ class BulkTriageRequest(BaseModel):
     to_state: FindingState
     reason: str = ""
     actor: str = "user"
+
+
+class FindingEnrichmentResponse(BaseModel):
+    """No-AI enrichment (issue #71): real CWE/CVSS/description from NVD and
+    known fixed versions from OSV.dev, both keyed off Finding.cve_id.
+    Fields are null when not applicable (e.g. a secrets-detection or SAST
+    finding with no cve_id has no CVE/OSV data at all -- that's correct, not
+    a bug) or when the upstream source didn't have data for this CVE.
+    Distinct from AI Analysis (app/api/ai.py) -- this always works with zero
+    AI provider configured."""
+    finding_id: int
+    cve_id: str | None = None
+    cve_description: str | None = None
+    cvss_score: float | None = None
+    cvss_vector: str | None = None
+    cwe_ids: list[str] | None = None
+    references: list[str] | None = None
+    fix_versions: list[dict] | None = None
+    fetched_at: datetime | None = None
 
 
 def _apply_triage(finding: Finding, to_state: FindingState, reason: str, actor: str, session: Session) -> Finding:
@@ -122,6 +145,48 @@ def get_finding(finding_id: int, session: Session = Depends(get_session), user: 
         if not target or target.workspace_id not in ws_ids:
             raise HTTPException(status_code=404, detail="finding not found")
     return finding
+
+
+@router.get("/{finding_id}/enrichment")
+def get_finding_enrichment(
+    finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)
+) -> FindingEnrichmentResponse:
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        target = session.get(Target, finding.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="finding not found")
+
+    if not finding.cve_id:
+        # No CVE on this finding (SAST/secrets finding) -- nothing to
+        # enrich from NVD/OSV. Correct, not a bug: return an all-null body
+        # rather than a 404, so the frontend can render "no enrichment
+        # available" instead of treating it as an error.
+        return FindingEnrichmentResponse(finding_id=finding_id)
+
+    row = get_cve_enrichment(session, finding.cve_id)
+
+    references: list[str] = []
+    if row.nvd_references:
+        references.extend(json.loads(row.nvd_references))
+    if row.osv_references:
+        references.extend(json.loads(row.osv_references))
+    deduped_references = list(dict.fromkeys(references))  # de-dup, preserve order
+
+    return FindingEnrichmentResponse(
+        finding_id=finding_id,
+        cve_id=finding.cve_id,
+        cve_description=row.nvd_description,
+        cvss_score=row.cvss_score,
+        cvss_vector=row.cvss_vector,
+        cwe_ids=json.loads(row.cwe_ids) if row.cwe_ids else None,
+        references=deduped_references or None,
+        fix_versions=json.loads(row.fixed_versions) if row.fixed_versions else None,
+        fetched_at=row.fetched_at,
+    )
 
 
 @router.post("/bulk-triage")

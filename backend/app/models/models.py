@@ -111,6 +111,13 @@ class Target(SQLModel, table=True):
     label: str = "Dev"  # Prod, Dev, Internal, Public, or custom
     criticality_weight: int = 1  # 1-5
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Pipeline integration (issue #66): whether a real PR opening
+    # .github/workflows/osp-scan.yml against this target's default GitHub
+    # repo has been opened via the GitHub App. pipeline_pr_url is the actual
+    # PR that was opened (kept even after merge/close, as a record of what
+    # happened -- not re-checked live against GitHub's PR state).
+    pipeline_integrated: bool = False
+    pipeline_pr_url: Optional[str] = None
 
 
 class Group(SQLModel, table=True):

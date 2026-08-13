@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import { ScanButtons } from "./scan-buttons";
 import { FindingRow } from "@/components/finding-row";
 import { TargetGroups } from "./target-groups";
+import { PipelineIntegration } from "./pipeline-integration";
 
 export default async function TargetDetailPage({
   params,
@@ -33,6 +34,12 @@ export default async function TargetDetailPage({
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">Groups</h2>
         <TargetGroups targetId={targetId} workspaceId={target.workspace_id} />
       </div>
+
+      <PipelineIntegration
+        targetId={targetId}
+        initialIntegrated={target.pipeline_integrated}
+        initialPrUrl={target.pipeline_pr_url}
+      />
 
       <div>
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">Findings ({findings.length})</h2>

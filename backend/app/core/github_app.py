@@ -13,7 +13,21 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
 
     Permissions mirror the architecture doc's Integration & Permissions Matrix:
     contents (clone + commit fixes), pull_requests + statuses (PR Guardrail),
-    metadata read-only (mandatory baseline).
+    workflows (issue #66: Pipeline Integration writes files under
+    .github/workflows/), metadata read-only (mandatory baseline).
+
+    ``workflows: write`` is required in addition to ``contents: write`` for
+    any Contents-API write under ``.github/workflows/`` -- GitHub gates that
+    path behind its own separate permission scope regardless of the App's
+    general contents access (confirmed live: without it, PUT
+    /repos/{owner}/{repo}/contents/.github/workflows/<file> 403s with
+    "Resource not accessible by integration" even though creating the
+    backing branch via POST git/refs succeeds fine on contents:write alone).
+    An App installed before this permission existed needs its installation
+    owner to re-approve the updated permission set in GitHub's UI --
+    ``setup_on_update: True`` below prompts that on next install/reconfigure,
+    but doesn't retroactively grant it to installations that don't revisit
+    that flow.
 
     ``setup_url`` carries ``?cfg=<setup_token>`` baked in at manifest-creation
     time (#34: multi-App support). ``setup_url`` is a fixed property of the
@@ -32,6 +46,7 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         "public": False,
         "default_permissions": {
             "contents": "write",
+            "workflows": "write",
             "pull_requests": "write",
             "statuses": "write",
             "metadata": "read",

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Users, Plug, Wrench, ShieldAlert, ClipboardCheck, KeyRound } from "lucide-react";
+import { Users, Plug, Wrench, ShieldAlert, ClipboardCheck, KeyRound, Tag } from "lucide-react";
 import { api, AuthUser } from "@/lib/api";
 import { UserManagement } from "./user-management";
 import { WorkspaceRoles } from "./workspace-roles";
@@ -10,10 +10,12 @@ import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
 import { Policies } from "./policies";
 import { ApprovalQueue } from "./approval-queue";
+import { Groups } from "./groups";
 
 const TABS = [
   { id: "users", label: "User Management", icon: Users },
   { id: "workspace-roles", label: "Workspace Roles", icon: KeyRound },
+  { id: "groups", label: "Repo Groups", icon: Tag },
   { id: "integrations", label: "Global Integrations", icon: Plug },
   { id: "tools", label: "Tools Health", icon: Wrench },
   { id: "policies", label: "Policies", icon: ShieldAlert },
@@ -65,6 +67,7 @@ export default function AdminPage() {
 
       {tab === "users" && <UserManagement />}
       {tab === "workspace-roles" && <WorkspaceRoles />}
+      {tab === "groups" && <Groups />}
       {tab === "integrations" && <GlobalIntegrations />}
       {tab === "tools" && <ToolsHealth />}
       {tab === "policies" && <Policies />}

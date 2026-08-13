@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import { ScanButtons } from "./scan-buttons";
 import { FindingRow } from "@/components/finding-row";
+import { TargetGroups } from "./target-groups";
 
 export default async function TargetDetailPage({
   params,
@@ -26,6 +27,11 @@ export default async function TargetDetailPage({
           </p>
         </div>
         <ScanButtons targetId={targetId} />
+      </div>
+
+      <div>
+        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Groups</h2>
+        <TargetGroups targetId={targetId} workspaceId={target.workspace_id} />
       </div>
 
       <div>

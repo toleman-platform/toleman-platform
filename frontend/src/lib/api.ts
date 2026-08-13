@@ -10,6 +10,12 @@
 // effect on local `npm run dev` unless explicitly set.
 export const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// A group/tag badge embedded on a Target (issue #61) -- e.g. "production",
+// "PCI-scope". Also the shape returned standalone by the /api/groups CRUD
+// endpoints (which additionally carry workspace_id/created_at, see Group
+// below).
+export type GroupBadge = { id: number; name: string; color: string };
+
 export type Target = {
   id: number;
   workspace_id: number;
@@ -18,6 +24,15 @@ export type Target = {
   default_branch: string;
   label: string;
   criticality_weight: number;
+  groups: GroupBadge[];
+};
+
+export type Group = {
+  id: number;
+  workspace_id: number;
+  name: string;
+  color: string;
+  created_at: string;
 };
 
 export type Finding = {
@@ -77,6 +92,7 @@ export type FindingListResult = { items: Finding[]; total: number };
 
 export type FindingsQuery = {
   target_id?: number;
+  group_id?: number;
   state?: string;
   severity?: string;
   tool?: string;
@@ -299,13 +315,19 @@ export const api = {
     jsonFetch<AuthUser>("/api/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => jsonFetch<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   me: () => jsonFetch<AuthUser>("/api/auth/me"),
-  targets: () => jsonFetch<Target[]>("/api/targets"),
+  targets: (query: { group_id?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (query.group_id) params.set("group_id", String(query.group_id));
+    const qs = params.toString();
+    return jsonFetch<Target[]>(`/api/targets${qs ? `?${qs}` : ""}`);
+  },
   target: (id: number) => jsonFetch<Target>(`/api/targets/${id}`),
   createTarget: (t: Partial<Target>) =>
     jsonFetch<Target>("/api/targets", { method: "POST", body: JSON.stringify(t) }),
   findings: (query: FindingsQuery = {}) => {
     const params = new URLSearchParams();
     if (query.target_id) params.set("target_id", String(query.target_id));
+    if (query.group_id) params.set("group_id", String(query.group_id));
     if (query.state) params.set("state", query.state);
     if (query.severity) params.set("severity", query.severity);
     if (query.tool) params.set("tool", query.tool);
@@ -314,6 +336,19 @@ export const api = {
     if (query.page_size) params.set("page_size", String(query.page_size));
     return jsonFetch<FindingListResult>(`/api/findings?${params.toString()}`);
   },
+  // Issue #61: workspace-scoped Group CRUD + Target<->Group assignment.
+  groups: (workspaceId?: number) =>
+    jsonFetch<Group[]>(`/api/groups${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  createGroup: (g: { workspace_id: number; name: string; color?: string }) =>
+    jsonFetch<Group>("/api/groups", { method: "POST", body: JSON.stringify(g) }),
+  updateGroup: (id: number, patch: { name?: string; color?: string }) =>
+    jsonFetch<Group>(`/api/groups/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteGroup: (id: number) => jsonFetch<{ ok: boolean }>(`/api/groups/${id}`, { method: "DELETE" }),
+  targetGroups: (targetId: number) => jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups`),
+  assignTargetGroup: (targetId: number, groupId: number) =>
+    jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups/${groupId}`, { method: "POST" }),
+  removeTargetGroup: (targetId: number, groupId: number) =>
+    jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups/${groupId}`, { method: "DELETE" }),
   triage: (findingId: number, toState: string, reason: string) =>
     jsonFetch<Finding>(
       `/api/findings/${findingId}/triage?to_state=${encodeURIComponent(toState)}&reason=${encodeURIComponent(reason)}`,

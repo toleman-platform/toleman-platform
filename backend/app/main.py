@@ -6,7 +6,7 @@ from app.core.config import settings, validate_production_secrets
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups
 from app.api.auth import current_user, require_admin
 
 app = FastAPI(title="OSP - DevSecOps Vulnerability Management Platform")
@@ -45,6 +45,7 @@ app.include_router(webhooks.router)  # GitHub webhook deliveries, verified via H
 
 app.include_router(workspaces.router, dependencies=login_required)
 app.include_router(targets.router, dependencies=login_required)
+app.include_router(groups.router, dependencies=login_required)
 app.include_router(findings.router, dependencies=login_required)
 app.include_router(scans.router, dependencies=login_required)
 app.include_router(dashboard.router, dependencies=login_required)

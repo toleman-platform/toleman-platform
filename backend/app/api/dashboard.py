@@ -3,6 +3,7 @@ from sqlmodel import Session, select, func
 
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
+from app.core.sla import compute_sla_status
 from app.models.models import Finding, FindingState, Target, User
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -82,3 +83,32 @@ def summary(session: Session = Depends(get_session), user: User = Depends(curren
     open_count = session.exec(select(func.count()).select_from(base.where(Finding.state == FindingState.OPEN).subquery())).one()
     mitigated = session.exec(select(func.count()).select_from(base.where(Finding.state == FindingState.MITIGATED).subquery())).one()
     return {"total": total, "open": open_count, "mitigated": mitigated}
+
+
+@router.get("/sla-compliance")
+def sla_compliance(session: Session = Depends(get_session), user: User = Depends(current_user)):
+    """SLA compliance summary (issue #70): among OPEN (and Reopened, still
+    unresolved) findings that a real SlaRule actually applies to, how many
+    are past their days-to-fix window. Computed live via
+    app.core.sla.compute_sla_status (query-time, no background job) --
+    scoped to the caller's workspaces (issue #57)."""
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return {"with_sla": 0, "in_violation": 0, "compliant": 0}
+
+    query = select(Finding).where(Finding.state.in_([FindingState.OPEN, FindingState.REOPENED]))
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
+    open_findings = session.exec(query).all()
+
+    with_sla = 0
+    in_violation = 0
+    for f in open_findings:
+        sla_days, violated = compute_sla_status(session, f)
+        if sla_days is None:
+            continue
+        with_sla += 1
+        if violated:
+            in_violation += 1
+
+    return {"with_sla": with_sla, "in_violation": in_violation, "compliant": with_sla - in_violation}

@@ -3,15 +3,16 @@ import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SEVERITY_COLOR } from "@/lib/severity";
-import { ShieldAlert, ShieldCheck, GitBranch, Activity, CheckCircle2 } from "lucide-react";
+import { ShieldAlert, ShieldCheck, GitBranch, Activity, CheckCircle2, Timer } from "lucide-react";
 import { SeverityPie } from "@/components/charts/severity-pie";
 import { ToolBar } from "@/components/charts/tool-bar";
 
 export default async function PosturePage() {
-  const [summary, posture, stats] = await Promise.all([
+  const [summary, posture, stats, slaCompliance] = await Promise.all([
     api.summary().catch(() => ({ total: 0, open: 0, mitigated: 0 })),
     api.posture().catch(() => []),
     api.stats().catch(() => ({ open: 0, by_severity: {} as Record<string, number>, by_tool: {} as Record<string, number> })),
+    api.slaCompliance().catch(() => ({ with_sla: 0, in_violation: 0, compliant: 0 })),
   ]);
 
   const critical = stats.by_severity["Critical"] ?? 0;
@@ -29,6 +30,43 @@ export default async function PosturePage() {
         <KpiCard icon={GitBranch} iconClass="bg-primary/10 text-primary" value={posture.length} label="Targets Onboarded" />
         <KpiCard icon={CheckCircle2} iconClass="bg-chart-5/10 text-chart-5" value={summary.mitigated} label="Mitigated" />
       </div>
+
+      <Card className="border-border bg-card">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Timer className="h-4 w-4 text-primary" />
+            SLA Compliance
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {slaCompliance.with_sla === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No SLA rules configured yet. Set days-to-fix targets per severity/group on the{" "}
+              <Link href="/admin" className="text-primary underline">
+                Admin &rsaquo; SLA Rules
+              </Link>{" "}
+              tab.
+            </p>
+          ) : (
+            <div className="flex items-center gap-6">
+              <div>
+                <p className="text-2xl font-bold text-foreground">{slaCompliance.with_sla}</p>
+                <p className="text-xs text-muted-foreground">Open findings with an SLA</p>
+              </div>
+              <div>
+                <p className={`text-2xl font-bold ${slaCompliance.in_violation > 0 ? "text-destructive" : "text-foreground"}`}>
+                  {slaCompliance.in_violation}
+                </p>
+                <p className="text-xs text-muted-foreground">In violation</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-chart-5">{slaCompliance.compliant}</p>
+                <p className="text-xs text-muted-foreground">Within SLA</p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="border-border bg-card lg:col-span-2">

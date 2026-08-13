@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
+from app.api.auth import require_workspace_role
 from app.api.deps import get_session
 from app.core.config import settings
-from app.models.models import SbomComponent, Target
+from app.models.models import SbomComponent, Target, User, WorkspaceRole
 from app.scanners import runner
 from app.scanners.parsers import parse_trivy_sbom
 
@@ -179,7 +180,11 @@ def export_org_sbom(session: Session = Depends(get_session)):
 
 
 @router.post("/{target_id}")
-def generate_sbom(target_id: int, session: Session = Depends(get_session)):
+def generate_sbom(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
     """Clone the target's default branch, run trivy's CycloneDX SBOM scan,
     upsert components, and report which are new since the last run."""
     target = _get_target(target_id, session)

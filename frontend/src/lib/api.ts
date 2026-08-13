@@ -77,6 +77,20 @@ export type FindingsQuery = {
 
 export type AuthUser = { id: number; email: string; name: string; role: string };
 
+export type WorkspaceSummary = { id: number; name: string; organization_id: number };
+
+export type WorkspaceRole = "viewer" | "developer" | "security_engineer";
+
+export type WorkspaceMembership = {
+  id: number;
+  user_id: number;
+  user_email: string;
+  user_name: string;
+  workspace_id: number;
+  workspace_name: string;
+  role: WorkspaceRole;
+};
+
 export type CommitEvent = { sha: string; message: string; author: string; date: string; url: string };
 export type PullRequest = {
   number: number;
@@ -302,6 +316,16 @@ export const api = {
   updateUserRole: (id: number, role: string) =>
     jsonFetch<AuthUser>(`/api/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
+  workspaces: () => jsonFetch<WorkspaceSummary[]>("/api/workspaces"),
+  workspaceMemberships: (workspaceId?: number) =>
+    jsonFetch<WorkspaceMembership[]>(`/api/admin/workspace-roles${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  assignWorkspaceRole: (userId: number, workspaceId: number, role: WorkspaceRole) =>
+    jsonFetch<WorkspaceMembership>("/api/admin/workspace-roles", {
+      method: "PUT",
+      body: JSON.stringify({ user_id: userId, workspace_id: workspaceId, role }),
+    }),
+  removeWorkspaceMembership: (membershipId: number) =>
+    jsonFetch<{ ok: boolean }>(`/api/admin/workspace-roles/${membershipId}`, { method: "DELETE" }),
   githubAppStatus: () =>
     jsonFetch<{
       app_configured: boolean;

@@ -5,7 +5,7 @@ import json
 import os
 import time
 
-from app.core.config import settings
+from app.core.config import DEFAULT_SESSION_SECRET, settings
 
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
@@ -40,6 +40,12 @@ def create_session_token(user_id: int, token_version: int = 1) -> str:
 
 def decode_session_token(token: str) -> dict | None:
     """Verify signature/expiry and return the full payload (uid, tv, exp), or None if invalid."""
+    # Defense in depth: app.main's startup check already refuses to boot a
+    # non-local deployment with the default SESSION_SECRET, but if that check
+    # is ever bypassed (e.g. hot env var edit after startup), never honor a
+    # session signed with the known-default secret outside local dev.
+    if settings.environment != "local" and settings.session_secret == DEFAULT_SESSION_SECRET:
+        return None
     try:
         payload_b64, signature = token.split(".")
     except ValueError:

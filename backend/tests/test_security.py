@@ -52,6 +52,25 @@ def test_session_token_malformed_rejected():
     assert verify_session_token("") is None
 
 
+def test_token_rejected_outside_local_dev_when_secret_is_still_default(monkeypatch):
+    """Defense in depth for issue #55: app.main's startup check already
+    refuses to boot a non-local deployment with the default session_secret,
+    but if that check were ever bypassed, decode_session_token must still
+    never honor a token signed with the known-default secret outside local
+    dev."""
+    import app.core.security as security_module
+    from app.core.config import DEFAULT_SESSION_SECRET, settings
+
+    token = create_session_token(user_id=1)  # signed under the real test secret
+
+    monkeypatch.setattr(settings, "environment", "production")
+    monkeypatch.setattr(settings, "session_secret", DEFAULT_SESSION_SECRET)
+    try:
+        assert security_module.decode_session_token(token) is None
+    finally:
+        pass  # monkeypatch auto-reverts
+
+
 def test_expired_session_token_rejected(monkeypatch):
     import app.core.security as security_module
 

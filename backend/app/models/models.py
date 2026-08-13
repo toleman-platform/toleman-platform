@@ -272,6 +272,32 @@ class PlatformConfig(SQLModel, table=True):
     # untouched).
     openai_compatible_api_key: str = ""
     openai_compatible_model: str = ""
+    # Slack incoming-webhook config (issue #74): a single webhook URL used
+    # both for the "Test Connection" button and (future work) alert
+    # notifications. Encrypted at rest via app.core.crypto.encrypt_secret,
+    # same pattern as openai_compatible_api_key above -- a webhook URL is a
+    # bearer credential (anyone with it can post to the channel).
+    slack_webhook_url: str = ""
+    # Jira API config (issue #74): server URL (e.g.
+    # "https://yourorg.atlassian.net"), an API token (encrypted, same pattern
+    # as the webhook URL/openai key above), the project key issues get
+    # created under (e.g. "SEC"), and the issue type name (e.g. "Bug",
+    # "Task") -- both project key and issue type are plain strings, not
+    # validated against the live Jira instance's schema (that would require a
+    # real authenticated call on every save; "Test Connection" is the
+    # explicit real-call verification step instead).
+    jira_url: str = ""
+    jira_api_token: str = ""
+    jira_project_key: str = ""
+    jira_issue_type: str = "Task"
+    # Auto-ticket-creation criteria (issue #74 v1): a single severity
+    # threshold, e.g. "Critical" auto-creates a Jira ticket for every new
+    # Critical finding at ingestion time (see app.core.ingestion /
+    # app.core.jira_integration). None/"" means disabled. Deliberately a
+    # single scalar rather than a rule table for this first version -- see
+    # PolicyRule/SlaRule for the shape a future multi-rule version could grow
+    # into if needed.
+    jira_auto_create_severity: Optional[str] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 

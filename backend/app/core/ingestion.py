@@ -1,11 +1,52 @@
+import logging
 from datetime import datetime
 from sqlmodel import Session, select
 
-from app.models.models import Finding, FindingState, FindingStateLog, Scan, Target
+from app.models.models import Finding, FindingState, FindingStateLog, PlatformConfig, Scan, Severity, Target
 from app.core.dedup import compute_dedup_hash
 from app.core.scoring import compute_priority_score
 from app.core.epss import fetch_epss_scores
 from app.core.kev import fetch_kev_cve_set
+from app.core.jira_integration import create_jira_ticket_for_finding, jira_configured
+
+logger = logging.getLogger(__name__)
+
+# Severity is ordered least->most severe (Severity enum declaration order);
+# used to resolve "auto-create for X and anything at least as severe" from a
+# single PlatformConfig.jira_auto_create_severity threshold.
+_SEVERITY_ORDER = [Severity.INFO, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]
+
+
+def _meets_auto_create_threshold(severity: Severity, threshold: str) -> bool:
+    try:
+        threshold_severity = Severity(threshold)
+    except ValueError:
+        return False
+    return _SEVERITY_ORDER.index(severity) >= _SEVERITY_ORDER.index(threshold_severity)
+
+
+def _maybe_auto_create_jira_ticket(session: Session, finding: Finding) -> None:
+    """Issue #74 v1 auto-ticket-creation: fires a real Jira issue-creation
+    call when PlatformConfig.jira_auto_create_severity is set and this new
+    finding's severity meets that threshold. Best-effort -- a Jira outage or
+    misconfiguration must not fail the whole ingestion/scan, so failures are
+    logged, not raised."""
+    config = session.exec(select(PlatformConfig)).first()
+    if not config or not config.jira_auto_create_severity:
+        return
+    if not jira_configured(config):
+        return
+    if not _meets_auto_create_threshold(finding.severity, config.jira_auto_create_severity):
+        return
+
+    try:
+        ok, result = create_jira_ticket_for_finding(config, finding)
+    except Exception:
+        logger.exception("Auto-create Jira ticket failed for finding %s", finding.id)
+        return
+
+    if not ok:
+        logger.warning("Auto-create Jira ticket failed for finding %s: %s", finding.id, result)
 
 
 def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, branch: str, parsed: list[dict]) -> int:
@@ -18,6 +59,9 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
       hash present in earlier scan of same target/branch but absent this run -> Mitigated
     """
     seen_hashes = set()
+    # New Finding rows created this run, so the Jira auto-create hook below
+    # can fire after commit (once each has a real primary key id).
+    newly_created: list[Finding] = []
 
     # Batch EPSS/KEV lookups once per ingestion run (not per-finding) against the
     # distinct CVE IDs present in this parsed batch.
@@ -75,8 +119,16 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             kev_listed=kev_listed,
         )
         session.add(finding)
+        newly_created.append(finding)
 
     session.commit()
+
+    # Auto-create Jira tickets for net-new findings meeting the configured
+    # severity threshold (issue #74 v1) -- after commit so each finding has
+    # a real id to reference/link. Best-effort, never blocks ingestion.
+    for finding in newly_created:
+        session.refresh(finding)
+        _maybe_auto_create_jira_ticket(session, finding)
 
     # mark findings absent from this run (same target+branch+tool, still Open) as Mitigated
     stale = session.exec(

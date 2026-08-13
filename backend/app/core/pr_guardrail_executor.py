@@ -14,15 +14,13 @@ from sqlmodel import Session, select
 
 from app.core.dedup import compute_dedup_hash
 from app.core.github import get_github_token, github_get, repo_slug_from_url
-from app.core.github_app import get_installation_token
+from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
 from app.core.policy import apply_policies
 from app.core.pr_guardrail import compute_net_new, highest_severity, should_block
 from app.models.models import (
     ApiEndpoint,
     Finding,
     FindingState,
-    GitHubAppConfig,
-    GitHubInstallation,
     PolicyRule,
     PRGuardrailFinding,
     PRGuardrailScan,
@@ -146,18 +144,28 @@ def render_comment(
     return "\n".join(lines)
 
 
-def _get_installation_token_or_none(session: Session) -> str | None:
-    config = session.exec(select(GitHubAppConfig)).first()
-    installation = session.exec(select(GitHubInstallation)).first()
-    if not config or not installation:
+def _get_installation_token_or_none(session: Session, target: Target) -> str | None:
+    """Resolve the installation token for THIS target's repo specifically
+    (#34) -- previously this always grabbed installation row #1 and App
+    config row #1 regardless of which repo/target the caller actually
+    needed a token for, so PR Guardrail would silently use the wrong App's
+    installation token (or fail) for any repo not owned by the first
+    installation once a second real installation existed."""
+    slug = repo_slug_from_url(target.repo_url)
+    installation = resolve_installation_for_repo(session, target.workspace_id, slug)
+    if not installation:
+        return None
+    config = resolve_config_for_installation(session, installation)
+    if not config:
         return None
     return get_installation_token(config, installation.installation_id)
 
 
-def post_pr_comment(session: Session, slug: str, pr_number: int, body: str) -> None:
+def post_pr_comment(session: Session, target: Target, pr_number: int, body: str) -> None:
     """Best-effort: never raises -- a scan result that fails to post a comment is still useful."""
+    slug = repo_slug_from_url(target.repo_url)
     try:
-        token = _get_installation_token_or_none(session)
+        token = _get_installation_token_or_none(session, target)
         if not token:
             logger.warning("PR guardrail: no GitHub App installed, skipping PR comment")
             return
@@ -173,10 +181,11 @@ def post_pr_comment(session: Session, slug: str, pr_number: int, body: str) -> N
         logger.warning("PR guardrail: exception posting PR comment", exc_info=True)
 
 
-def set_commit_status(session: Session, slug: str, sha: str, state: str, description: str) -> None:
+def set_commit_status(session: Session, target: Target, sha: str, state: str, description: str) -> None:
     """Best-effort: never raises."""
+    slug = repo_slug_from_url(target.repo_url)
     try:
-        token = _get_installation_token_or_none(session)
+        token = _get_installation_token_or_none(session, target)
         if not token:
             logger.warning("PR guardrail: no GitHub App installed, skipping commit status")
             return
@@ -285,10 +294,10 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         persisted_findings = _persist_findings(session, pr_scan.id, net_new)
 
         comment_body = render_comment(persisted_findings, new_endpoints, status, target.id, pr_scan.id)
-        post_pr_comment(session, slug, pr_number, comment_body)
+        post_pr_comment(session, target, pr_number, comment_body)
         set_commit_status(
             session,
-            slug,
+            target,
             head_sha,
             "success" if status == PRGuardrailStatus.PASSED else "failure",
             f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)",

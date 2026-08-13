@@ -126,6 +126,19 @@ export type AuditEvent = { type: string; timestamp: string; actor: string; summa
 
 export type SearchResults = { findings: Finding[]; targets: Target[] };
 
+// #34: a platform may have multiple registered GitHub Apps, each with its
+// own set of installations (e.g. a dev App and a prod App, or the same App
+// installed on several orgs/accounts).
+export type GitHubAppInstalledAccount = { installation_id: number; account_login: string; account_type: string };
+export type GitHubAppInstallation = {
+  id: number;
+  app_id: string;
+  app_slug: string;
+  html_url: string;
+  webhook_secret_set: boolean;
+  installations: GitHubAppInstalledAccount[];
+};
+
 export type PolicyRuleType = "block_severity" | "suppress_rule" | "suppress_license";
 export type PolicyRule = {
   id: number;
@@ -304,6 +317,7 @@ export const api = {
   deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
   githubAppStatus: () =>
     jsonFetch<{
+      apps: GitHubAppInstallation[];
       app_configured: boolean;
       app_slug: string | null;
       installed: boolean;
@@ -313,10 +327,10 @@ export const api = {
   githubAppManifestData: (org?: string) =>
     jsonFetch<{ manifest: object; post_url: string }>(`/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`),
   githubAppSync: () => jsonFetch<{ created: number }>("/api/github-app/sync", { method: "POST" }),
-  updateWebhookSecret: (webhook_secret: string) =>
+  updateWebhookSecret: (webhook_secret: string, config_id?: number) =>
     jsonFetch<{ webhook_secret_set: boolean }>("/api/github-app/webhook-secret", {
       method: "PATCH",
-      body: JSON.stringify({ webhook_secret }),
+      body: JSON.stringify({ webhook_secret, config_id }),
     }),
   getConfig: () => jsonFetch<PlatformConfigView>("/api/config"),
   updateConfig: (payload: UpdateConfigPayload) =>

@@ -2,23 +2,32 @@ import time
 
 import httpx
 import jwt
+from sqlmodel import Session, select
 
 from app.core.crypto import decrypt_secret
-from app.models.models import GitHubAppConfig
+from app.models.models import GitHubAppConfig, GitHubInstallation
 
 
-def build_manifest(app_url: str, backend_url: str, name_suffix: str) -> dict:
+def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token: str) -> dict:
     """GitHub App Manifest — https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
 
     Permissions mirror the architecture doc's Integration & Permissions Matrix:
     contents (clone + commit fixes), pull_requests + statuses (PR Guardrail),
     metadata read-only (mandatory baseline).
+
+    ``setup_url`` carries ``?cfg=<setup_token>`` baked in at manifest-creation
+    time (#34: multi-App support). ``setup_url`` is a fixed property of the
+    App once created via the manifest conversion — GitHub calls exactly this
+    URL (appending its own ``installation_id``/``setup_action`` params) every
+    time *this* App is installed/reconfigured, for the life of the App, so
+    the token reliably tells /setup-callback which GitHubAppConfig row a new
+    installation belongs to without needing to guess or brute-force it.
     """
     return {
         "name": f"OSP DevSecOps {name_suffix}",
         "url": app_url,
         "redirect_url": f"{backend_url}/api/github-app/callback",
-        "setup_url": f"{backend_url}/api/github-app/setup-callback",
+        "setup_url": f"{backend_url}/api/github-app/setup-callback?cfg={setup_token}",
         "setup_on_update": True,
         "public": False,
         "default_permissions": {
@@ -77,3 +86,48 @@ def get_installation_account(config: GitHubAppConfig, installation_id: int) -> d
     )
     res.raise_for_status()
     return res.json()
+
+
+# --- Multi-App / multi-install resolution (#34) ----------------------------
+#
+# Before #34 every call site assumed exactly one GitHubAppConfig row and one
+# GitHubInstallation row (`select(...).first()`), which broke in two ways:
+#   (a) there was no way to select *which* App to use once more than one
+#       existed (dev App vs prod App, or different Apps per install target);
+#   (b) even installations of a *single* App were broken beyond the first
+#       one -- repo sync and PR Guardrail token minting always used
+#       whichever installation happened to be row #1, silently ignoring
+#       every other real installation.
+# The helpers below replace every such lookup with a real resolution: an
+# installation always knows which App minted it (github_app_config_id), and
+# the right installation for a given repo is chosen by matching the repo's
+# GitHub owner/org against the candidate installations' account_login.
+
+
+def resolve_config_for_installation(session: Session, installation: GitHubInstallation) -> GitHubAppConfig | None:
+    """Which GitHubAppConfig owns this installation (needed to sign the JWT
+    that mints an installation access token)."""
+    if installation.github_app_config_id is not None:
+        return session.get(GitHubAppConfig, installation.github_app_config_id)
+    # Legacy installation row created before github_app_config_id existed.
+    # Only safe to guess when there's exactly one App configured -- with
+    # multiple Apps an unlinked installation is genuinely ambiguous.
+    configs = session.exec(select(GitHubAppConfig)).all()
+    return configs[0] if len(configs) == 1 else None
+
+
+def resolve_installation_for_repo(session: Session, workspace_id: int, repo_slug: str) -> GitHubInstallation | None:
+    """Pick the installation that actually has access to ``repo_slug``
+    (``owner/repo``) among all installations in the target's workspace, by
+    matching the repo's owner against each installation's account_login.
+    Falls back to the workspace's only installation when there's just one,
+    or the repo owner can't be parsed."""
+    installations = session.exec(select(GitHubInstallation).where(GitHubInstallation.workspace_id == workspace_id)).all()
+    if not installations:
+        return None
+    owner = repo_slug.split("/")[0] if "/" in repo_slug else None
+    if owner:
+        for installation in installations:
+            if installation.account_login.lower() == owner.lower():
+                return installation
+    return installations[0]

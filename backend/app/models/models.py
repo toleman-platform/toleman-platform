@@ -142,7 +142,22 @@ class PlatformConfig(SQLModel, table=True):
 
 
 class GitHubAppConfig(SQLModel, table=True):
-    """Created once via the App Manifest flow. Single row for this MVP (single-tenant)."""
+    """One row per registered GitHub App (multi-install support, #34) -- a
+    platform can have several Apps registered (e.g. a dev App and a prod
+    App) and each GitHubInstallation records which App it belongs to via
+    ``GitHubInstallation.github_app_config_id``, since minting an
+    installation token requires signing a JWT with *that* App's private
+    key/app_id specifically.
+
+    ``setup_token`` is the CSRF ``state`` value from the manifest flow that
+    created this row, reused as a permanent, opaque marker baked into this
+    App's ``setup_url`` (see app/core/github_app.py:build_manifest) so every
+    future GitHub "install"/"configure" callback for this specific App can
+    be routed back to the right config row without guessing. Nullable only
+    for rows created before this column existed (pre-#34) -- those are
+    resolved via the single-config fallback in
+    app/core/github_app.py:resolve_config_for_installation.
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     app_id: str
     slug: str
@@ -151,6 +166,7 @@ class GitHubAppConfig(SQLModel, table=True):
     private_key_pem: str
     webhook_secret: str
     html_url: str
+    setup_token: Optional[str] = Field(default=None, unique=True, index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -160,6 +176,11 @@ class GitHubInstallation(SQLModel, table=True):
     account_login: str
     account_type: str
     workspace_id: int = Field(foreign_key="workspace.id")
+    # Which App this installation belongs to (#34: a platform may have
+    # multiple GitHubAppConfig rows). Nullable for rows created before this
+    # column existed; those are only resolvable when exactly one
+    # GitHubAppConfig exists (see resolve_config_for_installation).
+    github_app_config_id: Optional[int] = Field(default=None, foreign_key="githubappconfig.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

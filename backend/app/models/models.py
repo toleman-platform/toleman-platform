@@ -128,6 +128,16 @@ class PlatformConfig(SQLModel, table=True):
     """Single-row runtime configuration, editable via Admin > Global Integrations."""
     id: Optional[int] = Field(default=None, primary_key=True)
     anthropic_api_key: Optional[str] = None
+    # AI Analysis provider selection: "anthropic" (default) or "openai_compatible".
+    # The openai_compatible fields cover any self-hosted/OpenAI-compatible chat
+    # completions endpoint -- Kimi/Moonshot, Ollama, vLLM, LM Studio, etc.
+    ai_provider: str = "anthropic"
+    openai_compatible_base_url: str = ""
+    # Encrypted at rest via app.core.crypto.encrypt_secret (unlike
+    # anthropic_api_key above, which is a pre-existing plaintext field left
+    # untouched).
+    openai_compatible_api_key: str = ""
+    openai_compatible_model: str = ""
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 

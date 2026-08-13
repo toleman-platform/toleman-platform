@@ -6,6 +6,7 @@ import { AddTargetToggle } from "./add-target-toggle";
 import { ConnectedRefresher } from "./connected-refresher";
 import { GroupFilter } from "@/components/group-filter";
 import { GroupBadge } from "@/components/group-badge";
+import { Badge } from "@/components/ui/badge";
 
 function firstValue(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
@@ -59,9 +60,16 @@ export default async function TargetsPage({
                     </div>
                   )}
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {t.label} · weight {t.criticality_weight}
-                </span>
+                <div className="flex items-center gap-2">
+                  {t.pipeline_integrated && (
+                    <Badge variant="outline" className="border-green-600/40 text-green-500">
+                      Pipeline integrated
+                    </Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    {t.label} · weight {t.criticality_weight}
+                  </span>
+                </div>
               </CardContent>
             </Card>
           </Link>

@@ -25,6 +25,27 @@ export type Target = {
   label: string;
   criticality_weight: number;
   groups: GroupBadge[];
+  // Pipeline integration (issue #66): whether a PR adding
+  // .github/workflows/osp-scan.yml has been opened against this target's repo.
+  pipeline_integrated: boolean;
+  pipeline_pr_url: string | null;
+};
+
+// GET /api/targets/{id}/pipeline-workflow (issue #66) -- generated,
+// target-specific GitHub Actions workflow YAML, not yet written to GitHub.
+export type PipelineWorkflow = {
+  yaml: string;
+  path: string;
+  includes_gosec: boolean;
+  languages: string[];
+  detection_source: "scan_history" | "github_languages" | "default";
+};
+
+export type PipelineIntegrateResult = {
+  pipeline_integrated: boolean;
+  pipeline_pr_url: string | null;
+  pr_number: number;
+  branch: string;
 };
 
 export type Group = {
@@ -419,6 +440,14 @@ export const api = {
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   workspaceKey: (targetId: number) =>
     jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(`/api/targets/${targetId}/workspace-key`),
+  // Issue #66: generate/inspect the per-target CI/CD scan workflow, and open
+  // a real PR against the target's GitHub repo adding it.
+  pipelineWorkflow: (targetId: number) =>
+    jsonFetch<PipelineWorkflow>(`/api/targets/${targetId}/pipeline-workflow`),
+  integratePipeline: (targetId: number) =>
+    jsonFetch<PipelineIntegrateResult | { error: string }>(`/api/targets/${targetId}/pipeline-integrate`, {
+      method: "POST",
+    }),
   activity: (targetId: number) => jsonFetch<CommitEvent[]>(`/api/github/activity/${targetId}`),
   orgActivity: () => jsonFetch<(CommitEvent & { target: string })[]>("/api/github/org-activity"),
   prs: (targetId: number) => jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`),

@@ -6,6 +6,8 @@ from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
+from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
+from app.core.pipeline_workflow import generate_workflow_yaml
 from app.models.models import Group, Target, TargetGroup, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/targets", tags=["targets"])
@@ -150,6 +152,60 @@ def get_workspace_key(target_id: int, session: Session = Depends(get_session), u
         raise HTTPException(status_code=404, detail="target not found")
     workspace = session.get(Workspace, target.workspace_id)
     return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
+
+
+def _get_target_scoped(target_id: int, session: Session, user: User) -> Target:
+    """404-not-403 workspace scoping, same pattern used throughout this
+    file and app/api/pr_guardrail.py."""
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="target not found")
+    return target
+
+
+@router.get("/{target_id}/pipeline-workflow")
+def get_pipeline_workflow(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
+    """Issue #66: real, target-specific GitHub Actions workflow YAML that
+    runs Semgrep/Gitleaks/Trivy (+ gosec for Go repos, detected from this
+    target's own scan history or, failing that, GitHub's languages API)
+    natively in the runner and pushes results back to OSP via
+    POST /api/ingest. Generation only -- doesn't write anything to GitHub;
+    see POST .../pipeline-integrate for that."""
+    target = _get_target_scoped(target_id, session, user)
+    return generate_workflow_yaml(session, target)
+
+
+@router.post("/{target_id}/pipeline-integrate")
+def integrate_pipeline(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Issue #66: opens a real PR on the target's GitHub repo (via the
+    GitHub App's installation token) adding the generated
+    .github/workflows/osp-scan.yml, and records the outcome on the Target
+    row so the frontend can show integration status without re-hitting
+    GitHub every page load."""
+    target = _get_target_scoped(target_id, session, user)
+    try:
+        result = open_pipeline_pr(session, target)
+    except PipelinePrError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    target.pipeline_integrated = True
+    target.pipeline_pr_url = result["pr_url"]
+    session.add(target)
+    session.commit()
+    session.refresh(target)
+    return {
+        "pipeline_integrated": target.pipeline_integrated,
+        "pipeline_pr_url": target.pipeline_pr_url,
+        "pr_number": result["pr_number"],
+        "branch": result["branch"],
+    }
 
 
 @router.get("/{target_id}/groups")

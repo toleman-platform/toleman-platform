@@ -1,0 +1,268 @@
+"""Pipeline integration (issue #66): generate a real per-target GitHub
+Actions workflow that runs the same OSS scanners
+`.github/workflows/self-scan.yml` runs against this repo itself (Semgrep,
+Gitleaks, Trivy, plus gosec when the target is a Go repo) natively inside
+the runner, then pushes each tool's SARIF output back into this platform
+via `POST /api/ingest/{target_id}` -- the CI/CD push endpoint
+`app/api/ingest.py` already exists for exactly this purpose.
+
+IMPORTANT -- read `self-scan.yml`'s header comment before changing this:
+GitHub's cloud runners cannot reach a backend running at localhost:8000, so
+the generated workflow's ingest step depends on two GitHub Actions secrets
+the *target repo's* owner must configure themselves:
+
+  - ``OSP_API_URL``: a **publicly reachable** deployment of this platform
+    (e.g. `docker-compose.yml` from #60, exposed via a real domain/tunnel).
+    Pointing this at localhost:8000 will simply fail from GitHub's runners,
+    the same problem self-scan.yml's own comment documents.
+  - ``OSP_API_KEY``: the target's workspace API key (`GET
+    /api/targets/{id}/workspace-key`).
+
+Scanning still happens (and is reported in the job summary/artifacts)
+regardless of whether the ingest step succeeds -- so this degrades to
+"exactly self-scan.yml" rather than failing outright when OSP isn't publicly
+reachable yet.
+"""
+import logging
+
+import httpx
+from sqlmodel import Session, select
+
+from app.core.github import get_github_token, repo_slug_from_url
+from app.models.models import Finding, Target
+
+logger = logging.getLogger(__name__)
+
+WORKFLOW_PATH = ".github/workflows/osp-scan.yml"
+WORKFLOW_FILENAME = "osp-scan.yml"
+
+
+def detect_languages(target: Target) -> list[str]:
+    """Real per-target language detection via GitHub's repo languages API
+    (bytes-of-code-per-language) -- used as a fallback signal for whether to
+    include the Go-only gosec job when the target has no scan history yet.
+    Best-effort: returns [] on any failure rather than raising, since this
+    only affects which optional job gets included."""
+    slug = repo_slug_from_url(target.repo_url)
+    token = get_github_token()
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        res = httpx.get(f"https://api.github.com/repos/{slug}/languages", headers=headers, timeout=15)
+        if res.status_code == 200:
+            return list(res.json().keys())
+    except Exception:
+        logger.warning("pipeline workflow: language detection failed for %s", slug, exc_info=True)
+    return []
+
+
+def detect_tool_set(session: Session, target: Target) -> dict:
+    """Prefer real scan history for this target (what's already been run
+    natively against it, see `Finding.tool`) over guessing from GitHub's
+    language breakdown -- scan history is ground truth, language detection
+    is only a fallback for a target that's never been scanned yet."""
+    scanned_tools = session.exec(
+        select(Finding.tool).where(Finding.target_id == target.id).distinct()
+    ).all()
+    if scanned_tools:
+        return {"include_gosec": "gosec" in scanned_tools, "source": "scan_history", "languages": []}
+
+    languages = detect_languages(target)
+    if languages:
+        return {"include_gosec": "Go" in languages, "source": "github_languages", "languages": languages}
+
+    # No scan history and language detection failed/unreachable -- default
+    # to the same tool set self-scan.yml uses for a non-Go repo rather than
+    # guessing wrong in either direction.
+    return {"include_gosec": False, "source": "default", "languages": []}
+
+
+_GOSEC_JOB = """
+  gosec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - name: Run gosec
+        run: ~/go/bin/gosec -fmt=sarif -out=gosec.sarif -no-fail ./... || true
+      - name: Summarize
+        run: |
+          echo "## gosec" >> "$GITHUB_STEP_SUMMARY"
+          python3 -c "
+          import json
+          d = json.load(open('gosec.sarif'))
+          results = d.get('runs', [{}])[0].get('results', [])
+          with open('$GITHUB_STEP_SUMMARY', 'a') as f:
+              f.write(f'{len(results)} findings\\n')
+          " || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosec-results
+          path: gosec.sarif
+      - name: Push results to OSP
+        if: always()
+        env:
+          OSP_API_URL: ${{ secrets.OSP_API_URL }}
+          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+        run: |
+          if [ -n "$OSP_API_URL" ] && [ -f gosec.sarif ]; then
+            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=gosec&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+              --data-binary @gosec.sarif \\
+              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+          else
+            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+          fi
+"""
+
+_TEMPLATE = """name: __WORKFLOW_NAME__
+
+# Generated by OSP DevSecOps Platform (issue #66) for target "__TARGET_NAME__"
+# (id __TARGET_ID__). Runs the same open-source scanners OSP wraps natively
+# in this job -- mirrors this platform's own dogfooding workflow
+# (.github/workflows/self-scan.yml) -- then pushes each tool's SARIF output
+# back into OSP via POST /api/ingest/__TARGET_ID__.
+#
+# IMPORTANT: GitHub's cloud runners cannot reach an OSP backend running on
+# localhost. For the "push results to OSP" steps below to actually succeed,
+# configure these secrets in this repo's Settings > Secrets and variables >
+# Actions:
+#
+#   OSP_API_URL  - a PUBLICLY REACHABLE deployment of the OSP platform
+#                  (e.g. behind docker-compose.yml exposed via a real
+#                  domain/tunnel). Do NOT set this to http://localhost:8000
+#                  -- that only works from your own machine, not from
+#                  GitHub's runners.
+#   OSP_API_KEY  - this target's workspace API key
+#                  (GET /api/targets/__TARGET_ID__/workspace-key in OSP).
+#
+# Scanning and the job summary/artifacts work regardless of whether these
+# secrets are set -- only the "push results to OSP" step is skipped/fails
+# without them, same degrade-gracefully behavior as self-scan.yml.
+
+on:
+  push:
+    branches: [__DEFAULT_BRANCH__]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Semgrep
+        run: pip install semgrep
+      - name: Run Semgrep
+        run: semgrep scan --config=auto --sarif --output=semgrep.sarif || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep.sarif
+      - name: Push results to OSP
+        if: always()
+        env:
+          OSP_API_URL: ${{ secrets.OSP_API_URL }}
+          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+        run: |
+          if [ -n "$OSP_API_URL" ] && [ -f semgrep.sarif ]; then
+            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+              --data-binary @semgrep.sarif \\
+              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+          else
+            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+          fi
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+      - name: Run Gitleaks
+        run: |
+          ./gitleaks detect --source . --report-format sarif --report-path gitleaks.sarif --no-git --exit-code 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results
+          path: gitleaks.sarif
+      - name: Push results to OSP
+        if: always()
+        env:
+          OSP_API_URL: ${{ secrets.OSP_API_URL }}
+          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+        run: |
+          if [ -n "$OSP_API_URL" ] && [ -f gitleaks.sarif ]; then
+            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+              --data-binary @gitleaks.sarif \\
+              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+          else
+            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+          fi
+
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy (filesystem scan)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          format: sarif
+          output: trivy.sarif
+          scan-ref: .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy.sarif
+      - name: Push results to OSP
+        if: always()
+        env:
+          OSP_API_URL: ${{ secrets.OSP_API_URL }}
+          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+        run: |
+          if [ -n "$OSP_API_URL" ] && [ -f trivy.sarif ]; then
+            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+              --data-binary @trivy.sarif \\
+              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+          else
+            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+          fi
+__GOSEC_JOB__"""
+
+
+def generate_workflow_yaml(session: Session, target: Target) -> dict:
+    """Returns {"yaml": str, "includes_gosec": bool, "languages": [...],
+    "detection_source": "scan_history"|"github_languages"|"default"}."""
+    detection = detect_tool_set(session, target)
+    # YAML double-quoted scalar: escape backslashes then quotes so a target
+    # name containing `"` or `\` still produces valid YAML.
+    safe_name = target.name.replace("\\", "\\\\").replace('"', '\\"')
+    yaml_text = _TEMPLATE.replace("__GOSEC_JOB__", _GOSEC_JOB if detection["include_gosec"] else "")
+    yaml_text = (
+        yaml_text.replace("__WORKFLOW_NAME__", f'"OSP Scan ({safe_name})"')
+        .replace("__TARGET_ID__", str(target.id))
+        .replace("__TARGET_NAME__", target.name)
+        .replace("__DEFAULT_BRANCH__", target.default_branch)
+    )
+    return {
+        "yaml": yaml_text,
+        "path": WORKFLOW_PATH,
+        "includes_gosec": detection["include_gosec"],
+        "languages": detection["languages"],
+        "detection_source": detection["source"],
+    }

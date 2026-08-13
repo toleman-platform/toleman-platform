@@ -1,5 +1,12 @@
 from app.models.models import Severity
-from app.scanners.parsers import parse_gitleaks, parse_gosec, parse_sarif, parse_semgrep, parse_trivy
+from app.scanners.parsers import (
+    parse_gitleaks,
+    parse_gosec,
+    parse_sarif,
+    parse_semgrep,
+    parse_trivy,
+    parse_trivy_license,
+)
 
 
 def test_parse_semgrep_maps_fields():
@@ -95,3 +102,75 @@ def test_parse_sarif_extracts_location_and_level():
 
 def test_parse_sarif_no_runs():
     assert parse_sarif({}) == []
+
+
+def test_parse_trivy_license_maps_each_severity_tier():
+    raw = {
+        "Results": [
+            {
+                "Target": "go.mod",
+                "Licenses": [
+                    {"Severity": "UNKNOWN", "Name": "Unlicense", "PkgName": "foo", "FilePath": "go.mod"},
+                    {"Severity": "LOW", "Name": "MIT", "PkgName": "bar", "FilePath": "go.mod"},
+                    {"Severity": "MEDIUM", "Name": "MPL-2.0", "PkgName": "baz", "FilePath": "go.mod"},
+                    {"Severity": "HIGH", "Name": "AGPL-3.0", "PkgName": "qux", "FilePath": "go.mod"},
+                    {"Severity": "CRITICAL", "Name": "GPL-3.0", "PkgName": "quux", "FilePath": "go.mod"},
+                ],
+            }
+        ]
+    }
+    out = parse_trivy_license(raw)
+    assert len(out) == 5
+
+    by_pkg = {f["snippet"]: f for f in out}
+    assert by_pkg["foo"]["severity"] == Severity.LOW  # UNKNOWN maps to LOW per _map_severity
+    assert by_pkg["bar"]["severity"] == Severity.LOW
+    assert by_pkg["baz"]["severity"] == Severity.MEDIUM
+    assert by_pkg["qux"]["severity"] == Severity.HIGH
+    assert by_pkg["quux"]["severity"] == Severity.CRITICAL
+
+    gpl = by_pkg["quux"]
+    assert gpl["rule_id"] == "license:GPL-3.0"
+    assert gpl["title"] == "GPL-3.0 license detected in quux"
+    assert gpl["file_path"] == "go.mod"
+    assert gpl["cve_id"] is None
+    assert gpl["line_start"] is None
+    assert gpl["line_end"] is None
+
+
+def test_parse_trivy_license_missing_licenses_array():
+    raw = {"Results": [{"Target": "go.mod"}]}
+    assert parse_trivy_license(raw) == []
+
+
+def test_parse_trivy_license_empty_licenses_array():
+    raw = {"Results": [{"Target": "go.mod", "Licenses": []}]}
+    assert parse_trivy_license(raw) == []
+
+
+def test_parse_trivy_license_empty_results():
+    assert parse_trivy_license({}) == []
+
+
+def test_parse_trivy_license_multiple_results():
+    raw = {
+        "Results": [
+            {
+                "Target": "go.mod",
+                "Licenses": [
+                    {"Severity": "LOW", "Name": "MIT", "PkgName": "foo", "FilePath": "go.mod"},
+                ],
+            },
+            {
+                "Target": "package-lock.json",
+                "Licenses": [
+                    {"Severity": "HIGH", "Name": "GPL-2.0", "PkgName": "bar", "FilePath": "package-lock.json"},
+                    {"Severity": "CRITICAL", "Name": "AGPL-3.0", "PkgName": "baz", "FilePath": "package-lock.json"},
+                ],
+            },
+        ]
+    }
+    out = parse_trivy_license(raw)
+    assert len(out) == 3
+    assert {f["file_path"] for f in out} == {"go.mod", "package-lock.json"}
+    assert {f["rule_id"] for f in out} == {"license:MIT", "license:GPL-2.0", "license:AGPL-3.0"}

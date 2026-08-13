@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
-const TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"];
+const TOOLS = ["semgrep", "gitleaks", "trivy", "trivy-license", "gosec"];
 
 export function ScanButtons({ targetId }: { targetId: number }) {
   const router = useRouter();

@@ -11,12 +11,7 @@ from app.scanners import parsers, runner
 
 router = APIRouter(prefix="/api/scans", tags=["scans"])
 
-PARSER_MAP = {
-    "semgrep": parsers.parse_semgrep,
-    "gitleaks": parsers.parse_gitleaks,
-    "trivy": parsers.parse_trivy,
-    "gosec": parsers.parse_gosec,
-}
+PARSER_MAP = parsers.PARSER_MAP
 
 # Each request here clones the target repo and spawns a scanner subprocess,
 # so this needs a tighter limit than plain API reads -- generous enough for

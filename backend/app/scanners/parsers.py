@@ -85,6 +85,33 @@ def parse_trivy(raw: dict) -> list[dict]:
     return out
 
 
+def parse_trivy_license(raw: dict) -> list[dict]:
+    """Trivy license-scan output (`trivy fs --scanners license`).
+
+    Distinct from parse_trivy: license results live under Results[].Licenses[]
+    rather than Vulnerabilities/Misconfigurations.
+    """
+    out = []
+    for result in raw.get("Results", []):
+        target = result.get("Target", "")
+        for lic in result.get("Licenses", []) or []:
+            name = lic.get("Name", "unknown")
+            pkg_name = lic.get("PkgName", "")
+            file_path = lic.get("FilePath") or target
+            out.append({
+                "rule_id": f"license:{name}",
+                "title": f"{name} license detected in {pkg_name}"[:200] if pkg_name else f"{name} license detected"[:200],
+                "description": f"License {name} detected for package {pkg_name}".strip(),
+                "file_path": file_path,
+                "line_start": None,
+                "line_end": None,
+                "severity": _map_severity(lic.get("Severity", "")),
+                "snippet": pkg_name,
+                "cve_id": None,
+            })
+    return out
+
+
 def parse_gosec(raw: dict) -> list[dict]:
     out = []
     for issue in raw.get("Issues", []):
@@ -135,3 +162,15 @@ def parse_sarif(raw: dict) -> list[dict]:
                 "tool_name": tool_name,
             })
     return out
+
+
+# Shared by app/api/scans.py (synchronous "Pull" scan endpoint) and
+# app/tasks/scan_tasks.py (async Celery scan task) -- both dispatch on
+# tool name to pick the parser for runner.run_tool's raw output.
+PARSER_MAP = {
+    "semgrep": parse_semgrep,
+    "gitleaks": parse_gitleaks,
+    "trivy": parse_trivy,
+    "trivy-license": parse_trivy_license,
+    "gosec": parse_gosec,
+}

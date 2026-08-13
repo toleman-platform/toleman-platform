@@ -122,6 +122,24 @@ class Finding(SQLModel, table=True):
     mitigated_at: Optional[datetime] = None
 
 
+class DiscoveredEndpoint(SQLModel, table=True):
+    """A route surfaced by API Discovery's static scan, persisted across runs
+    so results survive page reload and net-new endpoints can be diffed against
+    the previous run (same first_seen/last_seen pattern as Finding)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+
+    dedup_key: str = Field(index=True)  # framework+method+route+file, unique per target
+    framework: str
+    method: str
+    route: str
+    file: str
+    line: int
+
+    first_seen: datetime = Field(default_factory=datetime.utcnow)
+    last_seen: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PlatformConfig(SQLModel, table=True):
     """Single-row runtime configuration, editable via Admin > Global Integrations."""
     id: Optional[int] = Field(default=None, primary_key=True)

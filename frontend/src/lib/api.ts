@@ -180,6 +180,12 @@ export type PlatformConfigView = {
   openai_compatible_base_url: string;
   openai_compatible_api_key_set: boolean;
   openai_compatible_model: string;
+  slack_webhook_url_set: boolean;
+  jira_url: string;
+  jira_api_token_set: boolean;
+  jira_project_key: string;
+  jira_issue_type: string;
+  jira_auto_create_severity: string | null;
 };
 
 export type UpdateConfigPayload = {
@@ -188,6 +194,17 @@ export type UpdateConfigPayload = {
   openai_compatible_base_url?: string;
   openai_compatible_api_key?: string;
   openai_compatible_model?: string;
+  slack_webhook_url?: string;
+  jira_url?: string;
+  jira_api_token?: string;
+  jira_project_key?: string;
+  jira_issue_type?: string;
+  jira_auto_create_severity?: string;
+};
+
+export type TestConnectionResult = {
+  success: boolean;
+  message: string;
 };
 
 export function githubBlobUrl(repoUrl: string, branch: string, filePath: string, lineStart?: number | null): string {
@@ -445,7 +462,19 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     headers,
   });
-  if (!res.ok) throw new Error(`API ${path} failed: ${res.status}`);
+  if (!res.ok) {
+    // Surface FastAPI's real {"detail": "..."} error body when present (e.g.
+    // the real Slack/Jira error text from test-connection) rather than just
+    // the status code.
+    let detail: string | undefined;
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // response body wasn't JSON -- fall through to the generic message
+    }
+    throw new Error(detail || `API ${path} failed: ${res.status}`);
+  }
   return res.json();
 }
 
@@ -647,6 +676,16 @@ export const api = {
   getConfig: () => jsonFetch<PlatformConfigView>("/api/config"),
   updateConfig: (payload: UpdateConfigPayload) =>
     jsonFetch<PlatformConfigView>("/api/config", { method: "POST", body: JSON.stringify(payload) }),
+  testSlack: (webhookUrl?: string) =>
+    jsonFetch<TestConnectionResult>("/api/config/test-slack", {
+      method: "POST",
+      body: JSON.stringify({ webhook_url: webhookUrl || undefined }),
+    }),
+  testJira: (jiraUrl?: string, apiToken?: string) =>
+    jsonFetch<TestConnectionResult>("/api/config/test-jira", {
+      method: "POST",
+      body: JSON.stringify({ jira_url: jiraUrl || undefined, jira_api_token: apiToken || undefined }),
+    }),
   toolsHealth: () =>
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(
       "/api/tools/health"

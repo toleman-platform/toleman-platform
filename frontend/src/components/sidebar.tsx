@@ -12,6 +12,7 @@ import {
   GitPullRequest,
   Globe,
   Package,
+  FileText,
   Settings,
   UserCog,
   LogOut,
@@ -34,6 +35,7 @@ const NAV_ITEMS = [
   { href: "/pr-history", label: "PR History", icon: GitPullRequest },
   { href: "/api-discovery", label: "API Discovery", icon: Globe },
   { href: "/sbom", label: "SBOM & OSS Vulns", icon: Package },
+  { href: "/reports", label: "Compliance Reports", icon: FileText },
 ];
 
 const BOTTOM_ITEMS = [

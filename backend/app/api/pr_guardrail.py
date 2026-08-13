@@ -33,6 +33,21 @@ def _get_target(target_id: int, session: Session) -> Target:
     return target
 
 
+def _get_pr_scan_scoped(pr_scan_id: int, session: Session, user: User) -> PRGuardrailScan:
+    """Load a PRGuardrailScan and 404 if the caller can't see its target's
+    workspace (mirrors the accessible_workspace_ids 404-not-403 pattern from
+    #57, in app/api/targets.py and app/api/findings.py)."""
+    pr_scan = session.get(PRGuardrailScan, pr_scan_id)
+    if not pr_scan:
+        raise HTTPException(status_code=404, detail="pr guardrail scan not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        target = session.get(Target, pr_scan.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="pr guardrail scan not found")
+    return pr_scan
+
+
 def _finding_out(f: PRGuardrailFinding) -> dict:
     return {
         "id": f.id,
@@ -172,11 +187,13 @@ def pr_guardrail_log(
 
 
 @router.get("/{pr_scan_id}/findings")
-def list_pr_guardrail_findings(pr_scan_id: int, session: Session = Depends(get_session)):
+def list_pr_guardrail_findings(
+    pr_scan_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Persisted net-new findings for one PR scan, with ignore-request state."""
-    pr_scan = session.get(PRGuardrailScan, pr_scan_id)
-    if not pr_scan:
-        raise HTTPException(status_code=404, detail="pr guardrail scan not found")
+    pr_scan = _get_pr_scan_scoped(pr_scan_id, session, user)
     findings = session.exec(
         select(PRGuardrailFinding).where(PRGuardrailFinding.pr_scan_id == pr_scan_id)
     ).all()
@@ -260,11 +277,14 @@ def reject_ignore(
 
 
 @router.post("/{pr_scan_id}/override")
-def override_pr_guardrail_scan(pr_scan_id: int, body: dict, session: Session = Depends(get_session)):
+def override_pr_guardrail_scan(
+    pr_scan_id: int,
+    body: dict,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """AppSec accept-risk override for a blocked PR (architecture doc §6)."""
-    pr_scan = session.get(PRGuardrailScan, pr_scan_id)
-    if not pr_scan:
-        raise HTTPException(status_code=404, detail="pr guardrail scan not found")
+    pr_scan = _get_pr_scan_scoped(pr_scan_id, session, user)
 
     reason = (body or {}).get("reason", "")
     if not reason:

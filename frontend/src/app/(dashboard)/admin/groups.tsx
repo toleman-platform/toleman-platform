@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, Group, WorkspaceSummary } from "@/lib/api";
+import { api, EnforcementMode, Group, WorkspaceSummary } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { EnforcementModeSelect } from "@/components/enforcement-mode-select";
 import { Tag, Trash2 } from "lucide-react";
 
 const SWATCHES = ["#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563eb", "#7c3aed", "#c026d3"];
@@ -24,6 +25,7 @@ export function Groups() {
   const [name, setName] = useState("");
   const [color, setColor] = useState(SWATCHES[0]);
   const [saving, setSaving] = useState(false);
+  const [wsEnforcementBusy, setWsEnforcementBusy] = useState(false);
 
   useEffect(() => {
     api.workspaces().then((list) => {
@@ -31,6 +33,33 @@ export function Groups() {
       if (list.length > 0) setWorkspaceId(list[0].id);
     });
   }, []);
+
+  const activeWorkspace = workspaces?.find((w) => w.id === workspaceId) ?? null;
+
+  async function changeWorkspaceEnforcement(mode: EnforcementMode | null) {
+    if (!workspaceId) return;
+    setWsEnforcementBusy(true);
+    setError(null);
+    try {
+      const updated = await api.updateWorkspace(workspaceId, { enforcement_mode: mode });
+      setWorkspaces((prev) => (prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to update workspace enforcement mode");
+    } finally {
+      setWsEnforcementBusy(false);
+    }
+  }
+
+  async function changeGroupEnforcement(groupId: number, mode: EnforcementMode | null) {
+    if (!workspaceId) return;
+    setError(null);
+    try {
+      const updated = await api.updateGroup(groupId, { enforcement_mode: mode });
+      setGroups((prev) => (prev ? prev.map((g) => (g.id === updated.id ? updated : g)) : prev));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to update group enforcement mode");
+    }
+  }
 
   function refresh(wsId: number) {
     setLoading(true);
@@ -106,6 +135,20 @@ export function Groups() {
             </select>
           )}
 
+          {activeWorkspace && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2">
+              <span className="text-xs text-muted-foreground">
+                Workspace-level PR Guardrail enforcement (fallback when a target and its groups have none set):
+              </span>
+              <EnforcementModeSelect
+                value={activeWorkspace.enforcement_mode}
+                onChange={changeWorkspaceEnforcement}
+                disabled={wsEnforcementBusy}
+                inheritLabel="Default (Block)"
+              />
+            </div>
+          )}
+
           {workspaceId != null && (
             <>
               <div className="flex flex-wrap items-center gap-2">
@@ -150,14 +193,20 @@ export function Groups() {
                       >
                         {g.name}
                       </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="shrink-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => removeGroup(g.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <EnforcementModeSelect
+                          value={g.enforcement_mode}
+                          onChange={(mode) => changeGroupEnforcement(g.id, mode)}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeGroup(g.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   ))
                 )}

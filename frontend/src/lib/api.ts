@@ -16,6 +16,18 @@ export const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_A
 // below).
 export type GroupBadge = { id: number; name: string; color: string };
 
+// PR Guardrail enforcement mode (issue #62): whether a policy-blocking PR
+// Guardrail scan actually fails the build ("block"), just warns via a
+// non-blocking commit status ("alert"), or PR Guardrail doesn't run at all
+// ("disabled"). Settable at Target/Group/Workspace level with
+// most-specific-wins inheritance -- null means "inherit", not "alert".
+export type EnforcementMode = "block" | "alert" | "disabled";
+// Where an *effective* (resolved) enforcement mode came from -- surfaced on
+// GET /api/targets/{id} as effective_enforcement_mode/enforcement_mode_source
+// so the target detail page can show "Enforcement: Block (inherited from
+// workspace)" instead of just a raw settable field.
+export type EnforcementModeSource = "target" | "group" | "workspace" | "default";
+
 export type Target = {
   id: number;
   workspace_id: number;
@@ -29,6 +41,13 @@ export type Target = {
   // .github/workflows/osp-scan.yml has been opened against this target's repo.
   pipeline_integrated: boolean;
   pipeline_pr_url: string | null;
+  // Issue #62. enforcement_mode is this target's own raw override (null =
+  // no override, inherit). effective_enforcement_mode/enforcement_mode_source
+  // are only present on GET /api/targets/{id} (single-target detail), not
+  // the list endpoint.
+  enforcement_mode: EnforcementMode | null;
+  effective_enforcement_mode?: EnforcementMode;
+  enforcement_mode_source?: EnforcementModeSource;
 };
 
 // GET /api/targets/{id}/pipeline-workflow (issue #66) -- generated,
@@ -84,6 +103,9 @@ export type Group = {
   name: string;
   color: string;
   created_at: string;
+  // Issue #62: group-level enforcement-mode override, applied to every
+  // target carrying this group (null = no override, inherit from workspace).
+  enforcement_mode: EnforcementMode | null;
 };
 
 export type Finding = {
@@ -171,7 +193,15 @@ export type FindingsQuery = {
 
 export type AuthUser = { id: number; email: string; name: string; role: string };
 
-export type WorkspaceSummary = { id: number; name: string; organization_id: number };
+export type WorkspaceSummary = {
+  id: number;
+  name: string;
+  organization_id: number;
+  // Issue #62: workspace-level enforcement-mode fallback, used when a target
+  // and all of its groups have no override configured (null = no override,
+  // falls back to the hardcoded "block" default).
+  enforcement_mode: EnforcementMode | null;
+};
 
 export type WorkspaceRole = "viewer" | "developer" | "security_engineer";
 
@@ -429,7 +459,7 @@ export const api = {
     jsonFetch<Group[]>(`/api/groups${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
   createGroup: (g: { workspace_id: number; name: string; color?: string }) =>
     jsonFetch<Group>("/api/groups", { method: "POST", body: JSON.stringify(g) }),
-  updateGroup: (id: number, patch: { name?: string; color?: string }) =>
+  updateGroup: (id: number, patch: { name?: string; color?: string; enforcement_mode?: EnforcementMode | null }) =>
     jsonFetch<Group>(`/api/groups/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteGroup: (id: number) => jsonFetch<{ ok: boolean }>(`/api/groups/${id}`, { method: "DELETE" }),
   targetGroups: (targetId: number) => jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups`),
@@ -553,6 +583,9 @@ export const api = {
     jsonFetch<AuthUser>(`/api/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
   workspaces: () => jsonFetch<WorkspaceSummary[]>("/api/workspaces"),
+  // Issue #62: workspace-level enforcement-mode fallback setting.
+  updateWorkspace: (id: number, patch: { enforcement_mode?: EnforcementMode | null }) =>
+    jsonFetch<WorkspaceSummary>(`/api/workspaces/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   workspaceMemberships: (workspaceId?: number) =>
     jsonFetch<WorkspaceMembership[]>(`/api/admin/workspace-roles${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
   assignWorkspaceRole: (userId: number, workspaceId: number, role: WorkspaceRole) =>

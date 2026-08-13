@@ -10,11 +10,12 @@ router (see pr_guardrail.router's findings/ignore routes under target-scoped
 scans).
 """
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
 from app.api.deps import get_session
+from app.core.enforcement import VALID_ENFORCEMENT_MODES
 from app.models.models import Group, TargetGroup, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
@@ -29,6 +30,16 @@ class CreateGroupRequest(BaseModel):
 class UpdateGroupRequest(BaseModel):
     name: str | None = None
     color: str | None = None
+    # PR Guardrail enforcement mode override (issue #62) for every target
+    # carrying this group. Explicit null clears the override.
+    enforcement_mode: str | None = None
+
+    @field_validator("enforcement_mode")
+    @classmethod
+    def _check_enforcement_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_ENFORCEMENT_MODES:
+            raise ValueError(f"enforcement_mode must be one of {sorted(VALID_ENFORCEMENT_MODES)} or null")
+        return v
 
 
 @router.get("")

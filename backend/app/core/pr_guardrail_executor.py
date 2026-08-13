@@ -13,6 +13,7 @@ import httpx
 from sqlmodel import Session, select
 
 from app.core.dedup import compute_dedup_hash
+from app.core.enforcement import resolve_enforcement_mode
 from app.core.github import get_github_token, github_get, repo_slug_from_url
 from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
 from app.core.policy import apply_policies
@@ -212,7 +213,31 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
     persisted default-branch discovery set, persist a PRGuardrailScan +
     PRGuardrailFinding rows, best-effort post a PR comment + commit status.
     Returns the same response shape regardless of caller (on-demand API
-    route, webhook handler, or Celery task)."""
+    route, webhook handler, or Celery task).
+
+    Enforcement mode (issue #62, app.core.enforcement.resolve_enforcement_mode)
+    gates this at the very top: "disabled" means PR Guardrail doesn't run for
+    this target/PR at all -- no clone, no PRGuardrailScan row, no PR comment,
+    no commit status. "block"/"alert" both run the full scan below; the
+    difference between them only affects the commit status sent to GitHub
+    at the end (see the set_commit_status call)."""
+    enforcement_mode = resolve_enforcement_mode(session, target)
+    if enforcement_mode == "disabled":
+        logger.info(
+            "PR guardrail: enforcement_mode=disabled for target %s, skipping scan for PR #%s",
+            target.id, pr_number,
+        )
+        return {
+            "pr_scan_id": None,
+            "status": "disabled",
+            "new_findings_count": 0,
+            "highest_new_severity": None,
+            "new_endpoints_count": 0,
+            "new_findings": [],
+            "new_endpoints": [],
+            "enforcement_mode": enforcement_mode,
+        }
+
     slug = repo_slug_from_url(target.repo_url)
 
     pr_res = github_get(f"/repos/{slug}/pulls/{pr_number}")
@@ -295,13 +320,22 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
         comment_body = render_comment(persisted_findings, new_endpoints, status, target.id, pr_scan.id)
         post_pr_comment(session, target, pr_number, comment_body)
-        set_commit_status(
-            session,
-            target,
-            head_sha,
-            "success" if status == PRGuardrailStatus.PASSED else "failure",
-            f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)",
-        )
+
+        summary_desc = f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)"
+        if status == PRGuardrailStatus.PASSED:
+            commit_state, commit_desc = "success", summary_desc
+        elif enforcement_mode == "alert":
+            # Alert mode: real blocking findings exist, but this
+            # target/group/workspace is configured to warn rather than fail
+            # the build. GitHub commit statuses only support
+            # success/failure/pending/error -- there's no dedicated "neutral"
+            # state -- so we use "success" (non-blocking) with a description
+            # that makes clear this is alert-mode, not a clean scan.
+            commit_state, commit_desc = "success", f"[alert mode, non-blocking] {summary_desc}"
+        else:
+            commit_state, commit_desc = "failure", summary_desc
+
+        set_commit_status(session, target, head_sha, commit_state, commit_desc)
 
         return {
             "pr_scan_id": pr_scan.id,
@@ -311,6 +345,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             "new_endpoints_count": pr_scan.new_endpoints_count,
             "new_findings": [finding_summary(f) for f in net_new[:MAX_NEW_FINDINGS_IN_RESPONSE]],
             "new_endpoints": new_endpoints[:MAX_NEW_ENDPOINTS_IN_RESPONSE],
+            "enforcement_mode": enforcement_mode,
         }
     except Exception as exc:
         pr_scan.status = PRGuardrailStatus.ERROR

@@ -1,13 +1,29 @@
 import secrets
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
-from app.api.auth import require_admin
-from app.models.models import Organization, User, Workspace
+from app.api.auth import require_admin, require_workspace_role
+from app.core.enforcement import VALID_ENFORCEMENT_MODES
+from app.models.models import Organization, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+class UpdateWorkspaceRequest(BaseModel):
+    # PR Guardrail enforcement mode override (issue #62), the workspace-level
+    # fallback below any group/target override. Explicit null clears it,
+    # falling back to the hardcoded "block" default (see app.core.enforcement).
+    enforcement_mode: str | None = None
+
+    @field_validator("enforcement_mode")
+    @classmethod
+    def _check_enforcement_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in VALID_ENFORCEMENT_MODES:
+            raise ValueError(f"enforcement_mode must be one of {sorted(VALID_ENFORCEMENT_MODES)} or null")
+        return v
 
 
 @router.get("")
@@ -16,6 +32,27 @@ def list_workspaces(session: Session = Depends(get_session)):
     list, not just the ones a target happens to already exist under, since
     this app is no longer assumed single-workspace)."""
     return session.exec(select(Workspace)).all()
+
+
+@router.patch("/{workspace_id}")
+def update_workspace(
+    workspace_id: int,
+    payload: UpdateWorkspaceRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Partial update for workspace-level settings (issue #62's
+    enforcement_mode fallback today; follows the same exclude_unset PATCH
+    shape as PATCH /api/targets/{id} and PATCH /api/groups/{id})."""
+    workspace = session.get(Workspace, workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(workspace, field, value)
+    session.add(workspace)
+    session.commit()
+    session.refresh(workspace)
+    return workspace
 
 
 @router.post("/bootstrap")

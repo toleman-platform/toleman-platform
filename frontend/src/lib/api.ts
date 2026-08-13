@@ -278,6 +278,22 @@ export type PrGuardrailLogEntry = {
   override_reason: string;
   created_at: string;
   completed_at: string | null;
+  // Present only on org-wide log rows (issue #64) -- a single-target log
+  // doesn't need these since the picker already implies the target.
+  target_id?: number;
+  target_name?: string | null;
+};
+export type PrGuardrailOrgStats = {
+  total: number;
+  passed: number;
+  blocked: number;
+  overridden: number;
+  error: number;
+  running: number;
+};
+export type PrGuardrailOrgLog = {
+  scans: PrGuardrailLogEntry[];
+  stats: PrGuardrailOrgStats;
 };
 
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -486,6 +502,7 @@ export const api = {
     ),
   getPrGuardrailLog: (targetId: number) =>
     jsonFetch<PrGuardrailLogEntry[]>(`/api/pr-guardrail/log?target_id=${targetId}`),
+  getPrGuardrailOrgLog: () => jsonFetch<PrGuardrailOrgLog>("/api/pr-guardrail/log"),
   overridePrGuardrail: (prScanId: number, reason: string) =>
     jsonFetch<PrGuardrailLogEntry>(`/api/pr-guardrail/${prScanId}/override`, {
       method: "POST",

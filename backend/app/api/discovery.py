@@ -1,16 +1,21 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
-from app.core.config import settings
-from app.models.models import ApiEndpoint, Target, User, WorkspaceRole
-from app.scanners import runner
-from app.scanners.discovery import discover_endpoints
+from app.core.discovery_ingestion import upsert_endpoints  # noqa: F401 -- re-exported, see docstring below
+from app.models.models import ApiEndpoint, DiscoveryRun, Target, User, WorkspaceRole
+from app.tasks.discovery_tasks import run_discovery as run_discovery_task
 
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
+
+# upsert_endpoints used to be defined in this module; it now lives in
+# app.core.discovery_ingestion (#59) so app.tasks.discovery_tasks -- which
+# does the actual clone+discover work on a Celery worker -- can import it
+# without an app.api.discovery <-> app.tasks.discovery_tasks import cycle.
+# Re-imported above (not re-implemented) so `from app.api.discovery import
+# upsert_endpoints` (used by tests) keeps working unchanged.
 
 
 def _get_target(target_id: int, session: Session) -> Target:
@@ -20,71 +25,64 @@ def _get_target(target_id: int, session: Session) -> Target:
     return target
 
 
-def upsert_endpoints(session: Session, target_id: int, branch: str, discovered: list[dict]) -> list[ApiEndpoint]:
-    """Persist discovered endpoints (upsert on target+branch+method+route+file_path),
-    returning the subset that are new since the last run (first_seen == last_seen
-    on this call, i.e. just created) -- same net-new pattern already used for
-    Finding dedup and PR Guardrail."""
-    existing = {
-        (e.method, e.route, e.file_path): e
-        for e in session.exec(
-            select(ApiEndpoint).where(ApiEndpoint.target_id == target_id, ApiEndpoint.branch == branch)
-        ).all()
-    }
-
-    now = datetime.utcnow()
-    new_endpoints: list[ApiEndpoint] = []
-    for item in discovered:
-        key = (item["method"], item["route"], item["file"])
-        existing_row = existing.get(key)
-        if existing_row:
-            existing_row.last_seen = now
-            existing_row.line = item.get("line")
-            session.add(existing_row)
-        else:
-            row = ApiEndpoint(
-                target_id=target_id,
-                branch=branch,
-                framework=item["framework"],
-                method=item["method"],
-                route=item["route"],
-                file_path=item["file"],
-                line=item.get("line"),
-                first_seen=now,
-                last_seen=now,
-            )
-            session.add(row)
-            new_endpoints.append(row)
-            existing[key] = row
-
-    session.commit()
-    for row in new_endpoints:
-        session.refresh(row)
-    return new_endpoints
-
-
 @router.post("/{target_id}")
 def run_discovery(
     target_id: int,
     session: Session = Depends(get_session),
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
-    """Run discovery against the target's default branch, upsert results, and
-    report which endpoints are new since the last run."""
+    """Dispatch an async API Discovery run (#59) instead of cloning+grepping
+    synchronously inside the request handler -- a handful of concurrent
+    requests here used to be enough to exhaust FastAPI's threadpool. Creates
+    a DiscoveryRun row (status="running"), hands the actual clone+discover
+    work to app.tasks.discovery_tasks.run_discovery via .delay(), and
+    returns immediately with the run's id. Poll
+    GET /api/discovery/{target_id}/runs/{run_id} until status leaves
+    "running" to get the same endpoints/new_count payload this used to
+    return synchronously."""
     target = _get_target(target_id, session)
-    repo_path = runner.clone_repo(target.repo_url, target.default_branch, settings.github_token)
-    discovered = discover_endpoints(repo_path)
-    new_endpoints = upsert_endpoints(session, target_id, target.default_branch, discovered)
 
-    all_endpoints = session.exec(
-        select(ApiEndpoint).where(ApiEndpoint.target_id == target_id, ApiEndpoint.branch == target.default_branch)
-    ).all()
-    new_ids = {e.id for e in new_endpoints}
-    return {
-        "target_id": target_id,
-        "count": len(all_endpoints),
-        "new_count": len(new_endpoints),
-        "endpoints": [
+    run = DiscoveryRun(target_id=target_id, branch=target.default_branch, status="running")
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    run_discovery_task.delay(target_id=target_id, run_id=run.id)
+
+    return JSONResponse(
+        status_code=202,
+        content={"run_id": run.id, "target_id": target_id, "status": run.status},
+    )
+
+
+@router.get("/{target_id}/runs/{run_id}")
+def get_discovery_run(target_id: int, run_id: int, session: Session = Depends(get_session)):
+    """Poll target for an async discovery run dispatched by POST above.
+    Once status leaves "running", also returns the same endpoints/new_count
+    payload the old synchronous POST used to return directly."""
+    run = session.get(DiscoveryRun, run_id)
+    if not run or run.target_id != target_id:
+        raise HTTPException(status_code=404, detail="discovery run not found")
+
+    target = _get_target(target_id, session)
+    payload = {
+        "run_id": run.id,
+        "target_id": run.target_id,
+        "status": run.status,
+        "count": run.count,
+        "new_count": run.new_count,
+        "error": run.error,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+    }
+    if run.status != "running":
+        new_id_set = {int(x) for x in run.new_ids.split(",") if x}
+        all_endpoints = session.exec(
+            select(ApiEndpoint).where(
+                ApiEndpoint.target_id == target_id, ApiEndpoint.branch == target.default_branch
+            )
+        ).all()
+        payload["endpoints"] = [
             {
                 "id": e.id,
                 "framework": e.framework,
@@ -92,13 +90,13 @@ def run_discovery(
                 "route": e.route,
                 "file": e.file_path,
                 "line": e.line,
-                "is_new": e.id in new_ids,
+                "is_new": e.id in new_id_set,
                 "first_seen": e.first_seen,
                 "last_seen": e.last_seen,
             }
             for e in all_endpoints
-        ],
-    }
+        ]
+    return payload
 
 
 @router.get("/{target_id}")

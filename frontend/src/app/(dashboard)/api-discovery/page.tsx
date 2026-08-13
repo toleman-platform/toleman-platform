@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, Target, Endpoint } from "@/lib/api";
+import { pollUntilSettled } from "@/lib/poll";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,12 +28,18 @@ export default function ApiDiscoveryPage() {
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" column at all until a POST has completed here.
   const [scanSummary, setScanSummary] = useState<{ new_count: number } | null>(null);
+  const cancelPollRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     api.targets().then((ts) => {
       setTargets(ts);
       if (ts.length > 0) setTargetId(ts[0].id);
     });
+  }, []);
+
+  useEffect(() => {
+    // Stop polling if the component unmounts (e.g. navigating away) mid-run.
+    return () => cancelPollRef.current?.();
   }, []);
 
   const loadPersisted = useCallback(async (id: number) => {
@@ -55,15 +62,37 @@ export default function ApiDiscoveryPage() {
 
   async function run() {
     if (targetId === null) return;
+    const runTargetId = targetId;
     setRunning(true);
     setError(null);
+    cancelPollRef.current?.();
     try {
-      const res = await api.runDiscovery(targetId);
-      setEndpoints(res.endpoints);
-      setScanSummary({ new_count: res.new_count });
+      // POST /api/discovery/{target_id} now dispatches a Celery task and
+      // returns immediately with status: "running" (#59) instead of
+      // blocking until the clone+grep finishes -- poll
+      // GET /api/discovery/{target_id}/runs/{run_id} until it's done.
+      const dispatch = await api.runDiscovery(runTargetId);
+      cancelPollRef.current = pollUntilSettled(
+        () => api.getDiscoveryRun(runTargetId, dispatch.run_id),
+        (run) => {
+          if (run.status === "completed") {
+            setEndpoints(run.endpoints ?? []);
+            setScanSummary({ new_count: run.new_count });
+            setRunning(false);
+          } else if (run.status === "failed") {
+            setError(run.error || "discovery failed");
+            setRunning(false);
+          }
+        },
+        {
+          onError: (e) => {
+            setError(e instanceof Error ? e.message : "discovery failed");
+            setRunning(false);
+          },
+        },
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "discovery failed");
-    } finally {
       setRunning(false);
     }
   }

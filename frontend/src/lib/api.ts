@@ -133,6 +133,47 @@ export type SbomComponent = {
   first_seen: string;
   last_seen: string;
 };
+
+// Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows
+// (#59) -- every POST that used to clone+scan synchronously now returns one
+// of these immediately, and the frontend polls the matching GET until
+// status leaves "running".
+export type RunStatus = "running" | "completed" | "failed";
+
+export type ScanRun = {
+  scan_id: number;
+  target_id: number;
+  tool: string;
+  branch: string;
+  status: RunStatus;
+  findings_count: number;
+  started_at: string;
+  completed_at: string | null;
+};
+
+export type DiscoveryRunResult = {
+  run_id: number;
+  target_id: number;
+  status: RunStatus;
+  count: number;
+  new_count: number;
+  error: string;
+  started_at: string;
+  completed_at: string | null;
+  endpoints?: Endpoint[];
+};
+
+export type SbomRunResult = {
+  run_id: number;
+  target_id: number;
+  status: RunStatus;
+  count: number;
+  new_count: number;
+  error: string;
+  started_at: string;
+  completed_at: string | null;
+  components?: SbomComponent[];
+};
 export type OrgSbomComponent = {
   name: string;
   version: string;
@@ -292,11 +333,16 @@ export const api = {
   posture: () => jsonFetch<{ target: Target; breakdown: Record<string, Record<string, number>> }[]>(
     "/api/dashboard/posture"
   ),
+  // Dispatches a Celery task and returns immediately with status: "running"
+  // (#59) -- callers must poll api.getScan(scan_id) until status leaves
+  // "running". target-not-found/unsupported-tool are still synchronous
+  // 200 { error } responses (validated before dispatch).
   runScan: (targetId: number, tool: string) =>
-    jsonFetch<{ scan_id: number; ingested: number } | { error: string }>(
+    jsonFetch<{ scan_id: number; status: RunStatus } | { error: string }>(
       `/api/scans/run?target_id=${targetId}&tool=${tool}`,
       { method: "POST" }
     ),
+  getScan: (scanId: number) => jsonFetch<ScanRun | { error: string }>(`/api/scans/${scanId}`),
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   workspaceKey: (targetId: number) =>
@@ -306,18 +352,25 @@ export const api = {
   prs: (targetId: number) => jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`),
   getDiscoveredEndpoints: (targetId: number) =>
     jsonFetch<{ target_id: number; count: number; endpoints: Endpoint[] }>(`/api/discovery/${targetId}`),
+  // Dispatches a Celery task and returns immediately with run_id/status:
+  // "running" (#59) -- poll api.getDiscoveryRun(targetId, run_id) until
+  // status leaves "running".
   runDiscovery: (targetId: number) =>
-    jsonFetch<{ target_id: number; count: number; new_count: number; endpoints: Endpoint[] }>(
-      `/api/discovery/${targetId}`,
-      { method: "POST" }
-    ),
+    jsonFetch<{ run_id: number; target_id: number; status: RunStatus }>(`/api/discovery/${targetId}`, {
+      method: "POST",
+    }),
+  getDiscoveryRun: (targetId: number, runId: number) =>
+    jsonFetch<DiscoveryRunResult>(`/api/discovery/${targetId}/runs/${runId}`),
   getSbom: (targetId: number) =>
     jsonFetch<{ target_id: number; count: number; components: SbomComponent[] }>(`/api/sbom/${targetId}`),
+  // Dispatches a Celery task and returns immediately with run_id/status:
+  // "running" (#59) -- poll api.getSbomRun(targetId, run_id) until status
+  // leaves "running".
   generateSbom: (targetId: number) =>
-    jsonFetch<{ target_id: number; count: number; new_count: number; components: SbomComponent[] }>(
-      `/api/sbom/${targetId}`,
-      { method: "POST" }
-    ),
+    jsonFetch<{ run_id: number; target_id: number; status: RunStatus }>(`/api/sbom/${targetId}`, {
+      method: "POST",
+    }),
+  getSbomRun: (targetId: number, runId: number) => jsonFetch<SbomRunResult>(`/api/sbom/${targetId}/runs/${runId}`),
   exportSbom: async (targetId: number): Promise<Blob> => {
     const res = await fetch(`${API_URL}/api/sbom/${targetId}/export`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);

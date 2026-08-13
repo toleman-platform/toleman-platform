@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   Target,
@@ -9,6 +9,7 @@ import {
   OrgSbomComponent,
   OrgSbomResult,
 } from "@/lib/api";
+import { pollUntilSettled } from "@/lib/poll";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,12 +93,18 @@ export default function SbomPage() {
   const [orgError, setOrgError] = useState<string | null>(null);
   const [orgExporting, setOrgExporting] = useState(false);
   const [orgSearch, setOrgSearch] = useState("");
+  const cancelPollRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     api.targets().then((ts) => {
       setTargets(ts);
       if (ts.length > 0) setTargetId(ts[0].id);
     });
+  }, []);
+
+  useEffect(() => {
+    // Stop polling if the component unmounts (e.g. navigating away) mid-run.
+    return () => cancelPollRef.current?.();
   }, []);
 
   const loadOrgSbom = useCallback(async () => {
@@ -192,15 +199,37 @@ export default function SbomPage() {
 
   async function run() {
     if (targetId === null) return;
+    const runTargetId = targetId;
     setRunning(true);
     setError(null);
+    cancelPollRef.current?.();
     try {
-      const res = await api.generateSbom(targetId);
-      setComponents(res.components);
-      setScanSummary({ new_count: res.new_count });
+      // POST /api/sbom/{target_id} now dispatches a Celery task and returns
+      // immediately with status: "running" (#59) instead of blocking until
+      // the clone+trivy scan finishes -- poll
+      // GET /api/sbom/{target_id}/runs/{run_id} until it's done.
+      const dispatch = await api.generateSbom(runTargetId);
+      cancelPollRef.current = pollUntilSettled(
+        () => api.getSbomRun(runTargetId, dispatch.run_id),
+        (run) => {
+          if (run.status === "completed") {
+            setComponents(run.components ?? []);
+            setScanSummary({ new_count: run.new_count });
+            setRunning(false);
+          } else if (run.status === "failed") {
+            setError(run.error || "SBOM generation failed");
+            setRunning(false);
+          }
+        },
+        {
+          onError: (e) => {
+            setError(e instanceof Error ? e.message : "SBOM generation failed");
+            setRunning(false);
+          },
+        },
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "SBOM generation failed");
-    } finally {
       setRunning(false);
     }
   }

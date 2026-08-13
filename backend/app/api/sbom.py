@@ -7,12 +7,18 @@ from sqlmodel import Session, select
 
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
-from app.core.config import settings
-from app.models.models import SbomComponent, Target, User, WorkspaceRole
-from app.scanners import runner
-from app.scanners.parsers import parse_trivy_sbom
+from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
+from app.models.models import SbomComponent, SbomRun, Target, User, WorkspaceRole
+from app.tasks.sbom_tasks import run_sbom_generation
 
 router = APIRouter(prefix="/api/sbom", tags=["sbom"])
+
+# upsert_components used to be defined in this module; it now lives in
+# app.core.sbom_ingestion (#59) so app.tasks.sbom_tasks -- which does the
+# actual clone+scan work on a Celery worker -- can import it without an
+# app.api.sbom <-> app.tasks.sbom_tasks import cycle. Re-imported above (not
+# re-implemented) so `from app.api.sbom import upsert_components` (used by
+# tests) keeps working unchanged.
 
 
 def _get_target(target_id: int, session: Session) -> Target:
@@ -20,46 +26,6 @@ def _get_target(target_id: int, session: Session) -> Target:
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     return target
-
-
-def upsert_components(session: Session, target_id: int, branch: str, discovered: list[dict]) -> list[SbomComponent]:
-    """Persist SBOM components (upsert on target+branch+name+version+purl),
-    returning the subset that are new since the last run -- same net-new
-    pattern used for ApiEndpoint (see upsert_endpoints() in discovery.py)."""
-    existing = {
-        (c.name, c.version, c.purl): c
-        for c in session.exec(
-            select(SbomComponent).where(SbomComponent.target_id == target_id, SbomComponent.branch == branch)
-        ).all()
-    }
-
-    now = datetime.utcnow()
-    new_components: list[SbomComponent] = []
-    for item in discovered:
-        key = (item["name"], item["version"], item["purl"])
-        existing_row = existing.get(key)
-        if existing_row:
-            existing_row.last_seen = now
-            existing_row.package_type = item.get("package_type", "")
-            session.add(existing_row)
-        else:
-            row = SbomComponent(
-                target_id=target_id,
-                branch=branch,
-                name=item["name"],
-                version=item["version"],
-                package_type=item.get("package_type", ""),
-                purl=item["purl"],
-                first_seen=now,
-                last_seen=now,
-            )
-            session.add(row)
-            new_components.append(row)
-
-    session.commit()
-    for row in new_components:
-        session.refresh(row)
-    return new_components
 
 
 def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]:
@@ -185,24 +151,60 @@ def generate_sbom(
     session: Session = Depends(get_session),
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
-    """Clone the target's default branch, run trivy's CycloneDX SBOM scan,
-    upsert components, and report which are new since the last run."""
+    """Dispatch an async SBOM generation run (#59) instead of cloning+
+    running trivy synchronously inside the request handler -- a handful of
+    concurrent requests here used to be enough to exhaust FastAPI's
+    threadpool. Creates a SbomRun row (status="running"), hands the actual
+    clone+scan work to app.tasks.sbom_tasks.run_sbom_generation via
+    .delay(), and returns immediately with the run's id. Poll
+    GET /api/sbom/{target_id}/runs/{run_id} until status leaves "running" to
+    get the same components/new_count payload this used to return
+    synchronously."""
     target = _get_target(target_id, session)
-    repo_path = runner.clone_repo(target.repo_url, target.default_branch, settings.github_token)
-    raw = runner.run_tool("trivy-sbom", repo_path)
-    discovered = parse_trivy_sbom(raw)
-    new_components = upsert_components(session, target_id, target.default_branch, discovered)
 
-    all_components = session.exec(
-        select(SbomComponent).where(SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch)
-    ).all()
-    new_ids = {c.id for c in new_components}
-    return {
-        "target_id": target_id,
-        "count": len(all_components),
-        "new_count": len(new_components),
-        "components": _serialize(all_components, new_ids),
+    run = SbomRun(target_id=target_id, branch=target.default_branch, status="running")
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    run_sbom_generation.delay(target_id=target_id, run_id=run.id)
+
+    return JSONResponse(
+        status_code=202,
+        content={"run_id": run.id, "target_id": target_id, "status": run.status},
+    )
+
+
+@router.get("/{target_id}/runs/{run_id}")
+def get_sbom_run(target_id: int, run_id: int, session: Session = Depends(get_session)):
+    """Poll target for an async SBOM generation run dispatched by POST
+    above. Once status leaves "running", also returns the same
+    components/new_count payload the old synchronous POST used to return
+    directly."""
+    run = session.get(SbomRun, run_id)
+    if not run or run.target_id != target_id:
+        raise HTTPException(status_code=404, detail="sbom run not found")
+
+    target = _get_target(target_id, session)
+    payload = {
+        "run_id": run.id,
+        "target_id": run.target_id,
+        "status": run.status,
+        "count": run.count,
+        "new_count": run.new_count,
+        "error": run.error,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
     }
+    if run.status != "running":
+        new_id_set = {int(x) for x in run.new_ids.split(",") if x}
+        all_components = session.exec(
+            select(SbomComponent).where(
+                SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch
+            )
+        ).all()
+        payload["components"] = _serialize(all_components, new_id_set)
+    return payload
 
 
 @router.get("/{target_id}")

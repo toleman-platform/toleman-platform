@@ -178,6 +178,30 @@ def enforce_workspace_role(
         )
 
 
+def accessible_workspace_ids(session: Session, user: User) -> list[int] | None:
+    """Issue #57: the set of workspace ids a caller's GET/list requests may
+    return rows from. `None` means "no filter, sees everything" -- reserved
+    for global admins, mirroring the existing admin bypass in
+    enforce_workspace_role. Non-admins get the (possibly empty) list of
+    workspaces they hold a WorkspaceMembership in; a user with zero
+    memberships gets `[]` so list endpoints correctly return nothing rather
+    than erroring or (the #57 bug) returning every workspace's data.
+
+    #32 already gated the write paths (targets/findings mutations) via
+    enforce_workspace_role/require_workspace_role. This is the read-path
+    counterpart: GET/list routes on findings and targets never filtered by
+    workspace at all, so any authenticated user -- including a viewer --
+    could see every workspace's findings and targets.
+    """
+    if user.role == "admin":
+        return None
+    return list(
+        session.exec(
+            select(WorkspaceMembership.workspace_id).where(WorkspaceMembership.user_id == user.id)
+        ).all()
+    )
+
+
 def require_workspace_role(min_role: WorkspaceRole):
     """Dependency factory for routes that operate on one workspace's
     resources. FastAPI binds sub-dependency parameters to the request's

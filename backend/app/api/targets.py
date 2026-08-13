@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
-from app.api.auth import current_user, enforce_workspace_role, require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
 from app.models.models import Target, User, Workspace, WorkspaceRole
 
@@ -44,8 +44,16 @@ class UpdateTargetRequest(BaseModel):
 
 
 @router.get("")
-def list_targets(session: Session = Depends(get_session)):
-    return session.exec(select(Target)).all()
+def list_targets(session: Session = Depends(get_session), user: User = Depends(current_user)):
+    # Issue #57: scope to workspaces the caller is a member of (None = admin,
+    # no filter; [] = no memberships yet -> empty list, not everything).
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return []
+    query = select(Target)
+    if ws_ids is not None:
+        query = query.where(Target.workspace_id.in_(ws_ids))
+    return session.exec(query).all()
 
 
 @router.post("")
@@ -66,8 +74,17 @@ def create_target(
 
 
 @router.get("/{target_id}")
-def get_target(target_id: int, session: Session = Depends(get_session)):
-    return session.get(Target, target_id)
+def get_target(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        # 404 rather than 403 to avoid confirming the target exists in a
+        # workspace the caller can't see (matches the "not found" wording
+        # already used across this codebase for missing resources).
+        raise HTTPException(status_code=404, detail="target not found")
+    return target
 
 
 @router.patch("/{target_id}")
@@ -89,9 +106,15 @@ def update_target(
 
 
 @router.get("/{target_id}/workspace-key")
-def get_workspace_key(target_id: int, session: Session = Depends(get_session)):
+def get_workspace_key(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
     target = session.get(Target, target_id)
     if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    # Issue #57: this returns the workspace's api_key, so an unscoped check
+    # here is worse than the plain read IDOR on the other routes -- it leaks
+    # another workspace's secret, not just its data.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
         raise HTTPException(status_code=404, detail="target not found")
     workspace = session.get(Workspace, target.workspace_id)
     return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}

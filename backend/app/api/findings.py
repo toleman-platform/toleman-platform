@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, func, or_, select
 
-from app.api.auth import current_user, enforce_workspace_role, require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
-from app.models.models import Finding, FindingState, FindingStateLog, Severity, User, WorkspaceRole
+from app.models.models import Finding, FindingState, FindingStateLog, Severity, Target, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/findings", tags=["findings"])
 
@@ -44,8 +44,18 @@ def list_findings(
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> FindingListResponse:
+    # Issue #57: scope to workspaces the caller is a member of (None = admin,
+    # no filter). A caller with no memberships gets ws_ids == [] below, which
+    # short-circuits to an empty page rather than every workspace's findings.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return FindingListResponse(items=[], total=0)
+
     query = select(Finding)
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     if target_id is not None:
         query = query.where(Finding.target_id == target_id)
     if branch is not None:
@@ -76,15 +86,33 @@ def list_findings(
 
 
 @router.get("/facets/tools")
-def list_tool_facets(session: Session = Depends(get_session)) -> list[str]:
-    """Distinct tool names across all findings, for populating the tool filter."""
-    rows = session.exec(select(Finding.tool).distinct()).all()
+def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
+    """Distinct tool names across findings visible to the caller (issue #57),
+    for populating the tool filter."""
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return []
+    query = select(Finding.tool).distinct()
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
+    rows = session.exec(query).all()
     return sorted(rows)
 
 
 @router.get("/{finding_id}")
-def get_finding(finding_id: int, session: Session = Depends(get_session)):
-    return session.get(Finding, finding_id)
+def get_finding(finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        # 404 rather than 403 to avoid confirming the finding exists in a
+        # workspace the caller can't see (matches the "not found" wording
+        # already used across this codebase for missing resources).
+        target = session.get(Target, finding.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="finding not found")
+    return finding
 
 
 @router.post("/bulk-triage")
@@ -129,5 +157,13 @@ def triage_finding(
 
 
 @router.get("/{finding_id}/history")
-def finding_history(finding_id: int, session: Session = Depends(get_session)):
+def finding_history(finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        target = session.get(Target, finding.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="finding not found")
     return session.exec(select(FindingStateLog).where(FindingStateLog.finding_id == finding_id).order_by(FindingStateLog.created_at)).all()

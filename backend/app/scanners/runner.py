@@ -55,6 +55,28 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
     return dest
 
 
+def normalize_file_path(file_path: str, repo_path: Path) -> str:
+    """Strip the scan-scoped clone directory prefix so file_path is relative
+    to the repo root, e.g. "vulnerability/idor/idor.go" not
+    "/tmp/osp-scans/govwa-<scan-id>/vulnerability/idor/idor.go".
+
+    This matters beyond cosmetics: compute_dedup_hash includes file_path, and
+    since clone_repo (above) gives every scan its own unique directory name
+    for isolation, an un-normalized absolute path made the dedup hash change
+    on every single scan -- silently defeating dedup entirely (every rescan
+    created a new Finding instead of updating last_seen on the existing one).
+    Call this on every parsed finding's file_path before hashing/persisting.
+    """
+    if not file_path:
+        return file_path
+    try:
+        return str(Path(file_path).relative_to(repo_path))
+    except ValueError:
+        # Already relative (some tools report paths relative to the scan
+        # root they were invoked against) -- nothing to strip.
+        return file_path
+
+
 def run_tool(tool: str, repo_path: Path) -> dict | list:
     if tool not in TOOL_COMMANDS:
         raise ValueError(f"unsupported tool: {tool}")

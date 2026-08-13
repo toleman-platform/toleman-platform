@@ -55,6 +55,8 @@ def run_native_scan(
         repo_path = runner.clone_repo(target.repo_url, target.default_branch, settings.github_token)
         raw = runner.run_tool(tool, repo_path)
         parsed = PARSER_MAP[tool](raw)
+        for item in parsed:
+            item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
         count = ingest_findings(session, target, scan, tool=tool, branch=target.default_branch, parsed=parsed)
         return {"scan_id": scan.id, "ingested": count}
     except Exception as exc:

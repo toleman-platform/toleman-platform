@@ -6,15 +6,24 @@ app.core.pr_guardrail_executor.execute_pr_guardrail_scan).
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
+from app.api.auth import current_user
 from app.api.deps import get_session
-from app.models.models import PolicyRule, PolicyRuleType
+from app.models.models import PolicyRule, PolicyRuleType, User, Workspace
 
 router = APIRouter(prefix="/api/policies", tags=["policies"])
+
+
+def _get_workspace_or_404(workspace_id: int, session: Session) -> Workspace:
+    workspace = session.get(Workspace, workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    return workspace
 
 
 @router.get("")
 def list_policies(workspace_id: int, session: Session = Depends(get_session)):
     """List active policy rules for a workspace."""
+    _get_workspace_or_404(workspace_id, session)
     return session.exec(
         select(PolicyRule).where(
             PolicyRule.workspace_id == workspace_id,
@@ -24,12 +33,17 @@ def list_policies(workspace_id: int, session: Session = Depends(get_session)):
 
 
 @router.post("")
-def create_policy(body: dict, session: Session = Depends(get_session)):
+def create_policy(
+    body: dict,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     workspace_id = body.get("workspace_id")
     rule_type = body.get("rule_type")
     value = body.get("value")
     if not workspace_id or not rule_type or not value:
         raise HTTPException(status_code=400, detail="workspace_id, rule_type, and value are required")
+    _get_workspace_or_404(workspace_id, session)
     try:
         rule_type = PolicyRuleType(rule_type)
     except ValueError:
@@ -40,7 +54,10 @@ def create_policy(body: dict, session: Session = Depends(get_session)):
         rule_type=rule_type,
         value=value,
         reason=body.get("reason", ""),
-        created_by=body.get("created_by", "system"),
+        # Taken from the authenticated session, never the request body -- a
+        # client-supplied created_by would let anyone forge the audit trail
+        # for who suppressed a finding.
+        created_by=user.email,
     )
     session.add(rule)
     session.commit()

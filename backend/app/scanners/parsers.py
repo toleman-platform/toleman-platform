@@ -112,6 +112,34 @@ def parse_trivy_license(raw: dict) -> list[dict]:
     return out
 
 
+def parse_trivy_sbom(raw: dict) -> list[dict]:
+    """Trivy CycloneDX SBOM output (`trivy fs --format cyclonedx`).
+
+    Distinct schema from the JSON-format parsers above: a flat CycloneDX 1.x
+    `components` array rather than Results[].Vulnerabilities[]. Only
+    type == "library" entries are real dependencies -- "application"
+    components describe the manifest file itself (e.g. requirements.txt)
+    and aren't a package. Package type/ecosystem (pip, npm, gomod, ...)
+    comes from the CycloneDX property named "aquasecurity:trivy:PkgType".
+    """
+    out = []
+    for c in raw.get("components", []):
+        if c.get("type") != "library":
+            continue
+        package_type = ""
+        for prop in c.get("properties", []) or []:
+            if prop.get("name") == "aquasecurity:trivy:PkgType":
+                package_type = prop.get("value", "")
+                break
+        out.append({
+            "name": c.get("name", ""),
+            "version": c.get("version", ""),
+            "package_type": package_type,
+            "purl": c.get("purl", ""),
+        })
+    return out
+
+
 def parse_gosec(raw: dict) -> list[dict]:
     out = []
     for issue in raw.get("Issues", []):
@@ -172,5 +200,6 @@ PARSER_MAP = {
     "gitleaks": parse_gitleaks,
     "trivy": parse_trivy,
     "trivy-license": parse_trivy_license,
+    "trivy-sbom": parse_trivy_sbom,
     "gosec": parse_gosec,
 }

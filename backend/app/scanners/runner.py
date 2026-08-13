@@ -19,6 +19,7 @@ TOOL_COMMANDS = {
     "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", "/dev/stdout", "--no-git", "--exit-code", "0"],
     "trivy": lambda path: ["trivy", "fs", "--format", "json", "--quiet", path],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],
+    "trivy-sbom": lambda path: ["trivy", "fs", "--format", "cyclonedx", "--quiet", path],
     "gosec": lambda path: ["gosec", "-fmt=json", "-quiet", "./..."],
 }
 
@@ -87,8 +88,8 @@ def run_tool(tool: str, repo_path: Path) -> dict | list:
 
     stdout = proc.stdout.strip()
     if not stdout:
-        return {} if tool in ("semgrep", "trivy", "trivy-license", "gosec") else []
+        return {} if tool in ("semgrep", "trivy", "trivy-license", "trivy-sbom", "gosec") else []
     try:
         return json.loads(stdout)
     except json.JSONDecodeError:
-        return {} if tool in ("semgrep", "trivy", "trivy-license", "gosec") else []
+        return {} if tool in ("semgrep", "trivy", "trivy-license", "trivy-sbom", "gosec") else []

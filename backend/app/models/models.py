@@ -189,6 +189,22 @@ class ApiEndpoint(SQLModel, table=True):
     last_seen: datetime = Field(default_factory=datetime.utcnow)
 
 
+class SbomComponent(SQLModel, table=True):
+    """A persisted SBOM Generation result (`trivy fs --format cyclonedx`).
+    Upserted per target+branch, mirroring ApiEndpoint above, so the page
+    shows real state without re-scanning and a generate run can highlight
+    which components are new since the last run."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    branch: str
+    name: str
+    version: str
+    package_type: str
+    purl: str
+    first_seen: datetime = Field(default_factory=datetime.utcnow)
+    last_seen: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PRGuardrailScan(SQLModel, table=True):
     """A PR Guardrail diff-scan run (architecture doc Flow C).
 

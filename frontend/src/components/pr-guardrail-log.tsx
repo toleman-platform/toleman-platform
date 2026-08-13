@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { api, PrGuardrailFinding, PrGuardrailLogEntry } from "@/lib/api";
+import { api, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { IGNORE_STATUS_COLOR, SEVERITY_COLOR } from "@/lib/severity";
+import { ALL_TARGETS } from "@/components/target-picker";
 
 const LOG_STATUS_COLOR: Record<string, string> = {
   running: "border-chart-1/20 bg-chart-1/10 text-chart-1",
@@ -173,8 +174,39 @@ function ScanFindings({ scanId }: { scanId: number }) {
   );
 }
 
+function OrgStatsBar({ stats }: { stats: PrGuardrailOrgStats }) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Badge variant="outline" className="text-foreground">
+        {stats.total} total scan{stats.total === 1 ? "" : "s"}
+      </Badge>
+      <Badge variant="outline" className={LOG_STATUS_COLOR.passed}>
+        {stats.passed} passed
+      </Badge>
+      <Badge variant="outline" className={LOG_STATUS_COLOR.blocked}>
+        {stats.blocked} blocked
+      </Badge>
+      <Badge variant="outline" className={LOG_STATUS_COLOR.overridden}>
+        {stats.overridden} overridden
+      </Badge>
+      {stats.running > 0 && (
+        <Badge variant="outline" className={LOG_STATUS_COLOR.running}>
+          {stats.running} running
+        </Badge>
+      )}
+      {stats.error > 0 && (
+        <Badge variant="outline" className={LOG_STATUS_COLOR.error}>
+          {stats.error} error
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
+  const isOrgWide = targetId === ALL_TARGETS;
   const [log, setLog] = useState<PrGuardrailLogEntry[]>([]);
+  const [stats, setStats] = useState<PrGuardrailOrgStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -183,12 +215,26 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
     if (targetId === null) return;
     setLoading(true);
     setError(null);
-    api
-      .getPrGuardrailLog(targetId)
-      .then(setLog)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load PR guardrail log"))
-      .finally(() => setLoading(false));
-  }, [targetId]);
+    if (isOrgWide) {
+      api
+        .getPrGuardrailOrgLog()
+        .then((res) => {
+          setLog(res.scans);
+          setStats(res.stats);
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : "failed to load PR guardrail log"))
+        .finally(() => setLoading(false));
+    } else {
+      api
+        .getPrGuardrailLog(targetId)
+        .then((entries) => {
+          setLog(entries);
+          setStats(null);
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : "failed to load PR guardrail log"))
+        .finally(() => setLoading(false));
+    }
+  }, [targetId, isOrgWide]);
 
   useEffect(() => {
     refresh();
@@ -200,8 +246,14 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
     <div className="flex flex-col gap-3">
       <div>
         <h2 className="text-lg font-semibold text-foreground">PR Audit &amp; Discovery Log</h2>
-        <p className="text-sm text-muted-foreground">History of PR Guardrail scans for this target.</p>
+        <p className="text-sm text-muted-foreground">
+          {isOrgWide
+            ? "History of PR Guardrail scans across every repository you can access."
+            : "History of PR Guardrail scans for this target."}
+        </p>
       </div>
+
+      {stats && <OrgStatsBar stats={stats} />}
 
       {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
       {error && <p className="text-sm text-destructive">{error}</p>}
@@ -219,6 +271,11 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium text-foreground">
                       #{entry.pr_number} {entry.pr_title}
+                      {isOrgWide && entry.target_name && (
+                        <Badge variant="outline" className="ml-2 align-middle text-xs text-muted-foreground">
+                          {entry.target_name}
+                        </Badge>
+                      )}
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">
                       {entry.branch} · created {new Date(entry.created_at).toLocaleString()}
@@ -258,7 +315,9 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
           );
         })}
         {!loading && log.length === 0 && (
-          <p className="text-sm text-muted-foreground">No PR Guardrail scans yet for this target.</p>
+          <p className="text-sm text-muted-foreground">
+            {isOrgWide ? "No PR Guardrail scans yet across your repositories." : "No PR Guardrail scans yet for this target."}
+          </p>
         )}
       </div>
     </div>

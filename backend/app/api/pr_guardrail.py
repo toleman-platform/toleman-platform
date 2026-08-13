@@ -15,7 +15,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from app.api.auth import current_user, require_security_reviewer, require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, require_security_reviewer, require_workspace_role
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, set_commit_status
@@ -67,32 +67,84 @@ def run_pr_guardrail_scan(
         raise HTTPException(status_code=502, detail=f"failed to fetch PR from GitHub: {exc}")
 
 
+def _scan_out(s: PRGuardrailScan, target_by_id: dict[int, Target] | None = None) -> dict:
+    out = {
+        "id": s.id,
+        "pr_number": s.pr_number,
+        "pr_title": s.pr_title,
+        "branch": s.branch,
+        "status": s.status,
+        "new_findings_count": s.new_findings_count,
+        "highest_new_severity": s.highest_new_severity,
+        "new_endpoints_count": s.new_endpoints_count,
+        "override_reason": s.override_reason,
+        "created_at": s.created_at,
+        "completed_at": s.completed_at,
+    }
+    if target_by_id is not None:
+        target = target_by_id.get(s.target_id)
+        out["target_id"] = s.target_id
+        out["target_name"] = target.name if target else None
+    return out
+
+
 @router.get("/log")
-def pr_guardrail_log(target_id: int, session: Session = Depends(get_session)):
+def pr_guardrail_log(
+    target_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """PR Audit & Discovery Log (architecture doc §6): most-recent-first list
-    of PR Guardrail scans for a target."""
-    _get_target(target_id, session)
+    of PR Guardrail scans.
+
+    Issue #64: when `target_id` is omitted, returns an org-wide aggregate
+    across every target the caller can see (via `accessible_workspace_ids`,
+    #57) instead of a single target -- each row carries its target id/name
+    since that's no longer implied by a single-target picker selection. When
+    `target_id` is given, behaves exactly as before (single target, no
+    target name needed since the picker already tells the caller which
+    target they're looking at)."""
+    if target_id is not None:
+        _get_target(target_id, session)
+        scans = session.exec(
+            select(PRGuardrailScan)
+            .where(PRGuardrailScan.target_id == target_id)
+            .order_by(PRGuardrailScan.created_at.desc())
+        ).all()
+        return [_scan_out(s) for s in scans]
+
+    # Org-wide mode: scope to the caller's accessible workspaces (#57), not
+    # every workspace's data -- None means admin/no filter.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return {"scans": [], "stats": {"total": 0, "passed": 0, "blocked": 0, "overridden": 0, "error": 0, "running": 0}}
+
+    target_query = select(Target)
+    if ws_ids is not None:
+        target_query = target_query.where(Target.workspace_id.in_(ws_ids))
+    targets = session.exec(target_query).all()
+    target_by_id = {t.id: t for t in targets}
+    if not target_by_id:
+        return {"scans": [], "stats": {"total": 0, "passed": 0, "blocked": 0, "overridden": 0, "error": 0, "running": 0}}
+
     scans = session.exec(
         select(PRGuardrailScan)
-        .where(PRGuardrailScan.target_id == target_id)
+        .where(PRGuardrailScan.target_id.in_(target_by_id.keys()))
         .order_by(PRGuardrailScan.created_at.desc())
     ).all()
-    return [
-        {
-            "id": s.id,
-            "pr_number": s.pr_number,
-            "pr_title": s.pr_title,
-            "branch": s.branch,
-            "status": s.status,
-            "new_findings_count": s.new_findings_count,
-            "highest_new_severity": s.highest_new_severity,
-            "new_endpoints_count": s.new_endpoints_count,
-            "override_reason": s.override_reason,
-            "created_at": s.created_at,
-            "completed_at": s.completed_at,
-        }
-        for s in scans
-    ]
+
+    # Cheap org-wide stats computed from the same rows we just fetched --
+    # no extra query, matches the "don't build a new heavy aggregation
+    # endpoint just for this" guidance in #64.
+    stats = {"total": len(scans), "passed": 0, "blocked": 0, "overridden": 0, "error": 0, "running": 0}
+    for s in scans:
+        # PRGuardrailStatus subclasses str, so s.status hashes/compares equal
+        # to its plain string value ("running", "passed", ...) -- no .value
+        # conversion needed.
+        if s.status in stats:
+            stats[s.status] += 1
+
+    return {"scans": [_scan_out(s, target_by_id) for s in scans], "stats": stats}
 
 
 @router.get("/{pr_scan_id}/findings")

@@ -65,7 +65,17 @@ export type PullRequest = {
   url: string;
   scan_status: string;
 };
-export type Endpoint = { framework: string; method: string; route: string; file: string; line: number };
+export type Endpoint = {
+  id: number;
+  framework: string;
+  method: string;
+  route: string;
+  file: string;
+  line: number;
+  is_new: boolean;
+  first_seen: string;
+  last_seen: string;
+};
 export type AuditEvent = { type: string; timestamp: string; actor: string; summary: string; reason: string };
 
 export type SearchResults = { findings: Finding[]; targets: Target[] };
@@ -211,8 +221,13 @@ export const api = {
   activity: (targetId: number) => jsonFetch<CommitEvent[]>(`/api/github/activity/${targetId}`),
   orgActivity: () => jsonFetch<(CommitEvent & { target: string })[]>("/api/github/org-activity"),
   prs: (targetId: number) => jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`),
+  getDiscoveredEndpoints: (targetId: number) =>
+    jsonFetch<{ target_id: number; count: number; endpoints: Endpoint[] }>(`/api/discovery/${targetId}`),
   runDiscovery: (targetId: number) =>
-    jsonFetch<{ target_id: number; count: number; endpoints: Endpoint[] }>(`/api/discovery/${targetId}`, { method: "POST" }),
+    jsonFetch<{ target_id: number; count: number; new_count: number; endpoints: Endpoint[] }>(
+      `/api/discovery/${targetId}`,
+      { method: "POST" }
+    ),
   aiStatus: () => jsonFetch<{ configured: boolean }>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),

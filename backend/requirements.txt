@@ -15,4 +15,4 @@ PyJWT[crypto]==2.9.0
 pytest==8.3.3
 pytest-mock==3.14.0
 reportlab==4.2.5
-pypdf==5.0.1
+pypdf==6.15.0

@@ -319,6 +319,24 @@ export const api = {
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
     return res.blob();
   },
+  exportPostureReport: async (
+    targetId: number | null,
+    format: "csv" | "pdf",
+  ): Promise<Blob> => {
+    const params = new URLSearchParams({ format });
+    // Target ids are positive (DB serial starting at 1); 0 is the shared
+    // "All repositories" sentinel from components/target-picker.tsx's
+    // ALL_TARGETS -- omitting target_id entirely is how the backend knows
+    // to build the org-wide report.
+    if (targetId !== null && targetId !== 0) {
+      params.set("target_id", String(targetId));
+    }
+    const res = await fetch(`${API_URL}/api/reports/posture?${params.toString()}`, {
+      credentials: "include",
+    });
+    if (!res.ok) throw new Error(`report export failed: ${res.status}`);
+    return res.blob();
+  },
   aiStatus: () => jsonFetch<AiStatus>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),

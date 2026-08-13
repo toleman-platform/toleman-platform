@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, Target, Finding } from "@/lib/api";
+import { pollUntilSettled } from "@/lib/poll";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,7 +57,7 @@ export default function OnboardingPage() {
   // Step 2 - scan
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [scanResult, setScanResult] = useState<{ scan_id: number; ingested: number } | null>(null);
+  const [scanResult, setScanResult] = useState<{ scan_id: number; findings_count: number } | null>(null);
 
   // Step 3 - findings
   const [findings, setFindings] = useState<Finding[] | null>(null);
@@ -144,20 +145,49 @@ export default function OnboardingPage() {
     setScanError(null);
     setScanResult(null);
     try {
+      // POST /api/scans/run now dispatches a Celery task and returns
+      // immediately with status: "running" (#59) instead of blocking until
+      // the clone+scan finishes -- poll GET /api/scans/{scan_id} until it's
+      // done.
       const res = await api.runScan(targetId, "semgrep");
       if ("error" in res) {
         setScanError(res.error);
-      } else {
-        setScanResult(res);
-        setFindingsLoading(true);
-        const result = await api.findings({ target_id: targetId, page_size: 5 }).catch(() => ({ items: [], total: 0 }));
-        setFindings(result.items);
-        setFindingsLoading(false);
-        setStep(3);
+        setScanning(false);
+        return;
       }
+
+      const scanId = res.scan_id;
+      pollUntilSettled(
+        async () => {
+          const scan = await api.getScan(scanId);
+          if ("error" in scan) return { status: "failed" as const, message: scan.error };
+          return { status: scan.status, findings_count: scan.findings_count };
+        },
+        async (scan) => {
+          if (scan.status === "completed") {
+            setScanResult({ scan_id: scanId, findings_count: scan.findings_count });
+            setFindingsLoading(true);
+            const result = await api
+              .findings({ target_id: targetId, page_size: 5 })
+              .catch(() => ({ items: [], total: 0 }));
+            setFindings(result.items);
+            setFindingsLoading(false);
+            setStep(3);
+            setScanning(false);
+          } else if (scan.status === "failed") {
+            setScanError(scan.message ?? "scan failed");
+            setScanning(false);
+          }
+        },
+        {
+          onError: (err) => {
+            setScanError(err instanceof Error ? err.message : "scan failed");
+            setScanning(false);
+          },
+        },
+      );
     } catch (err) {
       setScanError(err instanceof Error ? err.message : "scan failed");
-    } finally {
       setScanning(false);
     }
   }
@@ -373,7 +403,7 @@ export default function OnboardingPage() {
           {scanResult && (
             <p className="text-sm text-muted-foreground">
               Scan complete on <span className="text-foreground">{selectedTarget?.name}</span> —{" "}
-              {scanResult.ingested} finding{scanResult.ingested === 1 ? "" : "s"} ingested.
+              {scanResult.findings_count} finding{scanResult.findings_count === 1 ? "" : "s"} ingested.
             </p>
           )}
 

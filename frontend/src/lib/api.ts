@@ -419,6 +419,77 @@ export type PrGuardrailOrgLog = {
   stats: PrGuardrailOrgStats;
 };
 
+// Configurable dashboard (issue #69): a small, concrete widget catalog
+// (KPI cards, findings trend, CVE timeline, SLA compliance, top risky
+// repos, recent findings) rather than a generic chart-config system --
+// each widget's real data comes from GET /api/dashboard/widget-data,
+// batched for every widget currently in the caller's layout.
+export type WidgetId =
+  | "kpi_cards"
+  | "findings_trend"
+  | "cve_timeline"
+  | "sla_compliance"
+  | "top_risky_repos"
+  | "recent_findings";
+
+export type WidgetCatalogEntry = { widget_id: WidgetId; name: string; description: string };
+
+export type LayoutWidget = { id: string; widget_id: WidgetId; config: Record<string, unknown> };
+export type DashboardLayoutOut = { widgets: LayoutWidget[] };
+
+export type KpiCardsData = { open: number; critical: number; high: number; mitigated: number; targets: number };
+export type FindingsTrendData = { points: { date: string; open: number }[] };
+export type CveTimelineItem = {
+  finding_id: number;
+  cve_id: string;
+  title: string;
+  severity: string;
+  state: string;
+  target_id: number;
+  target_name: string | null;
+  first_seen: string;
+  epss_score: number | null;
+  kev_listed: boolean;
+};
+export type CveTimelineData = { items: CveTimelineItem[] };
+export type SlaComplianceData = { with_sla: number; in_violation: number; compliant: number };
+export type TopRiskyRepoItem = {
+  target_id: number;
+  target_name: string;
+  critical: number;
+  high: number;
+  priority_score_sum: number;
+};
+export type TopRiskyReposData = { items: TopRiskyRepoItem[] };
+export type RecentFindingItem = {
+  finding_id: number;
+  title: string;
+  severity: string;
+  state: string;
+  tool: string;
+  target_id: number;
+  target_name: string | null;
+  first_seen: string;
+  sla_days: number | null;
+  sla_violated: boolean;
+};
+export type RecentFindingsData = { items: RecentFindingItem[] };
+
+export type WidgetDataMap = {
+  kpi_cards: KpiCardsData;
+  findings_trend: FindingsTrendData;
+  cve_timeline: CveTimelineData;
+  sla_compliance: SlaComplianceData;
+  top_risky_repos: TopRiskyReposData;
+  recent_findings: RecentFindingsData;
+};
+
+export type WidgetDataEntry =
+  | { widget_id: WidgetId; data: WidgetDataMap[WidgetId]; error?: undefined }
+  | { widget_id: WidgetId; data?: undefined; error: string };
+
+export type WidgetDataResponse = { widgets: Record<string, WidgetDataEntry> };
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) };
 
@@ -515,6 +586,14 @@ export const api = {
     jsonFetch<{ open: number; by_severity: Record<string, number>; by_tool: Record<string, number> }>(
       "/api/dashboard/stats"
     ),
+  // Issue #69: configurable dashboard -- widget catalog, per-user saved
+  // layout (add/remove/reorder), and one batched call for every widget's
+  // real data.
+  dashboardWidgets: () => jsonFetch<WidgetCatalogEntry[]>("/api/dashboard/widgets"),
+  dashboardLayout: () => jsonFetch<DashboardLayoutOut>("/api/dashboard/layout"),
+  saveDashboardLayout: (widgets: LayoutWidget[]) =>
+    jsonFetch<DashboardLayoutOut>("/api/dashboard/layout", { method: "PUT", body: JSON.stringify({ widgets }) }),
+  dashboardWidgetData: () => jsonFetch<WidgetDataResponse>("/api/dashboard/widget-data"),
   posture: () => jsonFetch<{ target: Target; breakdown: Record<string, Record<string, number>> }[]>(
     "/api/dashboard/posture"
   ),

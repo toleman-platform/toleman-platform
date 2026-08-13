@@ -526,3 +526,42 @@ class PolicyRule(SQLModel, table=True):
     created_by: str = "system"
     created_at: datetime = Field(default_factory=datetime.utcnow)
     active: bool = True
+
+
+class SlaRule(SQLModel, table=True):
+    """A workspace-scoped SLA (days-to-fix) rule, keyed by severity and
+    optionally a repo Group (issue #70) -- e.g. "Critical findings in the
+    'production' group must be fixed within 7 days", or a workspace-wide
+    default of "Medium findings get 30 days" for targets with no
+    group-specific rule.
+
+    Unlike #62's enforcement_mode (a single inherited scalar per level),
+    an SLA is naturally a matrix of (group-or-workspace-default, severity)
+    -> days_to_fix, since "Critical" and "Low" need very different windows
+    even within the same group. group_id is nullable: NULL means
+    "workspace-default", applied to a target only when none of its groups
+    carry a rule for that severity -- see
+    app.core.sla.resolve_sla_days for the group -> workspace-default -> "no
+    SLA" resolution (deliberately not the enforcement.py 3-level target ->
+    group -> workspace chain, since there's no per-target SLA override in
+    this first version; targets inherit purely through their group(s)).
+
+    The (workspace_id, group_id, severity) unique constraint is the intended
+    shape of "at most one rule per group+severity, and at most one workspace
+    default per severity" -- note Postgres treats NULL as distinct for
+    uniqueness purposes, so this constraint alone doesn't stop two NULL-
+    group_id rows for the same (workspace_id, severity); the API layer
+    (app/api/sla_rules.py) additionally checks for an existing match before
+    insert so duplicate workspace-default rules are rejected with a 409
+    rather than silently multiplying.
+    """
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "group_id", "severity", name="uq_sla_rule_workspace_group_severity"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    group_id: Optional[int] = Field(default=None, foreign_key="groups.id", index=True)
+    severity: Severity
+    days_to_fix: int
+    created_at: datetime = Field(default_factory=datetime.utcnow)

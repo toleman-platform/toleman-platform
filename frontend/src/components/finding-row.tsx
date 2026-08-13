@@ -19,6 +19,40 @@ import { Input } from "@/components/ui/input";
 
 const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
+// Issue #70: SLA countdown/violation badge. sla_days is null when no
+// SlaRule applies to this finding (group/severity or workspace default) --
+// render nothing in that case rather than a fabricated countdown.
+function SlaBadge({ finding }: { finding: Finding }) {
+  if (finding.sla_days === null || finding.sla_days === undefined) return null;
+
+  const firstSeen = new Date(finding.first_seen).getTime();
+  const deadline = firstSeen + finding.sla_days * 24 * 60 * 60 * 1000;
+  const msLeft = deadline - Date.now();
+  const daysLeft = Math.ceil(Math.abs(msLeft) / (24 * 60 * 60 * 1000));
+
+  if (finding.sla_violated) {
+    return (
+      <Badge
+        variant="outline"
+        title={`SLA: ${finding.sla_days}d to fix, first seen ${new Date(finding.first_seen).toLocaleDateString()}`}
+        className="shrink-0 border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
+      >
+        Overdue by {daysLeft}d
+      </Badge>
+    );
+  }
+
+  return (
+    <Badge
+      variant="outline"
+      title={`SLA: ${finding.sla_days}d to fix`}
+      className="shrink-0 border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+    >
+      {daysLeft}d left
+    </Badge>
+  );
+}
+
 // GET /api/findings/{id}/enrichment (issue #71) -- real CVE/CWE/CVSS/fix-
 // version data sourced from NVD + OSV.dev, no AI provider involved. Lazily
 // fetched the first time a finding's details are expanded, then cached in
@@ -248,9 +282,12 @@ export function FindingRow({
               </div>
             </div>
           </div>
-          <div className="shrink-0 text-right">
-            <div className="font-mono text-sm text-foreground">{finding.priority_score}</div>
-            <div className={`text-xs ${STATE_COLOR[finding.state] || "text-muted-foreground"}`}>{finding.state}</div>
+          <div className="flex shrink-0 items-center gap-2">
+            <SlaBadge finding={finding} />
+            <div className="text-right">
+              <div className="font-mono text-sm text-foreground">{finding.priority_score}</div>
+              <div className={`text-xs ${STATE_COLOR[finding.state] || "text-muted-foreground"}`}>{finding.state}</div>
+            </div>
           </div>
         </div>
 

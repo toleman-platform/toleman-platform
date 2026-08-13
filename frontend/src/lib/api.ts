@@ -127,6 +127,27 @@ export type Finding = {
   kev_listed: boolean;
   first_seen: string;
   last_seen: string;
+  // Issue #70: resolved SLA (days-to-fix), computed on read via
+  // app.core.sla.compute_sla_status -- sla_days is null when no SlaRule
+  // applies to this finding's group(s)/severity or workspace default;
+  // sla_violated is only ever true when a real rule applies AND the
+  // finding is still open past that window.
+  sla_days: number | null;
+  sla_violated: boolean;
+};
+
+// A single workspace-scoped SLA (days-to-fix) rule, keyed by severity and
+// optionally a repo Group (issue #70) -- group_id null means "workspace
+// default", applied to targets with no group-specific rule for that
+// severity. See app.core.sla.resolve_sla_days for the group ->
+// workspace-default -> "no SLA" resolution.
+export type SlaRule = {
+  id: number;
+  workspace_id: number;
+  group_id: number | null;
+  severity: "Critical" | "High" | "Medium" | "Low" | "Informational";
+  days_to_fix: number;
+  created_at: string;
 };
 
 // No-AI enrichment (issue #71) -- real CVE/CWE/CVSS/fix-version data sourced
@@ -462,6 +483,17 @@ export const api = {
   updateGroup: (id: number, patch: { name?: string; color?: string; enforcement_mode?: EnforcementMode | null }) =>
     jsonFetch<Group>(`/api/groups/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteGroup: (id: number) => jsonFetch<{ ok: boolean }>(`/api/groups/${id}`, { method: "DELETE" }),
+  // Issue #70: workspace-scoped SlaRule CRUD (SECURITY_ENGINEER-or-admin
+  // gated on the backend).
+  slaRules: (workspaceId?: number) =>
+    jsonFetch<SlaRule[]>(`/api/sla-rules${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  createSlaRule: (r: { workspace_id: number; group_id: number | null; severity: string; days_to_fix: number }) =>
+    jsonFetch<SlaRule>("/api/sla-rules", { method: "POST", body: JSON.stringify(r) }),
+  updateSlaRule: (id: number, patch: { days_to_fix: number }) =>
+    jsonFetch<SlaRule>(`/api/sla-rules/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteSlaRule: (id: number) => jsonFetch<{ ok: boolean }>(`/api/sla-rules/${id}`, { method: "DELETE" }),
+  slaCompliance: () =>
+    jsonFetch<{ with_sla: number; in_violation: number; compliant: number }>("/api/dashboard/sla-compliance"),
   targetGroups: (targetId: number) => jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups`),
   assignTargetGroup: (targetId: number, groupId: number) =>
     jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups/${groupId}`, { method: "POST" }),

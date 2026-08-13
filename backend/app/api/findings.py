@@ -8,6 +8,7 @@ from sqlmodel import Session, func, or_, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
 from app.core.cve_enrichment import get_cve_enrichment
+from app.core.sla import compute_sla_status
 from app.models.models import Finding, FindingState, FindingStateLog, Severity, Target, TargetGroup, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/findings", tags=["findings"])
@@ -15,8 +16,25 @@ router = APIRouter(prefix="/api/findings", tags=["findings"])
 DEFAULT_PAGE_SIZE = 25
 
 
+class FindingOut(Finding):
+    """Finding plus resolved SLA fields (issue #70), computed on read via
+    app.core.sla.compute_sla_status -- not stored columns. sla_days is None
+    when no SlaRule applies to this finding's (group, severity) or
+    workspace default; sla_violated is always False in that case (never a
+    fabricated countdown). Subclasses Finding (not a table) purely to reuse
+    its field set without hand-duplicating every column, matching how this
+    endpoint already returns Finding rows almost as-is elsewhere."""
+    sla_days: int | None = None
+    sla_violated: bool = False
+
+
+def _to_finding_out(session: Session, finding: Finding) -> FindingOut:
+    sla_days, sla_violated = compute_sla_status(session, finding)
+    return FindingOut(**finding.model_dump(), sla_days=sla_days, sla_violated=sla_violated)
+
+
 class FindingListResponse(BaseModel):
-    items: list[Finding]
+    items: list[FindingOut]
     total: int
 
 
@@ -114,7 +132,7 @@ def list_findings(
     page_size = max(min(page_size, 500), 1)
     query = query.order_by(Finding.priority_score.desc()).offset((page - 1) * page_size).limit(page_size)
     items = session.exec(query).all()
-    return FindingListResponse(items=items, total=total)
+    return FindingListResponse(items=[_to_finding_out(session, f) for f in items], total=total)
 
 
 @router.get("/facets/tools")
@@ -132,7 +150,7 @@ def list_tool_facets(session: Session = Depends(get_session), user: User = Depen
 
 
 @router.get("/{finding_id}")
-def get_finding(finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
+def get_finding(finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)) -> FindingOut:
     finding = session.get(Finding, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
@@ -144,7 +162,7 @@ def get_finding(finding_id: int, session: Session = Depends(get_session), user: 
         target = session.get(Target, finding.target_id)
         if not target or target.workspace_id not in ws_ids:
             raise HTTPException(status_code=404, detail="finding not found")
-    return finding
+    return _to_finding_out(session, finding)
 
 
 @router.get("/{finding_id}/enrichment")

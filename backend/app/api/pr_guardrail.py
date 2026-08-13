@@ -67,7 +67,28 @@ def run_pr_guardrail_scan(
         raise HTTPException(status_code=502, detail=f"failed to fetch PR from GitHub: {exc}")
 
 
-def _scan_out(s: PRGuardrailScan, target_by_id: dict[int, Target] | None = None) -> dict:
+def _pr_url(target: Target | None, pr_number: int) -> str | None:
+    """Best-effort deep link back to the originating GitHub PR (issue #65).
+    None if the target is missing or its repo_url can't be parsed."""
+    if not target or not target.repo_url:
+        return None
+    slug = repo_slug_from_url(target.repo_url)
+    if not slug:
+        return None
+    return f"https://github.com/{slug}/pull/{pr_number}"
+
+
+def _scan_out(
+    s: PRGuardrailScan,
+    target_by_id: dict[int, Target] | None = None,
+    target: Target | None = None,
+) -> dict:
+    """`target_by_id` (org-wide mode, #64) adds target_id/target_name to the
+    row and is also used to resolve pr_url. `target` (single-target mode)
+    is the one target already fetched by the caller, used only for pr_url --
+    single-target rows don't carry target_id/target_name."""
+    if target_by_id is not None:
+        target = target_by_id.get(s.target_id)
     out = {
         "id": s.id,
         "pr_number": s.pr_number,
@@ -80,9 +101,9 @@ def _scan_out(s: PRGuardrailScan, target_by_id: dict[int, Target] | None = None)
         "override_reason": s.override_reason,
         "created_at": s.created_at,
         "completed_at": s.completed_at,
+        "pr_url": _pr_url(target, s.pr_number),
     }
     if target_by_id is not None:
-        target = target_by_id.get(s.target_id)
         out["target_id"] = s.target_id
         out["target_name"] = target.name if target else None
     return out
@@ -105,13 +126,16 @@ def pr_guardrail_log(
     target name needed since the picker already tells the caller which
     target they're looking at)."""
     if target_id is not None:
-        _get_target(target_id, session)
+        target = _get_target(target_id, session)
         scans = session.exec(
             select(PRGuardrailScan)
             .where(PRGuardrailScan.target_id == target_id)
             .order_by(PRGuardrailScan.created_at.desc())
         ).all()
-        return [_scan_out(s) for s in scans]
+        # Single-target mode: no target_by_id map (target_id/target_name stay
+        # implied by the picker, per #64), but pr_url is still derivable from
+        # the one target we already fetched above -- pass it in directly.
+        return [_scan_out(s, target=target) for s in scans]
 
     # Org-wide mode: scope to the caller's accessible workspaces (#57), not
     # every workspace's data -- None means admin/no filter.

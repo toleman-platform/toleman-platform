@@ -86,6 +86,19 @@ export type SbomComponent = {
   first_seen: string;
   last_seen: string;
 };
+export type OrgSbomComponent = {
+  name: string;
+  version: string;
+  purl: string;
+  package_type: string;
+  targets: { id: number; name: string }[];
+};
+export type OrgSbomResult = {
+  targets_with_sbom_count: number;
+  total_targets_count: number;
+  unique_component_count: number;
+  components: OrgSbomComponent[];
+};
 export type AuditEvent = { type: string; timestamp: string; actor: string; summary: string; reason: string };
 
 export type SearchResults = { findings: Finding[]; targets: Target[] };
@@ -247,6 +260,12 @@ export const api = {
     ),
   exportSbom: async (targetId: number): Promise<Blob> => {
     const res = await fetch(`${API_URL}/api/sbom/${targetId}/export`, { credentials: "include" });
+    if (!res.ok) throw new Error(`export failed: ${res.status}`);
+    return res.blob();
+  },
+  getOrgSbom: () => jsonFetch<OrgSbomResult>("/api/sbom/org"),
+  exportOrgSbom: async (): Promise<Blob> => {
+    const res = await fetch(`${API_URL}/api/sbom/org/export`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
     return res.blob();
   },

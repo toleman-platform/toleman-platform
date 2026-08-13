@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Finding, api } from "@/lib/api";
+import { Finding, Target, api } from "@/lib/api";
 import { FindingRow } from "@/components/finding-row";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,12 +14,15 @@ export function FindingsList({
   total,
   page,
   pageSize,
+  targets = [],
 }: {
   findings: Finding[];
   total: number;
   page: number;
   pageSize: number;
+  targets?: Target[];
 }) {
+  const repoUrlByTargetId = new Map(targets.map((t) => [t.id, t.repo_url]));
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -105,6 +108,7 @@ export function FindingsList({
           <FindingRow
             key={f.id}
             finding={f}
+            repoUrl={repoUrlByTargetId.get(f.target_id)}
             selectable
             selected={selected.has(f.id)}
             onSelectChange={(checked) => toggleOne(f.id, checked)}

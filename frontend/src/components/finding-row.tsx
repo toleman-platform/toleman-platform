@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Finding, api } from "@/lib/api";
+import { ExternalLink } from "lucide-react";
+import { Finding, api, githubBlobUrl } from "@/lib/api";
 import {
   EPSS_BADGE_COLOR,
   EPSS_NOTABLE_THRESHOLD,
@@ -20,11 +21,13 @@ const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
 export function FindingRow({
   finding,
+  repoUrl,
   selectable = false,
   selected = false,
   onSelectChange,
 }: {
   finding: Finding;
+  repoUrl?: string;
   selectable?: boolean;
   selected?: boolean;
   onSelectChange?: (checked: boolean) => void;
@@ -88,9 +91,23 @@ export function FindingRow({
                 )}
                 <span className="truncate text-sm font-medium text-foreground">{finding.title}</span>
               </div>
-              <div className="mt-1 truncate text-xs text-muted-foreground">
-                {finding.tool} · {finding.file_path}
-                {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
+              <div className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
+                <span className="truncate">
+                  {finding.tool} · {finding.file_path}
+                  {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
+                </span>
+                {repoUrl && finding.file_path && (
+                  <a
+                    href={githubBlobUrl(repoUrl, finding.branch, finding.file_path, finding.line_start)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open this line on GitHub"
+                    onClick={(e) => e.stopPropagation()}
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
               </div>
             </div>
           </div>

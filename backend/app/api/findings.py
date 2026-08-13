@@ -4,7 +4,7 @@ from sqlmodel import Session, func, or_, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
-from app.models.models import Finding, FindingState, FindingStateLog, Severity, Target, User, WorkspaceRole
+from app.models.models import Finding, FindingState, FindingStateLog, Severity, Target, TargetGroup, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/findings", tags=["findings"])
 
@@ -36,6 +36,7 @@ def _apply_triage(finding: Finding, to_state: FindingState, reason: str, actor: 
 @router.get("")
 def list_findings(
     target_id: int | None = None,
+    group_id: int | None = None,
     branch: str | None = None,
     state: FindingState | None = None,
     severity: Severity | None = None,
@@ -56,6 +57,14 @@ def list_findings(
     query = select(Finding)
     if ws_ids is not None:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
+    if group_id is not None:
+        # Issue #61: findings for targets tagged with this group. Joined on
+        # Finding.target_id directly (not via the Target join above, which
+        # only happens when ws_ids is not None) so this works regardless of
+        # whether the caller is an admin.
+        query = query.join(TargetGroup, TargetGroup.target_id == Finding.target_id).where(
+            TargetGroup.group_id == group_id
+        )
     if target_id is not None:
         query = query.where(Finding.target_id == target_id)
     if branch is not None:

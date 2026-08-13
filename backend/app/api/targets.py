@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
-from app.models.models import Target, User, Workspace, WorkspaceRole
+from app.models.models import Group, Target, TargetGroup, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/targets", tags=["targets"])
 
@@ -43,8 +43,33 @@ class UpdateTargetRequest(BaseModel):
     criticality_weight: int | None = None
 
 
+def _groups_by_target(session: Session, target_ids: list[int]) -> dict[int, list[dict]]:
+    """Batch-load {target_id: [{id, name, color}, ...]} for embedding group
+    badges in target list/detail responses (issue #61), one query instead of
+    N+1 per target."""
+    if not target_ids:
+        return {}
+    rows = session.exec(
+        select(TargetGroup.target_id, Group)
+        .join(Group, Group.id == TargetGroup.group_id)
+        .where(TargetGroup.target_id.in_(target_ids))
+    ).all()
+    out: dict[int, list[dict]] = {tid: [] for tid in target_ids}
+    for target_id, group in rows:
+        out.setdefault(target_id, []).append({"id": group.id, "name": group.name, "color": group.color})
+    return out
+
+
+def _with_groups(target: Target, groups_by_target: dict[int, list[dict]]) -> dict:
+    return {**target.model_dump(), "groups": groups_by_target.get(target.id, [])}
+
+
 @router.get("")
-def list_targets(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def list_targets(
+    group_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     # Issue #57: scope to workspaces the caller is a member of (None = admin,
     # no filter; [] = no memberships yet -> empty list, not everything).
     ws_ids = accessible_workspace_ids(session, user)
@@ -53,7 +78,13 @@ def list_targets(session: Session = Depends(get_session), user: User = Depends(c
     query = select(Target)
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
-    return session.exec(query).all()
+    if group_id is not None:
+        # Issue #61: filter to targets carrying this group -- storage with no
+        # way to actually query by it would be a foundation nobody can use.
+        query = query.join(TargetGroup, TargetGroup.target_id == Target.id).where(TargetGroup.group_id == group_id)
+    targets = session.exec(query).all()
+    groups_by_target = _groups_by_target(session, [t.id for t in targets])
+    return [_with_groups(t, groups_by_target) for t in targets]
 
 
 @router.post("")
@@ -84,7 +115,8 @@ def get_target(target_id: int, session: Session = Depends(get_session), user: Us
         # workspace the caller can't see (matches the "not found" wording
         # already used across this codebase for missing resources).
         raise HTTPException(status_code=404, detail="target not found")
-    return target
+    groups_by_target = _groups_by_target(session, [target.id])
+    return _with_groups(target, groups_by_target)
 
 
 @router.patch("/{target_id}")
@@ -118,3 +150,61 @@ def get_workspace_key(target_id: int, session: Session = Depends(get_session), u
         raise HTTPException(status_code=404, detail="target not found")
     workspace = session.get(Workspace, target.workspace_id)
     return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
+
+
+@router.get("/{target_id}/groups")
+def list_target_groups(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="target not found")
+    return _groups_by_target(session, [target_id]).get(target_id, [])
+
+
+@router.post("/{target_id}/groups/{group_id}")
+def assign_target_group(
+    target_id: int,
+    group_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    group = session.get(Group, group_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="group not found")
+    if group.workspace_id != target.workspace_id:
+        # A group only makes sense scoped to the same workspace its targets
+        # live in -- otherwise a caller with developer access to workspace A
+        # could tag a workspace-B target with a workspace-A group, leaking
+        # naming/existence across the workspace boundary #57 exists to draw.
+        raise HTTPException(status_code=400, detail="group and target must belong to the same workspace")
+    existing = session.exec(
+        select(TargetGroup).where(TargetGroup.target_id == target_id, TargetGroup.group_id == group_id)
+    ).first()
+    if not existing:
+        session.add(TargetGroup(target_id=target_id, group_id=group_id))
+        session.commit()
+    return _groups_by_target(session, [target_id]).get(target_id, [])
+
+
+@router.delete("/{target_id}/groups/{group_id}")
+def remove_target_group(
+    target_id: int,
+    group_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    link = session.exec(
+        select(TargetGroup).where(TargetGroup.target_id == target_id, TargetGroup.group_id == group_id)
+    ).first()
+    if link:
+        session.delete(link)
+        session.commit()
+    return _groups_by_target(session, [target_id]).get(target_id, [])

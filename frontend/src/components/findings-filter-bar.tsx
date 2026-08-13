@@ -2,17 +2,18 @@
 
 import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Target } from "@/lib/api";
+import { Group, Target } from "@/lib/api";
 import { SEVERITY_ORDER } from "@/lib/severity";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { GroupFilter } from "@/components/group-filter";
 
 const STATES = ["Open", "Accepted Risk", "False Positive", "Won't Fix", "Mitigated", "Reopened"];
 
 const SELECT_CLASS =
   "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
-export function FindingsFilterBar({ targets, tools }: { targets: Target[]; tools: string[] }) {
+export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[]; tools: string[]; groups: Group[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -31,7 +32,7 @@ export function FindingsFilterBar({ targets, tools }: { targets: Target[]; tools
     updateParam("search", search);
   }
 
-  const hasFilters = ["severity", "tool", "state", "target_id", "search"].some((k) => searchParams.get(k));
+  const hasFilters = ["severity", "tool", "state", "target_id", "group_id", "search"].some((k) => searchParams.get(k));
 
   function clearAll() {
     setSearch("");
@@ -107,6 +108,8 @@ export function FindingsFilterBar({ targets, tools }: { targets: Target[]; tools
           </option>
         ))}
       </select>
+
+      {groups.length > 0 && <GroupFilter groups={groups} />}
 
       {hasFilters && (
         <button onClick={clearAll} className="text-xs text-muted-foreground underline hover:text-foreground">

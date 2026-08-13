@@ -1,6 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+from sqlalchemy import UniqueConstraint
 from sqlmodel import SQLModel, Field
 
 
@@ -109,6 +110,43 @@ class Target(SQLModel, table=True):
     default_branch: str = "main"
     label: str = "Dev"  # Prod, Dev, Internal, Public, or custom
     criticality_weight: int = 1  # 1-5
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Group(SQLModel, table=True):
+    """A workspace-scoped tag/group for organizing Targets at scale (issue
+    #61) -- e.g. "production", "PCI-scope", "internal-tool". Foundation for
+    group-level policy (block/alert-mode-per-group, #62) and group-level SLA
+    (#70) in later sprints; this issue only covers creating/assigning groups
+    and filtering by them.
+
+    __tablename__ is set explicitly to "groups" rather than the SQLModel
+    default ("group") since GROUP is a reserved SQL keyword -- avoids relying
+    on every driver/tool correctly auto-quoting it.
+    """
+    __tablename__ = "groups"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    name: str
+    color: str = "#6366f1"  # hex color for UI badges
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TargetGroup(SQLModel, table=True):
+    """Many-to-many join between Target and Group (issue #61). A target can
+    carry multiple groups and a group can contain multiple targets. Kept as
+    a plain join table + explicit queries rather than a SQLModel
+    Relationship, matching this codebase's existing style (see
+    WorkspaceMembership). The unique constraint keeps assigning the same
+    group to the same target twice a no-op at the DB level, backing up the
+    idempotent-POST handling in app/api/groups.py."""
+    __tablename__ = "target_group"
+    __table_args__ = (UniqueConstraint("target_id", "group_id", name="uq_target_group_target_id_group_id"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    group_id: int = Field(foreign_key="groups.id", index=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

@@ -26,6 +26,17 @@ export const SEVERITY_HEX: Record<string, string> = {
   Informational: "#6b7280",
 };
 
+// KEV (CISA Known Exploited Vulnerabilities) badge — deliberately distinct from the
+// severity palette so a KEV-listed finding reads as "confirmed exploited in the wild",
+// not just another severity tier.
+export const KEV_BADGE_COLOR = "border-destructive/40 bg-destructive/20 text-destructive";
+
+// EPSS (FIRST.org Exploit Prediction Scoring System) badge, shown when the score
+// exceeds this threshold. 0.1 == FIRST.org's own "greater than 10% predicted
+// probability of exploitation in the next 30 days" notability cutoff.
+export const EPSS_NOTABLE_THRESHOLD = 0.1;
+export const EPSS_BADGE_COLOR = "border-chart-3/30 bg-chart-3/10 text-chart-3";
+
 export const STATE_COLOR: Record<string, string> = {
   Open: "text-destructive",
   "Accepted Risk": "text-chart-3",

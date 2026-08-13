@@ -4,6 +4,8 @@ from sqlmodel import Session, select
 from app.models.models import Finding, FindingState, FindingStateLog, Scan, Target
 from app.core.dedup import compute_dedup_hash
 from app.core.scoring import compute_priority_score
+from app.core.epss import fetch_epss_scores
+from app.core.kev import fetch_kev_cve_set
 
 
 def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, branch: str, parsed: list[dict]) -> int:
@@ -16,6 +18,12 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
       hash present in earlier scan of same target/branch but absent this run -> Mitigated
     """
     seen_hashes = set()
+
+    # Batch EPSS/KEV lookups once per ingestion run (not per-finding) against the
+    # distinct CVE IDs present in this parsed batch.
+    cve_ids = sorted({item["cve_id"] for item in parsed if item.get("cve_id")})
+    epss_scores = fetch_epss_scores(cve_ids) if cve_ids else {}
+    kev_set = fetch_kev_cve_set() if cve_ids else set()
 
     for item in parsed:
         dedup_hash = compute_dedup_hash(
@@ -32,6 +40,9 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
         ).first()
 
         if existing:
+            # epss_score/kev_listed are intentionally left as whatever was set at
+            # creation time on rescans -- re-fetching per-finding on every rescan
+            # isn't worth the network cost; MVP tradeoff, staleness is acceptable.
             existing.last_seen = datetime.utcnow()
             existing.scan_id = scan.id
             if existing.state == FindingState.MITIGATED:
@@ -40,6 +51,9 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             continue
 
         severity = item["severity"]
+        finding_cve_id = item.get("cve_id")
+        epss_score = epss_scores.get(finding_cve_id) if finding_cve_id else None
+        kev_listed = finding_cve_id in kev_set if finding_cve_id else False
         finding = Finding(
             target_id=target.id,
             scan_id=scan.id,
@@ -52,9 +66,13 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             line_start=item.get("line_start"),
             line_end=item.get("line_end"),
             severity=severity,
-            priority_score=compute_priority_score(severity, target.criticality_weight),
+            priority_score=compute_priority_score(
+                severity, target.criticality_weight, epss_score=epss_score, kev_listed=kev_listed
+            ),
             branch=branch,
-            cve_id=item.get("cve_id"),
+            cve_id=finding_cve_id,
+            epss_score=epss_score,
+            kev_listed=kev_listed,
         )
         session.add(finding)
 

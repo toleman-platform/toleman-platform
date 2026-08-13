@@ -2,29 +2,32 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, GitHubAppInstallation } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Github, CheckCircle2, XCircle } from "lucide-react";
 
+type GithubAppStatus = {
+  apps: GitHubAppInstallation[];
+  app_configured: boolean;
+  app_slug: string | null;
+  installed: boolean;
+  account_login: string | null;
+  webhook_secret_set: boolean;
+};
+
 export function ConnectGithubCard() {
   const router = useRouter();
-  const [status, setStatus] = useState<{
-    app_configured: boolean;
-    app_slug: string | null;
-    installed: boolean;
-    account_login: string | null;
-    webhook_secret_set: boolean;
-  } | null>(null);
+  const [status, setStatus] = useState<GithubAppStatus | null>(null);
   const [org, setOrg] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [webhookSecret, setWebhookSecret] = useState("");
-  const [savingSecret, setSavingSecret] = useState(false);
+  const [webhookSecrets, setWebhookSecrets] = useState<Record<number, string>>({});
+  const [savingSecretFor, setSavingSecretFor] = useState<number | null>(null);
 
   function refresh() {
     api.githubAppStatus().then(setStatus);
@@ -70,15 +73,16 @@ export function ConnectGithubCard() {
     }
   }
 
-  async function saveWebhookSecret() {
-    if (!webhookSecret.trim()) return;
-    setSavingSecret(true);
+  async function saveWebhookSecret(configId: number) {
+    const value = (webhookSecrets[configId] || "").trim();
+    if (!value) return;
+    setSavingSecretFor(configId);
     try {
-      await api.updateWebhookSecret(webhookSecret.trim());
-      setWebhookSecret("");
+      await api.updateWebhookSecret(value, configId);
+      setWebhookSecrets((prev) => ({ ...prev, [configId]: "" }));
       refresh();
     } finally {
-      setSavingSecret(false);
+      setSavingSecretFor(null);
     }
   }
 
@@ -92,7 +96,7 @@ export function ConnectGithubCard() {
           <div>
             <div className="font-medium text-foreground">GitHub</div>
             <div className="text-xs text-muted-foreground">
-              Install the OSP GitHub App to sync and auto-discover repos
+              Install one or more OSP GitHub Apps to sync and auto-discover repos
             </div>
           </div>
         </div>
@@ -104,82 +108,104 @@ export function ConnectGithubCard() {
           </div>
         )}
 
-        {status && !status.app_configured && (
-          <div className="flex flex-col gap-2">
-            <p className="text-xs text-muted-foreground">
-              Leave blank to install on your personal account, or enter an org name to install there instead.
-            </p>
-            <div className="flex gap-2">
-              <Input
-                className="bg-secondary"
-                placeholder="Organization (optional)"
-                value={org}
-                onChange={(e) => setOrg(e.target.value)}
-              />
-              <Button onClick={connect} disabled={connecting} className="shrink-0">
-                {connecting ? "Redirecting..." : "Connect GitHub"}
-              </Button>
-            </div>
-            {error && <p className="text-xs text-destructive">{error}</p>}
-          </div>
-        )}
+        {status && status.apps.length > 0 && (
+          <div className="flex flex-col gap-3">
+            {status.apps.map((appEntry) => (
+              <div key={appEntry.id} className="rounded-md border border-border p-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium text-foreground">
+                    <code>{appEntry.app_slug}</code>
+                  </div>
+                  <a href={`https://github.com/apps/${appEntry.app_slug}/installations/new`} target="_blank" rel="noreferrer">
+                    <Button size="sm" variant="outline">
+                      Add installation
+                    </Button>
+                  </a>
+                </div>
 
-        {status && status.app_configured && !status.installed && (
-          <div className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">
-              App <code className="text-foreground">{status.app_slug}</code> was created. Finish installing it on
-              your account or org:
-            </p>
-            <a href={`https://github.com/apps/${status.app_slug}/installations/new`} target="_blank" rel="noreferrer">
-              <Button>Install App</Button>
-            </a>
-          </div>
-        )}
+                {appEntry.installations.length === 0 ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    App created but not installed on any account/org yet.
+                  </p>
+                ) : (
+                  <div className="mt-1 flex flex-col gap-1">
+                    {appEntry.installations.map((inst) => (
+                      <div key={inst.installation_id} className="flex items-center gap-2 text-xs text-chart-5">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        <span className="text-muted-foreground">
+                          Connected as {inst.account_login} ({inst.account_type})
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
-        {status && status.installed && (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2 text-sm text-chart-5">
-              <CheckCircle2 className="h-4 w-4" />
-              Connected as {status.account_login}
-            </div>
+                <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    {appEntry.webhook_secret_set ? (
+                      <>
+                        <CheckCircle2 className="h-3.5 w-3.5 text-chart-5" />
+                        <span className="text-muted-foreground">
+                          Webhook secret set — real-time PR scanning active if this App&apos;s webhook is configured
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="text-muted-foreground">
+                          No webhook secret set — PRs from this App only scan on-demand (PR History page)
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Input
+                      type="password"
+                      className="bg-secondary"
+                      placeholder="Webhook secret (must match this App's GitHub settings)"
+                      value={webhookSecrets[appEntry.id] || ""}
+                      onChange={(e) => setWebhookSecrets((prev) => ({ ...prev, [appEntry.id]: e.target.value }))}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => saveWebhookSecret(appEntry.id)}
+                      disabled={savingSecretFor === appEntry.id || !(webhookSecrets[appEntry.id] || "").trim()}
+                      className="shrink-0"
+                    >
+                      {savingSecretFor === appEntry.id ? "Saving..." : "Save"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ))}
+
             <Button onClick={sync} disabled={syncing} variant="outline" className="self-start">
               {syncing ? "Syncing..." : "Sync Repos Now"}
             </Button>
             {syncResult && <p className="text-xs text-muted-foreground">{syncResult}</p>}
-
-            <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3">
-              <div className="flex items-center gap-2 text-xs">
-                {status.webhook_secret_set ? (
-                  <>
-                    <CheckCircle2 className="h-3.5 w-3.5 text-chart-5" />
-                    <span className="text-muted-foreground">
-                      Webhook secret set — real-time PR scanning active if the App's webhook is configured
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-muted-foreground">
-                      No webhook secret set — PRs only scan on-demand (PR History page), not automatically
-                    </span>
-                  </>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Input
-                  type="password"
-                  className="bg-secondary"
-                  placeholder="Webhook secret (must match GitHub App settings)"
-                  value={webhookSecret}
-                  onChange={(e) => setWebhookSecret(e.target.value)}
-                />
-                <Button size="sm" variant="outline" onClick={saveWebhookSecret} disabled={savingSecret || !webhookSecret.trim()} className="shrink-0">
-                  {savingSecret ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            </div>
           </div>
         )}
+
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
+          <p className="text-xs text-muted-foreground">
+            {status && status.apps.length > 0
+              ? "Register another GitHub App (e.g. a separate dev/prod App, or one scoped to a different org):"
+              : "Leave blank to install on your personal account, or enter an org name to install there instead."}
+          </p>
+          <div className="flex gap-2">
+            <Input
+              className="bg-secondary"
+              placeholder="Organization (optional)"
+              value={org}
+              onChange={(e) => setOrg(e.target.value)}
+            />
+            <Button onClick={connect} disabled={connecting} className="shrink-0">
+              {connecting ? "Redirecting..." : "Connect GitHub"}
+            </Button>
+          </div>
+          {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
       </CardContent>
     </Card>
   );

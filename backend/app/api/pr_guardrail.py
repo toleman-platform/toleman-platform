@@ -209,7 +209,7 @@ def override_pr_guardrail_scan(pr_scan_id: int, body: dict, session: Session = D
             pr_res = github_get(f"/repos/{slug}/pulls/{pr_scan.pr_number}")
             if pr_res.status_code == 200:
                 head_sha = pr_res.json()["head"]["sha"]
-                set_commit_status(session, slug, head_sha, "success", f"Overridden: {reason[:100]}")
+                set_commit_status(session, target, head_sha, "success", f"Overridden: {reason[:100]}")
     except Exception:
         logger.warning("PR guardrail: exception re-setting commit status on override", exc_info=True)
 

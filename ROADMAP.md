@@ -45,6 +45,55 @@ Per the architecture doc, this was always meant to be the core differentiator ("
 - Full GitHub App OAuth polish (multi-install support — `GitHubAppConfig` is explicitly single-row/single-tenant today).
 - Mass CI/CD Rollout Engine + Custom Workflow Builder (deferred from the original architecture doc's v2.1, still deferred).
 
+## Sprint 6 — Security & Platform Hardening (#54–60)
+
+Surfaced by a code-review pass against the live codebase (verified against actual source, not assumed — several other claims from the same review turned out to be false and were discarded). This is foundational: must land before Sprint 8's pipeline integration adds more surface area to secure.
+
+- **#54** Git-clone argument injection + GitHub token leakage in `runner.py` (missing `--` separator/host allowlist; token embedded in clone URL leaks via exception messages).
+- **#55** Enforce non-default `SESSION_SECRET`/`ADMIN_PASSWORD` — fail-fast or loud warning outside local dev.
+- **#56** Gate `POST /api/workspaces/bootstrap` to admin (currently any logged-in user).
+- **#57** Workspace-scoped filtering on findings/targets queries (IDOR) — ties into Sprint 5's RBAC work (#32).
+- **#58** Adopt Alembic for schema migrations (replace `create_all()` — every schema change so far has required a manual `ALTER TABLE`/`ALTER TYPE` against the live DB).
+- **#59** Offload scan/discovery/SBOM execution to Celery (currently synchronous in the request handler; threadpool exhaustion risk under concurrent scans).
+- **#60** Docker Compose deployment (backend, frontend, Postgres, Redis, Celery worker) — biggest adoption blocker per both reviews.
+
+## Sprint 7 — Org Structure & Developer Trust (#61, #64, #65, #71)
+
+Low-effort, high-value items plus the repo-grouping foundation Sprint 8/9 build on.
+
+- **#61** Custom repo groups/tags (many-to-many `Group`/`TargetGroup`) — prerequisite for #62 and #70.
+- **#64** PR History: "All repos" aggregate view (reuse the `ALL_TARGETS` dropdown pattern already shipped for SBOM).
+- **#65** PR Guardrail scan log: link back to the originating GitHub PR.
+- **#71** Detailed vulnerability descriptions from CWE/NVD/OWASP/OSV.dev — explicitly no AI required, for developer trust when no AI provider is configured.
+
+## Sprint 8 — Pipeline Integration & Enforcement (#66, #68, #62, #70)
+
+The "operational, not just a dashboard" story — founder's highest-priority manual-review finding.
+
+- **#66** Pipeline integration button (generate CI YAML, open a PR to the target repo, track integration status).
+- **#68** Bulk pipeline onboarding — multi-select in Repo Sync, depends on #66.
+- **#62** Block mode vs alert mode per repo/group/org with inheritance (workspace → group → target).
+- **#70** SLA configuration by severity × group, depends on #61.
+
+## Sprint 9 — Executive & Ops Surfaces (#63, #69, #73, #74)
+
+- **#63** Security score (org/group/repo composite, gauge chart) — the metric a CISO buys into.
+- **#69** Configurable dashboard (widget library, per-user layout, CVE timeline).
+- **#73** User profile (password/name) + notification preferences (email/Slack on critical/KEV/SLA-breach).
+- **#74** Slack & Jira integration in Admin settings, encrypted config + test-connection — delivery channel for #73.
+
+## Sprint 10 — Platform Differentiation (#75, #72, #76)
+
+The largest, highest-effort items — the features that make OSP more than a free Snyk clone.
+
+- **#75** Tool marketplace / health page (registry, install-from-UI, per-tool usage assignment, IaC tools).
+- **#72** Active API scanning against discovered endpoints (Nuclei/ZAP integration).
+- **#76** False positive learning engine (cross-repo suppression rules, auto-suppress on ingestion).
+
+## Continuous — UI polish (#77)
+
+Not sprint-bound — typography, spacing/density, micro-interactions, empty/loading/error states, consistent icon set, branding. Iterate alongside every sprint above rather than as a single dedicated pass.
+
 ## Explicitly not planned
 
 - Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.

@@ -33,6 +33,7 @@ export default function SbomPage() {
   // the API Discovery page).
   const [scanSummary, setScanSummary] = useState<{ new_count: number } | null>(null);
   const [tab, setTab] = useState<Tab>("components");
+  const [exporting, setExporting] = useState(false);
 
   const [ossFindings, setOssFindings] = useState<Finding[] | null>(null);
   const [ossTotal, setOssTotal] = useState(0);
@@ -99,6 +100,27 @@ export default function SbomPage() {
     }
   }
 
+  async function exportJson() {
+    if (targetId === null) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const blob = await api.exportSbom(targetId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sbom-${currentTarget?.name ?? targetId}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "SBOM export failed");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const showBusy = loading || running;
   const currentTarget = targets.find((t) => t.id === targetId);
 
@@ -118,6 +140,13 @@ export default function SbomPage() {
         <TargetPicker targets={targets} value={targetId} onChange={setTargetId} />
         <Button onClick={run} disabled={running || targetId === null}>
           {running ? "Generating..." : "Generate SBOM"}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={exportJson}
+          disabled={exporting || targetId === null || !components || components.length === 0}
+        >
+          {exporting ? "Exporting..." : "Export SBOM (JSON)"}
         </Button>
       </div>
 

@@ -35,6 +35,10 @@ def discover_endpoints(repo_path: Path) -> list[dict]:
 
         rel_path = str(path.relative_to(repo_path))
         for line_no, line in enumerate(text.splitlines(), start=1):
+            # A line matches at most one framework's route pattern -- several
+            # patterns overlap syntactically (e.g. `router.get("...")` reads
+            # as both FastAPI and Express), so stop at the first hit instead
+            # of tagging the same line under multiple frameworks.
             for framework, pattern in PATTERNS:
                 m = pattern.search(line)
                 if not m:
@@ -57,4 +61,5 @@ def discover_endpoints(repo_path: Path) -> list[dict]:
                     "file": rel_path,
                     "line": line_no,
                 })
+                break
     return results

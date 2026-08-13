@@ -13,7 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TargetPicker } from "@/components/target-picker";
+import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { FindingsList } from "@/components/findings-list";
 import { cn } from "@/lib/utils";
@@ -27,7 +27,6 @@ function formatSince(iso: string): string {
 }
 
 type Tab = "components" | "vulnerabilities";
-type Mode = "repo" | "org";
 
 function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
   const [expanded, setExpanded] = useState(false);
@@ -88,7 +87,6 @@ export default function SbomPage() {
   const [ossTotal, setOssTotal] = useState(0);
   const [ossLoading, setOssLoading] = useState(false);
 
-  const [mode, setMode] = useState<Mode>("repo");
   const [orgSbom, setOrgSbom] = useState<OrgSbomResult | null>(null);
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
@@ -118,10 +116,10 @@ export default function SbomPage() {
   }, []);
 
   useEffect(() => {
-    if (mode === "org" && orgSbom === null) {
+    if (targetId === ALL_TARGETS && orgSbom === null) {
       loadOrgSbom();
     }
-  }, [mode, orgSbom, loadOrgSbom]);
+  }, [targetId, orgSbom, loadOrgSbom]);
 
   async function exportOrgJson() {
     setOrgExporting(true);
@@ -186,7 +184,7 @@ export default function SbomPage() {
   }, []);
 
   useEffect(() => {
-    if (targetId !== null) {
+    if (targetId !== null && targetId !== ALL_TARGETS) {
       loadPersisted(targetId);
       loadOssFindings(targetId);
     }
@@ -248,48 +246,51 @@ export default function SbomPage() {
         </p>
       </div>
 
-      <div className="flex gap-1 border-b border-border">
-        <button
-          onClick={() => setMode("repo")}
-          className={cn(
-            "px-3 py-2 text-sm font-medium transition-colors",
-            mode === "repo"
-              ? "border-b-2 border-primary text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          This Repo
-        </button>
-        <button
-          onClick={() => setMode("org")}
-          className={cn(
-            "px-3 py-2 text-sm font-medium transition-colors",
-            mode === "org"
-              ? "border-b-2 border-primary text-foreground"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          Organization-wide
-        </button>
-      </div>
-
-      {mode === "org" && (
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-muted-foreground">
-              Aggregated from every already-scanned target&apos;s persisted SBOM
-              (default branch) — read-only, no new scans are triggered here.
-            </p>
+      <div className="flex items-center gap-3">
+        <TargetPicker
+          targets={targets}
+          value={targetId}
+          onChange={setTargetId}
+          allowAll
+        />
+        {targetId !== ALL_TARGETS && (
+          <>
+            <Button onClick={run} disabled={running || targetId === null}>
+              {running ? "Generating..." : "Generate SBOM"}
+            </Button>
             <Button
               variant="outline"
-              onClick={exportOrgJson}
+              onClick={exportJson}
               disabled={
-                orgExporting || !orgSbom || orgSbom.components.length === 0
+                exporting ||
+                targetId === null ||
+                !components ||
+                components.length === 0
               }
             >
-              {orgExporting ? "Exporting..." : "Export Org SBOM (JSON)"}
+              {exporting ? "Exporting..." : "Export SBOM (JSON)"}
             </Button>
-          </div>
+          </>
+        )}
+        {targetId === ALL_TARGETS && (
+          <Button
+            variant="outline"
+            onClick={exportOrgJson}
+            disabled={
+              orgExporting || !orgSbom || orgSbom.components.length === 0
+            }
+          >
+            {orgExporting ? "Exporting..." : "Export Org SBOM (JSON)"}
+          </Button>
+        )}
+      </div>
+
+      {targetId === ALL_TARGETS && (
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-muted-foreground">
+            Aggregated from every already-scanned target&apos;s persisted SBOM
+            (default branch) — read-only, no new scans are triggered here.
+          </p>
 
           {orgError && <p className="text-sm text-destructive">{orgError}</p>}
 
@@ -343,7 +344,7 @@ export default function SbomPage() {
                 {filteredOrgComponents.length === 0 && (
                   <p className="text-sm text-muted-foreground">
                     {orgSbom.components.length === 0
-                      ? "No SBOM data recorded yet across any target. Generate an SBOM from the This Repo tab first."
+                      ? "No SBOM data recorded yet across any target. Select a repository above and generate an SBOM first."
                       : "No components match your search."}
                   </p>
                 )}
@@ -353,31 +354,8 @@ export default function SbomPage() {
         </div>
       )}
 
-      {mode === "repo" && (
+      {targetId !== null && targetId !== ALL_TARGETS && (
         <>
-          <div className="flex items-center gap-3">
-            <TargetPicker
-              targets={targets}
-              value={targetId}
-              onChange={setTargetId}
-            />
-            <Button onClick={run} disabled={running || targetId === null}>
-              {running ? "Generating..." : "Generate SBOM"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={exportJson}
-              disabled={
-                exporting ||
-                targetId === null ||
-                !components ||
-                components.length === 0
-              }
-            >
-              {exporting ? "Exporting..." : "Export SBOM (JSON)"}
-            </Button>
-          </div>
-
           {error && <p className="text-sm text-destructive">{error}</p>}
 
           {!error && scanSummary && (

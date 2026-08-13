@@ -6,6 +6,7 @@ from sqlmodel import Session, select, func
 
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
+from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
 from app.core.widgets import WIDGET_CATALOG, build_default_layout
 from app.models.models import DashboardLayout, Finding, FindingState, Target, User
@@ -116,6 +117,29 @@ def sla_compliance(session: Session = Depends(get_session), user: User = Depends
             in_violation += 1
 
     return {"with_sla": with_sla, "in_violation": in_violation, "compliant": with_sla - in_violation}
+
+
+@router.get("/security-score")
+def security_score(
+    target_id: int | None = None,
+    group_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Composite security health score (issue #63): a single 0-100 number +
+    letter grade + component breakdown (open findings by severity, SLA
+    compliance reused from #70, scan coverage, FP rate, week-over-week
+    trend -- see app.core.security_score for the full formula/constants).
+    Computable at org (no filter), group, or single-target scope, mirroring
+    #61's `findings.py` group_id filtering convention -- `target_id` and
+    `group_id` are mutually exclusive (neither means org-wide). Scoped to
+    the caller's workspaces via accessible_workspace_ids (issue #57). The
+    same scope resolution backs the `security_score` widget
+    (app.core.widgets) so the dashboard-widget and standalone-endpoint
+    numbers for the same scope always agree."""
+    ws_ids = accessible_workspace_ids(session, user)
+    target_ids = resolve_target_ids_for_scope(session, ws_ids, target_id, group_id)
+    return compute_security_score(session, target_ids)
 
 
 # ---------------------------------------------------------------------------

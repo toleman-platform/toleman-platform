@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import {
   ShieldAlert,
   GitBranch,
@@ -10,10 +11,17 @@ import {
   Bug,
   AlertTriangle,
   ListChecks,
+  Gauge,
+  TrendingDown,
+  TrendingUp,
+  Minus,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SEVERITY_COLOR } from "@/lib/severity";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
+import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
+import { api } from "@/lib/api";
 import type {
   WidgetId,
   WidgetDataEntry,
@@ -23,6 +31,9 @@ import type {
   SlaComplianceData,
   TopRiskyReposData,
   RecentFindingsData,
+  SecurityScore,
+  Group,
+  Target,
 } from "@/lib/api";
 
 // Issue #69: the concrete render for each widget type in the catalog --
@@ -31,6 +42,7 @@ import type {
 // the WidgetShell header; `render` consumes exactly the shape returned by
 // that widget's app.core.widgets resolver on the backend.
 export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementType; colSpanClass?: string }> = {
+  security_score: { label: "Security Score", icon: Gauge, colSpanClass: "lg:col-span-3" },
   kpi_cards: { label: "KPI Cards", icon: ShieldAlert, colSpanClass: "lg:col-span-3" },
   sla_compliance: { label: "SLA Compliance", icon: Timer, colSpanClass: "lg:col-span-3" },
   findings_trend: { label: "Findings Over Time", icon: Activity, colSpanClass: "lg:col-span-2" },
@@ -174,6 +186,132 @@ function RecentFindingsWidget({ data }: { data: RecentFindingsData }) {
   );
 }
 
+const SCORE_COMPONENT_LABEL: Record<string, string> = {
+  findings: "Open findings",
+  sla: "SLA compliance",
+  coverage: "Scan coverage",
+  fp_rate: "False-positive rate",
+  trend: "Trend (7d)",
+};
+
+type ScoreScope = { kind: "org" } | { kind: "group"; id: number } | { kind: "target"; id: number };
+
+function scoreScopeKey(s: ScoreScope) {
+  return s.kind === "org" ? "org" : `${s.kind}:${s.id}`;
+}
+
+function TrendIcon({ direction }: { direction: "improving" | "stable" | "worsening" }) {
+  const Icon = direction === "improving" ? TrendingDown : direction === "worsening" ? TrendingUp : Minus;
+  const cls = direction === "improving" ? "text-chart-5" : direction === "worsening" ? "text-destructive" : "text-muted-foreground";
+  return <Icon className={`ml-1 inline h-3 w-3 ${cls}`} />;
+}
+
+// Issue #63: composite security health score gauge, with a scope selector
+// (org-wide / a Group / a single Target) for drill-down -- reuses the same
+// scoping concepts as #61's group filtering. The widget's own batched data
+// (`initialData`, from GET /api/dashboard/widget-data) covers the org-wide
+// default view; switching scope calls GET /api/dashboard/security-score
+// directly client-side, since #69's dashboard has no per-widget-instance
+// config editor yet for a saved scoped layout. Targets/groups for the
+// picker are fetched once on mount (WidgetBody only receives this widget's
+// own data, not the whole page's).
+function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
+  const [scope, setScope] = useState<ScoreScope>({ kind: "org" });
+  const [score, setScore] = useState<SecurityScore>(initialData);
+  const [targets, setTargets] = useState<Target[]>([]);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.targets().then(setTargets).catch(() => {});
+    api.groups().then(setGroups).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (scope.kind === "org") {
+      setScore(initialData);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    const req = scope.kind === "group" ? api.securityScore({ groupId: scope.id }) : api.securityScore({ targetId: scope.id });
+    req
+      .then(setScore)
+      .catch((e) => setError(e instanceof Error ? e.message : "failed to load security score"))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scoreScopeKey(scope)]);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <select
+        className="self-end rounded-md border border-input bg-secondary px-2 py-1 text-xs text-foreground"
+        value={scoreScopeKey(scope)}
+        onChange={(e) => {
+          const [kind, id] = e.target.value.split(":");
+          if (kind === "org") setScope({ kind: "org" });
+          else if (kind === "group") setScope({ kind: "group", id: Number(id) });
+          else setScope({ kind: "target", id: Number(id) });
+        }}
+      >
+        <option value="org">All repositories (org-wide)</option>
+        {groups.length > 0 && (
+          <optgroup label="Groups">
+            {groups.map((g) => (
+              <option key={`group:${g.id}`} value={`group:${g.id}`}>
+                {g.name}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {targets.length > 0 && (
+          <optgroup label="Repositories">
+            {targets.map((t) => (
+              <option key={`target:${t.id}`} value={`target:${t.id}`}>
+                {t.name}
+              </option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {loading ? (
+        <div className="flex items-center justify-center py-6">
+          <Skeleton className="h-32 w-56" />
+        </div>
+      ) : score.target_count === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">No targets in scope.</p>
+      ) : (
+        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:justify-around">
+          <SecurityScoreGauge score={score.score} grade={score.grade} />
+          <div className="grid w-full max-w-sm grid-cols-1 gap-1.5 text-xs">
+            {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
+              const c = score.components[key as keyof SecurityScore["components"]];
+              const isWeakest = score.weakest_component === key;
+              return (
+                <div key={key} className={`flex items-center justify-between rounded-md px-2 py-1 ${isWeakest ? "bg-destructive/10" : ""}`}>
+                  <span className={isWeakest ? "font-medium text-destructive" : "text-muted-foreground"}>
+                    {SCORE_COMPONENT_LABEL[key]}
+                    {key === "trend" && <TrendIcon direction={score.components.trend.direction} />}
+                  </span>
+                  <span className={isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}>{Math.round(c.score)}</span>
+                </div>
+              );
+            })}
+            {score.weakest_component && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Dragged down by <span className="font-medium text-foreground">{SCORE_COMPONENT_LABEL[score.weakest_component]}</span>.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Central dispatch: given one layout entry's fetched data, render the right
 // widget body. Keeps DashboardBoard free of a giant per-type switch.
 export function WidgetBody({ entry }: { entry: WidgetDataEntry | undefined }) {
@@ -194,6 +332,8 @@ export function WidgetBody({ entry }: { entry: WidgetDataEntry | undefined }) {
       return <CveTimelineWidget data={entry.data as CveTimelineData} />;
     case "recent_findings":
       return <RecentFindingsWidget data={entry.data as RecentFindingsData} />;
+    case "security_score":
+      return <SecurityScoreWidget initialData={entry.data as SecurityScore} />;
     default:
       return <ErrorState message={`unknown widget type: ${entry.widget_id}`} />;
   }

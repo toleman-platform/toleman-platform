@@ -34,6 +34,8 @@ class UserRole(str, Enum):
     ADMIN = "admin"
     USER = "user"
     VIEWER = "viewer"
+    DEVELOPER = "developer"
+    SECURITY_ENGINEER = "security_engineer"
 
 
 class User(SQLModel, table=True):
@@ -169,12 +171,32 @@ class PRGuardrailStatus(str, Enum):
     OVERRIDDEN = "overridden"
 
 
+class ApiEndpoint(SQLModel, table=True):
+    """A persisted API Discovery result. Previously ephemeral (re-run every
+    time, results lost on reload) - now upserted per target+branch so the
+    page shows real state without re-scanning, and a discovery run can
+    highlight which endpoints are new since the last run (first_seen ==
+    this run's timestamp) the same way Finding/dedup already does."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    branch: str
+    framework: str
+    method: str
+    route: str
+    file_path: str
+    line: int | None = None
+    first_seen: datetime = Field(default_factory=datetime.utcnow)
+    last_seen: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PRGuardrailScan(SQLModel, table=True):
     """A PR Guardrail diff-scan run (architecture doc Flow C).
 
-    Ephemeral/comparative by design: findings surfaced here are NOT persisted
-    as platform Finding rows (that would pollute default-branch posture with
-    PR-branch-only noise). Only the scan summary is stored.
+    Net-new findings from this run are NOT persisted as platform Finding rows
+    (that would pollute default-branch posture with PR-branch-only noise) --
+    but each one IS persisted as a PRGuardrailFinding (below), scoped to this
+    scan, so an individual finding can be linked to and have its own
+    ignore/approval lifecycle without touching the main Finding table.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     target_id: int = Field(foreign_key="target.id", index=True)
@@ -184,9 +206,38 @@ class PRGuardrailScan(SQLModel, table=True):
     status: PRGuardrailStatus = PRGuardrailStatus.RUNNING
     new_findings_count: int = 0
     highest_new_severity: str | None = None  # "Critical"/"High"/etc, or None
+    new_endpoints_count: int = 0  # API Discovery: endpoints newly appearing in the PR diff
     override_reason: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
+
+
+class IgnoreStatus(str, Enum):
+    NONE = "none"
+    REQUESTED = "requested"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class PRGuardrailFinding(SQLModel, table=True):
+    """One net-new finding from a PRGuardrailScan, persisted so it can be
+    deep-linked from the GitHub PR comment back into the platform and carry
+    its own ignore-request/approval state (developer requests, security
+    engineer or admin approves/rejects -- see app/api/pr_guardrail.py)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pr_scan_id: int = Field(foreign_key="prguardrailscan.id", index=True)
+    tool: str
+    rule_id: str
+    title: str
+    file_path: str
+    line_start: int | None = None
+    severity: str  # "Critical"/"High"/etc -- stored as str, not Severity, since these aren't platform Findings
+
+    ignore_status: IgnoreStatus = IgnoreStatus.NONE
+    ignore_requested_by: str = ""
+    ignore_requested_reason: str = ""
+    ignore_reviewed_by: str = ""
+    ignore_reviewed_at: datetime | None = None
 
 
 class PolicyRuleType(str, Enum):

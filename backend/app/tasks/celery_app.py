@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.pr_guardrail_tasks",
         "app.tasks.discovery_tasks",
         "app.tasks.sbom_tasks",
+        "app.tasks.pipeline_tasks",
     ],
 )
 celery_app.conf.task_routes = {
@@ -26,6 +27,11 @@ celery_app.conf.task_routes = {
     # these do the same class of work (clone + subprocess) as scan_tasks.
     "app.tasks.discovery_tasks.*": {"queue": "scans"},
     "app.tasks.sbom_tasks.*": {"queue": "scans"},
+    # pipeline_tasks (#68): GitHub API calls, not a clone+subprocess, but
+    # still belongs off the request thread and behind the same worker --
+    # routed to the same queue rather than standing up a new one for a
+    # single task.
+    "app.tasks.pipeline_tasks.*": {"queue": "scans"},
 }
 
 # task_acks_late + reject_on_worker_lost: if a worker dies mid-scan (OOM, pod

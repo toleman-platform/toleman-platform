@@ -1,6 +1,7 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
@@ -8,7 +9,19 @@ from app.api.auth import accessible_workspace_ids, current_user, enforce_workspa
 from app.api.deps import get_session
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
-from app.models.models import Group, Target, TargetGroup, User, Workspace, WorkspaceRole
+from app.models.models import (
+    WORKSPACE_ROLE_RANK,
+    Group,
+    PipelineIntegrationBatch,
+    PipelineIntegrationBatchItem,
+    Target,
+    TargetGroup,
+    User,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
+from app.tasks.pipeline_tasks import run_pipeline_integration_batch
 
 router = APIRouter(prefix="/api/targets", tags=["targets"])
 
@@ -205,6 +218,134 @@ def integrate_pipeline(
         "pipeline_pr_url": target.pipeline_pr_url,
         "pr_number": result["pr_number"],
         "branch": result["branch"],
+    }
+
+
+class BulkPipelineIntegrateRequest(BaseModel):
+    target_ids: list[int]
+
+
+def _caller_can_integrate(session: Session, user: User, target: Target) -> bool:
+    """Same bar as the single-target POST .../pipeline-integrate
+    (require_workspace_role(DEVELOPER)), applied per-target here since a
+    bulk selection can span multiple workspaces at once."""
+    if user.role == "admin":
+        return True
+    membership = session.exec(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.user_id == user.id,
+            WorkspaceMembership.workspace_id == target.workspace_id,
+        )
+    ).first()
+    return bool(membership) and WORKSPACE_ROLE_RANK[membership.role] >= WORKSPACE_ROLE_RANK[WorkspaceRole.DEVELOPER]
+
+
+@router.post("/bulk-pipeline-integrate")
+def bulk_pipeline_integrate(
+    payload: BulkPipelineIntegrateRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Issue #68: multi-select wrapper around #66's per-target pipeline
+    integration. Accepts a list of target_ids, silently drops any the
+    caller can't see or doesn't hold at least DEVELOPER on (same
+    404-shaped hiding this file uses everywhere else -- see
+    _get_target_scoped), and dispatches the rest as one Celery batch
+    instead of blocking the request thread on N sequential real GitHub API
+    calls (branch create + contents write + PR open per target, same
+    "don't block the request thread" reasoning as #59's scan/discovery/sbom
+    offload). Returns 202 with a batch_id to poll via
+    GET /bulk-pipeline-integrate/{batch_id}.
+    """
+    if not payload.target_ids:
+        raise HTTPException(status_code=400, detail="target_ids must not be empty")
+
+    ws_ids = accessible_workspace_ids(session, user)
+    unique_ids = list(dict.fromkeys(payload.target_ids))
+    targets = session.exec(select(Target).where(Target.id.in_(unique_ids))).all()
+    targets_by_id = {t.id: t for t in targets}
+
+    eligible_ids: list[int] = []
+    for tid in unique_ids:
+        target = targets_by_id.get(tid)
+        if not target:
+            continue
+        if ws_ids is not None and target.workspace_id not in ws_ids:
+            continue
+        if not _caller_can_integrate(session, user, target):
+            continue
+        eligible_ids.append(tid)
+
+    if not eligible_ids:
+        raise HTTPException(status_code=403, detail="no accessible targets with sufficient role in the selection")
+
+    batch = PipelineIntegrationBatch(created_by_user_id=user.id, total=len(eligible_ids), status="running")
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    for tid in eligible_ids:
+        session.add(PipelineIntegrationBatchItem(batch_id=batch.id, target_id=tid, status="pending"))
+    session.commit()
+
+    run_pipeline_integration_batch.delay(batch_id=batch.id)
+
+    return JSONResponse(
+        status_code=202,
+        content={"batch_id": batch.id, "total": batch.total, "status": batch.status},
+    )
+
+
+@router.get("/bulk-pipeline-integrate/{batch_id}")
+def get_bulk_pipeline_integrate_batch(
+    batch_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Poll target for the async batch dispatched by POST above. Item
+    detail is workspace-scoped the same way as everything else in this
+    file -- items for targets outside the caller's accessible workspaces
+    (relevant if role/membership changed after the batch was created) are
+    left out of the returned items list."""
+    batch = session.get(PipelineIntegrationBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="batch not found")
+
+    ws_ids = accessible_workspace_ids(session, user)
+    items = session.exec(
+        select(PipelineIntegrationBatchItem).where(PipelineIntegrationBatchItem.batch_id == batch_id)
+    ).all()
+    target_ids = [i.target_id for i in items]
+    targets_by_id = {t.id: t for t in session.exec(select(Target).where(Target.id.in_(target_ids))).all()}
+
+    item_payload = []
+    for item in items:
+        target = targets_by_id.get(item.target_id)
+        if target and ws_ids is not None and target.workspace_id not in ws_ids:
+            continue
+        item_payload.append(
+            {
+                "target_id": item.target_id,
+                "target_name": target.name if target else None,
+                "repo_url": target.repo_url if target else None,
+                "status": item.status,
+                "error": item.error,
+                "pr_url": item.pr_url,
+                "pr_number": item.pr_number,
+                "completed_at": item.completed_at,
+            }
+        )
+
+    return {
+        "batch_id": batch.id,
+        "status": batch.status,
+        "total": batch.total,
+        "succeeded": batch.succeeded,
+        "failed": batch.failed,
+        "already_integrated": batch.already_integrated,
+        "started_at": batch.started_at,
+        "completed_at": batch.completed_at,
+        "items": item_payload,
     }
 
 

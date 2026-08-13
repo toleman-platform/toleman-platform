@@ -1,12 +1,9 @@
-import Link from "next/link";
 import { api } from "@/lib/api";
-import { Card, CardContent } from "@/components/ui/card";
 import { ConnectGithubCard } from "@/components/connect-github-card";
 import { AddTargetToggle } from "./add-target-toggle";
 import { ConnectedRefresher } from "./connected-refresher";
 import { GroupFilter } from "@/components/group-filter";
-import { GroupBadge } from "@/components/group-badge";
-import { Badge } from "@/components/ui/badge";
+import { TargetsList } from "./targets-list";
 
 function firstValue(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
@@ -45,35 +42,7 @@ export default async function TargetsPage({
           </h2>
           {groups.length > 0 && <GroupFilter groups={groups} />}
         </div>
-        {targets.map((t) => (
-          <Link key={t.id} href={`/targets/${t.id}`}>
-            <Card className="border-border bg-card transition-colors hover:border-primary/40">
-              <CardContent className="flex items-center justify-between px-4 py-3">
-                <div>
-                  <div className="font-medium text-foreground">{t.name}</div>
-                  <div className="text-xs text-muted-foreground">{t.repo_url}</div>
-                  {t.groups.length > 0 && (
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {t.groups.map((g) => (
-                        <GroupBadge key={g.id} group={g} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {t.pipeline_integrated && (
-                    <Badge variant="outline" className="border-green-600/40 text-green-500">
-                      Pipeline integrated
-                    </Badge>
-                  )}
-                  <span className="text-xs text-muted-foreground">
-                    {t.label} · weight {t.criticality_weight}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
+        {targets.length > 0 && <TargetsList targets={targets} />}
         {targets.length === 0 && (
           <p className="text-sm text-muted-foreground">
             {group_id

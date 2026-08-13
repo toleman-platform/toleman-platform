@@ -110,7 +110,9 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
       </nav>
 
       <div className="flex flex-col gap-1 border-t border-sidebar-border p-2">
-        {BOTTOM_ITEMS.filter((item) => !item.adminOnly || user?.role === "admin").map((item) => (
+        {BOTTOM_ITEMS.filter(
+          (item) => !item.adminOnly || user?.role === "admin" || user?.role === "security_engineer"
+        ).map((item) => (
           <NavLink key={item.href} item={item} />
         ))}
 

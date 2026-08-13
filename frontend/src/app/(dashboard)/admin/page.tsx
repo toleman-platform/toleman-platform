@@ -1,24 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Users, Plug, Wrench, ShieldAlert } from "lucide-react";
+import { Users, Plug, Wrench, ShieldAlert, ClipboardCheck } from "lucide-react";
+import { api, AuthUser } from "@/lib/api";
 import { UserManagement } from "./user-management";
 import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
 import { Policies } from "./policies";
+import { ApprovalQueue } from "./approval-queue";
 
 const TABS = [
   { id: "users", label: "User Management", icon: Users },
   { id: "integrations", label: "Global Integrations", icon: Plug },
   { id: "tools", label: "Tools Health", icon: Wrench },
   { id: "policies", label: "Policies", icon: ShieldAlert },
+  { id: "approval-queue", label: "Approval Queue", icon: ClipboardCheck },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
 
+// Approval Queue surfaces PR Guardrail ignore requests -- a security-team
+// action (matches the backend's require_security_reviewer gate: admin or
+// security_engineer, not any authenticated user reaching /admin).
+const APPROVAL_QUEUE_ROLES = ["admin", "security_engineer"];
+
 export default function AdminPage() {
   const [tab, setTab] = useState<TabId>("users");
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  useEffect(() => {
+    api.me().then(setUser).catch(() => setUser(null));
+  }, []);
+
+  const canSeeApprovalQueue = !!user && APPROVAL_QUEUE_ROLES.includes(user.role);
+  const visibleTabs = TABS.filter((t) => t.id !== "approval-queue" || canSeeApprovalQueue);
 
   return (
     <div className="flex flex-col gap-6">
@@ -28,7 +44,7 @@ export default function AdminPage() {
       </div>
 
       <div className="flex gap-1 border-b border-border">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -49,6 +65,7 @@ export default function AdminPage() {
       {tab === "integrations" && <GlobalIntegrations />}
       {tab === "tools" && <ToolsHealth />}
       {tab === "policies" && <Policies />}
+      {tab === "approval-queue" && canSeeApprovalQueue && <ApprovalQueue />}
     </div>
   );
 }

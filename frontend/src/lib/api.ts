@@ -216,6 +216,29 @@ export function githubBlobUrl(repoUrl: string, branch: string, filePath: string,
 
 export type Summary = { total: number; open: number; mitigated: number };
 
+// Issue #63: composite security health score. Mirrors
+// backend/app/core/security_score.py's return shape exactly -- see that
+// module's docstring for how each component/weight is computed.
+export type SecurityScoreComponent = {
+  score: number;
+  weight: number;
+  [key: string]: unknown;
+};
+
+export type SecurityScore = {
+  score: number;
+  grade: "A" | "B" | "C" | "D" | "F" | null;
+  target_count: number;
+  weakest_component: "findings" | "sla" | "coverage" | "fp_rate" | "trend" | null;
+  components: {
+    findings: SecurityScoreComponent & { open_findings: number; weighted_severity_sum: number; avg_weighted_severity_per_target: number };
+    sla: SecurityScoreComponent & { with_sla: number; in_violation: number; compliant: number; note: string | null };
+    coverage: SecurityScoreComponent & { scanned_targets: number; total_targets: number; window_days: number };
+    fp_rate: SecurityScoreComponent & { false_positives: number; total_findings: number; fp_rate: number };
+    trend: SecurityScoreComponent & { direction: "improving" | "stable" | "worsening"; current_weighted_sum: number; prior_weighted_sum: number; window_days: number };
+  };
+};
+
 export type FindingListResult = { items: Finding[]; total: number };
 
 export type FindingsQuery = {
@@ -438,16 +461,18 @@ export type PrGuardrailOrgLog = {
 
 // Configurable dashboard (issue #69): a small, concrete widget catalog
 // (KPI cards, findings trend, CVE timeline, SLA compliance, top risky
-// repos, recent findings) rather than a generic chart-config system --
-// each widget's real data comes from GET /api/dashboard/widget-data,
-// batched for every widget currently in the caller's layout.
+// repos, recent findings, security score) rather than a generic
+// chart-config system -- each widget's real data comes from
+// GET /api/dashboard/widget-data, batched for every widget currently in
+// the caller's layout. "security_score" (#63) was added after #69 shipped.
 export type WidgetId =
   | "kpi_cards"
   | "findings_trend"
   | "cve_timeline"
   | "sla_compliance"
   | "top_risky_repos"
-  | "recent_findings";
+  | "recent_findings"
+  | "security_score";
 
 export type WidgetCatalogEntry = { widget_id: WidgetId; name: string; description: string };
 
@@ -499,6 +524,7 @@ export type WidgetDataMap = {
   sla_compliance: SlaComplianceData;
   top_risky_repos: TopRiskyReposData;
   recent_findings: RecentFindingsData;
+  security_score: SecurityScore;
 };
 
 export type WidgetDataEntry =
@@ -594,6 +620,20 @@ export const api = {
   deleteSlaRule: (id: number) => jsonFetch<{ ok: boolean }>(`/api/sla-rules/${id}`, { method: "DELETE" }),
   slaCompliance: () =>
     jsonFetch<{ with_sla: number; in_violation: number; compliant: number }>("/api/dashboard/sla-compliance"),
+  // Issue #63: composite 0-100 security health score + letter grade +
+  // per-component breakdown. Org-wide with no args; pass exactly one of
+  // targetId/groupId to scope (mutually exclusive, enforced server-side).
+  // Also backs the "Security Score" dashboard widget (#69's widget system)
+  // for its org-wide default view -- this function is what the widget's own
+  // scope selector calls for a scoped (group/target) drill-down, since
+  // there's no per-widget-instance config editor in this dashboard yet.
+  securityScore: (scope: { targetId?: number; groupId?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (scope.targetId) params.set("target_id", String(scope.targetId));
+    if (scope.groupId) params.set("group_id", String(scope.groupId));
+    const qs = params.toString();
+    return jsonFetch<SecurityScore>(`/api/dashboard/security-score${qs ? `?${qs}` : ""}`);
+  },
   targetGroups: (targetId: number) => jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups`),
   assignTargetGroup: (targetId: number, groupId: number) =>
     jsonFetch<GroupBadge[]>(`/api/targets/${targetId}/groups/${groupId}`, { method: "POST" }),

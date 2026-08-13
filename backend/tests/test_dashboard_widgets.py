@@ -23,6 +23,7 @@ from app.core.widgets import (
     resolve_findings_trend,
     resolve_kpi_cards,
     resolve_recent_findings,
+    resolve_security_score,
     resolve_sla_compliance,
     resolve_top_risky_repos,
 )
@@ -31,10 +32,12 @@ from app.models.models import (
     DashboardLayout,
     Finding,
     FindingState,
+    Group,
     Organization,
     Severity,
     SlaRule,
     Target,
+    TargetGroup,
     User,
     UserRole,
     Workspace,
@@ -202,7 +205,8 @@ def test_recent_findings_ordered_and_limited(engine):
     assert data["items"][0]["title"] == "Leaked key"  # most recent first_seen
 
 
-def test_widget_catalog_has_six_concrete_widgets():
+def test_widget_catalog_has_seven_concrete_widgets():
+    # Issue #63 added "security_score" to the original 6 (#69).
     assert set(WIDGET_CATALOG.keys()) == {
         "kpi_cards",
         "findings_trend",
@@ -210,16 +214,67 @@ def test_widget_catalog_has_six_concrete_widgets():
         "sla_compliance",
         "top_risky_repos",
         "recent_findings",
+        "security_score",
     }
 
 
 def test_build_default_layout_all_valid_widget_ids():
     layout = build_default_layout()
-    assert len(layout) == 6
+    assert len(layout) == 7
     ids = {w["id"] for w in layout}
-    assert len(ids) == 6  # each instance gets a unique id
+    assert len(ids) == 7  # each instance gets a unique id
     for w in layout:
         assert w["widget_id"] in WIDGET_CATALOG
+
+
+def test_security_score_widget_org_wide(engine):
+    """Issue #63's security_score widget, added to the catalog after #69
+    shipped -- reuses app.core.security_score.compute_security_score
+    (exhaustively hand-verified in tests/test_security_score.py), so this
+    only needs to confirm the widget wiring itself: org-wide with no config
+    covers both seeded targets."""
+    t1, t2, _ = _seed(engine)
+    with Session(engine) as session:
+        data = resolve_security_score(session, None, {})
+    assert data["target_count"] == 2
+    assert set(data["components"].keys()) == {"findings", "sla", "coverage", "fp_rate", "trend"}
+    assert data["grade"] in {"A", "B", "C", "D", "F"}
+
+
+def test_security_score_widget_target_scope(engine):
+    t1, t2, _ = _seed(engine)
+    with Session(engine) as session:
+        data = resolve_security_score(session, None, {"target_id": t1})
+    assert data["target_count"] == 1
+    # t1 carries 2 open findings (1 Critical, 1 High); t2 carries 1
+    assert data["components"]["findings"]["open_findings"] == 2
+
+
+def test_security_score_widget_group_scope(engine):
+    t1, t2, ws_id = _seed(engine)
+    with Session(engine) as session:
+        group = Group(workspace_id=ws_id, name="g")
+        session.add(group)
+        session.commit()
+        session.refresh(group)
+        session.add(TargetGroup(target_id=t2, group_id=group.id))
+        session.commit()
+        group_id = group.id
+
+    with Session(engine) as session:
+        data = resolve_security_score(session, None, {"group_id": group_id})
+    assert data["target_count"] == 1
+    assert data["components"]["findings"]["open_findings"] == 1  # only t2's open finding
+
+
+def test_security_score_widget_rejects_conflicting_config(engine):
+    _seed(engine)
+    with Session(engine) as session:
+        try:
+            resolve_security_score(session, None, {"target_id": 1, "group_id": 1})
+            assert False, "expected HTTPException"
+        except Exception as exc:
+            assert "mutually exclusive" in str(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +287,7 @@ def test_get_widgets_catalog_endpoint(client, engine):
     res = client.get("/api/dashboard/widgets")
     assert res.status_code == 200
     body = res.json()
-    assert len(body) == 6
+    assert len(body) == 7
     assert {w["widget_id"] for w in body} == set(WIDGET_CATALOG.keys())
 
 
@@ -241,7 +296,7 @@ def test_get_layout_returns_default_when_unsaved(client, engine):
     res = client.get("/api/dashboard/layout")
     assert res.status_code == 200
     body = res.json()
-    assert len(body["widgets"]) == 6
+    assert len(body["widgets"]) == 7
 
 
 def test_layout_save_and_load_round_trip(client, engine):
@@ -312,4 +367,4 @@ def test_widget_data_uses_default_layout_when_unsaved(client, engine):
     client, _ = _login(client, engine)
     res = client.get("/api/dashboard/widget-data")
     assert res.status_code == 200
-    assert len(res.json()["widgets"]) == 6
+    assert len(res.json()["widgets"]) == 7

@@ -2,10 +2,10 @@
 
 Deliberately ~6 concrete, real widgets backed by real queries -- NOT a
 generic "arbitrary chart config" system. Adding a new widget type later
-(e.g. a security-score widget once #63's scoring lands) means adding one
-entry to WIDGET_CATALOG plus one resolver function here, not a rewrite --
-mirrors the "one entry + one file" extensibility documented in
-ARCHITECTURE.md for the admin page's tabs.
+means adding one entry to WIDGET_CATALOG plus one resolver function here,
+not a rewrite -- mirrors the "one entry + one file" extensibility
+documented in ARCHITECTURE.md for the admin page's tabs. `security_score`
+below is exactly that: #63's composite score, added after #69 shipped.
 
 Every resolver has the signature (session, ws_ids, config) -> JSON-able dict,
 where ws_ids is the caller's accessible_workspace_ids() result (None for
@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from sqlmodel import Session, func, select
 
+from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
 from app.models.models import Finding, FindingState, Severity, Target
 
@@ -215,6 +216,27 @@ def resolve_recent_findings(session: Session, ws_ids, config: dict) -> dict:
     return {"items": items}
 
 
+def resolve_security_score(session: Session, ws_ids, config: dict) -> dict:
+    """Composite security health score (issue #63) -- same
+    app.core.security_score.compute_security_score used by the standalone
+    GET /api/dashboard/security-score endpoint, so the widget and the
+    dedicated endpoint always agree for the same scope. config:
+    `target_id`/`group_id` (both optional, mutually exclusive -- neither
+    means org-wide), matching #61's group_id filtering convention. The
+    "Security Score" widget itself always resolves org-wide (its
+    default_config is {}); a scoped view is a client-side-only
+    interaction in the widget's own component (frontend/src/components/
+    dashboard/widgets.tsx's SecurityScoreWidget), which calls
+    GET /api/dashboard/security-score directly rather than round-tripping
+    through a saved per-instance widget config -- there's no config-editing
+    UI in this dashboard yet (see DashboardBoard), so a fixed
+    scope-per-saved-widget-instance wouldn't give real drill-down anyway."""
+    target_id = config.get("target_id")
+    group_id = config.get("group_id")
+    target_ids = resolve_target_ids_for_scope(session, ws_ids, target_id, group_id)
+    return compute_security_score(session, target_ids)
+
+
 WIDGET_CATALOG: dict[str, dict[str, Any]] = {
     "kpi_cards": {
         "name": "KPI Cards",
@@ -252,12 +274,21 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "resolver": resolve_recent_findings,
         "default_config": {"limit": 10},
     },
+    "security_score": {
+        "name": "Security Score",
+        "description": "Composite 0-100 health score + letter grade (open findings, SLA compliance, scan coverage, FP rate, trend).",
+        "resolver": resolve_security_score,
+        "default_config": {},
+    },
 }
 
 # Sensible out-of-the-box composition for a user with no saved
 # DashboardLayout row yet. Order mirrors the previous fixed dashboard
-# (frontend/(dashboard)/page.tsx pre-#69) reasonably closely.
+# (frontend/(dashboard)/page.tsx pre-#69) reasonably closely. security_score
+# leads the list (#63) -- a CISO/CTO's single-number read on posture belongs
+# above the granular KPI breakdown, not after it.
 DEFAULT_WIDGET_ORDER = [
+    "security_score",
     "kpi_cards",
     "sla_compliance",
     "findings_trend",

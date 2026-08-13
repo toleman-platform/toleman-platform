@@ -1,7 +1,7 @@
 """add slack/jira integration fields to platformconfig (#74)
 
 Revision ID: b3f9d2a7c1e4
-Revises: f2074a4b6a54
+Revises: 42ad73d177db
 Create Date: 2026-08-13 00:00:00.000000
 
 """
@@ -14,7 +14,7 @@ import sqlmodel
 
 # revision identifiers, used by Alembic.
 revision: str = 'b3f9d2a7c1e4'
-down_revision: Union[str, None] = 'f2074a4b6a54'
+down_revision: Union[str, None] = '42ad73d177db'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

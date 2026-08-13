@@ -1,4 +1,14 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// NEXT_PUBLIC_API_URL is inlined at build time into both the browser bundle
+// and server-rendered code, so it must point wherever the *browser* can
+// reach the backend (e.g. a published host port). Server Components/route
+// handlers instead run inside the frontend container itself, where that
+// address usually isn't reachable (e.g. "localhost" resolves to the
+// frontend container, not the backend one) -- API_INTERNAL_URL is a plain
+// (non-NEXT_PUBLIC_) runtime env var read fresh on the server for exactly
+// that case, e.g. set to "http://backend:8000" on the docker-compose
+// internal network. It's never bundled for the browser, so this has no
+// effect on local `npm run dev` unless explicitly set.
+export const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export type Target = {
   id: number;

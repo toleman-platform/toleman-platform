@@ -4,7 +4,39 @@ MVP slice of the [architecture](../ARCHITECTURE.md): FastAPI + Celery backend, N
 
 Deferred (see architecture doc §2/§8): Custom Workflow Builder, Mass CI/CD Rollout Engine, full GitHub App OAuth (this MVP uses a PAT/`gh`-credentialed git clone for native scans and a Workspace API Key for CI push ingestion instead).
 
-## Prerequisites (macOS, Homebrew)
+## Quickstart (Docker Compose)
+
+The fastest way to try OSP — no Homebrew, no manually installing Postgres/Redis/scanner CLIs. Requires only [Docker](https://docs.docker.com/get-docker/) with Compose v2 (`docker compose`, bundled with Docker Desktop and recent Docker Engine installs).
+
+```bash
+cp .env.example .env   # optional — every var has a working local-dev default
+docker compose up --build
+```
+
+This builds and starts five containers:
+
+- `postgres` (16) and `redis` (7), each gated by a real healthcheck (`pg_isready`, `redis-cli ping`)
+- `backend` — FastAPI on port 8000, with Semgrep/Trivy/Gitleaks/gosec installed in the image (same versions/install method proven in `.github/workflows/`); waits for Postgres and Redis to report healthy before starting, and exposes its own healthcheck (`curl` against `/health`)
+- `celery-worker` — same image as `backend`, running `celery -A app.tasks.celery_app worker -Q scans`; waits for the backend to be healthy first (backend's startup hook is what creates the DB schema — no Alembic migrations yet, see #58)
+- `frontend` — Next.js on port 3000, waits for the backend to be healthy
+
+Once it's up:
+
+- Frontend: http://localhost:3000 — sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in `.env`, defaults to `admin@rikugan.io` / `changeme123`)
+- Backend: http://localhost:8000 (`/docs` for the OpenAPI UI, `/health` for a liveness check)
+- Scanner install sanity check: `curl http://localhost:8000/api/tools/health` reports real installed versions for all four tools, running inside the `backend` container
+
+Bootstrap a workspace and register a target the same way as the manual setup below, just against `http://localhost:8000`.
+
+See `.env.example` for every variable Compose reads (Postgres credentials, backend secrets, `NEXT_PUBLIC_API_URL`) and what happens if you leave it at its default. `.env` is git-ignored, so it's safe to put real secrets there once you have any (`GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, etc.).
+
+To stop everything: `docker compose down` (add `-v` to also drop the Postgres volume and start fully fresh next time).
+
+## Manual setup (macOS, Homebrew)
+
+Prefer running the backend/frontend directly on your machine instead of in containers — e.g. for faster iteration with hot reload, or to attach a debugger. Skip this section if you used Docker Compose above.
+
+### Prerequisites
 
 ```bash
 brew install postgresql@16 redis semgrep trivy gitleaks gosec python@3.12
@@ -21,7 +53,7 @@ psql postgres -c "CREATE USER osp WITH PASSWORD 'osp' CREATEDB;"
 psql postgres -c "CREATE DATABASE osp OWNER osp;"
 ```
 
-## Backend
+### Backend
 
 ```bash
 cd backend
@@ -55,7 +87,7 @@ curl -X POST "http://localhost:8000/api/scans/run?target_id=1&tool=semgrep"
 
 Private repos are cloned using whatever git credential helper is already configured locally (e.g. `gh auth setup-git`) — set `GITHUB_TOKEN` in `.env` as an alternative.
 
-## Frontend
+### Frontend
 
 ```bash
 cd frontend

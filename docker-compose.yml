@@ -1,0 +1,128 @@
+# Full OSP stack: Postgres, Redis, the FastAPI backend, a Celery worker
+# (same image as the backend, different command), and the Next.js frontend.
+#
+# Quickstart:
+#   cp .env.example .env   # then fill in real secrets as needed
+#   docker compose up --build
+#
+# Backend:  http://localhost:8000  (docs at /docs, health at /health)
+# Frontend: http://localhost:3000
+#
+# See README.md for the full walkthrough and the manual (non-Docker) setup
+# path.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-osp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-osp}
+      POSTGRES_DB: ${POSTGRES_DB:-osp}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-osp} -d ${POSTGRES_DB:-osp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Compose service names, not the .env file's localhost defaults --
+      # these are always correct on the internal compose network regardless
+      # of what's in .env.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-osp}:${POSTGRES_PASSWORD:-osp}@postgres:5432/${POSTGRES_DB:-osp}
+      REDIS_URL: redis://redis:6379/0
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
+      SCAN_WORKDIR: /tmp/osp-scans
+      SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
+      COOKIE_SECURE: ${COOKIE_SECURE:-False}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.io}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PLATFORM_ENCRYPTION_KEY: ${PLATFORM_ENCRYPTION_KEY:-}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  celery-worker:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app worker -Q scans --loglevel=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        # Only the backend's startup hook (app/main.py -> init_db()) creates
+        # the DB schema (no Alembic migrations yet - see #58). Waiting on its
+        # healthcheck means the worker never races a scan against tables
+        # that don't exist yet.
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-osp}:${POSTGRES_PASSWORD:-osp}@postgres:5432/${POSTGRES_DB:-osp}
+      REDIS_URL: redis://redis:6379/0
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
+      SCAN_WORKDIR: /tmp/osp-scans
+      SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
+      COOKIE_SECURE: ${COOKIE_SECURE:-False}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.io}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
+      ADMIN_NAME: ${ADMIN_NAME:-Admin}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      PLATFORM_ENCRYPTION_KEY: ${PLATFORM_ENCRYPTION_KEY:-}
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Build-time only (inlined into the browser bundle) -- must be an
+        # address the browser on the host can reach, i.e. the published
+        # backend port below, not the internal "backend" service name.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      # Runtime-only override so the Next.js server *inside* this container
+      # (Server Components, route handlers) can reach the backend over the
+      # compose network. See the comment on API_URL in src/lib/api.ts.
+      API_INTERNAL_URL: http://backend:8000
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres-data:

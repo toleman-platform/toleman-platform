@@ -3,7 +3,11 @@ import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { AuthUser, Target } from "@/lib/api";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// See the matching comment in src/lib/api.ts -- API_INTERNAL_URL lets the
+// Next.js server (inside the frontend container) reach the backend over the
+// docker-compose network, independent of the build-time, browser-facing
+// NEXT_PUBLIC_API_URL.
+const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const ONBOARDING_EXEMPT_PATHS = ["/onboarding", "/settings", "/admin"];
 
 async function getCurrentUser(): Promise<AuthUser | null> {

@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export type Target = {
   id: number;
@@ -245,6 +245,11 @@ export const api = {
       `/api/sbom/${targetId}`,
       { method: "POST" }
     ),
+  exportSbom: async (targetId: number): Promise<Blob> => {
+    const res = await fetch(`${API_URL}/api/sbom/${targetId}/export`, { credentials: "include" });
+    if (!res.ok) throw new Error(`export failed: ${res.status}`);
+    return res.blob();
+  },
   aiStatus: () => jsonFetch<{ configured: boolean }>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),

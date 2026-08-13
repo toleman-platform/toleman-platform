@@ -1,6 +1,8 @@
+import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
@@ -112,3 +114,42 @@ def list_sbom_components(target_id: int, session: Session = Depends(get_session)
         "count": len(components),
         "components": _serialize(components, set()),
     }
+
+
+@router.get("/{target_id}/export")
+def export_sbom(target_id: int, session: Session = Depends(get_session)):
+    """Downloadable CycloneDX 1.5 SBOM built from persisted components --
+    the same real data shown on the page, not a re-fetch or re-scan."""
+    target = _get_target(target_id, session)
+    components = session.exec(
+        select(SbomComponent)
+        .where(SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch)
+        .order_by(SbomComponent.name)
+    ).all()
+
+    document = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{uuid.uuid4()}",
+        "version": 1,
+        "metadata": {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "component": {"type": "application", "name": target.name},
+        },
+        "components": [
+            {
+                "type": "library",
+                "name": c.name,
+                "version": c.version,
+                "purl": c.purl,
+                "properties": [{"name": "osp:packageType", "value": c.package_type}],
+            }
+            for c in components
+        ],
+    }
+
+    filename = f"sbom-{target.name}-{target.default_branch}.json"
+    return JSONResponse(
+        content=document,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

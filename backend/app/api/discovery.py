@@ -54,6 +54,7 @@ def upsert_endpoints(session: Session, target_id: int, branch: str, discovered: 
             )
             session.add(row)
             new_endpoints.append(row)
+            existing[key] = row
 
     session.commit()
     for row in new_endpoints:

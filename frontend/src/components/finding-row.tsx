@@ -3,7 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Finding, api } from "@/lib/api";
-import { SEVERITY_BORDER_COLOR, SEVERITY_COLOR, STATE_COLOR } from "@/lib/severity";
+import {
+  EPSS_BADGE_COLOR,
+  EPSS_NOTABLE_THRESHOLD,
+  KEV_BADGE_COLOR,
+  SEVERITY_BORDER_COLOR,
+  SEVERITY_COLOR,
+  STATE_COLOR,
+} from "@/lib/severity";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -61,6 +68,24 @@ export function FindingRow({
                 >
                   {finding.severity}
                 </Badge>
+                {finding.kev_listed && (
+                  <Badge
+                    variant="outline"
+                    title="Listed in CISA's Known Exploited Vulnerabilities catalog"
+                    className={`shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${KEV_BADGE_COLOR}`}
+                  >
+                    KEV
+                  </Badge>
+                )}
+                {!finding.kev_listed && finding.epss_score !== null && finding.epss_score > EPSS_NOTABLE_THRESHOLD && (
+                  <Badge
+                    variant="outline"
+                    title="EPSS: predicted probability of real-world exploitation in the next 30 days"
+                    className={`shrink-0 px-2 py-0.5 text-xs font-bold ${EPSS_BADGE_COLOR}`}
+                  >
+                    EPSS {(finding.epss_score * 100).toFixed(0)}%
+                  </Badge>
+                )}
                 <span className="truncate text-sm font-medium text-foreground">{finding.title}</span>
               </div>
               <div className="mt-1 truncate text-xs text-muted-foreground">

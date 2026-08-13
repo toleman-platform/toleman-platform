@@ -25,6 +25,8 @@ export type Finding = {
   branch: string;
   state: string;
   cve_id: string | null;
+  epss_score: number | null;
+  kev_listed: boolean;
   first_seen: string;
   last_seen: string;
 };

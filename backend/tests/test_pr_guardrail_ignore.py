@@ -165,7 +165,10 @@ def test_pending_queue_only_shows_requested(client, engine):
 
 
 def test_list_findings_for_a_scan(client, engine):
-    client = _login(client, engine)
+    # ADMIN bypasses workspace scoping (accessible_workspace_ids returns
+    # None) -- this test's scan targets target_id=1, which doesn't exist as
+    # a real row, so a non-admin caller would 404 on the workspace check.
+    client = _login(client, engine, role=UserRole.ADMIN)
     scan_id, finding_id = _make_pr_scan_and_finding(engine)
 
     res = client.get(f"/api/pr-guardrail/{scan_id}/findings")

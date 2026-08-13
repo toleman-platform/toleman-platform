@@ -21,6 +21,7 @@ from app.models.models import (
     Finding,
     FindingState,
     Organization,
+    PRGuardrailScan,
     Severity,
     Target,
     User,
@@ -107,6 +108,17 @@ def _make_finding(engine, target_id: int, **overrides) -> int:
         session.commit()
         session.refresh(finding)
         return finding.id
+
+
+def _make_pr_scan(engine, target_id: int, **overrides) -> int:
+    defaults = dict(target_id=target_id, pr_number=1, branch="feature")
+    defaults.update(overrides)
+    with Session(engine) as session:
+        scan = PRGuardrailScan(**defaults)
+        session.add(scan)
+        session.commit()
+        session.refresh(scan)
+        return scan.id
 
 
 def _assign(engine, user_id: int, workspace_id: int, role: WorkspaceRole = WorkspaceRole.VIEWER):
@@ -249,3 +261,48 @@ def test_dashboard_posture_scoped_to_caller_workspace(client, engine):
     assert res.status_code == 200
     target_ids = {row["target"]["id"] for row in res.json()}
     assert target_ids == {target_a}
+
+
+def test_get_pr_guardrail_findings_in_other_workspace_returns_404(client, engine):
+    """A viewer with no membership in the scan's workspace must not be able
+    to read PR Guardrail findings for it by guessing/incrementing
+    pr_scan_id -- the read-path counterpart to #57 for this router."""
+    ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
+    scan_a = _make_pr_scan(engine, target_a)
+    scan_b = _make_pr_scan(engine, target_b)
+    client, uid = _login(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a)
+
+    res = client.get(f"/api/pr-guardrail/{scan_b}/findings")
+    assert res.status_code == 404
+
+    own = client.get(f"/api/pr-guardrail/{scan_a}/findings")
+    assert own.status_code == 200
+
+
+def test_override_pr_guardrail_scan_in_other_workspace_returns_404(client, engine):
+    ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
+    scan_b = _make_pr_scan(engine, target_b)
+    client, uid = _login(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a)
+
+    res = client.post(f"/api/pr-guardrail/{scan_b}/override", json={"reason": "accepted risk"})
+    assert res.status_code == 404
+
+
+def test_pr_guardrail_findings_empty_membership_returns_404(client, engine):
+    ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
+    scan_a = _make_pr_scan(engine, target_a)
+    client, _uid = _login(client, engine, role=UserRole.VIEWER)  # zero WorkspaceMembership rows
+
+    res = client.get(f"/api/pr-guardrail/{scan_a}/findings")
+    assert res.status_code == 404
+
+
+def test_admin_sees_pr_guardrail_scan_in_any_workspace(client, engine):
+    ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
+    scan_b = _make_pr_scan(engine, target_b)
+    client, _uid = _login(client, engine, role=UserRole.ADMIN)  # no WorkspaceMembership row at all
+
+    res = client.get(f"/api/pr-guardrail/{scan_b}/findings")
+    assert res.status_code == 200

@@ -22,8 +22,8 @@ def _fake_run_factory(created_marker: str = "MARKER"):
     the destination directory (with a marker file) instead of hitting the network.
     """
 
-    def _fake_run(cmd, check=False, capture_output=False, text=False, cwd=None):
-        # cmd looks like ["git", "clone", "--depth", "1", "--branch", branch, url, dest]
+    def _fake_run(cmd, check=False, capture_output=False, text=False, cwd=None, env=None):
+        # cmd looks like ["git", "clone", "--depth", "1", "--branch", branch, "--", url, dest]
         dest = Path(cmd[-1])
         dest.mkdir(parents=True, exist_ok=True)
         (dest / created_marker).write_text("cloned")

@@ -20,6 +20,9 @@ PARSER_MAP = parsers.PARSER_MAP
 #     installation problem, will fail identically every time.
 #   - ValueError (unsupported tool) / KeyError (bad PARSER_MAP entry) -- programmer
 #     error / bad input, deterministic.
+#   - runner.RepoCloneError (invalid repo_url/branch, rejected by clone_repo's
+#     validation before subprocess ever runs) -- deterministic bad input, same
+#     as the ValueError/KeyError cases above.
 #   - json parsing issues are already swallowed inside runner.run_tool.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
 
@@ -69,4 +72,6 @@ def run_scan(self, target_id: int, tool: str):
             scan.status = "failed"
             session.add(scan)
             session.commit()
-            return {"error": str(exc), "scan_id": scan.id}
+            # runner.clone_error_message avoids echoing raw subprocess argv/paths
+            # (and, historically, an embedded GitHub token) back into scan state.
+            return {"error": runner.clone_error_message(exc), "scan_id": scan.id}

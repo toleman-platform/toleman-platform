@@ -40,10 +40,10 @@ Per the architecture doc, this was always meant to be the core differentiator ("
 
 ## Sprint 5 — Scale & enterprise readiness
 
-- RBAC with workspace/project-scoped roles (today it's global admin/user/viewer only).
-- Compliance/report export (PDF/CSV posture reports).
-- Full GitHub App OAuth polish (multi-install support — `GitHubAppConfig` is explicitly single-row/single-tenant today).
-- Mass CI/CD Rollout Engine + Custom Workflow Builder (deferred from the original architecture doc's v2.1, still deferred).
+- **#32** RBAC with workspace/project-scoped roles (today it's global admin/user/viewer only).
+- **#33** Compliance/report export (PDF/CSV posture reports).
+- **#34** Full GitHub App OAuth polish (multi-install support — `GitHubAppConfig` is explicitly single-row/single-tenant today).
+- ~~Mass CI/CD Rollout Engine + Custom Workflow Builder~~ — **#35 moved to after Sprint 8**: it naturally builds on the single-repo pipeline-integration mechanism (#66), which doesn't exist until Sprint 8. Building the "mass rollout" wrapper before the thing it rolls out would be speculative.
 
 ## Sprint 6 — Security & Platform Hardening (#54–60)
 
@@ -82,13 +82,14 @@ The "operational, not just a dashboard" story — founder's highest-priority man
 - **#73** User profile (password/name) + notification preferences (email/Slack on critical/KEV/SLA-breach).
 - **#74** Slack & Jira integration in Admin settings, encrypted config + test-connection — delivery channel for #73.
 
-## Sprint 10 — Platform Differentiation (#75, #72, #76)
+## Sprint 10 — Platform Differentiation (#75, #72, #76, #35)
 
 The largest, highest-effort items — the features that make OSP more than a free Snyk clone.
 
 - **#75** Tool marketplace / health page (registry, install-from-UI, per-tool usage assignment, IaC tools).
 - **#72** Active API scanning against discovered endpoints (Nuclei/ZAP integration).
 - **#76** False positive learning engine (cross-repo suppression rules, auto-suppress on ingestion).
+- **#35** Mass CI/CD Rollout Engine + Custom Workflow Builder (moved from Sprint 5 — depends on #66's single-repo pipeline mechanism from Sprint 8).
 
 ## Continuous — UI polish (#77)
 

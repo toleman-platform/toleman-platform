@@ -63,4 +63,6 @@ def run_native_scan(
         scan.status = "failed"
         session.add(scan)
         session.commit()
-        return {"error": str(exc), "scan_id": scan.id}
+        # runner.clone_error_message avoids echoing raw subprocess argv/paths
+        # (and, historically, an embedded GitHub token) back in the response.
+        return {"error": runner.clone_error_message(exc), "scan_id": scan.id}

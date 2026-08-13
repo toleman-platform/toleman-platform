@@ -325,5 +325,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             "new_endpoints_count": 0,
             "new_findings": [],
             "new_endpoints": [],
-            "error": str(exc),
+            # runner.clone_error_message avoids echoing raw subprocess argv/paths
+            # (and, historically, an embedded GitHub token) back in the response.
+            "error": runner.clone_error_message(exc),
         }

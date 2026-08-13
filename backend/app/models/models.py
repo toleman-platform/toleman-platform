@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import SQLModel, Field
 
 
@@ -591,3 +591,29 @@ class SlaRule(SQLModel, table=True):
     severity: Severity
     days_to_fix: int
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DashboardLayout(SQLModel, table=True):
+    """A user's configurable dashboard composition (issue #69), replacing
+    the previous single fixed layout in frontend/(dashboard)/page.tsx.
+
+    `widgets` is an ordered JSON list of widget *instances*:
+    ``[{"id": "<uuid>", "widget_id": "kpi_cards", "config": {...}}, ...]``.
+    `id` is a per-instance identifier (stable across reorders/renames so the
+    frontend can key React lists and target a specific instance for
+    remove/move, distinct from `widget_id` which names the concrete widget
+    *type* in app.core.widgets.WIDGET_CATALOG). `config` is deliberately
+    minimal -- a widget's own scope filter (e.g. `{"limit": 10}` for recent
+    findings), not a generic arbitrary-chart-config blob; see
+    app.core.widgets for the concrete (non-generic) widget catalog this
+    project chose instead of a build-your-own-chart system.
+
+    One row per user (unique user_id) -- absence of a row means "no custom
+    layout saved yet", resolved by GET /api/dashboard/layout to
+    app.core.widgets.build_default_layout()'s sensible default set rather
+    than an empty dashboard.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", unique=True, index=True)
+    widgets: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

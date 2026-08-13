@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { api, Target } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -50,9 +51,14 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground">Target configuration and workspace credentials</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+          <p className="text-sm text-muted-foreground">Target configuration and workspace credentials</p>
+        </div>
+        <Link href="/onboarding" className="text-xs text-primary underline">
+          Replay guided onboarding
+        </Link>
       </div>
 
       <TargetPicker targets={targets} value={targetId} onChange={setTargetId} />

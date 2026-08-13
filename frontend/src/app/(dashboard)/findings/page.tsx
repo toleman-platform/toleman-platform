@@ -38,7 +38,7 @@ export default async function FindingsPage({
         <p className="text-sm text-muted-foreground">{result.total} findings across all targets</p>
       </div>
       <FindingsFilterBar targets={targets} tools={tools} />
-      <FindingsList findings={result.items} total={result.total} page={page} pageSize={PAGE_SIZE} />
+      <FindingsList findings={result.items} total={result.total} page={page} pageSize={PAGE_SIZE} targets={targets} />
     </div>
   );
 }

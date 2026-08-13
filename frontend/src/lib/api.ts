@@ -31,6 +31,13 @@ export type Finding = {
   last_seen: string;
 };
 
+export function githubBlobUrl(repoUrl: string, branch: string, filePath: string, lineStart?: number | null): string {
+  const repoPath = new URL(repoUrl).pathname.replace(/\.git$/, "").replace(/^\//, "");
+  const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
+  const url = `https://github.com/${repoPath}/blob/${encodeURIComponent(branch)}/${encodedFilePath}`;
+  return lineStart ? `${url}#L${lineStart}` : url;
+}
+
 export type Summary = { total: number; open: number; mitigated: number };
 
 export type FindingListResult = { items: Finding[]; total: number };

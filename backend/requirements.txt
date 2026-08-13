@@ -2,6 +2,7 @@ fastapi==0.115.0
 pydantic==2.9.2
 uvicorn[standard]==0.30.6
 sqlmodel==0.0.22
+alembic==1.13.3
 psycopg[binary]==3.2.10
 celery==5.4.0
 redis==5.0.8

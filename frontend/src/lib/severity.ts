@@ -37,6 +37,17 @@ export const KEV_BADGE_COLOR = "border-destructive/40 bg-destructive/20 text-des
 export const EPSS_NOTABLE_THRESHOLD = 0.1;
 export const EPSS_BADGE_COLOR = "border-chart-3/30 bg-chart-3/10 text-chart-3";
 
+// PR Guardrail finding ignore-request lifecycle (developer requests ->
+// security engineer/admin approves or rejects). Deliberately distinct from
+// SEVERITY_COLOR/STATE_COLOR since it tracks the ignore workflow, not the
+// finding's own severity/triage state.
+export const IGNORE_STATUS_COLOR: Record<string, string> = {
+  none: "border-border bg-muted text-muted-foreground",
+  requested: "border-chart-1/20 bg-chart-1/10 text-chart-1",
+  approved: "border-chart-5/20 bg-chart-5/10 text-chart-5",
+  rejected: "border-destructive/20 bg-destructive/10 text-destructive",
+};
+
 export const STATE_COLOR: Record<string, string> = {
   Open: "text-destructive",
   "Accepted Risk": "text-chart-3",

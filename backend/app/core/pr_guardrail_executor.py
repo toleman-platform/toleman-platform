@@ -1,8 +1,10 @@
 """PR Guardrail execution: clone the PR head branch, scan, diff against the
-default branch, persist a PRGuardrailScan, and best-effort post a PR comment
-+ commit status. Extracted from app/api/pr_guardrail.py so both the on-demand
-API route and the webhook-driven (real-time, PR opened/synchronize) path call
-the exact same logic instead of two copies drifting apart.
+default branch, persist a PRGuardrailScan (+ one PRGuardrailFinding per
+net-new finding, so each can be deep-linked and carry its own ignore/approval
+state), and best-effort post a PR comment + commit status. Extracted from
+app/api/pr_guardrail.py so both the on-demand API route and the
+webhook-driven (real-time, PR opened/synchronize) path call the exact same
+logic instead of two copies drifting apart.
 """
 import logging
 from datetime import datetime
@@ -16,22 +18,37 @@ from app.core.github_app import get_installation_token
 from app.core.policy import apply_policies
 from app.core.pr_guardrail import compute_net_new, highest_severity, should_block
 from app.models.models import (
+    ApiEndpoint,
     Finding,
     FindingState,
     GitHubAppConfig,
     GitHubInstallation,
     PolicyRule,
+    PRGuardrailFinding,
     PRGuardrailScan,
     PRGuardrailStatus,
     Target,
 )
 from app.scanners import parsers, runner
+from app.scanners.discovery import discover_endpoints
 
 logger = logging.getLogger(__name__)
+
+FRONTEND_URL = "http://localhost:3000"
 
 GUARDRAIL_TOOL = "semgrep"
 GUARDRAIL_PARSER = parsers.parse_semgrep
 MAX_NEW_FINDINGS_IN_RESPONSE = 20
+MAX_NEW_ENDPOINTS_IN_RESPONSE = 10
+
+
+def _severity_str(severity) -> str:
+    """Findings carry a Severity enum member up to this point; f-string-ing
+    an enum directly renders "Severity.MEDIUM" (its default __repr__-ish
+    __str__), not "Medium" -- a real bug found via a screenshot of an actual
+    posted PR comment. Persisted PRGuardrailFinding.severity is already a
+    plain str, so this also passes those through unchanged."""
+    return severity.value if hasattr(severity, "value") else str(severity)
 
 
 def finding_summary(f: dict) -> dict:
@@ -41,22 +58,91 @@ def finding_summary(f: dict) -> dict:
         "title": f.get("title"),
         "file_path": f.get("file_path"),
         "line_start": f.get("line_start"),
-        "severity": f.get("severity"),
+        "severity": _severity_str(f.get("severity")),
     }
 
 
-def render_comment(net_new: list[dict], status: PRGuardrailStatus) -> str:
-    if not net_new:
-        return "**OSP PR Guardrail**: no net-new findings vs the default branch. ✅"
-    lines = [f"**OSP PR Guardrail**: {len(net_new)} net-new finding(s) vs the default branch.", ""]
+def _persist_findings(session: Session, pr_scan_id: int, net_new: list[dict]) -> list[PRGuardrailFinding]:
+    rows = []
     for f in net_new[:MAX_NEW_FINDINGS_IN_RESPONSE]:
-        loc = f.get("file_path", "")
-        if f.get("line_start"):
-            loc += f":{f['line_start']}"
-        lines.append(f"- **{f.get('severity')}** `{f.get('rule_id')}` — {f.get('title')} ({loc})")
-    if status == PRGuardrailStatus.BLOCKED:
+        row = PRGuardrailFinding(
+            pr_scan_id=pr_scan_id,
+            tool=GUARDRAIL_TOOL,
+            rule_id=f.get("rule_id", ""),
+            title=f.get("title", "") or f.get("rule_id", ""),
+            file_path=f.get("file_path", ""),
+            line_start=f.get("line_start"),
+            severity=_severity_str(f.get("severity")),
+        )
+        session.add(row)
+        rows.append(row)
+    session.commit()
+    for row in rows:
+        session.refresh(row)
+    return rows
+
+
+def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dict]:
+    """Real static-analysis route discovery on the PR branch, diffed against
+    what's already persisted for the target's default branch -- same
+    net-new pattern as findings, but informational only (no ignore workflow;
+    unlike vulnerabilities, a new API endpoint isn't inherently something to
+    approve/reject, just something to be aware of in review)."""
+    try:
+        discovered = discover_endpoints(repo_path)
+    except Exception:
+        logger.warning("PR guardrail: endpoint discovery failed, skipping", exc_info=True)
+        return []
+
+    existing = {
+        (e.method, e.route, e.file_path)
+        for e in session.exec(
+            select(ApiEndpoint).where(ApiEndpoint.target_id == target.id, ApiEndpoint.branch == target.default_branch)
+        ).all()
+    }
+    return [d for d in discovered if (d["method"], d["route"], d["file"]) not in existing]
+
+
+def render_comment(
+    findings: list[PRGuardrailFinding],
+    new_endpoints: list[dict],
+    status: PRGuardrailStatus,
+    target_id: int,
+    pr_scan_id: int,
+) -> str:
+    if not findings and not new_endpoints:
+        return "**OSP PR Guardrail**: no net-new findings or API changes vs the default branch. ✅"
+
+    lines = ["**OSP PR Guardrail**", ""]
+
+    if findings:
+        lines.append(f"**{len(findings)} net-new vulnerability finding(s)** vs the default branch:")
         lines.append("")
-        lines.append("This PR is **blocked** pending fix or AppSec override.")
+        for f in findings:
+            loc = f.file_path
+            if f.line_start:
+                loc += f":{f.line_start}"
+            ref_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{f.id}"
+            ignore_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&ignore_finding={f.id}"
+            lines.append(
+                f"- **{f.severity}** `{f.rule_id}` — {f.title} (`{loc}`) "
+                f"[[view]]({ref_link}) · [[request ignore]]({ignore_link})"
+            )
+        lines.append("")
+
+    if new_endpoints:
+        lines.append(f"**{len(new_endpoints)} new API endpoint(s)** detected in this PR:")
+        lines.append("")
+        for e in new_endpoints[:MAX_NEW_ENDPOINTS_IN_RESPONSE]:
+            lines.append(f"- `{e['method']}` `{e['route']}` (`{e['file']}:{e.get('line', '?')}`)")
+        if len(new_endpoints) > MAX_NEW_ENDPOINTS_IN_RESPONSE:
+            lines.append(f"- _...and {len(new_endpoints) - MAX_NEW_ENDPOINTS_IN_RESPONSE} more_")
+        lines.append("")
+
+    if status == PRGuardrailStatus.BLOCKED:
+        lines.append("This PR is **blocked** pending fix or AppSec override — [review in OSP]"
+                      f"({FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}).")
+
     return "\n".join(lines)
 
 
@@ -68,14 +154,13 @@ def _get_installation_token_or_none(session: Session) -> str | None:
     return get_installation_token(config, installation.installation_id)
 
 
-def post_pr_comment(session: Session, slug: str, pr_number: int, net_new: list[dict], status: PRGuardrailStatus) -> None:
+def post_pr_comment(session: Session, slug: str, pr_number: int, body: str) -> None:
     """Best-effort: never raises -- a scan result that fails to post a comment is still useful."""
     try:
         token = _get_installation_token_or_none(session)
         if not token:
             logger.warning("PR guardrail: no GitHub App installed, skipping PR comment")
             return
-        body = render_comment(net_new, status)
         res = httpx.post(
             f"https://api.github.com/repos/{slug}/issues/{pr_number}/comments",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
@@ -113,10 +198,12 @@ def set_commit_status(session: Session, slug: str, sha: str, state: str, descrip
 
 
 def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) -> dict:
-    """Diff-only scan: scan the PR's head branch, diff against the target's
-    default-branch Open findings, persist a PRGuardrailScan, best-effort post
-    a PR comment + commit status. Returns the same response shape regardless
-    of caller (on-demand API route, webhook handler, or Celery task)."""
+    """Diff-only scan: scan the PR's head branch, diff findings against the
+    target's default-branch Open findings and API endpoints against the
+    persisted default-branch discovery set, persist a PRGuardrailScan +
+    PRGuardrailFinding rows, best-effort post a PR comment + commit status.
+    Returns the same response shape regardless of caller (on-demand API
+    route, webhook handler, or Celery task)."""
     slug = repo_slug_from_url(target.repo_url)
 
     pr_res = github_get(f"/repos/{slug}/pulls/{pr_number}")
@@ -184,21 +271,27 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
         status = PRGuardrailStatus.BLOCKED if should_block(net_new, blocking_severities) else PRGuardrailStatus.PASSED
 
+        new_endpoints = _diff_new_endpoints(session, target, repo_path)
+
         pr_scan.status = status
         pr_scan.new_findings_count = len(net_new)
         pr_scan.highest_new_severity = highest_severity(net_new)
+        pr_scan.new_endpoints_count = len(new_endpoints)
         pr_scan.completed_at = datetime.utcnow()
         session.add(pr_scan)
         session.commit()
         session.refresh(pr_scan)
 
-        post_pr_comment(session, slug, pr_number, net_new, status)
+        persisted_findings = _persist_findings(session, pr_scan.id, net_new)
+
+        comment_body = render_comment(persisted_findings, new_endpoints, status, target.id, pr_scan.id)
+        post_pr_comment(session, slug, pr_number, comment_body)
         set_commit_status(
             session,
             slug,
             head_sha,
             "success" if status == PRGuardrailStatus.PASSED else "failure",
-            f"{len(net_new)} net-new finding(s), highest: {pr_scan.highest_new_severity or 'none'}",
+            f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)",
         )
 
         return {
@@ -206,7 +299,9 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             "status": pr_scan.status,
             "new_findings_count": pr_scan.new_findings_count,
             "highest_new_severity": pr_scan.highest_new_severity,
+            "new_endpoints_count": pr_scan.new_endpoints_count,
             "new_findings": [finding_summary(f) for f in net_new[:MAX_NEW_FINDINGS_IN_RESPONSE]],
+            "new_endpoints": new_endpoints[:MAX_NEW_ENDPOINTS_IN_RESPONSE],
         }
     except Exception as exc:
         pr_scan.status = PRGuardrailStatus.ERROR
@@ -218,6 +313,8 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             "status": pr_scan.status,
             "new_findings_count": 0,
             "highest_new_severity": None,
+            "new_endpoints_count": 0,
             "new_findings": [],
+            "new_endpoints": [],
             "error": str(exc),
         }

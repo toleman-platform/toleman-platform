@@ -32,7 +32,7 @@ export default async function TargetDetailPage({
         <h2 className="mb-3 text-sm font-medium text-muted-foreground">Findings ({findings.length})</h2>
         <div className="flex flex-col gap-2">
           {findings.map((f) => (
-            <FindingRow key={f.id} finding={f} />
+            <FindingRow key={f.id} finding={f} repoUrl={target.repo_url} />
           ))}
           {findings.length === 0 && (
             <p className="text-sm text-muted-foreground">No findings yet. Run a scan above.</p>

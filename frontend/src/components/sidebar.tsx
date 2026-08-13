@@ -11,6 +11,7 @@ import {
   BrainCircuit,
   GitPullRequest,
   Globe,
+  Package,
   Settings,
   UserCog,
   LogOut,
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { href: "/ai-analysis", label: "AI Analysis", icon: BrainCircuit },
   { href: "/pr-history", label: "PR History", icon: GitPullRequest },
   { href: "/api-discovery", label: "API Discovery", icon: Globe },
+  { href: "/sbom", label: "SBOM & OSS Vulns", icon: Package },
 ];
 
 const BOTTOM_ITEMS = [

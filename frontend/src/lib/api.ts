@@ -31,6 +31,29 @@ export type Finding = {
   last_seen: string;
 };
 
+export type AiProvider = "anthropic" | "openai_compatible";
+
+export type AiStatus = {
+  configured: boolean;
+  provider: AiProvider;
+};
+
+export type PlatformConfigView = {
+  anthropic_api_key_set: boolean;
+  ai_provider: AiProvider;
+  openai_compatible_base_url: string;
+  openai_compatible_api_key_set: boolean;
+  openai_compatible_model: string;
+};
+
+export type UpdateConfigPayload = {
+  ai_provider?: AiProvider;
+  anthropic_api_key?: string;
+  openai_compatible_base_url?: string;
+  openai_compatible_api_key?: string;
+  openai_compatible_model?: string;
+};
+
 export function githubBlobUrl(repoUrl: string, branch: string, filePath: string, lineStart?: number | null): string {
   const repoPath = new URL(repoUrl).pathname.replace(/\.git$/, "").replace(/^\//, "");
   const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
@@ -269,7 +292,7 @@ export const api = {
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
     return res.blob();
   },
-  aiStatus: () => jsonFetch<{ configured: boolean }>("/api/ai/status"),
+  aiStatus: () => jsonFetch<AiStatus>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),
   auditLog: () => jsonFetch<AuditEvent[]>("/api/audit/log"),
@@ -295,9 +318,9 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ webhook_secret }),
     }),
-  getConfig: () => jsonFetch<{ anthropic_api_key_set: boolean }>("/api/config"),
-  updateConfig: (anthropic_api_key: string) =>
-    jsonFetch<{ anthropic_api_key_set: boolean }>("/api/config", { method: "POST", body: JSON.stringify({ anthropic_api_key }) }),
+  getConfig: () => jsonFetch<PlatformConfigView>("/api/config"),
+  updateConfig: (payload: UpdateConfigPayload) =>
+    jsonFetch<PlatformConfigView>("/api/config", { method: "POST", body: JSON.stringify(payload) }),
   toolsHealth: () =>
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(
       "/api/tools/health"

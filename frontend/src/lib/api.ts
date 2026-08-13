@@ -61,6 +61,18 @@ export type AuditEvent = { type: string; timestamp: string; actor: string; summa
 
 export type SearchResults = { findings: Finding[]; targets: Target[] };
 
+export type PolicyRuleType = "block_severity" | "suppress_rule" | "suppress_license";
+export type PolicyRule = {
+  id: number;
+  workspace_id: number;
+  rule_type: PolicyRuleType;
+  value: string;
+  reason: string;
+  created_by: string;
+  created_at: string;
+  active: boolean;
+};
+
 export type PrGuardrailFinding = {
   tool: string;
   rule_id: string;
@@ -218,4 +230,8 @@ export const api = {
       body: JSON.stringify({ reason }),
     }),
   search: (q: string) => jsonFetch<SearchResults>(`/api/search?q=${encodeURIComponent(q)}`),
+  listPolicies: (workspaceId: number) => jsonFetch<PolicyRule[]>(`/api/policies?workspace_id=${workspaceId}`),
+  createPolicy: (p: { workspace_id: number; rule_type: PolicyRuleType; value: string; reason?: string }) =>
+    jsonFetch<PolicyRule>("/api/policies", { method: "POST", body: JSON.stringify(p) }),
+  deletePolicy: (id: number) => jsonFetch<PolicyRule>(`/api/policies/${id}`, { method: "DELETE" }),
 };

@@ -55,10 +55,17 @@ app.include_router(github_app.router, dependencies=login_required)
 app.include_router(tools.router, dependencies=login_required)
 app.include_router(pr_guardrail.router, dependencies=login_required)
 app.include_router(search.router, dependencies=login_required)
-app.include_router(policies.router, dependencies=login_required)
 
 app.include_router(admin.router, dependencies=admin_required)
 app.include_router(config_api.router, dependencies=admin_required)
+# Policy rules can silently suppress real findings / widen PR Guardrail's
+# blocking threshold platform-wide -- there's no per-workspace membership
+# model in this app (single org/admin pattern, same as admin.router and
+# config_api.router above), so admin-only is the only safe gate available.
+# Previously login_required, which let any authenticated user (including
+# role=viewer) create suppression rules for any workspace_id - a real IDOR
+# found in review.
+app.include_router(policies.router, dependencies=admin_required)
 
 
 @app.get("/health")

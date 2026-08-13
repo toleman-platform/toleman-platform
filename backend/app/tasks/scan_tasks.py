@@ -51,6 +51,8 @@ def run_scan(self, target_id: int, tool: str):
             )
             raw = runner.run_tool(tool, repo_path)
             parsed = PARSER_MAP[tool](raw)
+            for item in parsed:
+                item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
             count = ingest_findings(session, target, scan, tool=tool, branch=target.default_branch, parsed=parsed)
             return {"scan_id": scan.id, "ingested": count}
         except RETRYABLE_EXCEPTIONS:

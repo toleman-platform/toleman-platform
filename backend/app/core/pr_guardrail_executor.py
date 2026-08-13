@@ -145,6 +145,11 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         parsed = GUARDRAIL_PARSER(raw)
 
         for item in parsed:
+            # Must match the same normalization ingest_findings applies, or
+            # dedup_hash never lines up with the persisted default-branch
+            # findings and every PR finding looks "net-new" even when it
+            # already exists on the base branch.
+            item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
             item["dedup_hash"] = compute_dedup_hash(
                 rule_id=item["rule_id"],
                 file_path=item["file_path"],

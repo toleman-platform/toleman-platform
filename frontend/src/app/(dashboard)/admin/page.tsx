@@ -2,15 +2,17 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { Users, Plug, Wrench } from "lucide-react";
+import { Users, Plug, Wrench, ShieldAlert } from "lucide-react";
 import { UserManagement } from "./user-management";
 import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
+import { Policies } from "./policies";
 
 const TABS = [
   { id: "users", label: "User Management", icon: Users },
   { id: "integrations", label: "Global Integrations", icon: Plug },
   { id: "tools", label: "Tools Health", icon: Wrench },
+  { id: "policies", label: "Policies", icon: ShieldAlert },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -46,6 +48,7 @@ export default function AdminPage() {
       {tab === "users" && <UserManagement />}
       {tab === "integrations" && <GlobalIntegrations />}
       {tab === "tools" && <ToolsHealth />}
+      {tab === "policies" && <Policies />}
     </div>
   );
 }

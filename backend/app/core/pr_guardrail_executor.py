@@ -13,12 +13,14 @@ from sqlmodel import Session, select
 from app.core.dedup import compute_dedup_hash
 from app.core.github import get_github_token, github_get, repo_slug_from_url
 from app.core.github_app import get_installation_token
+from app.core.policy import apply_policies
 from app.core.pr_guardrail import compute_net_new, highest_severity, should_block
 from app.models.models import (
     Finding,
     FindingState,
     GitHubAppConfig,
     GitHubInstallation,
+    PolicyRule,
     PRGuardrailScan,
     PRGuardrailStatus,
     Target,
@@ -162,7 +164,20 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         )
 
         net_new = compute_net_new(parsed, existing_hashes)
-        status = PRGuardrailStatus.BLOCKED if should_block(net_new) else PRGuardrailStatus.PASSED
+
+        # Policy-as-code (ROADMAP Sprint 4): apply the target's workspace
+        # active policy rules -- org-level suppression + severity threshold
+        # override -- before deciding whether to block. No policies configured
+        # for the workspace means today's default behavior is unchanged.
+        policies = session.exec(
+            select(PolicyRule).where(
+                PolicyRule.workspace_id == target.workspace_id,
+                PolicyRule.active == True,  # noqa: E712
+            )
+        ).all()
+        net_new, blocking_severities = apply_policies(net_new, policies)
+
+        status = PRGuardrailStatus.BLOCKED if should_block(net_new, blocking_severities) else PRGuardrailStatus.PASSED
 
         pr_scan.status = status
         pr_scan.new_findings_count = len(net_new)

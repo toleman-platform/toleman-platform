@@ -187,3 +187,24 @@ class PRGuardrailScan(SQLModel, table=True):
     override_reason: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
+
+
+class PolicyRuleType(str, Enum):
+    """ROADMAP Sprint 4 (Policy-as-code): workspace-configurable rules that
+    adjust PR Guardrail's default blocking behavior."""
+    BLOCK_SEVERITY = "block_severity"       # block PRs with net-new findings at or above this severity
+    SUPPRESS_RULE = "suppress_rule"          # suppress findings matching a specific rule_id (org-level, not per-finding)
+    SUPPRESS_LICENSE = "suppress_license"    # suppress specific license findings (e.g. allow MIT even if Trivy flags it)
+
+
+class PolicyRule(SQLModel, table=True):
+    """A single workspace-scoped policy-as-code rule. Soft-deleted (active=False)
+    rather than hard-deleted since these are audit-relevant."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id")
+    rule_type: PolicyRuleType
+    value: str  # for BLOCK_SEVERITY: "Critical"/"High"/"Medium"/"Low"; for SUPPRESS_RULE: a rule_id substring/exact match; for SUPPRESS_LICENSE: a license name like "MIT"
+    reason: str = ""
+    created_by: str = "system"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    active: bool = True

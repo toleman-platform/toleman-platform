@@ -40,6 +40,10 @@ def highest_severity(findings: list[dict]) -> str | None:
     return best
 
 
-def should_block(findings: list[dict]) -> bool:
-    """Blocking rule: any net-new finding at Critical or High severity blocks the PR."""
-    return any(f.get("severity") in BLOCKING_SEVERITIES for f in findings)
+def should_block(findings: list[dict], blocking_severities: set[str] | None = None) -> bool:
+    """Blocking rule: any net-new finding at or above a blocking severity blocks
+    the PR. Defaults to BLOCKING_SEVERITIES (Critical/High); callers with a
+    workspace-level policy override (app.core.policy.apply_policies) can pass
+    an explicit `blocking_severities` set instead."""
+    severities = blocking_severities if blocking_severities is not None else BLOCKING_SEVERITIES
+    return any(f.get("severity") in severities for f in findings)

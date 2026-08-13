@@ -258,6 +258,33 @@ class ApiEndpoint(SQLModel, table=True):
     last_seen: datetime = Field(default_factory=datetime.utcnow)
 
 
+class DiscoveryRun(SQLModel, table=True):
+    """Tracks a single async API Discovery run dispatched via Celery (#59).
+
+    POST /api/discovery/{target_id} used to clone+grep synchronously inside
+    the request handler; a handful of concurrent requests could exhaust
+    FastAPI's threadpool. Now the endpoint creates this row, dispatches
+    app.tasks.discovery_tasks.run_discovery via .delay(), and returns
+    immediately with this row's id -- the frontend polls
+    GET /api/discovery/{target_id}/runs/{run_id} until status leaves
+    "running", the same running/completed/failed lifecycle Scan already
+    uses for native scans."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    branch: str
+    status: str = "running"  # running, completed, failed
+    error: str = ""
+    count: int = 0
+    new_count: int = 0
+    # Comma-separated ApiEndpoint ids that were net-new on this specific run
+    # -- lets GET .../runs/{run_id} report accurate per-endpoint is_new flags
+    # (mirroring what the old synchronous POST response used to compute
+    # inline) without guessing from timestamps after the fact.
+    new_ids: str = ""
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+
+
 class SbomComponent(SQLModel, table=True):
     """A persisted SBOM Generation result (`trivy fs --format cyclonedx`).
     Upserted per target+branch, mirroring ApiEndpoint above, so the page
@@ -272,6 +299,24 @@ class SbomComponent(SQLModel, table=True):
     purl: str
     first_seen: datetime = Field(default_factory=datetime.utcnow)
     last_seen: datetime = Field(default_factory=datetime.utcnow)
+
+
+class SbomRun(SQLModel, table=True):
+    """Tracks a single async SBOM generation run dispatched via Celery
+    (#59) -- same running/completed/failed lifecycle as DiscoveryRun above,
+    for POST /api/sbom/{target_id}."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    branch: str
+    status: str = "running"  # running, completed, failed
+    error: str = ""
+    count: int = 0
+    new_count: int = 0
+    # Comma-separated SbomComponent ids that were net-new on this run --
+    # same rationale as DiscoveryRun.new_ids above.
+    new_ids: str = ""
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
 
 
 class PRGuardrailScan(SQLModel, table=True):

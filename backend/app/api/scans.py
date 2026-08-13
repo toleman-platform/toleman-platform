@@ -1,22 +1,22 @@
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from sqlmodel import Session
 
 from app.api.auth import current_user
 from app.api.deps import get_session
-from app.core.config import settings
-from app.core.ingestion import ingest_findings
 from app.core.rate_limit import enforce_rate_limit
 from app.models.models import Scan, Target, User
-from app.scanners import parsers, runner
+from app.scanners import parsers
+from app.tasks.scan_tasks import run_scan
 
 router = APIRouter(prefix="/api/scans", tags=["scans"])
 
 PARSER_MAP = parsers.PARSER_MAP
 
-# Each request here clones the target repo and spawns a scanner subprocess,
-# so this needs a tighter limit than plain API reads -- generous enough for
-# a human triggering ad-hoc scans, tight enough to bound concurrent
-# clone+subprocess load per user.
+# Each request here dispatches a Celery task that clones the target repo and
+# spawns a scanner subprocess, so this needs a tighter limit than plain API
+# reads -- generous enough for a human triggering ad-hoc scans, tight enough
+# to bound concurrent clone+subprocess load on the worker pool.
 SCAN_RUN_RATE_LIMIT = 10
 SCAN_RUN_RATE_WINDOW_SECONDS = 60
 
@@ -29,10 +29,16 @@ def run_native_scan(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    """Pull/Native scan: clone target repo, execute CLI tool, ingest results.
+    """Pull/Native scan: dispatch a Celery task to clone the target repo,
+    execute the CLI tool, and ingest results (#59).
 
-    Runs synchronously for MVP simplicity; production path is the Celery task
-    in app/tasks/scan_tasks.py (used by scheduled cron scans).
+    Previously ran the clone+scan synchronously inside this handler -- a
+    plain `def` route, so FastAPI ran it in its threadpool, but a handful of
+    concurrent scan requests was enough to exhaust that pool and stall the
+    whole API. Now this just validates input, creates the Scan row
+    (status="running"), dispatches app.tasks.scan_tasks.run_scan via
+    .delay(), and returns immediately with the scan's id. Poll
+    GET /api/scans/{scan_id} until status leaves "running".
     """
     enforce_rate_limit(
         key=f"scan_run:user:{user.id}",
@@ -51,18 +57,28 @@ def run_native_scan(
     session.commit()
     session.refresh(scan)
 
-    try:
-        repo_path = runner.clone_repo(target.repo_url, target.default_branch, settings.github_token)
-        raw = runner.run_tool(tool, repo_path)
-        parsed = PARSER_MAP[tool](raw)
-        for item in parsed:
-            item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
-        count = ingest_findings(session, target, scan, tool=tool, branch=target.default_branch, parsed=parsed)
-        return {"scan_id": scan.id, "ingested": count}
-    except Exception as exc:
-        scan.status = "failed"
-        session.add(scan)
-        session.commit()
-        # runner.clone_error_message avoids echoing raw subprocess argv/paths
-        # (and, historically, an embedded GitHub token) back in the response.
-        return {"error": runner.clone_error_message(exc), "scan_id": scan.id}
+    run_scan.delay(target_id=target.id, tool=tool, scan_id=scan.id)
+
+    return JSONResponse(status_code=202, content={"scan_id": scan.id, "status": scan.status})
+
+
+@router.get("/{scan_id}")
+def get_scan(
+    scan_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Poll target for the async scan dispatched by POST /run above."""
+    scan = session.get(Scan, scan_id)
+    if not scan:
+        return {"error": "scan not found"}
+    return {
+        "scan_id": scan.id,
+        "target_id": scan.target_id,
+        "tool": scan.tool,
+        "branch": scan.branch,
+        "status": scan.status,
+        "findings_count": scan.findings_count,
+        "started_at": scan.started_at,
+        "completed_at": scan.completed_at,
+    }

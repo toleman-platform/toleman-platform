@@ -36,17 +36,36 @@ RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
     retry_jitter=True,
     max_retries=3,
 )
-def run_scan(self, target_id: int, tool: str):
-    """Async native scan — used by scheduled cron jobs (e.g. 'Run Trivy Daily at 2 AM')."""
+def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
+    """Async native scan.
+
+    Two callers:
+      - Scheduled cron jobs (e.g. 'Run Trivy Daily at 2 AM') call this with
+        no scan_id -- the task creates its own Scan row.
+      - POST /api/scans/run (#59) creates the Scan row itself (so it can
+        return the id immediately) and passes scan_id here so the task
+        updates that same row instead of creating a second one.
+    """
     with Session(engine) as session:
         target = session.get(Target, target_id)
         if not target:
+            if scan_id is not None:
+                existing = session.get(Scan, scan_id)
+                if existing:
+                    existing.status = "failed"
+                    session.add(existing)
+                    session.commit()
             return {"error": "target not found"}
 
-        scan = Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
-        session.add(scan)
-        session.commit()
-        session.refresh(scan)
+        if scan_id is not None:
+            scan = session.get(Scan, scan_id)
+            if not scan:
+                return {"error": "scan not found"}
+        else:
+            scan = Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
+            session.add(scan)
+            session.commit()
+            session.refresh(scan)
 
         try:
             repo_path = runner.clone_repo(

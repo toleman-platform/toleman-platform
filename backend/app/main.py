@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
-from app.core.config import settings
+from app.core.config import settings, validate_production_secrets
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
@@ -22,6 +22,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
+    validate_production_secrets()
     init_db()
     with Session(engine) as session:
         existing = session.exec(select(User).where(User.email == settings.admin_email)).first()

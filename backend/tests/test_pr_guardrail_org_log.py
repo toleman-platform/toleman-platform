@@ -125,6 +125,31 @@ def test_org_log_only_returns_callers_workspace_scans(client, engine):
     # each row should carry which target it belongs to
     assert body["scans"][0]["target_id"] == target_a
     assert body["scans"][0]["target_name"] == "target-a"
+    # issue #65: each row also carries a direct link back to the GitHub PR,
+    # built from the target's repo_url ("https://github.com/acme/repo") +
+    # pr_number (1)
+    assert body["scans"][0]["pr_url"] == "https://github.com/acme/repo/pull/1"
+
+
+def test_org_log_pr_url_none_when_repo_url_unparseable(client, engine):
+    """A target with an empty repo_url shouldn't crash the endpoint -- pr_url
+    just comes back None for that row (issue #65)."""
+    ws_a = _make_workspace(engine, "ws-no-url")
+    with Session(engine) as session:
+        target = Target(workspace_id=ws_a, name="no-url-target", repo_url="")
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+        target_id = target.id
+    scan_id = _make_scan(engine, target_id, 9, PRGuardrailStatus.PASSED)
+    client, uid = _login(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a)
+
+    res = client.get("/api/pr-guardrail/log")
+    assert res.status_code == 200
+    body = res.json()
+    row = next(s for s in body["scans"] if s["id"] == scan_id)
+    assert row["pr_url"] is None
 
 
 def test_org_log_admin_sees_all_workspaces_scans(client, engine):
@@ -181,3 +206,6 @@ def test_single_target_log_unaffected_by_org_wide_change(client, engine):
     assert isinstance(body, list)
     assert {s["id"] for s in body} == {scan_a}
     assert "target_name" not in body[0]
+    # issue #65: pr_url is still present/correct in single-target mode, it's
+    # not an org-wide-only addition
+    assert body[0]["pr_url"] == "https://github.com/acme/repo/pull/1"

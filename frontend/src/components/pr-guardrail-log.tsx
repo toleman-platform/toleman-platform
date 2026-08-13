@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { ExternalLink } from "lucide-react";
 import { api, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -269,12 +270,26 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                   onClick={() => setExpanded(isExpanded ? null : entry.id)}
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-foreground">
-                      #{entry.pr_number} {entry.pr_title}
+                    <div className="flex items-center gap-1 truncate text-sm font-medium text-foreground">
+                      <span className="truncate">
+                        #{entry.pr_number} {entry.pr_title}
+                      </span>
                       {isOrgWide && entry.target_name && (
-                        <Badge variant="outline" className="ml-2 align-middle text-xs text-muted-foreground">
+                        <Badge variant="outline" className="align-middle text-xs text-muted-foreground">
                           {entry.target_name}
                         </Badge>
+                      )}
+                      {entry.pr_url && (
+                        <a
+                          href={entry.pr_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="Open this PR on GitHub"
+                          onClick={(e) => e.stopPropagation()}
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </a>
                       )}
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">

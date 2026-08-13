@@ -278,6 +278,10 @@ export type PrGuardrailLogEntry = {
   override_reason: string;
   created_at: string;
   completed_at: string | null;
+  // Deep link back to the originating GitHub PR (issue #65), constructed
+  // server-side from the target's repo_url + pr_number. Null if the repo
+  // URL can't be parsed.
+  pr_url: string | null;
   // Present only on org-wide log rows (issue #64) -- a single-target log
   // doesn't need these since the picker already implies the target.
   target_id?: number;

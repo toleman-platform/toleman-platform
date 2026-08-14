@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { SEVERITY_COLOR } from "@/lib/severity";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
@@ -220,9 +221,20 @@ function RecentFindingsWidget({ data }: { data: RecentFindingsData }) {
       {data.items.map((f) => (
         <div key={f.finding_id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
           <div className="min-w-0">
-            <p className="truncate text-sm text-foreground">{f.title}</p>
-            <p className="text-xs text-muted-foreground">
-              {f.target_name ?? `target #${f.target_id}`} &middot; {f.tool} &middot; {formatDate(f.first_seen)}
+            {/* Issue #117/#119: reuse the shared truncate-with-tooltip
+                affordance so a long title isn't silently clipped, and show
+                file_path in the subtitle -- the same rule can legitimately
+                fire on several files in one scan (e.g. Semgrep's
+                django-no-csrf-token across multiple templates), which
+                otherwise renders as visually-identical rows since title/
+                target/tool/date alone don't distinguish them. */}
+            <TruncateTooltip
+              text={f.title}
+              subtext={f.file_path}
+              className="text-sm text-foreground"
+            />
+            <p className="truncate text-xs text-muted-foreground">
+              {f.target_name ?? `target #${f.target_id}`} &middot; {f.tool} &middot; {f.file_path} &middot; {formatDate(f.first_seen)}
               {f.sla_violated && <span className="ml-1 text-destructive">&middot; SLA violated</span>}
             </p>
           </div>

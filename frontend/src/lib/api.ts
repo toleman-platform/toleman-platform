@@ -48,6 +48,9 @@ export type Target = {
   enforcement_mode: EnforcementMode | null;
   effective_enforcement_mode?: EnforcementMode;
   enforcement_mode_source?: EnforcementModeSource;
+  // Issue #72: live base URL of this target's deployed API. Active API
+  // scanning refuses to run until this is set -- see api.runApiScan.
+  api_base_url: string | null;
 };
 
 // GET /api/targets/{id}/pipeline-workflow (issue #66) -- generated,
@@ -850,6 +853,19 @@ export const api = {
     }),
   getDiscoveryRun: (targetId: number, runId: number) =>
     jsonFetch<DiscoveryRunResult>(`/api/discovery/${targetId}/runs/${runId}`),
+  // Issue #72: active API scanning (nuclei) against endpoints already
+  // discovered above. Same dispatch-then-poll shape as runScan -- 202 with
+  // scan_id immediately, poll api.getScan(scan_id) until status leaves
+  // "running". endpointIds narrows to a specific selection; omit to scan
+  // every discovered endpoint for the target's default branch. A 400 means
+  // the target has no api_base_url configured yet or nothing is scannable.
+  runApiScan: (targetId: number, endpointIds?: number[]) =>
+    jsonFetch<{ scan_id: number; target_id: number; status: RunStatus; endpoint_count: number }>(
+      `/api/api-scan/${targetId}`,
+      { method: "POST", body: JSON.stringify({ endpoint_ids: endpointIds ?? null }) }
+    ),
+  getLatestApiScan: (targetId: number) =>
+    jsonFetch<{ target_id: number; scan: ScanRun | null }>(`/api/api-scan/${targetId}/latest`),
   getSbom: (targetId: number) =>
     jsonFetch<{ target_id: number; count: number; components: SbomComponent[] }>(`/api/sbom/${targetId}`),
   // Dispatches a Celery task and returns immediately with run_id/status:

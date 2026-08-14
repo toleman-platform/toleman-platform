@@ -1,4 +1,5 @@
 import re
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -64,11 +65,28 @@ class UpdateTargetRequest(BaseModel):
     # simply omitting the field leaves the existing value untouched.
     enforcement_mode: str | None = None
 
+    # Issue #72: the live base URL active API scanning combines with
+    # already-discovered routes -- see Target.api_base_url's docstring in
+    # app/models/models.py for why this is the only allowed source of a
+    # scan target host. Explicit null clears it (same exclude_unset
+    # semantics as enforcement_mode above).
+    api_base_url: str | None = None
+
     @field_validator("enforcement_mode")
     @classmethod
     def _check_enforcement_mode(cls, v: str | None) -> str | None:
         if v is not None and v not in VALID_ENFORCEMENT_MODES:
             raise ValueError(f"enforcement_mode must be one of {sorted(VALID_ENFORCEMENT_MODES)} or null")
+        return v
+
+    @field_validator("api_base_url")
+    @classmethod
+    def _check_api_base_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError("api_base_url must be a real http(s):// URL with a host")
         return v
 
 

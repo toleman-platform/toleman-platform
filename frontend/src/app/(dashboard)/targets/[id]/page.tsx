@@ -4,6 +4,7 @@ import { FindingRow } from "@/components/finding-row";
 import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
 import { TargetEnforcement } from "./target-enforcement";
+import { ApiScanConfig } from "./api-scan-config";
 
 export default async function TargetDetailPage({
   params,
@@ -44,6 +45,11 @@ export default async function TargetDetailPage({
           initialEffectiveMode={target.effective_enforcement_mode ?? "block"}
           initialSource={target.enforcement_mode_source ?? "default"}
         />
+      </div>
+
+      <div>
+        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Active API Scanning</h2>
+        <ApiScanConfig targetId={targetId} initialApiBaseUrl={target.api_base_url} />
       </div>
 
       <PipelineIntegration

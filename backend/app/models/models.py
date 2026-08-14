@@ -131,6 +131,19 @@ class Target(SQLModel, table=True):
     # None means "inherit" (from this target's group(s), then its workspace,
     # then the hardcoded "block" default) -- see app.core.enforcement.
     enforcement_mode: Optional[str] = None
+    # Issue #72 (Active API Scanning): the live base URL of this target's
+    # deployed API, e.g. "https://api-staging.example.com". Deliberately a
+    # user-set, per-target field rather than anything derived from repo_url
+    # (a git clone URL, not a runtime host) -- active scanning combines this
+    # with routes already persisted in ApiEndpoint (Sprint 1's static
+    # discovery) to build the exact URL list nuclei is invoked against. None
+    # means active scanning is not configured for this target yet; the scan
+    # trigger endpoint refuses to run rather than guessing a host. This is
+    # the ONLY source of a scan target host -- never taken from request
+    # input -- so a caller can never point an active scan at an arbitrary
+    # third-party URL, only at a host this target's owner explicitly
+    # declared as belonging to it.
+    api_base_url: Optional[str] = None
 
 
 class Group(SQLModel, table=True):

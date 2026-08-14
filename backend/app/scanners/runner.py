@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
@@ -179,6 +180,91 @@ def normalize_file_path(file_path: str, repo_path: Path) -> str:
         # Already relative (some tools report paths relative to the scan
         # root they were invoked against) -- nothing to strip.
         return file_path
+
+
+def _validate_scan_url(url: str) -> None:
+    """Defense in depth for run_nuclei below: the caller (app.core.api_scan_targets)
+    already builds these URLs from a Target's own operator-configured
+    api_base_url plus its own persisted ApiEndpoint routes, and already
+    confirms every URL's host matches api_base_url's host -- so nothing
+    here should ever actually reject a well-formed call. This exists purely
+    so a future caller can't accidentally hand this function (and therefore
+    a real subprocess invocation against the network) something that isn't
+    a genuine http(s) URL with a real host, the same "validate before it
+    ever reaches subprocess" discipline as _validate_repo_url above."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(f"nuclei scan URL must be http(s):// with a host, got: {url!r}")
+    if url.startswith("-"):
+        raise ValueError(f"invalid nuclei scan URL: {url!r}")
+
+
+def run_nuclei(urls: list[str]) -> list[dict]:
+    """Run nuclei against an already-validated list of live URLs and return
+    parsed JSONL results (one dict per finding).
+
+    Safety posture (issue #72 -- this is ACTIVE scanning against real
+    network endpoints, unlike every other scanner in this module which only
+    reads a git checkout):
+      - Every URL is re-validated here (see _validate_scan_url) even though
+        the caller already built/validated them, so this function is safe
+        to call directly.
+      - URLs are written to a temp file and passed via `-l <file>`, never
+        joined into a shell string or passed as a single argv blob --
+        avoids any injection surface from a route/host containing shell
+        metacharacters.
+      - `-etags` excludes disruptive template categories by default
+        (settings.nuclei_exclude_tags: dos/fuzz/intrusive) so a first run
+        defaults to passive/safe detection, not exploitation attempts.
+      - `-rate-limit` bounds request rate against the target; `-timeout`
+        bounds nuclei's per-request timeout; the subprocess itself is
+        killed via subprocess.run(timeout=...) if the whole run hangs
+        rather than blocking a Celery worker indefinitely.
+      - `-no-interactsh` disables nuclei's out-of-band interaction server
+        (an external network dependency this platform doesn't control) --
+        keeps scanning self-contained to what this process directly
+        observes.
+    """
+    if not urls:
+        return []
+    for url in urls:
+        _validate_scan_url(url)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write("\n".join(urls))
+        target_file = f.name
+
+    try:
+        cmd = [
+            settings.nuclei_binary,
+            "-l", target_file,
+            "-jsonl",
+            "-silent",
+            "-no-interactsh",
+            "-rate-limit", str(settings.nuclei_rate_limit),
+            "-timeout", "5",
+        ]
+        if settings.nuclei_exclude_tags:
+            cmd += ["-etags", settings.nuclei_exclude_tags]
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=settings.nuclei_timeout_seconds
+        )
+    finally:
+        try:
+            os.unlink(target_file)
+        except OSError:
+            pass
+
+    results = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            results.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return results
 
 
 def run_tool(tool: str, repo_path: Path) -> dict | list:

@@ -11,9 +11,12 @@ describe("severity color maps", () => {
     }
   });
 
-  it("has a hex color for every severity", () => {
+  it("has a themed color token for every severity", () => {
+    // #115: these are CSS var() references (not literal hex) so severity
+    // colors stay theme-aware in chart contexts too -- see the comment on
+    // SEVERITY_HEX in severity.ts.
     for (const s of SEVERITIES) {
-      expect(SEVERITY_HEX[s]).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(SEVERITY_HEX[s]).toMatch(/^var\(--[\w-]+\)$/);
     }
   });
 

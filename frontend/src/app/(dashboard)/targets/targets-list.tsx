@@ -22,13 +22,13 @@ const ITEM_STATUS_LABEL: Record<string, string> = {
 function itemBadgeClass(status: string): string {
   switch (status) {
     case "succeeded":
-      return "border-green-600/40 text-green-500";
+      return "border-chart-5/40 text-chart-5";
     case "already_integrated":
-      return "border-blue-600/40 text-blue-400";
+      return "border-chart-2/40 text-chart-2";
     case "failed":
-      return "border-red-600/40 text-red-500";
+      return "border-destructive/40 text-destructive";
     case "running":
-      return "border-amber-600/40 text-amber-400";
+      return "border-chart-3/40 text-chart-3";
     default:
       return "text-muted-foreground";
   }
@@ -344,7 +344,7 @@ export function TargetsList({ targets }: { targets: Target[] }) {
                       </span>
                     )}
                     {item.pr_url && (
-                      <a href={item.pr_url} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+                      <a href={item.pr_url} target="_blank" rel="noreferrer" className="text-accent-strong underline underline-offset-2">
                         PR
                       </a>
                     )}
@@ -387,7 +387,7 @@ export function TargetsList({ targets }: { targets: Target[] }) {
               </div>
               <div className="flex items-center gap-2">
                 {t.pipeline_integrated && (
-                  <Badge variant="outline" className="border-green-600/40 text-green-500">
+                  <Badge variant="outline" className="border-chart-5/40 text-chart-5">
                     Pipeline integrated
                   </Badge>
                 )}

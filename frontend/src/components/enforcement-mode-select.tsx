@@ -63,9 +63,9 @@ export function EnforcementModeLabel({
 }) {
   const tone =
     mode === "block"
-      ? "bg-red-500/10 text-red-400 border-red-500/30"
+      ? "bg-destructive/10 text-destructive border-destructive/30"
       : mode === "alert"
-        ? "bg-amber-500/10 text-amber-400 border-amber-500/30"
+        ? "bg-chart-3/10 text-chart-3 border-chart-3/30"
         : "bg-muted text-muted-foreground border-border";
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">

@@ -13,11 +13,11 @@ export function ToolBar({ data }: { data: Record<string, number> }) {
     <div className="h-56">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-          <XAxis dataKey="name" tick={{ fill: "#94a3b8", fontSize: 12 }} axisLine={{ stroke: "#1e293b" }} />
-          <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} axisLine={{ stroke: "#1e293b" }} allowDecimals={false} />
-          <Tooltip contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px", color: "#e2e8f0" }} />
-          <Bar dataKey="count" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <XAxis dataKey="name" tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} axisLine={{ stroke: "var(--color-border)" }} />
+          <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} axisLine={{ stroke: "var(--color-border)" }} allowDecimals={false} />
+          <Tooltip contentStyle={{ backgroundColor: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: "8px", color: "var(--color-popover-foreground)" }} />
+          <Bar dataKey="count" fill="var(--color-accent-strong)" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
     </div>

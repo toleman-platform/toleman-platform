@@ -41,7 +41,7 @@ function LoginForm() {
       </div>
       <Card className="relative z-10 w-full max-w-md border-border bg-card">
         <CardHeader className="items-center gap-4 pb-2">
-          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10 text-accent-strong">
             <Shield className="h-8 w-8" />
           </div>
           <div className="text-center">

@@ -396,7 +396,7 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold text-foreground">Settings</h1>
           <p className="text-sm text-muted-foreground">Target configuration and workspace credentials</p>
         </div>
-        <Link href="/onboarding" className="text-xs text-primary underline">
+        <Link href="/onboarding" className="text-xs text-accent-strong underline">
           Replay guided onboarding
         </Link>
       </div>

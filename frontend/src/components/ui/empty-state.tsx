@@ -38,7 +38,7 @@ function EmptyState({
         className
       )}
     >
-      <div className={cn("flex items-center justify-center rounded-full bg-primary/10 text-primary", bare ? "h-9 w-9" : "h-12 w-12")}>
+      <div className={cn("flex items-center justify-center rounded-full bg-primary/10 text-accent-strong", bare ? "h-9 w-9" : "h-12 w-12")}>
         <Icon className={bare ? "h-4 w-4" : "h-6 w-6"} />
       </div>
       <div className="flex flex-col gap-1">

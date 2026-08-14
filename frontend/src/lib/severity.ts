@@ -18,12 +18,20 @@ export const SEVERITY_BORDER_COLOR: Record<string, string> = {
 
 export const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Informational"];
 
+// CSS custom-property references, not literal hex -- these feed recharts
+// `fill`/Cell colors (see components/charts/severity-pie.tsx), which accept
+// `var(--x)` in both the fill attribute and inline style, and modern
+// browsers resolve them live against the current `:root`/`:root[data-theme]`
+// cascade. Kept as *tokens*, not hex, so the severity pie chart actually
+// re-colors on theme toggle instead of freezing at whatever it rendered
+// first -- the same partial-theming failure mode called out in #115's
+// acceptance criteria, just in chart form instead of CSS form.
 export const SEVERITY_HEX: Record<string, string> = {
-  Critical: "#ef4444",
-  High: "#f59e0b",
-  Medium: "#3b82f6",
-  Low: "#6b7280",
-  Informational: "#6b7280",
+  Critical: "var(--destructive)",
+  High: "var(--chart-3)",
+  Medium: "var(--chart-1)",
+  Low: "var(--muted-foreground)",
+  Informational: "var(--muted-foreground)",
 };
 
 // KEV (CISA Known Exploited Vulnerabilities) badge — deliberately distinct from the

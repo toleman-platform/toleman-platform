@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { api, AuthUser } from "@/lib/api";
 import { GlobalSearch } from "@/components/global-search";
 import { DensityToggle } from "@/components/density-toggle";
+import { ThemeToggle, Theme } from "@/components/theme-toggle";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -46,7 +47,7 @@ const BOTTOM_ITEMS = [
   { href: "/admin", label: "Admin", icon: UserCog, adminOnly: true },
 ];
 
-export function Sidebar({ user }: { user: AuthUser | null }) {
+export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initialTheme?: Theme }) {
   const pathname = usePathname();
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
@@ -71,12 +72,12 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
         className={cn(
           "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
           isActive
-            ? "bg-sidebar-accent text-primary font-medium"
+            ? "bg-sidebar-accent text-accent-strong font-medium"
             : "text-sidebar-foreground hover:bg-sidebar-accent/50",
           collapsed && "justify-center px-2"
         )}
       >
-        <item.icon className={cn("h-4 w-4 shrink-0", isActive && "text-primary")} />
+        <item.icon className={cn("h-4 w-4 shrink-0", isActive && "text-accent-strong")} />
         {!collapsed && <span>{item.label}</span>}
       </Link>
     );
@@ -90,7 +91,7 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
       )}
     >
       <div className={cn("flex h-14 items-center gap-3 border-b border-sidebar-border px-4", collapsed && "justify-center px-2")}>
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
           <Shield className="h-5 w-5" />
         </div>
         {!collapsed && (
@@ -122,7 +123,7 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
         ))}
 
         <div className={cn("mt-1 flex items-center gap-3 rounded-md border border-sidebar-border bg-sidebar-accent/30 px-3 py-2", collapsed && "justify-center px-2")}>
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-accent-strong">
             {initials}
           </div>
           {!collapsed && (
@@ -139,6 +140,7 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
         </div>
 
         <DensityToggle collapsed={collapsed} />
+        <ThemeToggle collapsed={collapsed} initialTheme={initialTheme} />
 
         <button
           onClick={() => setCollapsed((v) => !v)}

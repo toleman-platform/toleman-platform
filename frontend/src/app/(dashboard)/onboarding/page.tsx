@@ -237,7 +237,7 @@ export default function OnboardingPage() {
           <Card className="border-border bg-card">
             <CardContent className="flex flex-col gap-4 px-4 py-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
                   <Github className="h-5 w-5" />
                 </div>
                 <div>
@@ -422,7 +422,7 @@ export default function OnboardingPage() {
                   <div className="text-sm font-medium text-foreground">No findings — this repo looks clean</div>
                   <div className="text-xs text-muted-foreground">
                     Nothing to show yet, but you can still browse the{" "}
-                    <Link href="/findings" className="text-primary underline">
+                    <Link href="/findings" className="text-accent-strong underline">
                       Findings
                     </Link>{" "}
                     page any time.

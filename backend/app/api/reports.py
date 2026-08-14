@@ -15,17 +15,30 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from sqlmodel import Session, func, select
 
+from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
-from app.models.models import Finding, FindingState, Scan, SbomComponent, Target
+from app.models.models import Finding, FindingState, Scan, SbomComponent, Target, User
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 
-def _get_targets(session: Session, target_id: Optional[int]) -> list[Target]:
+def _get_targets(session: Session, target_id: Optional[int], ws_ids: Optional[list[int]]) -> list[Target]:
+    """`ws_ids` is `accessible_workspace_ids()`'s result -- None for admins
+    (no filter), else the caller's workspace ids (issue #86, same
+    unscoped-aggregate bug class #57 fixed on dashboard/findings/targets).
+    A caller with no memberships (ws_ids == []) gets an empty report rather
+    than every workspace's data."""
     if target_id is None:
-        return list(session.exec(select(Target).order_by(Target.name)).all())
+        query = select(Target).order_by(Target.name)
+        if ws_ids is not None:
+            if not ws_ids:
+                return []
+            query = query.where(Target.workspace_id.in_(ws_ids))
+        return list(session.exec(query).all())
     target = session.get(Target, target_id)
-    if not target:
+    if not target or (ws_ids is not None and target.workspace_id not in ws_ids):
+        # 404 rather than 403 to avoid confirming the target exists in a
+        # workspace the caller can't see (matches findings.py's get_finding).
         raise HTTPException(status_code=404, detail="target not found")
     return [target]
 
@@ -48,12 +61,13 @@ def _age_bucket(age_days: int) -> str:
     return "90d+"
 
 
-def build_posture_report(session: Session, target_id: Optional[int]) -> dict:
+def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Optional[list[int]]) -> dict:
     """Assemble the real audit-evidence dataset: finding counts by
     severity/state, SLA/age of open findings, scan history/coverage, and an
     SBOM component summary -- all scoped to each target's default branch,
-    mirroring GET /api/dashboard/posture's convention."""
-    targets = _get_targets(session, target_id)
+    mirroring GET /api/dashboard/posture's convention. `ws_ids` scopes the
+    org-wide (target_id is None) case to the caller's workspaces (issue #86)."""
+    targets = _get_targets(session, target_id, ws_ids)
     now = datetime.utcnow()
 
     severity_state_rows: list[dict] = []
@@ -354,13 +368,21 @@ def posture_report(
     target_id: Optional[int] = Query(default=None),
     format: str = Query(default="csv", pattern="^(csv|pdf)$"),
     session: Session = Depends(get_session),
+    user: User = Depends(current_user),
 ):
     """Real audit-evidence posture report -- finding counts by
     severity/state, open-finding SLA/age, scan coverage, and SBOM summary --
     built from persisted Finding/Scan/SbomComponent rows. target_id omitted
-    means org-wide (every target), same "0/omitted = all" convention as
-    TargetPicker's ALL_TARGETS sentinel on the frontend."""
-    data = build_posture_report(session, target_id)
+    means org-wide (every target the caller can see), same "0/omitted = all"
+    convention as TargetPicker's ALL_TARGETS sentinel on the frontend.
+
+    Issue #86: the org-wide case is scoped to the caller's workspaces via
+    accessible_workspace_ids(), the same helper #57 applied to
+    dashboard/findings/targets but which reports.py was out of scope for at
+    the time. A specific target_id outside the caller's workspaces 404s
+    (see _get_targets), matching findings.py's get_finding."""
+    ws_ids = accessible_workspace_ids(session, user)
+    data = build_posture_report(session, target_id, ws_ids)
 
     scope_slug = "org-wide" if target_id is None else data["targets"][0]["name"].replace(" ", "-")
     date_slug = datetime.utcnow().strftime("%Y%m%d")

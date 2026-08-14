@@ -78,7 +78,7 @@ def test_render_comment_never_shows_raw_enum_repr():
     )
     body = render_comment([finding], [], PRGuardrailStatus.BLOCKED, target_id=1, pr_scan_id=scan_id)
     assert "Severity." not in body
-    assert "**Medium**" in body
+    assert "| Medium |" in body
 
 
 def test_render_comment_includes_ref_and_ignore_links():

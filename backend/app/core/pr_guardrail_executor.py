@@ -17,7 +17,7 @@ from app.core.enforcement import resolve_enforcement_mode
 from app.core.github import get_github_token, github_get, repo_slug_from_url
 from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
 from app.core.policy import apply_policies
-from app.core.pr_guardrail import compute_net_new, highest_severity, should_block
+from app.core.pr_guardrail import SEVERITY_ORDER, compute_net_new, highest_severity, should_block
 from app.models.models import (
     ApiEndpoint,
     Finding,
@@ -102,6 +102,68 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
     return [d for d in discovered if (d["method"], d["route"], d["file"]) not in existing]
 
 
+# Hidden HTML marker embedded in every comment `render_comment()` produces,
+# used by `post_pr_comment()` to find a prior Rikugan comment on the PR and
+# PATCH it in place instead of posting a new one on every rescan (#127).
+# GitHub strips HTML comments from the rendered view, so this is invisible
+# to a human reading the PR but trivially greppable via the Issue Comments API.
+COMMENT_MARKER = "<!-- rikugan-pr-guardrail -->"
+
+# Severities whose per-finding <details> block is expanded by default -- the
+# ones a reviewer needs to see without an extra click. Medium/Low collapse
+# since they're rarely PR-blocking on their own (see BLOCKING_SEVERITIES in
+# app/core/pr_guardrail.py).
+OPEN_BY_DEFAULT_SEVERITIES = {"Critical", "High"}
+
+
+def _severity_badge(status: PRGuardrailStatus) -> str:
+    """shields.io-style top-line pass/fail badge -- same visual pattern as
+    the SafeDep bot's badge comments already seen on this repo's PRs (e.g.
+    PR #11), rebuilt via img.shields.io instead of a static PNG so the label
+    changes with the real scan outcome."""
+    if status == PRGuardrailStatus.BLOCKED:
+        return "![Blocked](https://img.shields.io/badge/status-blocked-red)"
+    return "![Passed](https://img.shields.io/badge/status-passed-brightgreen)"
+
+
+def _severity_counts(findings: list[PRGuardrailFinding]) -> dict[str, int]:
+    counts = {sev: 0 for sev in SEVERITY_ORDER}
+    for f in findings:
+        counts[f.severity] = counts.get(f.severity, 0) + 1
+    return counts
+
+
+def _severity_count_table(findings: list[PRGuardrailFinding]) -> str:
+    """One-line (single header + single data row) GFM table summarizing
+    net-new finding counts by severity, meant to be the first thing a
+    reviewer sees -- before any per-finding detail."""
+    counts = _severity_counts(findings)
+    header = "| " + " | ".join(SEVERITY_ORDER) + " |"
+    divider = "|" + "|".join(["---"] * len(SEVERITY_ORDER)) + "|"
+    row = "| " + " | ".join(str(counts[sev]) for sev in SEVERITY_ORDER) + " |"
+    return "\n".join([header, divider, row])
+
+
+def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_id: int) -> str:
+    """GFM table (Severity | Rule | Title | Location | Links) for one
+    severity group's findings -- replaces the old flat prose-bullet list."""
+    lines = [
+        "| Severity | Rule | Title | Location | Links |",
+        "|---|---|---|---|---|",
+    ]
+    for f in findings:
+        loc = f.file_path
+        if f.line_start:
+            loc += f":{f.line_start}"
+        ref_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{f.id}"
+        ignore_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&ignore_finding={f.id}"
+        lines.append(
+            f"| {f.severity} | `{f.rule_id}` | {f.title} | `{loc}` | "
+            f"[view]({ref_link}) &middot; [request ignore]({ignore_link}) |"
+        )
+    return "\n".join(lines)
+
+
 def render_comment(
     findings: list[PRGuardrailFinding],
     new_endpoints: list[dict],
@@ -109,33 +171,50 @@ def render_comment(
     target_id: int,
     pr_scan_id: int,
 ) -> str:
-    if not findings and not new_endpoints:
-        return "**Rikugan PR Guardrail**: no net-new findings or API changes vs the default branch. ✅"
+    lines = [COMMENT_MARKER, "**Rikugan PR Guardrail**", "", _severity_badge(status), ""]
 
-    lines = ["**Rikugan PR Guardrail**", ""]
+    if not findings and not new_endpoints:
+        lines.append("No net-new findings or API changes vs the default branch. ✅")
+        return "\n".join(lines)
 
     if findings:
         lines.append(f"**{len(findings)} net-new vulnerability finding(s)** vs the default branch:")
         lines.append("")
-        for f in findings:
-            loc = f.file_path
-            if f.line_start:
-                loc += f":{f.line_start}"
-            ref_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{f.id}"
-            ignore_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&ignore_finding={f.id}"
-            lines.append(
-                f"- **{f.severity}** `{f.rule_id}` — {f.title} (`{loc}`) "
-                f"[[view]]({ref_link}) · [[request ignore]]({ignore_link})"
-            )
+        lines.append(_severity_count_table(findings))
         lines.append("")
 
+        by_severity: dict[str, list[PRGuardrailFinding]] = {}
+        for f in findings:
+            by_severity.setdefault(f.severity, []).append(f)
+
+        # Most-severe-first, matching SEVERITY_ORDER's ranking (reversed
+        # since SEVERITY_ORDER is least-to-most severe).
+        for sev in reversed(SEVERITY_ORDER):
+            sev_findings = by_severity.get(sev)
+            if not sev_findings:
+                continue
+            open_attr = " open" if sev in OPEN_BY_DEFAULT_SEVERITIES else ""
+            lines.append(f"<details{open_attr}>")
+            lines.append(f"<summary><strong>{sev}</strong> ({len(sev_findings)})</summary>")
+            lines.append("")
+            lines.append(_findings_table(sev_findings, target_id, pr_scan_id))
+            lines.append("")
+            lines.append("</details>")
+            lines.append("")
+
     if new_endpoints:
-        lines.append(f"**{len(new_endpoints)} new API endpoint(s)** detected in this PR:")
+        lines.append("<details>")
+        lines.append(f"<summary><strong>{len(new_endpoints)} new API endpoint(s)</strong> detected in this PR (informational, not blocking)</summary>")
         lines.append("")
+        lines.append("| Method | Route | Location |")
+        lines.append("|---|---|---|")
         for e in new_endpoints[:MAX_NEW_ENDPOINTS_IN_RESPONSE]:
-            lines.append(f"- `{e['method']}` `{e['route']}` (`{e['file']}:{e.get('line', '?')}`)")
+            lines.append(f"| `{e['method']}` | `{e['route']}` | `{e['file']}:{e.get('line', '?')}` |")
         if len(new_endpoints) > MAX_NEW_ENDPOINTS_IN_RESPONSE:
-            lines.append(f"- _...and {len(new_endpoints) - MAX_NEW_ENDPOINTS_IN_RESPONSE} more_")
+            lines.append("")
+            lines.append(f"_...and {len(new_endpoints) - MAX_NEW_ENDPOINTS_IN_RESPONSE} more_")
+        lines.append("")
+        lines.append("</details>")
         lines.append("")
 
     if status == PRGuardrailStatus.BLOCKED:
@@ -162,22 +241,70 @@ def _get_installation_token_or_none(session: Session, target: Target) -> str | N
     return get_installation_token(config, installation.installation_id)
 
 
+def _find_existing_comment_id(slug: str, pr_number: int, token: str) -> int | None:
+    """List issue comments on the PR and return the id of the first one
+    carrying COMMENT_MARKER, or None if this is the first Rikugan comment on
+    this PR. GitHub's issue-comments API is paginated (100/page default);
+    walk pages since a long-lived PR can accumulate comments from humans and
+    other bots ahead of Rikugan's own."""
+    page = 1
+    while True:
+        res = httpx.get(
+            f"https://api.github.com/repos/{slug}/issues/{pr_number}/comments",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            params={"per_page": 100, "page": page},
+            timeout=15,
+        )
+        if res.status_code >= 300:
+            logger.warning("PR guardrail: failed to list PR comments: %s %s", res.status_code, res.text[:300])
+            return None
+        comments = res.json()
+        for comment in comments:
+            if COMMENT_MARKER in (comment.get("body") or ""):
+                return comment["id"]
+        if len(comments) < 100:
+            return None
+        page += 1
+
+
 def post_pr_comment(session: Session, target: Target, pr_number: int, body: str) -> None:
-    """Best-effort: never raises -- a scan result that fails to post a comment is still useful."""
+    """Best-effort: never raises -- a scan result that fails to post a comment
+    is still useful.
+
+    Update-in-place (#127): look for a prior Rikugan comment on this PR via
+    COMMENT_MARKER (embedded by render_comment) and PATCH it instead of
+    always POSTing a new one, so an actively-iterated PR gets one comment
+    that stays current across rescans rather than a growing stack of
+    near-duplicates."""
     slug = repo_slug_from_url(target.repo_url)
     try:
         token = _get_installation_token_or_none(session, target)
         if not token:
             logger.warning("PR guardrail: no GitHub App installed, skipping PR comment")
             return
-        res = httpx.post(
-            f"https://api.github.com/repos/{slug}/issues/{pr_number}/comments",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-            json={"body": body},
-            timeout=15,
-        )
+
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+        existing_comment_id = _find_existing_comment_id(slug, pr_number, token)
+
+        if existing_comment_id is not None:
+            res = httpx.patch(
+                f"https://api.github.com/repos/{slug}/issues/comments/{existing_comment_id}",
+                headers=headers,
+                json={"body": body},
+                timeout=15,
+            )
+            action = "update"
+        else:
+            res = httpx.post(
+                f"https://api.github.com/repos/{slug}/issues/{pr_number}/comments",
+                headers=headers,
+                json={"body": body},
+                timeout=15,
+            )
+            action = "create"
+
         if res.status_code >= 300:
-            logger.warning("PR guardrail: failed to post PR comment: %s %s", res.status_code, res.text[:300])
+            logger.warning("PR guardrail: failed to %s PR comment: %s %s", action, res.status_code, res.text[:300])
     except Exception:
         logger.warning("PR guardrail: exception posting PR comment", exc_info=True)
 

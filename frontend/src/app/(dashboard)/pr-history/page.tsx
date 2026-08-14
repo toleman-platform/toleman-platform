@@ -8,6 +8,8 @@ import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
 import { PrScanAction } from "@/components/pr-scan-action";
 import { PrGuardrailLog } from "@/components/pr-guardrail-log";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
+import { GitPullRequest } from "lucide-react";
 
 export default function PrHistoryPage() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -94,7 +96,7 @@ export default function PrHistoryPage() {
                 </Card>
               ))}
               {prs.length === 0 && targetId !== null && (
-                <p className="text-sm text-muted-foreground">No pull requests found for this target.</p>
+                <EmptyState icon={GitPullRequest} title="No pull requests found" description="Nothing has been opened against this target yet." bare />
               )}
             </div>
           )}

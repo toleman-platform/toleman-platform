@@ -210,8 +210,8 @@ export function FindingRow({
   }
 
   return (
-    <Card className={`border-border bg-card border-l-4 ${SEVERITY_BORDER_COLOR[finding.severity]}`}>
-      <CardContent className="px-4 py-3">
+    <Card interactive className={`border-border bg-card border-l-4 ${SEVERITY_BORDER_COLOR[finding.severity]}`}>
+      <CardContent className="px-4" style={{ paddingTop: "var(--density-row-py)", paddingBottom: "var(--density-row-py)" }}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             {selectable && (

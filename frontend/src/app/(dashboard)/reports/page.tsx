@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CheckCircle2 } from "lucide-react";
 import { api, Target } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -121,8 +122,9 @@ export default function ReportsPage() {
 
           {error && <p className="text-sm text-destructive">{error}</p>}
           {!error && lastDownload && (
-            <p className="text-sm text-foreground">
-              Downloaded <span className="font-mono">{lastDownload}</span>
+            <p className="flex items-center gap-1.5 text-sm text-success">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Downloaded <span className="font-mono text-foreground">{lastDownload}</span>
             </p>
           )}
         </CardContent>

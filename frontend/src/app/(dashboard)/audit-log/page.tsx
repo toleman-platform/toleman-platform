@@ -1,6 +1,8 @@
+import { ScrollText } from "lucide-react";
 import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export default async function AuditLogPage() {
   const events = await api.auditLog().catch(() => []);
@@ -30,7 +32,9 @@ export default async function AuditLogPage() {
             </CardContent>
           </Card>
         ))}
-        {events.length === 0 && <p className="text-sm text-muted-foreground">No audit events yet.</p>}
+        {events.length === 0 && (
+          <EmptyState icon={ScrollText} title="No audit events yet" description="Triage decisions and scan runs will show up here as they happen." />
+        )}
       </div>
     </div>
   );

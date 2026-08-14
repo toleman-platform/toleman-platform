@@ -6,7 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { Trash2 } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Building2, Trash2, UserCog } from "lucide-react";
 
 const WORKSPACE_ROLES: WorkspaceRole[] = ["viewer", "developer", "security_engineer"];
 
@@ -89,7 +90,12 @@ export function WorkspaceRoles() {
           {workspaces === null ? (
             <SkeletonList count={1} />
           ) : workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No workspaces yet.</p>
+            <EmptyState
+              icon={Building2}
+              title="No workspaces yet"
+              description="Connect a target first to create a workspace."
+              bare
+            />
           ) : (
             <select
               className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
@@ -139,11 +145,16 @@ export function WorkspaceRoles() {
 
           <div className="flex flex-col divide-y divide-border rounded-md border border-border">
             {loading ? (
-              <div className="px-3 py-3 text-sm text-muted-foreground">Loading...</div>
-            ) : memberships === null || memberships.length === 0 ? (
-              <div className="px-3 py-3 text-sm text-muted-foreground">
-                No workspace-scoped roles assigned for this workspace yet.
+              <div className="px-3 py-2">
+                <SkeletonList count={2} />
               </div>
+            ) : memberships === null || memberships.length === 0 ? (
+              <EmptyState
+                icon={UserCog}
+                title="No workspace-scoped roles assigned"
+                description="For this workspace yet."
+                bare
+              />
             ) : (
               memberships.map((m) => (
                 <div key={m.id} className="flex items-center justify-between gap-3 px-3 py-2">

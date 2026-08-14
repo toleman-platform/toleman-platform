@@ -2,10 +2,12 @@
 
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { ShieldCheck } from "lucide-react";
 import { Finding, Target, api } from "@/lib/api";
 import { FindingRow } from "@/components/finding-row";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { EmptyState } from "@/components/ui/empty-state";
 
 const BULK_TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
@@ -114,7 +116,28 @@ export function FindingsList({
             onSelectChange={(checked) => toggleOne(f.id, checked)}
           />
         ))}
-        {findings.length === 0 && <p className="text-sm text-muted-foreground">No findings match the current filters.</p>}
+        {findings.length === 0 && (
+          <EmptyState
+            icon={ShieldCheck}
+            title={searchParams.toString() ? "No findings match these filters" : "No findings yet"}
+            description={
+              searchParams.toString()
+                ? "Try widening your severity, tool, or state filters."
+                : "Once a scan runs against your targets, findings will show up here."
+            }
+            action={
+              searchParams.toString() ? (
+                <Button size="sm" variant="outline" onClick={() => router.push(pathname)}>
+                  Clear filters
+                </Button>
+              ) : (
+                <Button size="sm" onClick={() => router.push("/scans")}>
+                  Run a scan
+                </Button>
+              )
+            }
+          />
+        )}
       </div>
 
       {total > 0 && (

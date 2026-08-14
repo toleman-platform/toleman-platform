@@ -6,8 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { EnforcementModeSelect } from "@/components/enforcement-mode-select";
-import { Tag, Trash2 } from "lucide-react";
+import { Building2, FolderTree, Tag, Trash2 } from "lucide-react";
 
 const SWATCHES = ["#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563eb", "#7c3aed", "#c026d3"];
 
@@ -120,7 +121,12 @@ export function Groups() {
           {workspaces === null ? (
             <SkeletonList count={1} />
           ) : workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No workspaces yet — connect a target first.</p>
+            <EmptyState
+              icon={Building2}
+              title="No workspaces yet"
+              description="Connect a target first to create a workspace."
+              bare
+            />
           ) : (
             <select
               className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
@@ -179,11 +185,16 @@ export function Groups() {
 
               <div className="flex flex-col divide-y divide-border rounded-md border border-border">
                 {loading ? (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">Loading...</div>
-                ) : !groups || groups.length === 0 ? (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">
-                    No groups yet for this workspace.
+                  <div className="px-3 py-2">
+                    <SkeletonList count={2} />
                   </div>
+                ) : !groups || groups.length === 0 ? (
+                  <EmptyState
+                    icon={FolderTree}
+                    title="No groups yet"
+                    description="For this workspace."
+                    bare
+                  />
                 ) : (
                   groups.map((g) => (
                     <div key={g.id} className="flex items-center justify-between gap-3 px-3 py-2">

@@ -5,7 +5,8 @@ import { api, FalsePositiveRule, FpRuleStats, WorkspaceSummary } from "@/lib/api
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { Ban, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Ban, Building2, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 
 // Issue #76: false-positive learning engine -- rules here are learned
 // automatically the moment a finding is triaged "False Positive" (see
@@ -95,7 +96,12 @@ export function FpRules() {
           {workspaces === null ? (
             <SkeletonList count={1} />
           ) : workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No workspaces yet — connect a target first.</p>
+            <EmptyState
+              icon={Building2}
+              title="No workspaces yet"
+              description="Connect a target first to create a workspace."
+              bare
+            />
           ) : (
             <select
               aria-label="Workspace"
@@ -129,12 +135,16 @@ export function FpRules() {
           {workspaceId != null && (
             <div className="flex flex-col divide-y divide-border rounded-md border border-border">
               {loading ? (
-                <div className="px-3 py-3 text-sm text-muted-foreground">Loading...</div>
-              ) : !rules || rules.length === 0 ? (
-                <div className="px-3 py-3 text-sm text-muted-foreground">
-                  No false-positive rules learned yet for this workspace -- triage a finding as &quot;False
-                  Positive&quot; to teach one.
+                <div className="px-3 py-2">
+                  <SkeletonList count={2} />
                 </div>
+              ) : !rules || rules.length === 0 ? (
+                <EmptyState
+                  icon={ShieldOff}
+                  title="No false-positive rules learned yet"
+                  description={'For this workspace -- triage a finding as "False Positive" to teach one.'}
+                  bare
+                />
               ) : (
                 rules.map((r) => (
                   <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">

@@ -1,6 +1,8 @@
+import { Github } from "lucide-react";
 import { api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export default async function GithubOrgLogsPage() {
   const events = await api.orgActivity().catch(() => []);
@@ -35,7 +37,9 @@ export default async function GithubOrgLogsPage() {
             </CardContent>
           </Card>
         ))}
-        {events.length === 0 && <p className="text-sm text-muted-foreground">No activity found.</p>}
+        {events.length === 0 && (
+          <EmptyState icon={Github} title="No activity found" description="Recent commit activity from your integrated targets will appear here." />
+        )}
       </div>
     </div>
   );

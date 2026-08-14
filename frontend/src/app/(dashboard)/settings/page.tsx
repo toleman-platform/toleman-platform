@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const LABELS = ["Prod", "Dev", "Internal", "Public"];
 
@@ -177,7 +178,17 @@ function NotificationPreferencesSection() {
     }
   }
 
-  if (loading) return null;
+  if (loading) {
+    return (
+      <Card className="border-border bg-card">
+        <CardContent className="flex flex-col gap-3 px-4 py-4">
+          <Skeleton className="h-4 w-48" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="border-border bg-card">

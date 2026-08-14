@@ -1,6 +1,9 @@
 import { api } from "@/lib/api";
 import { FindingsFilterBar } from "@/components/findings-filter-bar";
 import { FindingsList } from "@/components/findings-list";
+import { ErrorState } from "@/components/ui/error-state";
+import { ReloadButton } from "@/components/reload-button";
+import { settleOrNull } from "@/lib/settle";
 
 const PAGE_SIZE = 25;
 
@@ -25,14 +28,13 @@ export default async function FindingsPage({
   const pageRaw = firstValue(sp.page);
   const page = pageRaw && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
 
-  const [result, targets, tools, groups] = await Promise.all([
-    api
-      .findings({ severity, tool, state, search, target_id, group_id, page, page_size: PAGE_SIZE })
-      .catch(() => ({ items: [], total: 0 })),
+  const [findingsResult, targets, tools, groups] = await Promise.all([
+    settleOrNull(api.findings({ severity, tool, state, search, target_id, group_id, page, page_size: PAGE_SIZE })),
     api.targets().catch(() => []),
     api.findingTools().catch(() => []),
     api.groups().catch(() => []),
   ]);
+  const result = findingsResult ?? { items: [], total: 0 };
 
   return (
     <div className="flex flex-col gap-6">
@@ -41,7 +43,14 @@ export default async function FindingsPage({
         <p className="text-sm text-muted-foreground">{result.total} findings across all targets</p>
       </div>
       <FindingsFilterBar targets={targets} tools={tools} groups={groups} />
-      <FindingsList findings={result.items} total={result.total} page={page} pageSize={PAGE_SIZE} targets={targets} />
+      {findingsResult === null ? (
+        <ErrorState
+          description="The findings list couldn't be loaded from the API."
+          action={<ReloadButton />}
+        />
+      ) : (
+        <FindingsList findings={result.items} total={result.total} page={page} pageSize={PAGE_SIZE} targets={targets} />
+      )}
     </div>
   );
 }

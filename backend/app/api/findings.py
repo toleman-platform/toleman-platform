@@ -1,6 +1,7 @@
 import json
 import logging
 from datetime import datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -126,10 +127,24 @@ class FindingEnrichmentResponse(BaseModel):
     fetched_at: datetime | None = None
 
 
-def _apply_triage(finding: Finding, to_state: FindingState, reason: str, actor: str, session: Session) -> Finding:
+def _apply_triage(
+    finding: Finding,
+    to_state: FindingState,
+    reason: str,
+    actor: str,
+    session: Session,
+    batch_id: str | None = None,
+) -> Finding:
     """Shared single-finding state-transition + audit-log logic, used by
-    both the single triage endpoint and the bulk triage endpoint."""
-    log = FindingStateLog(finding_id=finding.id, from_state=finding.state, to_state=to_state, reason=reason, actor=actor)
+    both the single triage endpoint and the bulk triage endpoint.
+
+    batch_id (issue #123) tags every FindingStateLog row written by the same
+    bulk-triage call so the Audit Log can collapse them into one grouped feed
+    item at read time instead of flooding the feed with N near-identical
+    rows. None for single-finding triage."""
+    log = FindingStateLog(
+        finding_id=finding.id, from_state=finding.state, to_state=to_state, reason=reason, actor=actor, batch_id=batch_id
+    )
     finding.state = to_state
     session.add(finding)
     session.add(log)
@@ -287,6 +302,14 @@ def bulk_triage_findings(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
+    # Issue #123: a single bulk-triage call over N findings previously wrote
+    # N indistinguishable FindingStateLog rows, which flooded the Audit Log
+    # (a real 30-finding bulk action produced 30 near-identical cards). Tag
+    # every row this call writes with one shared batch_id so /api/audit/log
+    # can group them back into a single feed item. Only stamped when there's
+    # actually more than one finding -- a "batch" of one is just a normal
+    # single triage and shouldn't render as a collapsible group.
+    batch_id = uuid4().hex if len(payload.finding_ids) > 1 else None
     updated = []
     for finding_id in payload.finding_ids:
         finding = session.get(Finding, finding_id)
@@ -297,7 +320,7 @@ def bulk_triage_findings(
         # rather than once, the same reason create_target checks explicitly
         # instead of using require_workspace_role (see its comment).
         enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, finding_id=finding_id)
-        updated.append(_apply_triage(finding, payload.to_state, payload.reason, payload.actor, session))
+        updated.append(_apply_triage(finding, payload.to_state, payload.reason, payload.actor, session, batch_id=batch_id))
     session.commit()
     for finding in updated:
         session.refresh(finding)

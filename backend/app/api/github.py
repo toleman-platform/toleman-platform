@@ -1,11 +1,29 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from pydantic import BaseModel
+from sqlmodel import Session, select
 
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.models.models import Target
 
 router = APIRouter(prefix="/api/github", tags=["github"])
+
+DEFAULT_PAGE_SIZE = 25
+
+
+class OrgActivityEvent(BaseModel):
+    target: str
+    target_id: int
+    sha: str
+    message: str
+    author: str
+    date: str | None
+    url: str
+
+
+class OrgActivityResponse(BaseModel):
+    items: list[OrgActivityEvent]
+    total: int
 
 
 def _get_target(target_id: int, session: Session) -> Target:
@@ -66,21 +84,53 @@ def repo_prs(target_id: int, session: Session = Depends(get_session)):
 
 
 @router.get("/org-activity")
-def org_activity(session: Session = Depends(get_session)):
+def org_activity(
+    target_id: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    session: Session = Depends(get_session),
+) -> OrgActivityResponse:
     """Recent commit activity across every integrated target — substitutes for a
     GitHub Org audit log, which requires an Enterprise/paid-org audit log API
-    scope not available for personal accounts/repos."""
-    from sqlmodel import select
-    targets = session.exec(select(Target)).all()
-    events = []
+    scope not available for personal accounts/repos.
+
+    Issue #123: adds the same repo + date-range filter and real-pagination
+    pattern as the Audit Log. target_id narrows the fetch to a single repo
+    (fewer GitHub API calls, more commits fetched for that repo since
+    there's only one); with no filter this still fetches a bounded number of
+    commits per repo across every target, same trade-off the original
+    unfiltered version made. date_from/date_to are passed straight through
+    as GitHub's own `since`/`until` commit-search params (real filtering at
+    the source, not a client-side guess), then the combined, sorted result
+    is paginated in-process.
+    """
+    query = select(Target)
+    if target_id is not None:
+        query = query.where(Target.id == target_id)
+    targets = session.exec(query).all()
+
+    # Fetch more commits per repo when scoped to just one, since there's
+    # only one GitHub API call to make either way.
+    per_repo_limit = 100 if target_id is not None else 10
+
+    commit_params: dict[str, str | int] = {"per_page": per_repo_limit}
+    if date_from:
+        commit_params["since"] = f"{date_from}T00:00:00Z"
+    if date_to:
+        commit_params["until"] = f"{date_to}T23:59:59Z"
+
+    events: list[dict] = []
     for target in targets:
         slug = repo_slug_from_url(target.repo_url)
-        res = github_get(f"/repos/{slug}/commits", params={"sha": target.default_branch, "per_page": 5})
+        res = github_get(f"/repos/{slug}/commits", params={**commit_params, "sha": target.default_branch})
         if res.status_code != 200:
             continue
         for c in res.json():
             events.append({
                 "target": target.name,
+                "target_id": target.id,
                 "sha": c["sha"][:7],
                 "message": c["commit"]["message"].split("\n")[0],
                 "author": (c["commit"]["author"] or {}).get("name", "unknown"),
@@ -88,4 +138,11 @@ def org_activity(session: Session = Depends(get_session)):
                 "url": c["html_url"],
             })
     events.sort(key=lambda e: e["date"] or "", reverse=True)
-    return events[:50]
+
+    total = len(events)
+    page = max(page, 1)
+    page_size = max(min(page_size, 200), 1)
+    start = (page - 1) * page_size
+    page_items = events[start : start + page_size]
+
+    return OrgActivityResponse(items=[OrgActivityEvent(**e) for e in page_items], total=total)

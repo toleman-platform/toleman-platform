@@ -28,6 +28,14 @@ TOOL_COMMANDS = {
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],
     "trivy-sbom": lambda path: ["trivy", "fs", "--format", "cyclonedx", "--quiet", path],
     "gosec": lambda path: ["gosec", "-fmt=json", "-quiet", "./..."],
+    # IaC scanners (issue #75). `--soft-fail`/exit-code-0-on-findings
+    # equivalents matter here the same way gitleaks' --exit-code 0 does
+    # above: run_tool below only treats a genuinely nonzero *unexpected*
+    # exit as an error, but explicit soft-fail keeps checkov/tfsec's own
+    # "findings present" exit code from ever being ambiguous with a real
+    # execution failure.
+    "checkov": lambda path: ["checkov", "-d", path, "--output", "json", "--compact", "--quiet", "--soft-fail"],
+    "tfsec": lambda path: ["tfsec", path, "--format", "json", "--soft-fail"],
 }
 
 
@@ -181,10 +189,17 @@ def run_tool(tool: str, repo_path: Path) -> dict | list:
     cwd = str(repo_path) if tool == "gosec" else None
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
 
+    # checkov's JSON shape depends on how many IaC frameworks it found files
+    # for in the target repo: a dict for a single framework, a list of
+    # per-framework dicts when it spans more than one -- parsers.parse_checkov
+    # normalizes both, so its empty/error default here is a dict (the more
+    # common single-framework case) rather than picking one shape and being
+    # wrong half the time.
+    dict_default_tools = ("semgrep", "trivy", "trivy-license", "trivy-sbom", "gosec", "tfsec", "checkov")
     stdout = proc.stdout.strip()
     if not stdout:
-        return {} if tool in ("semgrep", "trivy", "trivy-license", "trivy-sbom", "gosec") else []
+        return {} if tool in dict_default_tools else []
     try:
         return json.loads(stdout)
     except json.JSONDecodeError:
-        return {} if tool in ("semgrep", "trivy", "trivy-license", "trivy-sbom", "gosec") else []
+        return {} if tool in dict_default_tools else []

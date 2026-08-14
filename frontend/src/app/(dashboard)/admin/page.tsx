@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-import { Users, Plug, Wrench, ShieldAlert, ClipboardCheck, KeyRound, Tag, Timer, ShieldCheck } from "lucide-react";
+import { Users, Plug, Wrench, ShieldAlert, ClipboardCheck, KeyRound, Tag, Timer, ShieldCheck, Store } from "lucide-react";
 import { api, AuthUser } from "@/lib/api";
 import { UserManagement } from "./user-management";
 import { WorkspaceRoles } from "./workspace-roles";
 import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
+import { ToolMarketplace } from "./tool-marketplace";
 import { Policies } from "./policies";
 import { ApprovalQueue } from "./approval-queue";
 import { Groups } from "./groups";
@@ -22,6 +23,7 @@ const TABS = [
   { id: "fp-rules", label: "False Positive Rules", icon: ShieldCheck },
   { id: "integrations", label: "Global Integrations", icon: Plug },
   { id: "tools", label: "Tools Health", icon: Wrench },
+  { id: "tool-marketplace", label: "Tool Marketplace", icon: Store },
   { id: "policies", label: "Policies", icon: ShieldAlert },
   { id: "approval-queue", label: "Approval Queue", icon: ClipboardCheck },
 ] as const;
@@ -76,6 +78,7 @@ export default function AdminPage() {
       {tab === "fp-rules" && <FpRules />}
       {tab === "integrations" && <GlobalIntegrations />}
       {tab === "tools" && <ToolsHealth />}
+      {tab === "tool-marketplace" && <ToolMarketplace />}
       {tab === "policies" && <Policies />}
       {tab === "approval-queue" && canSeeApprovalQueue && <ApprovalQueue />}
     </div>

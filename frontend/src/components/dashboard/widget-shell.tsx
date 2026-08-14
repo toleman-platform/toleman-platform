@@ -39,7 +39,7 @@ export function WidgetShell({
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-foreground">
             {editMode && <GripVertical className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
-            <Icon className="h-4 w-4 text-primary" />
+            <Icon className="h-4 w-4 text-accent-strong" />
             {title}
           </CardTitle>
           {editMode && (

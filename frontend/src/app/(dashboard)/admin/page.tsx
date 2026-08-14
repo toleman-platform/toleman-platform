@@ -63,7 +63,7 @@ export default function AdminPage() {
             className={cn(
               "flex items-center gap-2 border-b-2 px-4 py-2 text-sm transition-colors",
               tab === t.id
-                ? "border-primary text-primary"
+                ? "border-accent-strong text-accent-strong"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             )}
           >

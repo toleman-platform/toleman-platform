@@ -3,13 +3,29 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Light/dark design tokens (#115) -- dark is the app's original, unchanged
+   default (no attribute needed); light is opted into via `data-theme="light"`
+   on <html>, set by ThemeInit/ThemeToggle (src/components/theme-toggle.tsx).
+   Light values are the real design-board palette, NOT auto-inverted/auto-
+   generated from dark -- see the token-by-token comments below for why each
+   one differs from a naive invert. Every color a component consumes must be
+   one of these custom properties (or a Tailwind utility backed by one, via
+   the `@theme inline` block) -- no new literal hex/rgb in component code. */
 :root {
+  color-scheme: dark;
+
   --background: #0a0e17;
   --foreground: #e2e8f0;
   --card: #111827;
   --card-foreground: #e2e8f0;
   --popover: #111827;
   --popover-foreground: #e2e8f0;
+  /* --primary is the button-fill brand color. It intentionally does NOT
+     change in light mode: it's always paired with --primary-foreground
+     (fixed dark text) on its own filled surface, so the surface itself
+     changing hue doesn't create a contrast problem the way primary used as
+     bare text/icon color on the page background would. See --accent-strong
+     below for the token that DOES need to deepen for that case. */
   --primary: #06b6d4;
   --primary-foreground: #0a0e17;
   --secondary: #1e293b;
@@ -18,10 +34,21 @@
   --muted-foreground: #94a3b8;
   --accent: #164e63;
   --accent-foreground: #e2e8f0;
+  /* --accent-strong: brand cyan used as bare text/icon color directly on a
+     canvas/card/sidebar background (links, active nav state, icon tiles) --
+     as opposed to --primary, which is only ever a button/badge *fill*.
+     Dark mode's bright cyan (#06b6d4) reads fine as text on the app's near-
+     black background, so it's identical to --primary here; light mode gets
+     its own deepened value below since that same bright cyan is unreadable
+     as text on white (see globals-level comment). */
+  --accent-strong: #06b6d4;
   --destructive: #ef4444;
   --destructive-foreground: #fecaca;
   --border: #1e293b;
   --input: #1e293b;
+  /* --ring is tied to --primary/button semantics (focus outline around
+     interactive controls), not to bare-text contrast, so it stays fixed
+     alongside --primary for the same reason. */
   --ring: #06b6d4;
   --chart-1: #06b6d4;
   --chart-2: #22d3ee;
@@ -51,6 +78,51 @@
   --density-gap: 1.5rem;
 }
 
+/* Light mode (#115) -- real, individually-chosen values from the design
+   board, not a mechanical invert of the dark palette. Severity/status colors
+   in particular are deepened on their own merits for contrast on white
+   (e.g. the dark-mode amber #f59e0b is unreadable as text on white, so
+   --chart-3/--warning get a real deepened amber here, not a lightness flip).
+   Only tokens whose value actually changes are listed -- everything else
+   (--primary, --primary-foreground, --ring, --sidebar-primary,
+   --sidebar-primary-foreground, --sidebar-ring) falls through unchanged
+   from :root, per the button-fill reasoning above. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --background: #f5f7fa; /* canvas */
+  --foreground: #161c2b; /* text-primary */
+  --card: #ffffff; /* surface */
+  --card-foreground: #161c2b;
+  --popover: #ffffff;
+  --popover-foreground: #161c2b;
+  --secondary: #eef1f6;
+  --secondary-foreground: #161c2b;
+  --muted: #eef1f6;
+  --muted-foreground: #5b6472; /* dark's #94a3b8 is too light to read on white */
+  --accent: #e6f6f9; /* soft cyan hover wash, replaces dark's saturated teal fill */
+  --accent-foreground: #161c2b;
+  --accent-strong: #0a7490; /* deepened from dark's #06b6d4 for contrast on white */
+  --destructive: #c0193f; /* deepened critical/error red */
+  --destructive-foreground: #fff5f5;
+  --border: #dde2ea; /* hairline */
+  --input: #dde2ea;
+  --chart-1: var(--accent-strong); /* "Medium" severity reuses the brand accent */
+  --chart-2: #0e6ba8; /* deepened info blue (was unused in dark; now backs "already integrated") */
+  --chart-3: #8a6200; /* deepened amber/warning -- bright yellow is unreadable on white */
+  --chart-4: #c0193f; /* deepened red, mirrors --destructive */
+  --chart-5: #047857; /* deepened success green */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #161c2b;
+  --sidebar-accent: #e6f6f9;
+  --sidebar-accent-foreground: #161c2b;
+  --sidebar-border: #dde2ea;
+  --warning: #8a6200;
+  --warning-foreground: #fffbe6;
+  --success: #047857;
+  --success-foreground: #f0fdf4;
+}
+
 [data-density="compact"] {
   --density-row-py: 0.375rem;
   --density-page-py: 1.25rem;
@@ -74,6 +146,7 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-accent-strong: var(--accent-strong);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);

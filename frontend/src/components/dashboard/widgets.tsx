@@ -94,7 +94,7 @@ function KpiCardsWidget({ data }: { data: KpiCardsData }) {
   const items = [
     { icon: ShieldAlert, iconClass: "bg-destructive/10 text-destructive", value: data.open, label: "Open Vulnerabilities" },
     { icon: AlertTriangle, iconClass: "bg-chart-3/10 text-chart-3", value: data.critical, label: "Critical Issues" },
-    { icon: GitBranch, iconClass: "bg-primary/10 text-primary", value: data.targets, label: "Targets Onboarded" },
+    { icon: GitBranch, iconClass: "bg-primary/10 text-accent-strong", value: data.targets, label: "Targets Onboarded" },
     { icon: CheckCircle2, iconClass: "bg-chart-5/10 text-chart-5", value: data.mitigated, label: "Mitigated" },
   ];
   return (
@@ -119,7 +119,7 @@ function SlaComplianceWidget({ data }: { data: SlaComplianceData }) {
     return (
       <EmptyState>
         No SLA rules configured yet. Set days-to-fix targets per severity/group on the{" "}
-        <Link href="/admin" className="text-primary underline">
+        <Link href="/admin" className="text-accent-strong underline">
           Admin &rsaquo; SLA Rules
         </Link>{" "}
         tab.
@@ -150,7 +150,7 @@ function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
       <EmptyState>
         No findings auto-suppressed since {formatDate(data.since)}. Rules are learned when a finding is triaged{" "}
         &quot;False Positive&quot; -- manage them on the{" "}
-        <Link href="/admin" className="text-primary underline">
+        <Link href="/admin" className="text-accent-strong underline">
           Admin &rsaquo; False Positive Rules
         </Link>{" "}
         tab.
@@ -197,7 +197,7 @@ function CveTimelineWidget({ data }: { data: CveTimelineData }) {
         <div key={item.finding_id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-mono text-xs text-primary">{item.cve_id}</span>
+              <span className="font-mono text-xs text-accent-strong">{item.cve_id}</span>
               {item.kev_listed && <Badge variant="outline" className="border-destructive/40 bg-destructive/20 text-destructive">KEV</Badge>}
             </div>
             <p className="truncate text-sm text-foreground">{item.title}</p>

@@ -74,7 +74,7 @@ export function PipelineIntegration({
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium text-foreground">CI/CD Pipeline Integration</h2>
             {integrated ? (
-              <Badge variant="outline" className="border-green-600/40 text-green-500">
+              <Badge variant="outline" className="border-chart-5/40 text-chart-5">
                 Integrated
               </Badge>
             ) : (
@@ -93,7 +93,7 @@ export function PipelineIntegration({
               href={prUrl}
               target="_blank"
               rel="noreferrer"
-              className="mt-1 inline-block text-xs text-primary underline underline-offset-2"
+              className="mt-1 inline-block text-xs text-accent-strong underline underline-offset-2"
             >
               View integration PR &rarr;
             </a>
@@ -121,7 +121,7 @@ export function PipelineIntegration({
                 {workflow.includes_gosec ? "semgrep, gitleaks, trivy, gosec" : "semgrep, gitleaks, trivy"}
                 {workflow.languages.length > 0 && ` (detected: ${workflow.languages.join(", ")})`}
               </p>
-              <p className="text-xs text-amber-500">
+              <p className="text-xs text-chart-3">
                 Requires the <code>RIKUGAN_API_URL</code> / <code>RIKUGAN_API_KEY</code> Actions secrets on
                 the target repo. <code>RIKUGAN_API_URL</code> must be a publicly reachable Rikugan
                 deployment -- GitHub&apos;s cloud runners cannot reach localhost.

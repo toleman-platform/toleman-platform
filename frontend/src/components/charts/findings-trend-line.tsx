@@ -17,11 +17,11 @@ export function FindingsTrendLine({ data }: { data: FindingsTrendData }) {
     <div className="h-56">
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-          <XAxis dataKey="date" tick={{ fill: "#94a3b8", fontSize: 12 }} axisLine={{ stroke: "#1e293b" }} />
-          <YAxis tick={{ fill: "#94a3b8", fontSize: 12 }} axisLine={{ stroke: "#1e293b" }} allowDecimals={false} />
-          <Tooltip contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px", color: "#e2e8f0" }} />
-          <Line type="monotone" dataKey="open" stroke="#06b6d4" strokeWidth={2} dot={{ r: 3, fill: "#06b6d4" }} />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+          <XAxis dataKey="date" tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} axisLine={{ stroke: "var(--color-border)" }} />
+          <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} axisLine={{ stroke: "var(--color-border)" }} allowDecimals={false} />
+          <Tooltip contentStyle={{ backgroundColor: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: "8px", color: "var(--color-popover-foreground)" }} />
+          <Line type="monotone" dataKey="open" stroke="var(--color-accent-strong)" strokeWidth={2} dot={{ r: 3, fill: "var(--color-accent-strong)" }} />
         </LineChart>
       </ResponsiveContainer>
     </div>

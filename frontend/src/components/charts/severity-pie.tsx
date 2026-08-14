@@ -22,7 +22,7 @@ export function SeverityPie({ data }: { data: Record<string, number> }) {
                 <Cell key={e.name} fill={e.color} />
               ))}
             </Pie>
-            <Tooltip contentStyle={{ backgroundColor: "#111827", border: "1px solid #1e293b", borderRadius: "8px", color: "#e2e8f0" }} />
+            <Tooltip contentStyle={{ backgroundColor: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: "8px", color: "var(--color-popover-foreground)" }} />
           </PieChart>
         </ResponsiveContainer>
       </div>

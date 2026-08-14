@@ -2,6 +2,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { AuthUser, Target } from "@/lib/api";
+import { THEME_COOKIE_KEY, Theme } from "@/components/theme-toggle";
 
 // See the matching comment in src/lib/api.ts -- API_INTERNAL_URL lets the
 // Next.js server (inside the frontend container) reach the backend over the
@@ -39,8 +40,14 @@ async function getCurrentPath(): Promise<string> {
   return headerStore.get("x-pathname") || "";
 }
 
+async function getInitialTheme(): Promise<Theme> {
+  const cookieStore = await cookies();
+  return cookieStore.get(THEME_COOKIE_KEY)?.value === "light" ? "light" : "dark";
+}
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
+  const initialTheme = await getInitialTheme();
 
   if (user) {
     const pathname = await getCurrentPath();
@@ -55,7 +62,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="flex h-screen w-full overflow-hidden">
-      <Sidebar user={user} />
+      <Sidebar user={user} initialTheme={initialTheme} />
       <main className="flex-1 overflow-y-auto">
         <div
           className="mx-auto max-w-6xl px-6"

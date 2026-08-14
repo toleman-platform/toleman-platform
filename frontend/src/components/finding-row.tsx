@@ -128,7 +128,7 @@ function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="mr-1 text-xs text-primary underline"
+                className="mr-1 text-xs text-accent-strong underline"
               >
                 {cwe}
               </a>
@@ -166,7 +166,7 @@ function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="truncate text-xs text-primary underline"
+                className="truncate text-xs text-accent-strong underline"
               >
                 {url}
               </a>

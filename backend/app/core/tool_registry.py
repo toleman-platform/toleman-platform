@@ -1,7 +1,7 @@
-"""Static registry of every OSS security tool OSP knows about (issue #75).
+"""Static registry of every OSS security tool Rikugan knows about (issue #75).
 
 This is deliberately a hardcoded Python list, not a DB table or a
-YAML/JSON file loaded at runtime -- the set of tools OSP can actually run
+YAML/JSON file loaded at runtime -- the set of tools Rikugan can actually run
 is fixed by what `app.scanners.runner.TOOL_COMMANDS` and
 `app.scanners.parsers.PARSER_MAP` know how to invoke/parse, so the registry
 lives next to that code and stays in sync with it by construction (each
@@ -138,7 +138,7 @@ def default_usage_for(tool: str) -> dict:
 
 def registry_with_integration_status() -> list[dict]:
     """Registry entries plus a computed `integrated` flag -- True only when
-    the tool has a real TOOL_COMMANDS entry (i.e. OSP can actually execute
+    the tool has a real TOOL_COMMANDS entry (i.e. Rikugan can actually execute
     a scan for it today), False for registry-only/health-check-only tools
     like kics above."""
     out = []

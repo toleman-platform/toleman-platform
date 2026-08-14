@@ -59,7 +59,7 @@ def _make_user(engine, email="user@example.com", password="correct-horse") -> Us
 def _authed_client(client, engine) -> TestClient:
     user = _make_user(engine)
     token = create_session_token(user.id, user.token_version)
-    client.cookies.set("osp_session", token)
+    client.cookies.set("rikugan_session", token)
     return client
 
 

@@ -2,7 +2,7 @@
 
 Extends the original Sprint 1 `GET /health` (which only checked the four
 already-integrated scanners) with:
-  - `GET /registry`: every OSS tool OSP knows about (see
+  - `GET /registry`: every OSS tool Rikugan knows about (see
     app.core.tool_registry.TOOL_REGISTRY), each merged with a real
     version/health check the same way `/health` always has -- not a static
     "supported" list divorced from what's actually on this host.
@@ -76,7 +76,7 @@ def tools_registry():
     """Full tool marketplace registry (issue #75): every supported OSS
     security tool across SAST/SCA/Secrets/Container/IaC/License, each
     merged with a real live health check (subprocess `--version`, exactly
-    like /health) and an `integrated` flag (whether OSP can actually
+    like /health) and an `integrated` flag (whether Rikugan can actually
     dispatch a scan for it today via app.scanners.runner.TOOL_COMMANDS)."""
     entries = registry_with_integration_status()
     out = []

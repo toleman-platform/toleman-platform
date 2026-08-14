@@ -1,4 +1,4 @@
-# OSP — Open-Source DevSecOps Vulnerability Management Platform
+# Rikugan — Open-Source DevSecOps Vulnerability Management Platform
 
 MVP slice of the [architecture](../ARCHITECTURE.md): FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec, dedup engine, two-tier priority scoring, triage state machine.
 
@@ -6,7 +6,7 @@ Deferred (see architecture doc §2/§8): Custom Workflow Builder, Mass CI/CD Rol
 
 ## Quickstart (Docker Compose)
 
-The fastest way to try OSP — no Homebrew, no manually installing Postgres/Redis/scanner CLIs. Requires only [Docker](https://docs.docker.com/get-docker/) with Compose v2 (`docker compose`, bundled with Docker Desktop and recent Docker Engine installs).
+The fastest way to try Rikugan — no Homebrew, no manually installing Postgres/Redis/scanner CLIs. Requires only [Docker](https://docs.docker.com/get-docker/) with Compose v2 (`docker compose`, bundled with Docker Desktop and recent Docker Engine installs).
 
 ```bash
 cp .env.example .env   # optional — every var has a working local-dev default
@@ -49,8 +49,8 @@ Homebrew's bundled `redis.conf` references modules that aren't shipped — if re
 Create the database:
 
 ```bash
-psql postgres -c "CREATE USER osp WITH PASSWORD 'osp' CREATEDB;"
-psql postgres -c "CREATE DATABASE osp OWNER osp;"
+psql postgres -c "CREATE USER rikugan WITH PASSWORD 'rikugan' CREATEDB;"
+psql postgres -c "CREATE DATABASE rikugan OWNER rikugan;"
 ```
 
 ### Backend

@@ -1,4 +1,4 @@
-"""Fixed-window rate limiting for OSP API endpoints.
+"""Fixed-window rate limiting for Rikugan API endpoints.
 
 Backend: Redis-first, in-memory fallback.
 

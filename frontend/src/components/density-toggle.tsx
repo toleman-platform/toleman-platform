@@ -5,7 +5,7 @@ import { AlignJustify, Rows3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type Density = "comfortable" | "compact";
-export const DENSITY_STORAGE_KEY = "osp-density";
+export const DENSITY_STORAGE_KEY = "rikugan-density";
 const STORAGE_KEY = DENSITY_STORAGE_KEY;
 
 function applyDensity(density: Density) {

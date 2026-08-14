@@ -1,11 +1,11 @@
-# OSP Platform — AI Knowledge Transfer (KT)
+# Rikugan Platform — AI Knowledge Transfer (KT)
 
-Welcome to the OSP Platform project. You are an AI engineer assisting in the development of a 100% free, open-source DevSecOps vulnerability management platform. 
+Welcome to the Rikugan Platform project. You are an AI engineer assisting in the development of a 100% free, open-source DevSecOps vulnerability management platform. 
 
 This document serves as your onboarding and knowledge transfer. Before starting any implementation, you must understand our strategic goals and read **`ARCHITECTURE.md`** — a token-cheap map of directory structure, backend routers, models, and established conventions (workspace scoping, secrets encryption, async task dispatch, the `TargetPicker` "all repos" pattern, etc.). Read it instead of re-discovering structure by grepping the whole tree on every task.
 
 ## 🎯 Project Vision & Strategy
-OSP aims to be the "Grafana for Security"—a fully free, open-source platform that orchestrates best-of-breed OSS scanners (Semgrep, Trivy, Gitleaks, gosec) with a modern developer-first UI, intelligent deduplication, context-aware prioritization, and PR-level enforcement.
+Rikugan aims to be the "Grafana for Security"—a fully free, open-source platform that orchestrates best-of-breed OSS scanners (Semgrep, Trivy, Gitleaks, gosec) with a modern developer-first UI, intelligent deduplication, context-aware prioritization, and PR-level enforcement.
 
 **Core Philosophy:** 
 - **100% Free**: No paid tiers, no feature gating, no monetization. Every enterprise feature (SSO, RBAC, etc.) is free.
@@ -27,7 +27,7 @@ When you are asked to implement a feature or fix a bug, adhere to the following 
 
 1. **Read `ARCHITECTURE.md` first**, then `ROADMAP.md` and the specific GitHub issue, to understand priority, exact requirements, and existing conventions before writing anything.
 2. **Plan First**: Propose an implementation plan. Outline the specific files you will create/modify. Any schema change needs a real Alembic migration (`backend/alembic/`, in place since #58) — not a manual `ALTER TABLE`.
-3. **Security First**: OSP is a security tool. Ensure no command injection, SQL injection, or IDOR is introduced. New GET/list endpoints over workspace-owned resources must use `accessible_workspace_ids()` (`backend/app/api/auth.py`) for tenant isolation.
+3. **Security First**: Rikugan is a security tool. Ensure no command injection, SQL injection, or IDOR is introduced. New GET/list endpoints over workspace-owned resources must use `accessible_workspace_ids()` (`backend/app/api/auth.py`) for tenant isolation.
 4. **UX Consistency**: When working on the frontend, use existing Shadcn components from `frontend/src/components/ui/`. Ensure dark mode styling is maintained and accessibility (ARIA labels) is prioritized.
 5. **No Placeholders**: Write complete, functional code. "No mock data" applies to verification too — live-test against real data/real HTTP calls wherever feasible, not just unit tests with mocks.
 

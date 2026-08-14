@@ -19,7 +19,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OSP - DevSecOps Vulnerability Management",
+  title: "Rikugan - DevSecOps Vulnerability Management",
   description: "Open-source vulnerability management platform",
 };
 

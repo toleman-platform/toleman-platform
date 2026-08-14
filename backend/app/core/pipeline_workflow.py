@@ -11,17 +11,17 @@ GitHub's cloud runners cannot reach a backend running at localhost:8000, so
 the generated workflow's ingest step depends on two GitHub Actions secrets
 the *target repo's* owner must configure themselves:
 
-  - ``OSP_API_URL``: a **publicly reachable** deployment of this platform
+  - ``RIKUGAN_API_URL``: a **publicly reachable** deployment of this platform
     (e.g. `docker-compose.yml` from #60, exposed via a real domain/tunnel).
     Pointing this at localhost:8000 will simply fail from GitHub's runners,
     the same problem self-scan.yml's own comment documents.
-  - ``OSP_API_KEY``: the target's workspace API key (`GET
+  - ``RIKUGAN_API_KEY``: the target's workspace API key (`GET
     /api/targets/{id}/workspace-key`).
 
 Scanning still happens (and is reported in the job summary/artifacts)
 regardless of whether the ingest step succeeds -- so this degrades to
-"exactly self-scan.yml" rather than failing outright when OSP isn't publicly
-reachable yet.
+"exactly self-scan.yml" rather than failing outright when Rikugan isn't
+publicly reachable yet.
 """
 import logging
 
@@ -33,8 +33,8 @@ from app.models.models import Finding, Target
 
 logger = logging.getLogger(__name__)
 
-WORKFLOW_PATH = ".github/workflows/osp-scan.yml"
-WORKFLOW_FILENAME = "osp-scan.yml"
+WORKFLOW_PATH = ".github/workflows/rikugan-scan.yml"
+WORKFLOW_FILENAME = "rikugan-scan.yml"
 
 # Custom Workflow Builder (issue #35): the fixed catalog of scanners a
 # PipelineWorkflowTemplate's step list may reference -- the same four jobs
@@ -101,19 +101,19 @@ _SEMGREP_JOB = """
         with:
           name: semgrep-results
           path: semgrep.sarif
-      - name: Push results to OSP
+      - name: Push results to Rikugan
         if: always()
         env:
-          OSP_API_URL: ${{ secrets.OSP_API_URL }}
-          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
+          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
         run: |
-          if [ -n "$OSP_API_URL" ] && [ -f semgrep.sarif ]; then
-            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$RIKUGAN_API_URL" ] && [ -f semgrep.sarif ]; then
+            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @semgrep.sarif \\
-              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
           else
-            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
           fi
 """
 
@@ -134,19 +134,19 @@ _GITLEAKS_JOB = """
         with:
           name: gitleaks-results
           path: gitleaks.sarif
-      - name: Push results to OSP
+      - name: Push results to Rikugan
         if: always()
         env:
-          OSP_API_URL: ${{ secrets.OSP_API_URL }}
-          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
+          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
         run: |
-          if [ -n "$OSP_API_URL" ] && [ -f gitleaks.sarif ]; then
-            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$RIKUGAN_API_URL" ] && [ -f gitleaks.sarif ]; then
+            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @gitleaks.sarif \\
-              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
           else
-            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
           fi
 """
 
@@ -166,19 +166,19 @@ _TRIVY_JOB = """
         with:
           name: trivy-results
           path: trivy.sarif
-      - name: Push results to OSP
+      - name: Push results to Rikugan
         if: always()
         env:
-          OSP_API_URL: ${{ secrets.OSP_API_URL }}
-          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
+          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
         run: |
-          if [ -n "$OSP_API_URL" ] && [ -f trivy.sarif ]; then
-            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$RIKUGAN_API_URL" ] && [ -f trivy.sarif ]; then
+            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @trivy.sarif \\
-              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
           else
-            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
           fi
 """
 
@@ -208,45 +208,45 @@ _GOSEC_JOB = """
         with:
           name: gosec-results
           path: gosec.sarif
-      - name: Push results to OSP
+      - name: Push results to Rikugan
         if: always()
         env:
-          OSP_API_URL: ${{ secrets.OSP_API_URL }}
-          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
+          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
         run: |
-          if [ -n "$OSP_API_URL" ] && [ -f gosec.sarif ]; then
-            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=gosec&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$RIKUGAN_API_URL" ] && [ -f gosec.sarif ]; then
+            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=gosec&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @gosec.sarif \\
-              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
           else
-            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
           fi
 """
 
 _TEMPLATE = """name: __WORKFLOW_NAME__
 
-# Generated by OSP DevSecOps Platform (issue #66) for target "__TARGET_NAME__"
-# (id __TARGET_ID__). Runs the same open-source scanners OSP wraps natively
+# Generated by Rikugan DevSecOps Platform (issue #66) for target "__TARGET_NAME__"
+# (id __TARGET_ID__). Runs the same open-source scanners Rikugan wraps natively
 # in this job -- mirrors this platform's own dogfooding workflow
 # (.github/workflows/self-scan.yml) -- then pushes each tool's SARIF output
-# back into OSP via POST /api/ingest/__TARGET_ID__.
+# back into Rikugan via POST /api/ingest/__TARGET_ID__.
 #
-# IMPORTANT: GitHub's cloud runners cannot reach an OSP backend running on
-# localhost. For the "push results to OSP" steps below to actually succeed,
+# IMPORTANT: GitHub's cloud runners cannot reach a Rikugan backend running on
+# localhost. For the "push results to Rikugan" steps below to actually succeed,
 # configure these secrets in this repo's Settings > Secrets and variables >
 # Actions:
 #
-#   OSP_API_URL  - a PUBLICLY REACHABLE deployment of the OSP platform
+#   RIKUGAN_API_URL  - a PUBLICLY REACHABLE deployment of the Rikugan platform
 #                  (e.g. behind docker-compose.yml exposed via a real
 #                  domain/tunnel). Do NOT set this to http://localhost:8000
 #                  -- that only works from your own machine, not from
 #                  GitHub's runners.
-#   OSP_API_KEY  - this target's workspace API key
-#                  (GET /api/targets/__TARGET_ID__/workspace-key in OSP).
+#   RIKUGAN_API_KEY  - this target's workspace API key
+#                  (GET /api/targets/__TARGET_ID__/workspace-key in Rikugan).
 #
 # Scanning and the job summary/artifacts work regardless of whether these
-# secrets are set -- only the "push results to OSP" step is skipped/fails
+# secrets are set -- only the "push results to Rikugan" step is skipped/fails
 # without them, same degrade-gracefully behavior as self-scan.yml.
 
 on:
@@ -312,7 +312,7 @@ def generate_workflow_yaml(session: Session, target: Target, steps: list[str] | 
     safe_name = target.name.replace("\\", "\\\\").replace('"', '\\"')
     yaml_text = _TEMPLATE.replace("__JOBS__", jobs_yaml)
     yaml_text = (
-        yaml_text.replace("__WORKFLOW_NAME__", f'"OSP Scan ({safe_name})"')
+        yaml_text.replace("__WORKFLOW_NAME__", f'"Rikugan Scan ({safe_name})"')
         .replace("__TARGET_ID__", str(target.id))
         .replace("__TARGET_NAME__", target.name)
         .replace("__DEFAULT_BRANCH__", target.default_branch)

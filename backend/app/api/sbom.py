@@ -250,7 +250,7 @@ def export_sbom(target_id: int, session: Session = Depends(get_session)):
                 "name": c.name,
                 "version": c.version,
                 "purl": c.purl,
-                "properties": [{"name": "osp:packageType", "value": c.package_type}],
+                "properties": [{"name": "rikugan:packageType", "value": c.package_type}],
             }
             for c in components
         ],

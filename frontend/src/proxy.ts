@@ -6,7 +6,7 @@ const PUBLIC_PATHS = ["/login"];
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-  const hasSession = request.cookies.has("osp_session");
+  const hasSession = request.cookies.has("rikugan_session");
 
   if (!hasSession && !isPublic) {
     const loginUrl = new URL("/login", request.url);

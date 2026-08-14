@@ -68,7 +68,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("osp_session", token)
+    client.cookies.set("rikugan_session", token)
     return client, uid
 
 

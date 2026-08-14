@@ -85,7 +85,7 @@ export function PipelineIntegration({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Generates a GitHub Actions workflow that runs Semgrep, Gitleaks, Trivy (and gosec for
-            Go repos) natively in your CI and pushes results back into OSP, then opens a PR adding
+            Go repos) natively in your CI and pushes results back into Rikugan, then opens a PR adding
             it to this repo.
           </p>
           {prUrl && (
@@ -122,8 +122,8 @@ export function PipelineIntegration({
                 {workflow.languages.length > 0 && ` (detected: ${workflow.languages.join(", ")})`}
               </p>
               <p className="text-xs text-amber-500">
-                Requires the <code>OSP_API_URL</code> / <code>OSP_API_KEY</code> Actions secrets on
-                the target repo. <code>OSP_API_URL</code> must be a publicly reachable OSP
+                Requires the <code>RIKUGAN_API_URL</code> / <code>RIKUGAN_API_KEY</code> Actions secrets on
+                the target repo. <code>RIKUGAN_API_URL</code> must be a publicly reachable Rikugan
                 deployment -- GitHub&apos;s cloud runners cannot reach localhost.
               </p>
               <pre className="max-h-96 overflow-auto rounded-md bg-secondary p-3 text-[11px] leading-relaxed text-foreground">

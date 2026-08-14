@@ -1,5 +1,5 @@
 """Pipeline integration (issue #66): open a real PR against a target's
-GitHub repo adding the generated `.github/workflows/osp-scan.yml` (see
+GitHub repo adding the generated `.github/workflows/rikugan-scan.yml` (see
 `app.core.pipeline_workflow`). Uses the GitHub App's installation token via
 the same resolution helpers PR Guardrail's comment/commit-status posting
 already relies on (`app.core.github_app`), rather than the plain
@@ -43,7 +43,7 @@ def _get_installation_token(session: Session, target: Target) -> str:
 
 def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None = None) -> dict:
     """Opens a real PR on the target's GitHub repo adding
-    .github/workflows/osp-scan.yml on a new branch off the default branch.
+    .github/workflows/rikugan-scan.yml on a new branch off the default branch.
     Returns {"pr_url": str, "pr_number": int, "branch": str}. Raises
     PipelinePrError (never a bare httpx exception) on any failure so the API
     layer can return a clean error message instead of a stack trace.
@@ -71,7 +71,7 @@ def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None =
     # 2. Create a new branch off that sha. Suffix with a timestamp so a
     # repeat "Integrate Pipeline" click after an earlier PR was merged/closed
     # doesn't collide with a stale branch of the same name.
-    branch_name = f"osp/add-pipeline-scan-{int(time.time())}"
+    branch_name = f"rikugan/add-pipeline-scan-{int(time.time())}"
     create_ref_res = httpx.post(
         f"https://api.github.com/repos/{slug}/git/refs",
         headers=headers,
@@ -99,7 +99,7 @@ def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None =
 
     content_b64 = base64.b64encode(generated["yaml"].encode("utf-8")).decode("ascii")
     put_body = {
-        "message": "Add OSP DevSecOps pipeline scan workflow",
+        "message": "Add Rikugan DevSecOps pipeline scan workflow",
         "content": content_b64,
         "branch": branch_name,
     }
@@ -115,14 +115,14 @@ def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None =
 
     # 4. Open the PR.
     pr_body = (
-        "Adds an OSP DevSecOps Platform CI/CD scan workflow "
+        "Adds a Rikugan DevSecOps Platform CI/CD scan workflow "
         f"(`{WORKFLOW_PATH}`), opened automatically via **Integrate Pipeline** "
-        "in OSP.\n\n"
+        "in Rikugan.\n\n"
         "Runs Semgrep, Gitleaks, and Trivy (plus gosec for Go repos) natively "
-        "in the GitHub Actions runner and, when the `OSP_API_URL`/`OSP_API_KEY` "
-        "repo secrets are configured, pushes results back into OSP via "
+        "in the GitHub Actions runner and, when the `RIKUGAN_API_URL`/`RIKUGAN_API_KEY` "
+        "repo secrets are configured, pushes results back into Rikugan via "
         "`POST /api/ingest`.\n\n"
-        "**Note:** `OSP_API_URL` must point to a publicly reachable OSP "
+        "**Note:** `RIKUGAN_API_URL` must point to a publicly reachable Rikugan "
         "deployment -- GitHub's cloud runners cannot reach `localhost`. See "
         "the comments at the top of the workflow file for setup details."
     )
@@ -130,7 +130,7 @@ def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None =
         f"https://api.github.com/repos/{slug}/pulls",
         headers=headers,
         json={
-            "title": "Add OSP DevSecOps pipeline scan workflow",
+            "title": "Add Rikugan DevSecOps pipeline scan workflow",
             "head": branch_name,
             "base": target.default_branch,
             "body": pr_body,

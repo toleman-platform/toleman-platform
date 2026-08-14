@@ -225,7 +225,7 @@ export function TargetsList({ targets }: { targets: Target[] }) {
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Add the OSP pipeline scan workflow to every repo in a scope at once, instead of selecting them one
+            Add the Rikugan pipeline scan workflow to every repo in a scope at once, instead of selecting them one
             by one.
           </p>
           <div className="flex flex-wrap items-center gap-2">

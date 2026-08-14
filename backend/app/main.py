@@ -9,7 +9,7 @@ from app.models.models import User
 from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules
 from app.api.auth import current_user, require_admin
 
-app = FastAPI(title="OSP - DevSecOps Vulnerability Management Platform")
+app = FastAPI(title="Rikugan - DevSecOps Vulnerability Management Platform")
 
 app.add_middleware(
     CORSMiddleware,

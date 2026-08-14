@@ -8,11 +8,11 @@ DEFAULT_ADMIN_PASSWORD = "changeme123"
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://osp:osp@localhost:5432/osp"
+    database_url: str = "postgresql+psycopg://rikugan:rikugan@localhost:5432/rikugan"
     redis_url: str = "redis://localhost:6379/0"
     github_token: str = ""
     workspace_api_key: str = "dev-local-key"
-    scan_workdir: str = "/tmp/osp-scans"
+    scan_workdir: str = "/tmp/rikugan-scans"
     session_secret: str = DEFAULT_SESSION_SECRET
     # Set True in any production/HTTPS deployment so the session cookie is
     # only ever sent over TLS. Defaults to False so local http:// dev works.

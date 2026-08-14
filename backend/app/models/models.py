@@ -640,6 +640,38 @@ class SlaRule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class WorkspaceToolConfig(SQLModel, table=True):
+    """Per-workspace, per-tool usage assignment (issue #75): which of the
+    tool registry's four usage surfaces (`app.core.tool_registry.
+    USAGE_SURFACES`) a given scanner is enabled for in this workspace --
+    on-demand ("Scan now" from the Targets page), CI pipeline (the
+    generated GitHub Actions workflow from #66/pipeline_workflow.py),
+    active API scanning (#72, not yet wired to actually read this flag --
+    the column exists now so the assignment UI has one stable place to
+    grow into once #72 ships), and PR Guardrail diff scans.
+
+    Absence of a row for a (workspace_id, tool) pair means "use the
+    built-in default", not "disabled" -- see
+    `app.core.tool_registry.default_usage_for` for the defaults (mirrors
+    the "None = inherit" philosophy already used by Workspace/Group/Target
+    .enforcement_mode in #62, rather than requiring every workspace to
+    explicitly configure every tool before any of them run).
+    """
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "tool", name="uq_workspace_tool_config_workspace_tool"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    tool: str = Field(index=True)
+    on_demand_scan: bool = True
+    ci_pipeline: bool = True
+    api_scan: bool = False
+    pr_guardrail: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class NotificationChannel(str, Enum):
     """Delivery channel for a NotificationPreference (issue #73). `slack`
     posts to the single platform-wide webhook configured in

@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Pencil, Save, Plus, X } from "lucide-react";
+import { Pencil, Save, Plus, X, LayoutGrid } from "lucide-react";
 import { api, type LayoutWidget, type WidgetCatalogEntry, type WidgetDataResponse, type WidgetId } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { WidgetShell } from "@/components/dashboard/widget-shell";
 import { WidgetBody, WIDGET_META } from "@/components/dashboard/widgets";
 
@@ -126,9 +127,19 @@ export function DashboardBoard({
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       {widgets.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          Your dashboard is empty. {editMode ? "Use “Add Widget” above to add one." : "Click “Edit Dashboard” to add widgets."}
-        </p>
+        <EmptyState
+          icon={LayoutGrid}
+          title="Your dashboard is empty"
+          description={editMode ? 'Use "Add Widget" above to add one.' : 'Click "Edit Dashboard" to add widgets.'}
+          action={
+            !editMode && (
+              <Button type="button" size="sm" onClick={() => setEditMode(true)}>
+                <Pencil className="h-3.5 w-3.5" />
+                Edit Dashboard
+              </Button>
+            )
+          }
+        />
       )}
 
       <div className="grid gap-4 lg:grid-cols-3">

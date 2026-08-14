@@ -1,3 +1,4 @@
+import { ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import { ScanButtons } from "./scan-buttons";
 import { FindingRow } from "@/components/finding-row";
@@ -5,6 +6,7 @@ import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
 import { TargetEnforcement } from "./target-enforcement";
 import { ApiScanConfig } from "./api-scan-config";
+import { EmptyState } from "@/components/ui/empty-state";
 
 export default async function TargetDetailPage({
   params,
@@ -65,7 +67,7 @@ export default async function TargetDetailPage({
             <FindingRow key={f.id} finding={f} repoUrl={target.repo_url} />
           ))}
           {findings.length === 0 && (
-            <p className="text-sm text-muted-foreground">No findings yet. Run a scan above.</p>
+            <EmptyState icon={ShieldCheck} title="No findings yet" description="Run a scan above to start surfacing issues for this target." />
           )}
         </div>
       </div>

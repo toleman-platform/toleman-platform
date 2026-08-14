@@ -16,6 +16,8 @@ import {
   TrendingUp,
   Minus,
   ShieldCheck,
+  Inbox,
+  AlertOctagon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,12 +66,28 @@ function formatDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
+// Widget-scoped, compact variants of the shared empty/error patterns
+// (src/components/ui/empty-state.tsx, error-state.tsx) -- widgets need
+// inline JSX (a <Link> to the admin tab that fixes the empty state) inside
+// the description, which the shared components' string-only `description`
+// prop doesn't support, so these stay local but follow the same
+// icon + copy shape for visual consistency across the dashboard.
 function ErrorState({ message }: { message: string }) {
-  return <p className="text-sm text-destructive">Couldn&apos;t load widget: {message}</p>;
+  return (
+    <div className="flex items-center gap-2 text-sm text-destructive">
+      <AlertOctagon className="h-4 w-4 shrink-0" />
+      <span>Couldn&apos;t load widget: {message}</span>
+    </div>
+  );
 }
 
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-muted-foreground">{children}</p>;
+function EmptyState({ children, icon: Icon = Inbox }: { children: React.ReactNode; icon?: React.ElementType }) {
+  return (
+    <div className="flex flex-col items-center gap-2 px-2 py-6 text-center">
+      <Icon className="h-5 w-5 text-muted-foreground" />
+      <p className="max-w-xs text-sm text-muted-foreground">{children}</p>
+    </div>
+  );
 }
 
 function KpiCardsWidget({ data }: { data: KpiCardsData }) {

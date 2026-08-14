@@ -664,6 +664,10 @@ export type RecentFindingItem = {
   tool: string;
   target_id: number;
   target_name: string | null;
+  // Issue #119: distinguishes rows that share title/target/tool/date (e.g.
+  // the same rule firing across several files in one scan) so they don't
+  // render as visually-identical duplicates.
+  file_path: string;
   first_seen: string;
   sla_days: number | null;
   sla_violated: boolean;

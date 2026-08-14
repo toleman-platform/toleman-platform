@@ -192,7 +192,20 @@ def resolve_top_risky_repos(session: Session, ws_ids, config: dict) -> dict:
 def resolve_recent_findings(session: Session, ws_ids, config: dict) -> dict:
     """Most recently first-seen findings, org-wide -- config: `limit`
     (default 10, clamped 1-100). Reuses app.core.sla.compute_sla_status the
-    same way GET /api/findings does."""
+    same way GET /api/findings does.
+
+    Issue #119: a UX audit flagged 4 visually-identical rows in this widget.
+    Checked live against Postgres -- there was zero real duplication (no
+    repeated `dedup_hash`, distinct `id`s, `SELECT dedup_hash, count(*) ...
+    HAVING count(*) > 1` returned 0 rows across all findings): a single scan
+    can legitimately trigger the same rule (e.g. Semgrep's
+    django-no-csrf-token) across several template files within milliseconds
+    of each other, and the old payload here (title/severity/tool/target/
+    date-only first_seen) had no field that differed between those rows.
+    `file_path` is added below so the frontend can render the one thing
+    that actually distinguishes them, instead of a client-side dedup hack
+    papering over data that was never duplicated.
+    """
     limit = max(1, min(int(config.get("limit", 10)), 100))
     query = _scoped_findings_query(ws_ids).order_by(Finding.first_seen.desc()).limit(limit)
     findings = list(session.exec(query).all())
@@ -209,6 +222,7 @@ def resolve_recent_findings(session: Session, ws_ids, config: dict) -> dict:
                 "tool": f.tool,
                 "target_id": f.target_id,
                 "target_name": names.get(f.target_id),
+                "file_path": f.file_path,
                 "first_seen": f.first_seen.isoformat(),
                 "sla_days": sla_days,
                 "sla_violated": sla_violated,

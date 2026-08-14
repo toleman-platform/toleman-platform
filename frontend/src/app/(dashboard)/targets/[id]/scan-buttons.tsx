@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
+import { SCAN_TOOLS } from "@/lib/scan-tools";
 import { Button } from "@/components/ui/button";
 
-const TOOLS = ["semgrep", "gitleaks", "trivy", "trivy-license", "gosec"];
+const TOOLS = SCAN_TOOLS;
 
 export function ScanButtons({ targetId }: { targetId: number }) {
   const router = useRouter();

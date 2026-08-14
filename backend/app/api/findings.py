@@ -9,6 +9,7 @@ from sqlmodel import Session, func, or_, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
 from app.core.cve_enrichment import get_cve_enrichment
+from app.core.fp_learning import learn_suppression_rule
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
 from app.models.models import (
@@ -132,6 +133,18 @@ def _apply_triage(finding: Finding, to_state: FindingState, reason: str, actor: 
     finding.state = to_state
     session.add(finding)
     session.add(log)
+    if to_state == FindingState.FALSE_POSITIVE:
+        # Issue #76: teach the false-positive learning engine right at the
+        # moment a human marks this as noise, so the same shape of finding
+        # (same rule_id+tool+file basename) is auto-suppressed on future
+        # ingestion -- including in a different repo within this workspace.
+        # Best-effort: a learning failure must never block the triage action
+        # itself, same "never break the primary action" philosophy as the
+        # Jira/notification hooks in app.core.ingestion.
+        try:
+            learn_suppression_rule(session, finding, actor=actor)
+        except Exception:
+            logger.exception("learn_suppression_rule failed for finding %s", finding.id)
     return finding
 
 

@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from sqlmodel import Session, func, select
 
+from app.core.fp_learning import AUTO_SUPPRESS_REASON_PREFIX
 from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
 from app.models.models import Finding, FindingState, Severity, Target
@@ -237,6 +238,26 @@ def resolve_security_score(session: Session, ws_ids, config: dict) -> dict:
     return compute_security_score(session, target_ids)
 
 
+def resolve_fp_auto_suppressions(session: Session, ws_ids, config: dict) -> dict:
+    """"X findings auto-suppressed this month" (issue #76). Counts real
+    Finding rows the false-positive learning engine set to FALSE_POSITIVE at
+    ingestion time this calendar month -- identified by
+    app.core.fp_learning.AUTO_SUPPRESS_REASON_PREFIX stamped onto
+    Finding.state_reason by apply_auto_suppression, not a separate event-log
+    table (see FalsePositiveRule's docstring for why). first_seen is used as
+    the "when" -- an auto-suppressed finding is marked FALSE_POSITIVE at the
+    moment it's first created, so first_seen and the suppression both happen
+    in the same instant."""
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    query = _scoped_findings_query(ws_ids).where(
+        Finding.state == FindingState.FALSE_POSITIVE,
+        Finding.state_reason.like(f"{AUTO_SUPPRESS_REASON_PREFIX}%"),
+        Finding.first_seen >= month_start,
+    )
+    count = len(list(session.exec(query).all()))
+    return {"count": count, "since": month_start.date().isoformat()}
+
+
 WIDGET_CATALOG: dict[str, dict[str, Any]] = {
     "kpi_cards": {
         "name": "KPI Cards",
@@ -278,6 +299,12 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "name": "Security Score",
         "description": "Composite 0-100 health score + letter grade (open findings, SLA compliance, scan coverage, FP rate, trend).",
         "resolver": resolve_security_score,
+        "default_config": {},
+    },
+    "fp_auto_suppressions": {
+        "name": "Auto-Suppressed Findings",
+        "description": "Findings auto-suppressed this month by learned false-positive rules (issue #76).",
+        "resolver": resolve_fp_auto_suppressions,
         "default_config": {},
     },
 }

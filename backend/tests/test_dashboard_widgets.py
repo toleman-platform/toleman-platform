@@ -205,8 +205,10 @@ def test_recent_findings_ordered_and_limited(engine):
     assert data["items"][0]["title"] == "Leaked key"  # most recent first_seen
 
 
-def test_widget_catalog_has_seven_concrete_widgets():
-    # Issue #63 added "security_score" to the original 6 (#69).
+def test_widget_catalog_has_eight_concrete_widgets():
+    # Issue #63 added "security_score" to the original 6 (#69); issue #76
+    # added "fp_auto_suppressions" (opt-in, not part of the default layout
+    # -- see DEFAULT_WIDGET_ORDER, still 7 entries).
     assert set(WIDGET_CATALOG.keys()) == {
         "kpi_cards",
         "findings_trend",
@@ -215,6 +217,7 @@ def test_widget_catalog_has_seven_concrete_widgets():
         "top_risky_repos",
         "recent_findings",
         "security_score",
+        "fp_auto_suppressions",
     }
 
 
@@ -287,7 +290,7 @@ def test_get_widgets_catalog_endpoint(client, engine):
     res = client.get("/api/dashboard/widgets")
     assert res.status_code == 200
     body = res.json()
-    assert len(body) == 7
+    assert len(body) == 8
     assert {w["widget_id"] for w in body} == set(WIDGET_CATALOG.keys())
 
 

@@ -397,6 +397,12 @@ export type SbomComponent = {
   last_seen: string;
 };
 
+// Issue #121: export-format parity with Reports (CSV/PDF) plus the two real
+// SBOM standards -- CycloneDX was already produced (`trivy fs --format
+// cyclonedx`); SPDX JSON is the other one compliance tooling commonly
+// expects. Matches GET /api/sbom/{id}/export's `format` query pattern.
+export type SbomExportFormat = "cyclonedx-json" | "spdx-json" | "csv" | "pdf";
+
 // Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows
 // (#59) -- every POST that used to clone+scan synchronously now returns one
 // of these immediately, and the frontend polls the matching GET until
@@ -646,6 +652,20 @@ export type WidgetDataEntry =
 
 export type WidgetDataResponse = { widgets: Record<string, WidgetDataEntry> };
 
+// Carries the real HTTP status alongside the message (issue #121) -- callers
+// that need to distinguish "session expired/revoked" (401) from any other
+// failure (e.g. PR History's error state) previously only had the message
+// string to go on. Still `instanceof Error` for every existing
+// `e instanceof Error ? e.message : "..."` catch-block across the app.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) };
 
@@ -683,7 +703,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // response body wasn't JSON -- fall through to the generic message
     }
-    throw new Error(detail || `API ${path} failed: ${res.status}`);
+    throw new ApiError(detail || `API ${path} failed: ${res.status}`, res.status);
   }
   return res.json();
 }
@@ -900,8 +920,8 @@ export const api = {
       method: "POST",
     }),
   getSbomRun: (targetId: number, runId: number) => jsonFetch<SbomRunResult>(`/api/sbom/${targetId}/runs/${runId}`),
-  exportSbom: async (targetId: number): Promise<Blob> => {
-    const res = await fetch(`${API_URL}/api/sbom/${targetId}/export`, { credentials: "include" });
+  exportSbom: async (targetId: number, format: SbomExportFormat = "cyclonedx-json"): Promise<Blob> => {
+    const res = await fetch(`${API_URL}/api/sbom/${targetId}/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
     return res.blob();
   },

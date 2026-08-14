@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { DocGenStep, DocumentGeneratorPanel, WhatsIncludedCard } from "@/components/document-generator-panel";
 import { Globe } from "lucide-react";
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
@@ -182,12 +183,35 @@ export default function ApiDiscoveryPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3">
-        <TargetPicker targets={targets} value={targetId} onChange={setTargetId} />
-        <Button onClick={run} disabled={running || targetId === null}>
-          {running ? "Scanning..." : "Run Discovery"}
-        </Button>
-      </div>
+      <DocumentGeneratorPanel
+        layout="stacked"
+        steps={[
+          <DocGenStep key="target" n={1} label="Target">
+            <TargetPicker targets={targets} value={targetId} onChange={setTargetId} />
+          </DocGenStep>,
+          ...(currentTarget
+            ? [
+                <DocGenStep key="scope" n={2} label="Scope">
+                  <div className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground">
+                    Default branch ({currentTarget.default_branch})
+                  </div>
+                </DocGenStep>,
+                <WhatsIncludedCard
+                  key="included"
+                  items={[
+                    "Every route discovered via static regex extraction (Flask/FastAPI/Express/Gin/Django/Spring patterns), grouped by method",
+                    "File:line provenance for each discovered route",
+                    "New-since-last-scan endpoints flagged",
+                  ]}
+                />,
+              ]
+            : []),
+        ]}
+        generateLabel="Run Discovery"
+        onGenerate={run}
+        generating={running}
+        generateDisabled={targetId === null}
+      />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 

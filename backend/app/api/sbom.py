@@ -1,8 +1,11 @@
+import csv
+import io
+import re
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlmodel import Session, select
 
 from app.api.auth import require_workspace_role
@@ -224,18 +227,8 @@ def list_sbom_components(target_id: int, session: Session = Depends(get_session)
     }
 
 
-@router.get("/{target_id}/export")
-def export_sbom(target_id: int, session: Session = Depends(get_session)):
-    """Downloadable CycloneDX 1.5 SBOM built from persisted components --
-    the same real data shown on the page, not a re-fetch or re-scan."""
-    target = _get_target(target_id, session)
-    components = session.exec(
-        select(SbomComponent)
-        .where(SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch)
-        .order_by(SbomComponent.name)
-    ).all()
-
-    document = {
+def _build_cyclonedx_document(target: Target, components: list[SbomComponent]) -> dict:
+    return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
@@ -256,8 +249,160 @@ def export_sbom(target_id: int, session: Session = Depends(get_session)):
         ],
     }
 
-    filename = f"sbom-{target.name}-{target.default_branch}.json"
+
+def _spdx_package_id(component: SbomComponent) -> str:
+    # SPDXID must be a valid SPDX reference identifier -- [A-Za-z0-9.-] only
+    # (SPDX spec sec 11.1) -- so package name/version (which can contain
+    # slashes, @, etc. for scoped npm packages) can't be used directly.
+    slug = re.sub(r"[^A-Za-z0-9.-]", "-", f"{component.name}-{component.version}")
+    return f"SPDXRef-Package-{slug}-{component.id}"
+
+
+def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dict:
+    """Minimal, valid SPDX 2.3 JSON document -- the other widely-used SBOM
+    standard alongside CycloneDX (issue #121's export-parity ask). Each
+    persisted component becomes one `packages[]` entry plus a
+    DESCRIBES relationship from the document root, same shape a real SPDX
+    consumer (e.g. an org's compliance tooling) expects to parse."""
+    now = datetime.utcnow().isoformat() + "Z"
+    doc_namespace = f"https://rikugan.io/spdx/{target.name}-{uuid.uuid4()}"
+    root_id = "SPDXRef-DOCUMENT"
+    packages = [
+        {
+            "SPDXID": _spdx_package_id(c),
+            "name": c.name,
+            "versionInfo": c.version,
+            "downloadLocation": "NOASSERTION",
+            "licenseConcluded": "NOASSERTION",
+            "licenseDeclared": "NOASSERTION",
+            "copyrightText": "NOASSERTION",
+            "externalRefs": [
+                {
+                    "referenceCategory": "PACKAGE-MANAGER",
+                    "referenceType": "purl",
+                    "referenceLocator": c.purl,
+                }
+            ]
+            if c.purl
+            else [],
+        }
+        for c in components
+    ]
+    relationships = [
+        {"spdxElementId": root_id, "relationshipType": "DESCRIBES", "relatedSpdxElement": p["SPDXID"]}
+        for p in packages
+    ]
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": root_id,
+        "name": f"{target.name}-{target.default_branch}",
+        "documentNamespace": doc_namespace,
+        "creationInfo": {
+            "created": now,
+            "creators": ["Tool: rikugan-sbom"],
+        },
+        "packages": packages,
+        "relationships": relationships,
+    }
+
+
+def _render_sbom_csv(target: Target, components: list[SbomComponent]) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Target", target.name])
+    writer.writerow(["Branch", target.default_branch])
+    writer.writerow(["Generated At", datetime.utcnow().isoformat() + "Z"])
+    writer.writerow([])
+    writer.writerow(["Name", "Version", "Package Type", "PURL"])
+    for c in components:
+        writer.writerow([c.name, c.version, c.package_type, c.purl])
+    return buf.getvalue()
+
+
+def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=letter, title=f"Rikugan SBOM - {target.name}")
+    styles = getSampleStyleSheet()
+    story = [
+        Paragraph(f"Rikugan SBOM Summary — {target.name}", styles["Title"]),
+        Paragraph(f"Branch: {target.default_branch}", styles["Normal"]),
+        Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", styles["Normal"]),
+        Paragraph(f"Components: {len(components)}", styles["Normal"]),
+        Spacer(1, 0.25 * inch),
+    ]
+    header = ["Name", "Version", "Package Type", "PURL"]
+    rows = [[c.name, c.version, c.package_type, c.purl] for c in components]
+    if rows:
+        table = Table([header] + rows, repeatRows=1)
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTSIZE", (0, 0), (-1, -1), 7),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        story.append(table)
+    else:
+        story.append(Paragraph("No components recorded.", styles["Normal"]))
+    doc.build(story)
+    return buf.getvalue()
+
+
+@router.get("/{target_id}/export")
+def export_sbom(
+    target_id: int,
+    format: str = Query(default="cyclonedx-json", pattern="^(cyclonedx-json|spdx-json|csv|pdf)$"),
+    session: Session = Depends(get_session),
+):
+    """Downloadable SBOM built from persisted components -- the same real
+    data shown on the page, not a re-fetch or re-scan. Issue #121: export-
+    format parity with Reports (CSV/PDF) plus the two real SBOM standards
+    (CycloneDX was already produced by `trivy fs --format cyclonedx`; SPDX
+    JSON is the other one most compliance tooling expects)."""
+    target = _get_target(target_id, session)
+    components = session.exec(
+        select(SbomComponent)
+        .where(SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch)
+        .order_by(SbomComponent.name)
+    ).all()
+
+    base = f"sbom-{target.name}-{target.default_branch}"
+
+    if format == "spdx-json":
+        document = _build_spdx_document(target, components)
+        return JSONResponse(
+            content=document,
+            headers={"Content-Disposition": f'attachment; filename="{base}.spdx.json"'},
+        )
+    if format == "csv":
+        csv_text = _render_sbom_csv(target, components)
+        return StreamingResponse(
+            iter([csv_text]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{base}.csv"'},
+        )
+    if format == "pdf":
+        pdf_bytes = _render_sbom_pdf(target, components)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'},
+        )
+
+    document = _build_cyclonedx_document(target, components)
     return JSONResponse(
         content=document,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{base}.json"'},
     )

@@ -5,6 +5,7 @@ import {
   api,
   Target,
   SbomComponent,
+  SbomExportFormat,
   Finding,
   OrgSbomComponent,
   OrgSbomResult,
@@ -18,8 +19,29 @@ import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FindingsList } from "@/components/findings-list";
+import {
+  DocGenStep,
+  DocGenToggle,
+  DocGenOption,
+  DocumentGeneratorPanel,
+  WhatsIncludedCard,
+} from "@/components/document-generator-panel";
 import { cn } from "@/lib/utils";
 import { Package, PackageSearch } from "lucide-react";
+
+const SBOM_FORMATS: DocGenOption[] = [
+  { value: "cyclonedx-json", label: "CycloneDX JSON" },
+  { value: "spdx-json", label: "SPDX JSON" },
+  { value: "csv", label: "CSV" },
+  { value: "pdf", label: "PDF" },
+];
+
+const SBOM_FORMAT_EXT: Record<SbomExportFormat, string> = {
+  "cyclonedx-json": "json",
+  "spdx-json": "spdx.json",
+  csv: "csv",
+  pdf: "pdf",
+};
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
 
@@ -85,6 +107,7 @@ export default function SbomPage() {
   );
   const [tab, setTab] = useState<Tab>("components");
   const [exporting, setExporting] = useState(false);
+  const [format, setFormat] = useState<SbomExportFormat>("cyclonedx-json");
 
   const [ossFindings, setOssFindings] = useState<Finding[] | null>(null);
   const [ossTotal, setOssTotal] = useState(0);
@@ -241,11 +264,11 @@ export default function SbomPage() {
     setExporting(true);
     setError(null);
     try {
-      const blob = await api.exportSbom(targetId);
+      const blob = await api.exportSbom(targetId, format);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `sbom-${currentTarget?.name ?? targetId}.json`;
+      a.download = `sbom-${currentTarget?.name ?? targetId}.${SBOM_FORMAT_EXT[format]}`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -277,44 +300,59 @@ export default function SbomPage() {
         </p>
       </div>
 
-      <div className="flex items-center gap-3">
-        <TargetPicker
-          targets={targets}
-          value={targetId}
-          onChange={setTargetId}
-          allowAll
-        />
-        {targetId !== ALL_TARGETS && (
-          <>
-            <Button onClick={run} disabled={running || targetId === null}>
-              {running ? "Generating..." : "Generate SBOM"}
-            </Button>
+      <DocumentGeneratorPanel
+        layout="stacked"
+        steps={[
+          <DocGenStep key="target" n={1} label="Target">
+            <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+          </DocGenStep>,
+          ...(targetId !== ALL_TARGETS
+            ? [
+                <DocGenStep key="scope" n={2} label="Scope">
+                  <div className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground">
+                    Default branch{currentTarget ? ` (${currentTarget.default_branch})` : ""}
+                  </div>
+                </DocGenStep>,
+                <DocGenStep key="format" n={3} label="Format">
+                  <DocGenToggle options={SBOM_FORMATS} value={format} onChange={(v) => setFormat(v as SbomExportFormat)} />
+                </DocGenStep>,
+                <WhatsIncludedCard
+                  key="included"
+                  items={[
+                    "All direct dependencies discovered via trivy fs, with pinned versions",
+                    "Known-vulnerable packages cross-referenced against this target's OSS Vulnerabilities tab",
+                    "Package URL (purl) and ecosystem per component",
+                  ]}
+                />,
+              ]
+            : []),
+        ]}
+        generateLabel={targetId !== ALL_TARGETS ? "Generate SBOM" : undefined}
+        onGenerate={targetId !== ALL_TARGETS ? run : undefined}
+        generating={running}
+        generateDisabled={targetId === null}
+        extra={
+          targetId !== ALL_TARGETS ? (
             <Button
               variant="outline"
+              className="w-full justify-center"
               onClick={exportJson}
-              disabled={
-                exporting ||
-                targetId === null ||
-                !components ||
-                components.length === 0
-              }
+              disabled={exporting || targetId === null || !components || components.length === 0}
             >
-              {exporting ? "Exporting..." : "Export SBOM (JSON)"}
+              {exporting ? "Exporting..." : `Export SBOM (${SBOM_FORMATS.find((f) => f.value === format)?.label})`}
             </Button>
-          </>
-        )}
-        {targetId === ALL_TARGETS && (
-          <Button
-            variant="outline"
-            onClick={exportOrgJson}
-            disabled={
-              orgExporting || !orgSbom || orgSbom.components.length === 0
-            }
-          >
-            {orgExporting ? "Exporting..." : "Export Org SBOM (JSON)"}
-          </Button>
-        )}
-      </div>
+          ) : (
+            <Button
+              variant="outline"
+              className="w-full justify-center"
+              onClick={exportOrgJson}
+              disabled={orgExporting || !orgSbom || orgSbom.components.length === 0}
+            >
+              {orgExporting ? "Exporting..." : "Export Org SBOM (JSON)"}
+            </Button>
+          )
+        }
+      />
 
       {targetId === ALL_TARGETS && (
         <div className="flex flex-col gap-4">

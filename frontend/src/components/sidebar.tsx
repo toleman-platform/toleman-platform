@@ -25,6 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 import { api, AuthUser } from "@/lib/api";
 import { GlobalSearch } from "@/components/global-search";
+import { DensityToggle } from "@/components/density-toggle";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -137,9 +138,11 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
           )}
         </div>
 
+        <DensityToggle collapsed={collapsed} />
+
         <button
           onClick={() => setCollapsed((v) => !v)}
-          className="mt-1 flex w-full items-center justify-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground"
+          className="mt-1 flex w-full items-center justify-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground"
         >
           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           {!collapsed && <span>Collapse</span>}

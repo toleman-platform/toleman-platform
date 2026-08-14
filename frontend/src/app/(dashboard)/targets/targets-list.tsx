@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { PipelineIntegrationBatch, Target, api } from "@/lib/api";
+import { Group, PipelineIntegrationBatch, PipelineWorkflowTemplate, Target, WorkspaceSummary, api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GroupBadge } from "@/components/group-badge";
 import { pollUntilSettled } from "@/lib/poll";
+import { Rocket, X } from "lucide-react";
 
 const ITEM_STATUS_LABEL: Record<string, string> = {
   pending: "Queued",
@@ -100,20 +101,198 @@ export function TargetsList({ targets }: { targets: Target[] }) {
     if (batch?.status === "completed") router.refresh();
   }
 
+  // ---------------------------------------------------------------------
+  // Issue #35: Mass CI/CD Rollout Engine -- scope-based sibling to the
+  // manual multi-select bulk flow above. Instead of checking boxes, the
+  // caller picks a whole workspace / repo Group / "every repo I can see"
+  // and optionally a Custom Workflow Builder template (workflow-templates
+  // tab in Admin); the backend resolves the scope into a target set and
+  // reuses the exact same PipelineIntegrationBatch tracking + polling as
+  // the bulk flow (batch state above is shared for both).
+  // ---------------------------------------------------------------------
+  const [massOpen, setMassOpen] = useState(false);
+  const [massScope, setMassScope] = useState<"all" | "workspace" | "group">("workspace");
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
+  const [massWorkspaceId, setMassWorkspaceId] = useState<number | "">("");
+  const [groupsInWorkspace, setGroupsInWorkspace] = useState<Group[] | null>(null);
+  const [massGroupId, setMassGroupId] = useState<number | "">("");
+  const [templatesInWorkspace, setTemplatesInWorkspace] = useState<PipelineWorkflowTemplate[] | null>(null);
+  const [massTemplateId, setMassTemplateId] = useState<number | "">("");
+  const [massSubmitting, setMassSubmitting] = useState(false);
+  const [massError, setMassError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (massOpen && workspaces === null) {
+      api
+        .workspaces()
+        .then((list) => {
+          setWorkspaces(list);
+          if (list.length > 0) setMassWorkspaceId(list[0].id);
+        })
+        .catch((e) => setMassError(e instanceof Error ? e.message : "failed to load workspaces"));
+    }
+  }, [massOpen, workspaces]);
+
+  useEffect(() => {
+    if (massScope === "all" || massWorkspaceId === "") {
+      setGroupsInWorkspace(null);
+      setTemplatesInWorkspace(null);
+      setMassGroupId("");
+      setMassTemplateId("");
+      return;
+    }
+    Promise.all([api.groups(massWorkspaceId), api.pipelineTemplates(massWorkspaceId)])
+      .then(([g, t]) => {
+        setGroupsInWorkspace(g);
+        setTemplatesInWorkspace(t);
+      })
+      .catch((e) => setMassError(e instanceof Error ? e.message : "failed to load groups/templates"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [massScope, massWorkspaceId]);
+
+  async function startMassRollout() {
+    setMassError(null);
+    if (massScope === "workspace" && massWorkspaceId === "") {
+      setMassError("choose a workspace");
+      return;
+    }
+    if (massScope === "group" && massGroupId === "") {
+      setMassError("choose a group");
+      return;
+    }
+    setMassSubmitting(true);
+    try {
+      const res = await api.massPipelineRollout({
+        scope: massScope,
+        workspace_id: massScope === "workspace" || massScope === "group" ? (massWorkspaceId as number) : undefined,
+        group_id: massScope === "group" ? (massGroupId as number) : undefined,
+        workflow_template_id: massTemplateId === "" ? undefined : (massTemplateId as number),
+      });
+      setBatch({
+        batch_id: res.batch_id,
+        status: res.status,
+        total: res.total,
+        succeeded: 0,
+        failed: 0,
+        already_integrated: 0,
+        started_at: new Date().toISOString(),
+        completed_at: null,
+        items: [],
+        scope_label: res.scope_label,
+      });
+      setMassOpen(false);
+    } catch (e) {
+      setMassError(e instanceof Error ? e.message : "failed to start mass rollout");
+    } finally {
+      setMassSubmitting(false);
+    }
+  }
+
   const allSelected = targets.length > 0 && targets.every((t) => selected.has(t.id));
 
   return (
     <div className="flex flex-col gap-2">
-      {targets.length > 0 && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            aria-label="Select all targets"
-            className="h-4 w-4 accent-primary"
-            checked={allSelected}
-            onChange={(e) => toggleAll(e.target.checked)}
-          />
-          <span>Select all</span>
+      <div className="flex items-center justify-between gap-2">
+        {targets.length > 0 ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              aria-label="Select all targets"
+              className="h-4 w-4 accent-primary"
+              checked={allSelected}
+              onChange={(e) => toggleAll(e.target.checked)}
+            />
+            <span>Select all</span>
+          </div>
+        ) : (
+          <span />
+        )}
+        {/* Issue #35: fleet-wide alternative to the checkbox-driven bulk bar
+            below -- rolls out to an entire workspace/group/every accessible
+            repo without paging through a manual selection. */}
+        <Button variant="outline" size="sm" onClick={() => setMassOpen((v) => !v)} className="h-7 text-xs">
+          <Rocket className="mr-1 h-3.5 w-3.5" />
+          Mass Rollout
+        </Button>
+      </div>
+
+      {massOpen && (
+        <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-foreground">Mass CI/CD Rollout</span>
+            <button onClick={() => setMassOpen(false)} aria-label="Close mass rollout" className="text-muted-foreground">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Add the OSP pipeline scan workflow to every repo in a scope at once, instead of selecting them one
+            by one.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+              value={massScope}
+              onChange={(e) => setMassScope(e.target.value as typeof massScope)}
+              aria-label="Rollout scope"
+            >
+              <option value="workspace">Entire workspace</option>
+              <option value="group">A repo group</option>
+              <option value="all">All repos I can access</option>
+            </select>
+
+            {(massScope === "workspace" || massScope === "group") && (
+              <select
+                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                value={massWorkspaceId}
+                onChange={(e) => setMassWorkspaceId(e.target.value === "" ? "" : Number(e.target.value))}
+                aria-label="Workspace"
+              >
+                <option value="">Choose workspace...</option>
+                {workspaces?.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {massScope === "group" && (
+              <select
+                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                value={massGroupId}
+                onChange={(e) => setMassGroupId(e.target.value === "" ? "" : Number(e.target.value))}
+                aria-label="Repo group"
+              >
+                <option value="">Choose group...</option>
+                {groupsInWorkspace?.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {(massScope === "workspace" || massScope === "group") && templatesInWorkspace && templatesInWorkspace.length > 0 && (
+              <select
+                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                value={massTemplateId}
+                onChange={(e) => setMassTemplateId(e.target.value === "" ? "" : Number(e.target.value))}
+                aria-label="Custom workflow template"
+              >
+                <option value="">Default scanner set</option>
+                {templatesInWorkspace.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            <Button size="sm" disabled={massSubmitting} onClick={startMassRollout} className="h-9 text-xs">
+              {massSubmitting ? "Starting..." : "Start Rollout"}
+            </Button>
+          </div>
+          {massError && <p className="text-xs text-destructive">{massError}</p>}
         </div>
       )}
 
@@ -142,6 +321,11 @@ export function TargetsList({ targets }: { targets: Target[] }) {
                   Done: {batch.succeeded} succeeded, {batch.already_integrated} already integrated, {batch.failed}{" "}
                   failed
                 </>
+              )}
+              {/* Issue #35: only set for a scope-based Mass Rollout batch --
+                  "" for #68's original manual checkbox-selection batches. */}
+              {batch.scope_label && (
+                <span className="ml-2 text-xs font-normal text-muted-foreground">({batch.scope_label})</span>
               )}
             </div>
             <button onClick={closeBatchPanel} className="text-xs text-muted-foreground underline">

@@ -16,6 +16,7 @@ from app.models.models import (
     Group,
     PipelineIntegrationBatch,
     PipelineIntegrationBatchItem,
+    PipelineWorkflowTemplate,
     Target,
     TargetGroup,
     User,
@@ -385,7 +386,126 @@ def get_bulk_pipeline_integrate_batch(
         "started_at": batch.started_at,
         "completed_at": batch.completed_at,
         "items": item_payload,
+        # "" for #68's original manual-selection batches; set for #35's
+        # scope-based mass rollout (see mass_pipeline_rollout below).
+        "scope_label": batch.scope_label,
+        "workflow_template_id": batch.workflow_template_id,
     }
+
+
+class MassPipelineRolloutRequest(BaseModel):
+    """Issue #35 (Mass CI/CD Rollout Engine): resolve an entire *scope*
+    (a workspace, a repo Group, or every repo the caller can see) into a
+    target set instead of requiring an explicit checkbox selection like
+    #68's bulk_pipeline_integrate above -- the "fleet-wide" part of the
+    issue. `workflow_template_id` is the Custom Workflow Builder half:
+    optionally use a saved PipelineWorkflowTemplate's step list instead of
+    #66's fixed default scanner set for every item in this rollout."""
+
+    scope: str
+    workspace_id: int | None = None
+    group_id: int | None = None
+    workflow_template_id: int | None = None
+
+    @field_validator("scope")
+    @classmethod
+    def _check_scope(cls, v: str) -> str:
+        if v not in ("workspace", "group", "all"):
+            raise ValueError("scope must be one of 'workspace', 'group', 'all'")
+        return v
+
+
+@router.post("/mass-pipeline-rollout")
+def mass_pipeline_rollout(
+    payload: MassPipelineRolloutRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Issue #35: scope-based sibling to #68's bulk_pipeline_integrate.
+    Resolves `payload.scope` into a target_id set fleet-wide (instead of an
+    explicit target_ids list), applies the exact same per-target
+    eligibility bar as the manual bulk flow (_caller_can_integrate --
+    DEVELOPER+ on the target's workspace), then reuses #68's
+    PipelineIntegrationBatch/BatchItem tracking rows and
+    run_pipeline_integration_batch Celery task verbatim -- the only new
+    pieces are scope resolution and an optional workflow_template_id
+    (Custom Workflow Builder) recorded on the batch so the task generates
+    each item's YAML from that template's step list (see
+    app.tasks.pipeline_tasks) instead of #66's fixed default set.
+    """
+    ws_ids = accessible_workspace_ids(session, user)
+
+    if payload.scope == "workspace":
+        if payload.workspace_id is None:
+            raise HTTPException(status_code=400, detail="workspace_id is required for scope='workspace'")
+        if ws_ids is not None and payload.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        workspace = session.get(Workspace, payload.workspace_id)
+        if not workspace:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        candidates = session.exec(select(Target).where(Target.workspace_id == payload.workspace_id)).all()
+        scope_label = f"Workspace: {workspace.name}"
+    elif payload.scope == "group":
+        if payload.group_id is None:
+            raise HTTPException(status_code=400, detail="group_id is required for scope='group'")
+        group = session.get(Group, payload.group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="group not found")
+        if ws_ids is not None and group.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="group not found")
+        member_ids = session.exec(
+            select(TargetGroup.target_id).where(TargetGroup.group_id == payload.group_id)
+        ).all()
+        candidates = (
+            session.exec(select(Target).where(Target.id.in_(member_ids))).all() if member_ids else []
+        )
+        scope_label = f"Group: {group.name}"
+    else:  # "all" -- every target across every accessible workspace (or literally all, for an admin)
+        query = select(Target)
+        if ws_ids is not None:
+            candidates = session.exec(query.where(Target.workspace_id.in_(ws_ids))).all() if ws_ids else []
+        else:
+            candidates = session.exec(query).all()
+        scope_label = "All accessible repositories"
+
+    template = None
+    if payload.workflow_template_id is not None:
+        template = session.get(PipelineWorkflowTemplate, payload.workflow_template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="pipeline workflow template not found")
+        if ws_ids is not None and template.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="pipeline workflow template not found")
+
+    eligible_ids = [t.id for t in candidates if _caller_can_integrate(session, user, t)]
+    if not eligible_ids:
+        raise HTTPException(status_code=404, detail="no accessible, eligible targets found for this scope")
+
+    batch = PipelineIntegrationBatch(
+        created_by_user_id=user.id,
+        total=len(eligible_ids),
+        status="running",
+        scope_label=scope_label,
+        workflow_template_id=template.id if template else None,
+    )
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    for tid in eligible_ids:
+        session.add(PipelineIntegrationBatchItem(batch_id=batch.id, target_id=tid, status="pending"))
+    session.commit()
+
+    run_pipeline_integration_batch.delay(batch_id=batch.id)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "batch_id": batch.id,
+            "total": batch.total,
+            "status": batch.status,
+            "scope_label": batch.scope_label,
+        },
+    )
 
 
 @router.get("/{target_id}/groups")

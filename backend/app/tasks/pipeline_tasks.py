@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.core.db import engine
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
-from app.models.models import PipelineIntegrationBatch, PipelineIntegrationBatchItem, Target
+from app.models.models import PipelineIntegrationBatch, PipelineIntegrationBatchItem, PipelineWorkflowTemplate, Target
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,17 @@ def run_pipeline_integration_batch(self, batch_id: int):
         batch = session.get(PipelineIntegrationBatch, batch_id)
         if not batch:
             return {"error": "batch not found"}
+
+        # Custom Workflow Builder (#35): resolve the batch's chosen template
+        # (if any) once, up front -- every item in a rollout shares the same
+        # step selection. None (#68's original manual bulk-integrate never
+        # sets workflow_template_id) means "use #66's fixed default set",
+        # exactly the pre-#35 behavior.
+        template_steps: list[str] | None = None
+        if batch.workflow_template_id is not None:
+            template = session.get(PipelineWorkflowTemplate, batch.workflow_template_id)
+            if template:
+                template_steps = [s["tool"] for s in template.steps if s.get("enabled")]
 
         item_rows = session.exec(
             select(PipelineIntegrationBatchItem).where(PipelineIntegrationBatchItem.batch_id == batch_id)
@@ -71,7 +82,15 @@ def run_pipeline_integration_batch(self, batch_id: int):
             session.commit()
 
             try:
-                result = open_pipeline_pr(session, target)
+                # Only pass steps= when a template applies -- keeps the call
+                # shape identical to pre-#35 (open_pipeline_pr(session,
+                # target)) for #68's original manual batches, matching what
+                # existing tests' fake_open_pipeline_pr(session, target)
+                # stand-ins expect.
+                if template_steps is not None:
+                    result = open_pipeline_pr(session, target, steps=template_steps)
+                else:
+                    result = open_pipeline_pr(session, target)
                 target.pipeline_integrated = True
                 target.pipeline_pr_url = result["pr_url"]
                 session.add(target)

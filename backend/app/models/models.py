@@ -522,6 +522,21 @@ class PipelineIntegrationBatch(SQLModel, table=True):
     already_integrated: int = 0
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
+    # Issue #35 (Mass CI/CD Rollout Engine): this batch table, originally
+    # #68's manual multi-select wrapper, is reused verbatim for scope-based
+    # "mass rollout" (by group/workspace/all-accessible) -- see
+    # POST /api/targets/mass-pipeline-rollout. `scope_label` is a
+    # human-readable description of how the target set was resolved (e.g.
+    # "Workspace: acme-prod", "Group: pci-scope", "All accessible repos")
+    # for display on a batch that wasn't built from an explicit checkbox
+    # selection; "" for #68's original manual-selection batches.
+    scope_label: str = ""
+    # Custom Workflow Builder (#35): which PipelineWorkflowTemplate's step
+    # list to use when generating each item's workflow YAML, instead of
+    # #66's fixed semgrep/gitleaks/trivy(+gosec) default. Null means "use
+    # the default template" -- #68's existing manual bulk-integrate flow
+    # never sets this, so it keeps its original behavior unchanged.
+    workflow_template_id: Optional[int] = Field(default=None, foreign_key="pipelineworkflowtemplate.id")
 
 
 class PipelineIntegrationBatchItem(SQLModel, table=True):
@@ -538,6 +553,31 @@ class PipelineIntegrationBatchItem(SQLModel, table=True):
     pr_url: Optional[str] = None
     pr_number: Optional[int] = None
     completed_at: Optional[datetime] = None
+
+
+class PipelineWorkflowTemplate(SQLModel, table=True):
+    """Custom Workflow Builder (issue #35): a workspace-scoped, named,
+    ordered step list over the fixed scanner catalog #66's default template
+    hardcodes (semgrep/gitleaks/trivy/gosec) -- lets a user compose *which*
+    scanners run and in what order, instead of always getting the fixed
+    default set. Deliberately a structured step-list editor over a small
+    known catalog (toggle + reorder), not a full drag-and-drop arbitrary-DAG
+    builder -- that's future work if ever needed, out of scope for a first
+    version per the issue.
+
+    `steps` is an ordered JSON list of ``{"tool": "semgrep", "enabled":
+    true}`` dicts (see `app.core.pipeline_workflow.SUPPORTED_TOOLS` for the
+    valid `tool` values); `app.core.pipeline_workflow.generate_workflow_yaml`
+    consumes the enabled subset directly, in list order. A workspace can
+    hold several named templates (e.g. "Fast" vs "Full audit") and pick one
+    at rollout time via `PipelineIntegrationBatch.workflow_template_id`."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    name: str
+    steps: list = Field(sa_column=Column(JSON), default_factory=list)
+    created_by_user_id: int = Field(foreign_key="user.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class PolicyRuleType(str, Enum):

@@ -36,6 +36,16 @@ logger = logging.getLogger(__name__)
 WORKFLOW_PATH = ".github/workflows/osp-scan.yml"
 WORKFLOW_FILENAME = "osp-scan.yml"
 
+# Custom Workflow Builder (issue #35): the fixed catalog of scanners a
+# PipelineWorkflowTemplate's step list may reference -- the same four jobs
+# #66's default template always included (gosec conditionally). Keeping
+# this a closed catalog (not an arbitrary user-supplied job) is deliberate:
+# every job body below still comes from this file, never from user input,
+# so a "custom workflow" can only reorder/toggle *which* of these known,
+# reviewed scanner jobs run -- it can't inject arbitrary YAML/shell into a
+# generated GitHub Actions file.
+SUPPORTED_TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"]
+
 
 def detect_languages(target: Target) -> list[str]:
     """Real per-target language detection via GitHub's repo languages API
@@ -77,6 +87,100 @@ def detect_tool_set(session: Session, target: Target) -> dict:
     # guessing wrong in either direction.
     return {"include_gosec": False, "source": "default", "languages": []}
 
+
+_SEMGREP_JOB = """
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Semgrep
+        run: pip install semgrep
+      - name: Run Semgrep
+        run: semgrep scan --config=auto --sarif --output=semgrep.sarif || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-results
+          path: semgrep.sarif
+      - name: Push results to OSP
+        if: always()
+        env:
+          OSP_API_URL: ${{ secrets.OSP_API_URL }}
+          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+        run: |
+          if [ -n "$OSP_API_URL" ] && [ -f semgrep.sarif ]; then
+            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+              --data-binary @semgrep.sarif \\
+              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+          else
+            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+          fi
+"""
+
+_GITLEAKS_JOB = """
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+      - name: Run Gitleaks
+        run: |
+          ./gitleaks detect --source . --report-format sarif --report-path gitleaks.sarif --no-git --exit-code 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results
+          path: gitleaks.sarif
+      - name: Push results to OSP
+        if: always()
+        env:
+          OSP_API_URL: ${{ secrets.OSP_API_URL }}
+          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+        run: |
+          if [ -n "$OSP_API_URL" ] && [ -f gitleaks.sarif ]; then
+            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+              --data-binary @gitleaks.sarif \\
+              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+          else
+            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+          fi
+"""
+
+_TRIVY_JOB = """
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Trivy (filesystem scan)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          format: sarif
+          output: trivy.sarif
+          scan-ref: .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results
+          path: trivy.sarif
+      - name: Push results to OSP
+        if: always()
+        env:
+          OSP_API_URL: ${{ secrets.OSP_API_URL }}
+          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
+        run: |
+          if [ -n "$OSP_API_URL" ] && [ -f trivy.sarif ]; then
+            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
+              --data-binary @trivy.sarif \\
+              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
+          else
+            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
+          fi
+"""
 
 _GOSEC_JOB = """
   gosec:
@@ -154,105 +258,59 @@ on:
 permissions:
   contents: read
 
-jobs:
-  semgrep:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Semgrep
-        run: pip install semgrep
-      - name: Run Semgrep
-        run: semgrep scan --config=auto --sarif --output=semgrep.sarif || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: semgrep-results
-          path: semgrep.sarif
-      - name: Push results to OSP
-        if: always()
-        env:
-          OSP_API_URL: ${{ secrets.OSP_API_URL }}
-          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
-        run: |
-          if [ -n "$OSP_API_URL" ] && [ -f semgrep.sarif ]; then
-            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
-              --data-binary @semgrep.sarif \\
-              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
-          else
-            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
-          fi
+jobs:__JOBS__
+"""
 
-  gitleaks:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Install Gitleaks
-        run: |
-          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
-      - name: Run Gitleaks
-        run: |
-          ./gitleaks detect --source . --report-format sarif --report-path gitleaks.sarif --no-git --exit-code 0
-      - uses: actions/upload-artifact@v4
-        with:
-          name: gitleaks-results
-          path: gitleaks.sarif
-      - name: Push results to OSP
-        if: always()
-        env:
-          OSP_API_URL: ${{ secrets.OSP_API_URL }}
-          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
-        run: |
-          if [ -n "$OSP_API_URL" ] && [ -f gitleaks.sarif ]; then
-            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
-              --data-binary @gitleaks.sarif \\
-              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
-          else
-            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
-          fi
-
-  trivy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Run Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          format: sarif
-          output: trivy.sarif
-          scan-ref: .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: trivy-results
-          path: trivy.sarif
-      - name: Push results to OSP
-        if: always()
-        env:
-          OSP_API_URL: ${{ secrets.OSP_API_URL }}
-          OSP_API_KEY: ${{ secrets.OSP_API_KEY }}
-        run: |
-          if [ -n "$OSP_API_URL" ] && [ -f trivy.sarif ]; then
-            curl -sS -X POST "$OSP_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $OSP_API_KEY" -H "Content-Type: application/json" \\
-              --data-binary @trivy.sarif \\
-              || echo "OSP ingest push failed -- OSP_API_URL must be a publicly reachable OSP deployment, not localhost"
-          else
-            echo "Skipping OSP push: set the OSP_API_URL/OSP_API_KEY repo secrets to enable it."
-          fi
-__GOSEC_JOB__"""
+# Ordered lookup from tool name -> job YAML block. Order here is only the
+# fallback default order (matches #66's original fixed template); a custom
+# PipelineWorkflowTemplate's own `steps` order (issue #35) is honored
+# instead when one is supplied to generate_workflow_yaml.
+_JOB_BLOCKS = {
+    "semgrep": _SEMGREP_JOB,
+    "gitleaks": _GITLEAKS_JOB,
+    "trivy": _TRIVY_JOB,
+    "gosec": _GOSEC_JOB,
+}
 
 
-def generate_workflow_yaml(session: Session, target: Target) -> dict:
+def generate_workflow_yaml(session: Session, target: Target, steps: list[str] | None = None) -> dict:
     """Returns {"yaml": str, "includes_gosec": bool, "languages": [...],
-    "detection_source": "scan_history"|"github_languages"|"default"}."""
+    "detection_source": "scan_history"|"github_languages"|"default"}.
+
+    `steps`, added for issue #35's Custom Workflow Builder, is an optional
+    ordered list of tool names (a PipelineWorkflowTemplate's enabled steps,
+    already filtered/ordered by the caller -- see
+    app.api.pipeline_templates) to include instead of #66's original fixed
+    default set. Unknown tool names are dropped rather than raising, since
+    validation already happens at template-write time
+    (app.api.pipeline_templates); duplicates are collapsed keeping first
+    occurrence so a malformed/edited-by-hand template can't double up a job
+    name and produce invalid YAML.
+
+    When `steps` is None (every existing #66/#68 call site), behavior is
+    byte-for-byte unchanged from before #35: semgrep + gitleaks + trivy
+    always, gosec only when `detect_tool_set` finds real evidence of Go."""
     detection = detect_tool_set(session, target)
+    if steps is not None:
+        seen: set[str] = set()
+        tools = []
+        for tool in steps:
+            if tool in _JOB_BLOCKS and tool not in seen:
+                tools.append(tool)
+                seen.add(tool)
+        includes_gosec = "gosec" in tools
+    else:
+        tools = ["semgrep", "gitleaks", "trivy"]
+        if detection["include_gosec"]:
+            tools.append("gosec")
+        includes_gosec = detection["include_gosec"]
+
+    jobs_yaml = "".join(_JOB_BLOCKS[t] for t in tools)
+
     # YAML double-quoted scalar: escape backslashes then quotes so a target
     # name containing `"` or `\` still produces valid YAML.
     safe_name = target.name.replace("\\", "\\\\").replace('"', '\\"')
-    yaml_text = _TEMPLATE.replace("__GOSEC_JOB__", _GOSEC_JOB if detection["include_gosec"] else "")
+    yaml_text = _TEMPLATE.replace("__JOBS__", jobs_yaml)
     yaml_text = (
         yaml_text.replace("__WORKFLOW_NAME__", f'"OSP Scan ({safe_name})"')
         .replace("__TARGET_ID__", str(target.id))
@@ -262,7 +320,7 @@ def generate_workflow_yaml(session: Session, target: Target) -> dict:
     return {
         "yaml": yaml_text,
         "path": WORKFLOW_PATH,
-        "includes_gosec": detection["include_gosec"],
+        "includes_gosec": includes_gosec,
         "languages": detection["languages"],
         "detection_source": detection["source"],
     }

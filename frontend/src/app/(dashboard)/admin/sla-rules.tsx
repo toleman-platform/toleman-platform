@@ -6,8 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { SEVERITY_COLOR, SEVERITY_ORDER } from "@/lib/severity";
-import { Timer, Trash2 } from "lucide-react";
+import { Building2, Clock, Timer, Trash2 } from "lucide-react";
 
 // Issue #70: workspace-scoped SLA (days-to-fix) rules, keyed by severity and
 // optionally a repo Group (#61) -- null group means "workspace default",
@@ -118,7 +119,12 @@ export function SlaRules() {
           {workspaces === null ? (
             <SkeletonList count={1} />
           ) : workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No workspaces yet — connect a target first.</p>
+            <EmptyState
+              icon={Building2}
+              title="No workspaces yet"
+              description="Connect a target first to create a workspace."
+              bare
+            />
           ) : (
             <select
               className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
@@ -176,9 +182,16 @@ export function SlaRules() {
 
               <div className="flex flex-col divide-y divide-border rounded-md border border-border">
                 {loading ? (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">Loading...</div>
+                  <div className="px-3 py-2">
+                    <SkeletonList count={2} />
+                  </div>
                 ) : !rules || rules.length === 0 ? (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">No SLA rules yet for this workspace.</div>
+                  <EmptyState
+                    icon={Clock}
+                    title="No SLA rules yet"
+                    description="For this workspace."
+                    bare
+                  />
                 ) : (
                   rules
                     .slice()

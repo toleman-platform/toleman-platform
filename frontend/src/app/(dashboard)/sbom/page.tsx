@@ -16,8 +16,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { FindingsList } from "@/components/findings-list";
 import { cn } from "@/lib/utils";
+import { Package, PackageSearch } from "lucide-react";
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
 
@@ -370,12 +372,16 @@ export default function SbomPage() {
                     component={c}
                   />
                 ))}
-                {filteredOrgComponents.length === 0 && (
-                  <p className="text-sm text-muted-foreground">
-                    {orgSbom.components.length === 0
-                      ? "No SBOM data recorded yet across any target. Select a repository above and generate an SBOM first."
-                      : "No components match your search."}
-                  </p>
+                {filteredOrgComponents.length === 0 && orgSbom.components.length === 0 && (
+                  <EmptyState
+                    icon={Package}
+                    title="No SBOM data yet"
+                    description="Select a repository above and generate an SBOM to see its dependency inventory here."
+                    bare
+                  />
+                )}
+                {filteredOrgComponents.length === 0 && orgSbom.components.length > 0 && (
+                  <EmptyState icon={PackageSearch} title="No components match your search" bare />
                 )}
               </div>
             </>
@@ -453,10 +459,12 @@ export default function SbomPage() {
                     </Card>
                   ))}
                   {components.length === 0 && (
-                    <p className="text-sm text-muted-foreground">
-                      No components recorded yet. Generate an SBOM to scan this
-                      target&apos;s dependency manifests.
-                    </p>
+                    <EmptyState
+                      icon={Package}
+                      title="No components recorded yet"
+                      description="Generate an SBOM to scan this target's dependency manifests."
+                      bare
+                    />
                   )}
                 </div>
               )}

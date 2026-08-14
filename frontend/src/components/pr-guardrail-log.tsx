@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, ShieldQuestion } from "lucide-react";
 import { api, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SkeletonList } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
 import { IGNORE_STATUS_COLOR, SEVERITY_COLOR } from "@/lib/severity";
 import { ALL_TARGETS } from "@/components/target-picker";
 
@@ -256,7 +258,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
 
       {stats && <OrgStatsBar stats={stats} />}
 
-      {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
+      {loading && <SkeletonList count={3} />}
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex flex-col gap-2">
@@ -330,9 +332,12 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
           );
         })}
         {!loading && log.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            {isOrgWide ? "No PR Guardrail scans yet across your repositories." : "No PR Guardrail scans yet for this target."}
-          </p>
+          <EmptyState
+            icon={ShieldQuestion}
+            title="No PR Guardrail scans yet"
+            description={isOrgWide ? "Across your repositories." : "For this target."}
+            bare
+          />
         )}
       </div>
     </div>

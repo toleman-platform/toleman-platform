@@ -5,7 +5,9 @@ import { api, PolicyRule, PolicyRuleType, Target } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { ShieldAlert, Trash2 } from "lucide-react";
+import { SkeletonList } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Building2, ScrollText, ShieldAlert, Trash2 } from "lucide-react";
 
 const RULE_TYPES: { value: PolicyRuleType; label: string; placeholder: string }[] = [
   { value: "block_severity", label: "Block severity threshold", placeholder: "Critical / High / Medium / Low" },
@@ -100,7 +102,12 @@ export function Policies() {
           </div>
 
           {workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No workspaces yet — connect a target first.</p>
+            <EmptyState
+              icon={Building2}
+              title="No workspaces yet"
+              description="Connect a target first to create a workspace."
+              bare
+            />
           ) : (
             <select
               className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
@@ -150,11 +157,16 @@ export function Policies() {
 
               <div className="flex flex-col divide-y divide-border rounded-md border border-border">
                 {loading ? (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">Loading...</div>
-                ) : rules.length === 0 ? (
-                  <div className="px-3 py-3 text-sm text-muted-foreground">
-                    No active policy rules for this workspace.
+                  <div className="px-3 py-2">
+                    <SkeletonList count={2} />
                   </div>
+                ) : rules.length === 0 ? (
+                  <EmptyState
+                    icon={ScrollText}
+                    title="No active policy rules"
+                    description="For this workspace."
+                    bare
+                  />
                 ) : (
                   rules.map((r) => (
                     <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">

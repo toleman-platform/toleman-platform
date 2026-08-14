@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Globe } from "lucide-react";
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
 
@@ -293,9 +295,16 @@ export default function ApiDiscoveryPage() {
             </Card>
           ))}
           {endpoints.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              No routes matched known framework patterns yet. Run discovery to scan this target.
-            </p>
+            <EmptyState
+              icon={Globe}
+              title="No routes discovered yet"
+              description="Run discovery to scan this target's codebase for API routes."
+              action={
+                <Button size="sm" onClick={run} disabled={running || targetId === null}>
+                  {running ? "Scanning..." : "Run Discovery"}
+                </Button>
+              }
+            />
           )}
         </div>
       )}

@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { ArrowUp, ArrowDown, GitBranch, Trash2, Pencil, Save, X } from "lucide-react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { ArrowUp, ArrowDown, Building2, GitBranch, Trash2, Pencil, Save, Workflow, X } from "lucide-react";
 
 // Custom Workflow Builder (issue #35): workspace-scoped named, ordered
 // scanner step lists (semgrep/gitleaks/trivy/gosec, toggle + reorder) used
@@ -188,7 +189,12 @@ export function WorkflowTemplates() {
           {workspaces === null ? (
             <SkeletonList count={1} />
           ) : workspaces.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No workspaces yet -- connect a target first.</p>
+            <EmptyState
+              icon={Building2}
+              title="No workspaces yet"
+              description="Connect a target first to create a workspace."
+              bare
+            />
           ) : (
             <select
               className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
@@ -272,10 +278,11 @@ export function WorkflowTemplates() {
                   ))}
                 </ul>
               ) : (
-                <p className="text-sm text-muted-foreground">
-                  No custom workflow templates yet for this workspace -- Mass Rollout uses the default
-                  scanner set until you create one.
-                </p>
+                <EmptyState
+                  icon={Workflow}
+                  title="No custom workflow templates yet"
+                  description="For this workspace -- Mass Rollout uses the default scanner set until you create one."
+                />
               )}
             </>
           )}

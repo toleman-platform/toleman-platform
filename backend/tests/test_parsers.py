@@ -1,9 +1,11 @@
 from app.models.models import Severity
 from app.scanners.parsers import (
+    parse_checkov,
     parse_gitleaks,
     parse_gosec,
     parse_sarif,
     parse_semgrep,
+    parse_tfsec,
     parse_trivy,
     parse_trivy_license,
 )
@@ -174,3 +176,80 @@ def test_parse_trivy_license_multiple_results():
     assert len(out) == 3
     assert {f["file_path"] for f in out} == {"go.mod", "package-lock.json"}
     assert {f["rule_id"] for f in out} == {"license:MIT", "license:GPL-2.0", "license:AGPL-3.0"}
+
+
+def test_parse_checkov_single_framework_dict():
+    raw = {
+        "check_type": "terraform",
+        "results": {
+            "failed_checks": [
+                {
+                    "check_id": "CKV_AWS_20",
+                    "check_name": "S3 Bucket has an ACL defined which allows public READ access",
+                    "file_path": "/main.tf",
+                    "file_line_range": [10, 15],
+                    "severity": "HIGH",
+                    "resource": "aws_s3_bucket.this",
+                }
+            ],
+            "passed_checks": [{"check_id": "CKV_AWS_1"}],
+        },
+    }
+    out = parse_checkov(raw)
+    assert len(out) == 1
+    f = out[0]
+    assert f["rule_id"] == "CKV_AWS_20"
+    assert f["file_path"] == "main.tf"
+    assert f["line_start"] == 10
+    assert f["line_end"] == 15
+    assert f["severity"] == Severity.HIGH
+    assert f["snippet"] == "aws_s3_bucket.this"
+
+
+def test_parse_checkov_multi_framework_list():
+    raw = [
+        {"check_type": "terraform", "results": {"failed_checks": [{"check_id": "CKV_AWS_20", "file_path": "/main.tf", "file_line_range": [1, 2]}]}},
+        {"check_type": "kubernetes", "results": {"failed_checks": [{"check_id": "CKV_K8S_8", "file_path": "/deploy.yaml", "file_line_range": [3, 4]}]}},
+    ]
+    out = parse_checkov(raw)
+    assert len(out) == 2
+    assert {f["rule_id"] for f in out} == {"CKV_AWS_20", "CKV_K8S_8"}
+
+
+def test_parse_checkov_no_severity_defaults_medium():
+    raw = {"results": {"failed_checks": [{"check_id": "CKV_1", "file_path": "/a.tf", "file_line_range": [1, 1]}]}}
+    out = parse_checkov(raw)
+    assert out[0]["severity"] == Severity.MEDIUM
+
+
+def test_parse_checkov_empty():
+    assert parse_checkov({}) == []
+    assert parse_checkov([]) == []
+
+
+def test_parse_tfsec_maps_fields():
+    raw = {
+        "results": [
+            {
+                "long_id": "aws-s3-enable-bucket-encryption",
+                "description": "Bucket does not have encryption enabled",
+                "severity": "HIGH",
+                "resource": "aws_s3_bucket.this",
+                "location": {"filename": "main.tf", "start_line": 4, "end_line": 9},
+            }
+        ]
+    }
+    out = parse_tfsec(raw)
+    assert len(out) == 1
+    f = out[0]
+    assert f["rule_id"] == "aws-s3-enable-bucket-encryption"
+    assert f["file_path"] == "main.tf"
+    assert f["line_start"] == 4
+    assert f["line_end"] == 9
+    assert f["severity"] == Severity.HIGH
+    assert f["snippet"] == "aws_s3_bucket.this"
+
+
+def test_parse_tfsec_null_results():
+    assert parse_tfsec({"results": None}) == []
+    assert parse_tfsec({}) == []

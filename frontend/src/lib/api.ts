@@ -136,6 +136,38 @@ export type Finding = {
   sla_violated: boolean;
 };
 
+// Issue #75: one entry from GET /api/tools/registry -- every OSS scanner
+// OSP knows about (app.core.tool_registry.TOOL_REGISTRY), merged with a
+// real live health check the same way the original 4-tool /health always
+// worked. `integrated` is false for a registry-only tool (e.g. kics) with
+// no real TOOL_COMMANDS entry -- OSP can show it and check for the binary,
+// but can't actually dispatch a scan for it yet.
+export type ToolRegistryEntry = {
+  tool: string;
+  display_name: string;
+  category: string;
+  languages: string[];
+  description: string;
+  install_cmd: string;
+  docs_url: string;
+  integrated: boolean;
+  installed: boolean;
+  version: string | null;
+  response_ms: number | null;
+};
+
+// Issue #75: per-workspace usage assignment for one tool. `is_default` is
+// true when there's no saved WorkspaceToolConfig row yet and the platform's
+// built-in default is being shown instead of an explicit choice.
+export type ToolAssignment = {
+  tool: string;
+  on_demand_scan: boolean;
+  ci_pipeline: boolean;
+  api_scan: boolean;
+  pr_guardrail: boolean;
+  is_default: boolean;
+};
+
 // A single workspace-scoped SLA (days-to-fix) rule, keyed by severity and
 // optionally a repo Group (issue #70) -- group_id null means "workspace
 // default", applied to targets with no group-specific rule for that
@@ -831,6 +863,21 @@ export const api = {
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(
       "/api/tools/health"
     ),
+  // Issue #75: tool marketplace registry (every supported OSS scanner,
+  // SAST/SCA/Secrets/Container/IaC/License, real live health check merged
+  // in) and per-workspace usage assignment (which of on-demand/CI
+  // pipeline/API scan/PR guardrail a tool is enabled for).
+  toolsRegistry: () => jsonFetch<ToolRegistryEntry[]>("/api/tools/registry"),
+  toolAssignments: (workspaceId: number) =>
+    jsonFetch<ToolAssignment[]>(`/api/tools/assignments?workspace_id=${workspaceId}`),
+  saveToolAssignment: (a: {
+    workspace_id: number;
+    tool: string;
+    on_demand_scan: boolean;
+    ci_pipeline: boolean;
+    api_scan: boolean;
+    pr_guardrail: boolean;
+  }) => jsonFetch<ToolAssignment>("/api/tools/assignments", { method: "PUT", body: JSON.stringify(a) }),
   runPrGuardrailScan: (targetId: number, prNumber: number) =>
     jsonFetch<PrGuardrailScanResult>(
       `/api/pr-guardrail/scan?target_id=${targetId}&pr_number=${prNumber}`,

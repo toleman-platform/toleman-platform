@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const ROLES = ["admin", "user", "viewer", "developer", "security_engineer"];
 
@@ -18,6 +19,16 @@ export function UserManagement() {
   const [role, setRole] = useState("user");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Issue #118: both actions below used to apply instantly with no
+  // confirmation -- a bare red "Delete" link, and a role `<select>` that
+  // fired `onRoleChange` on every `onChange`, including an accidental
+  // escalation to admin (global, bypasses all workspace scoping). Both now
+  // route through the shared `ConfirmDialog` instead of mutating on click.
+  const [pendingDelete, setPendingDelete] = useState<AuthUser | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [pendingRoleChange, setPendingRoleChange] = useState<{ user: AuthUser; newRole: string } | null>(null);
+  const [changingRole, setChangingRole] = useState(false);
 
   function refresh() {
     api.users().then(setUsers);
@@ -42,14 +53,44 @@ export function UserManagement() {
     }
   }
 
-  async function onRoleChange(id: number, newRole: string) {
+  function requestRoleChange(u: AuthUser, newRole: string) {
+    if (newRole === u.role) return;
+    // Only admin escalation needs a confirmation gate (per #118) -- it's a
+    // global role that bypasses all workspace-scoped permissions, unlike
+    // moving between the other four roles.
+    if (newRole === "admin") {
+      setPendingRoleChange({ user: u, newRole });
+      return;
+    }
+    applyRoleChange(u.id, newRole);
+  }
+
+  async function applyRoleChange(id: number, newRole: string) {
     await api.updateUserRole(id, newRole);
     refresh();
   }
 
-  async function onDelete(id: number) {
-    await api.deleteUser(id);
-    refresh();
+  async function confirmRoleChange() {
+    if (!pendingRoleChange) return;
+    setChangingRole(true);
+    try {
+      await applyRoleChange(pendingRoleChange.user.id, pendingRoleChange.newRole);
+    } finally {
+      setChangingRole(false);
+      setPendingRoleChange(null);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await api.deleteUser(pendingDelete.id);
+      refresh();
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
+    }
   }
 
   return (
@@ -94,7 +135,7 @@ export function UserManagement() {
                 <select
                   className="rounded-md border border-input bg-secondary px-2 py-1 text-xs text-foreground"
                   value={u.role}
-                  onChange={(e) => onRoleChange(u.id, e.target.value)}
+                  onChange={(e) => requestRoleChange(u, e.target.value)}
                 >
                   {ROLES.map((r) => (
                     <option key={r} value={r}>
@@ -103,7 +144,7 @@ export function UserManagement() {
                   ))}
                 </select>
                 <Badge variant="outline">{u.role}</Badge>
-                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => onDelete(u.id)}>
+                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setPendingDelete(u)}>
                   Delete
                 </Button>
               </div>
@@ -112,6 +153,43 @@ export function UserManagement() {
         ))}
       </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete user"
+        description={
+          pendingDelete ? (
+            <>
+              Permanently delete <span className="font-medium text-foreground">{pendingDelete.name}</span> (
+              {pendingDelete.email})? This cannot be undone.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete"
+        tone="destructive"
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingRoleChange !== null}
+        title="Grant admin access"
+        description={
+          pendingRoleChange ? (
+            <>
+              Make <span className="font-medium text-foreground">{pendingRoleChange.user.name}</span> a global admin?
+              Admins bypass all workspace-scoped permissions and can manage every workspace, user, and
+              platform setting.
+            </>
+          ) : null
+        }
+        confirmLabel="Grant admin"
+        tone="default"
+        loading={changingRole}
+        onConfirm={confirmRoleChange}
+        onCancel={() => setPendingRoleChange(null)}
+      />
     </div>
   );
 }

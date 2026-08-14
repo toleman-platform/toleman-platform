@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, AuthUser, WorkspaceMembership, WorkspaceRole, WorkspaceSummary } from "@/lib/api";
+import { api, AuthUser, WorkspaceMembership, WorkspaceRole, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Building2, Trash2, UserCog } from "lucide-react";
 
 const WORKSPACE_ROLES: WorkspaceRole[] = ["viewer", "developer", "security_engineer"];
@@ -27,6 +28,12 @@ export function WorkspaceRoles() {
   const [selectedUserId, setSelectedUserId] = useState<number | "">("");
   const [selectedRole, setSelectedRole] = useState<WorkspaceRole>("developer");
   const [assigning, setAssigning] = useState(false);
+
+  // Issue #118: removing a workspace role assignment is destructive (the
+  // user immediately loses that workspace's access) and previously fired
+  // straight off the icon-only Trash2 button with no confirmation.
+  const [pendingRemoval, setPendingRemoval] = useState<WorkspaceMembership | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   useEffect(() => {
     api.workspaces().then((list) => {
@@ -64,13 +71,17 @@ export function WorkspaceRoles() {
     }
   }
 
-  async function onRemove(membershipId: number) {
-    if (workspaceId == null) return;
+  async function confirmRemove() {
+    if (workspaceId == null || !pendingRemoval) return;
+    setRemoving(true);
     try {
-      await api.removeWorkspaceMembership(membershipId);
+      await api.removeWorkspaceMembership(pendingRemoval.id);
       refresh(workspaceId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to remove role");
+    } finally {
+      setRemoving(false);
+      setPendingRemoval(null);
     }
   }
 
@@ -104,7 +115,7 @@ export function WorkspaceRoles() {
             >
               {workspaces.map((w) => (
                 <option key={w.id} value={w.id}>
-                  {w.name}
+                  {workspaceDisplayName(w, workspaces)}
                 </option>
               ))}
             </select>
@@ -168,7 +179,7 @@ export function WorkspaceRoles() {
                       size="sm"
                       variant="ghost"
                       className="text-destructive"
-                      onClick={() => onRemove(m.id)}
+                      onClick={() => setPendingRemoval(m)}
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>
@@ -179,6 +190,25 @@ export function WorkspaceRoles() {
           </div>
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={pendingRemoval !== null}
+        title="Remove workspace role"
+        description={
+          pendingRemoval ? (
+            <>
+              Remove <span className="font-medium text-foreground">{pendingRemoval.user_name}</span>&apos;s{" "}
+              <span className="font-medium text-foreground">{pendingRemoval.role}</span> role on this
+              workspace? They&apos;ll immediately lose the access it grants.
+            </>
+          ) : null
+        }
+        confirmLabel="Remove"
+        tone="destructive"
+        loading={removing}
+        onConfirm={confirmRemove}
+        onCancel={() => setPendingRemoval(null)}
+      />
     </div>
   );
 }

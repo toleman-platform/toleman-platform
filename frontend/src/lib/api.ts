@@ -352,6 +352,21 @@ export type WorkspaceSummary = {
   enforcement_mode: EnforcementMode | null;
 };
 
+// Issue #118: real seeded data has multiple workspaces named "default"
+// (e.g. ids 1 and 7, each in a different organization) that are otherwise
+// indistinguishable in every workspace picker across the admin tabs. Append
+// a disambiguator only when a name collides within the given list, so a
+// single-workspace org's clean "acme-corp" label stays untouched. Used by
+// every admin-tab workspace `<select>` (workspace-roles, groups, sla-rules,
+// workflow-templates, fp-rules, policies).
+export function workspaceDisplayName(
+  workspace: Pick<WorkspaceSummary, "id" | "name">,
+  allWorkspaces: Pick<WorkspaceSummary, "id" | "name">[]
+): string {
+  const isDuplicate = allWorkspaces.filter((w) => w.name === workspace.name).length > 1;
+  return isDuplicate ? `${workspace.name} (#${workspace.id})` : workspace.name;
+}
+
 export type WorkspaceRole = "viewer" | "developer" | "security_engineer";
 
 export type WorkspaceMembership = {

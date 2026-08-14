@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from app.api.auth import current_user
+from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.core.rate_limit import enforce_rate_limit
 from app.models.models import Scan, Target, User
@@ -12,6 +12,55 @@ from app.tasks.scan_tasks import run_scan
 router = APIRouter(prefix="/api/scans", tags=["scans"])
 
 PARSER_MAP = parsers.PARSER_MAP
+
+
+@router.get("/summary")
+def scans_summary(
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Per-target scan history summary for the Scans page rebuild (#120):
+    last-scanned timestamp + the distinct set of tools ever run against each
+    target, keyed by target_id. The old flat scan-trigger grid had no way to
+    show this at all; the new filter bar's "last scanned" filter and each
+    target card's sub-line both need real data here, not a guess.
+
+    Workspace-scoped like every other GET/list endpoint over workspace-owned
+    resources (accessible_workspace_ids: None = admin/no filter, [] = no
+    memberships yet -> nothing to summarize).
+    """
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return {}
+
+    query = select(Scan.target_id, Scan.tool, Scan.started_at, Scan.completed_at)
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
+    rows = session.exec(query).all()
+
+    summary: dict[int, dict] = {}
+    for target_id, tool, started_at, completed_at in rows:
+        entry = summary.setdefault(target_id, {"last_scan_at": None, "tools": set()})
+        entry["tools"].add(tool)
+        # A still-"running" scan has no completed_at yet -- fall back to
+        # started_at so "last scanned" reflects the most recent attempt, not
+        # just settled ones.
+        ts = completed_at or started_at
+        if ts is not None and (entry["last_scan_at"] is None or ts > entry["last_scan_at"]):
+            entry["last_scan_at"] = ts
+
+    return {
+        str(target_id): {
+            # started_at/completed_at are naive UTC datetimes (datetime.utcnow(),
+            # see the Scan model) -- append "Z" explicitly so the frontend's
+            # `new Date(...)` (lib/utils.ts's timeAgo) parses this as UTC
+            # instead of local time, which would silently skew "last scanned"
+            # by the server's UTC offset.
+            "last_scan_at": v["last_scan_at"].isoformat() + "Z" if v["last_scan_at"] else None,
+            "tools": sorted(v["tools"]),
+        }
+        for target_id, v in summary.items()
+    }
 
 # Each request here dispatches a Celery task that clones the target repo and
 # spawns a scanner subprocess, so this needs a tighter limit than plain API

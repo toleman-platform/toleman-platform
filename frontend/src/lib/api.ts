@@ -439,6 +439,17 @@ export type ScanRun = {
   completed_at: string | null;
 };
 
+// GET /api/scans/summary (#120): per-target scan history so the Scans page
+// can show a real "last scanned Xd ago · tool, tool" line and support a
+// last-scanned filter, instead of the old flat grid which had no scan
+// history surfaced at all. Keyed by target id (as a string -- JSON object
+// keys).
+export type ScanSummaryEntry = {
+  last_scan_at: string | null;
+  tools: string[];
+};
+export type ScanSummary = Record<string, ScanSummaryEntry>;
+
 export type DiscoveryRunResult = {
   run_id: number;
   target_id: number;
@@ -863,6 +874,7 @@ export const api = {
       { method: "POST" }
     ),
   getScan: (scanId: number) => jsonFetch<ScanRun | { error: string }>(`/api/scans/${scanId}`),
+  scanSummary: () => jsonFetch<ScanSummary>("/api/scans/summary"),
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   workspaceKey: (targetId: number) =>

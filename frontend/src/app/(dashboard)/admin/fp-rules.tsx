@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, FalsePositiveRule, FpRuleStats, WorkspaceSummary } from "@/lib/api";
+import { api, FalsePositiveRule, FpRuleStats, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
@@ -111,7 +111,7 @@ export function FpRules() {
             >
               {workspaces.map((w) => (
                 <option key={w.id} value={w.id}>
-                  {w.name}
+                  {workspaceDisplayName(w, workspaces)}
                 </option>
               ))}
             </select>

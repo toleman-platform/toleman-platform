@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, Group, SlaRule, WorkspaceSummary } from "@/lib/api";
+import { api, Group, SlaRule, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -133,7 +133,7 @@ export function SlaRules() {
             >
               {workspaces.map((w) => (
                 <option key={w.id} value={w.id}>
-                  {w.name}
+                  {workspaceDisplayName(w, workspaces)}
                 </option>
               ))}
             </select>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, PolicyRule, PolicyRuleType, Target } from "@/lib/api";
+import { api, PolicyRule, PolicyRuleType, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,14 @@ function ruleLabel(t: PolicyRuleType) {
 }
 
 export function Policies() {
-  const [workspaces, setWorkspaces] = useState<{ id: number; name: string }[]>([]);
+  // Issue #118: this used to derive its workspace list from `targets`
+  // (labeling each as `Workspace ${id} (${target.name})` -- a raw,
+  // target-name-based label unlike every other admin tab's clean
+  // `workspace.name`). Switched to the same `api.workspaces()` source the
+  // other 5 workspace pickers use, so the label format (and the duplicate-
+  // "default"-workspace disambiguation via `workspaceDisplayName`) matches
+  // everywhere.
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
   const [rules, setRules] = useState<PolicyRule[]>([]);
   const [loading, setLoading] = useState(false);
@@ -32,14 +39,7 @@ export function Policies() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.targets().then((targets: Target[]) => {
-      const byId = new Map<number, { id: number; name: string }>();
-      for (const t of targets) {
-        if (!byId.has(t.workspace_id)) {
-          byId.set(t.workspace_id, { id: t.workspace_id, name: `Workspace ${t.workspace_id} (${t.name})` });
-        }
-      }
-      const list = Array.from(byId.values());
+    api.workspaces().then((list) => {
       setWorkspaces(list);
       if (list.length > 0) setWorkspaceId(list[0].id);
     });
@@ -116,7 +116,7 @@ export function Policies() {
             >
               {workspaces.map((w) => (
                 <option key={w.id} value={w.id}>
-                  {w.name}
+                  {workspaceDisplayName(w, workspaces)}
                 </option>
               ))}
             </select>

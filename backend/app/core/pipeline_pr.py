@@ -41,12 +41,17 @@ def _get_installation_token(session: Session, target: Target) -> str:
     return get_installation_token(config, installation.installation_id)
 
 
-def open_pipeline_pr(session: Session, target: Target) -> dict:
+def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None = None) -> dict:
     """Opens a real PR on the target's GitHub repo adding
     .github/workflows/osp-scan.yml on a new branch off the default branch.
     Returns {"pr_url": str, "pr_number": int, "branch": str}. Raises
     PipelinePrError (never a bare httpx exception) on any failure so the API
-    layer can return a clean error message instead of a stack trace."""
+    layer can return a clean error message instead of a stack trace.
+
+    `steps` (issue #35, Custom Workflow Builder / Mass CI/CD Rollout Engine)
+    is passed straight through to generate_workflow_yaml -- an ordered list
+    of tool names from a PipelineWorkflowTemplate, or None to keep #66's
+    original fixed default scanner set."""
     slug = repo_slug_from_url(target.repo_url)
     token = _get_installation_token(session, target)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
@@ -83,7 +88,7 @@ def open_pipeline_pr(session: Session, target: Target) -> dict:
     # tool set), then check whether the file already exists on the default
     # branch (repeat integration) so the contents-write API gets the sha it
     # requires to update rather than create.
-    generated = generate_workflow_yaml(session, target)
+    generated = generate_workflow_yaml(session, target, steps=steps)
     existing_res = httpx.get(
         f"https://api.github.com/repos/{slug}/contents/{WORKFLOW_PATH}",
         headers=headers,

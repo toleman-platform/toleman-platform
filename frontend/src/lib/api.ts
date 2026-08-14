@@ -95,6 +95,34 @@ export type PipelineIntegrationBatch = {
   started_at: string;
   completed_at: string | null;
   items: PipelineBatchItem[];
+  // Issue #35: "" for #68's original manual-selection batches; a
+  // human-readable description of the resolved scope (e.g. "Workspace:
+  // acme-prod") for a mass rollout batch. workflow_template_id is set when
+  // that rollout used a Custom Workflow Builder template instead of the
+  // default scanner set.
+  scope_label?: string;
+  workflow_template_id?: number | null;
+};
+
+// Custom Workflow Builder (issue #35): the fixed catalog of scanners a
+// PipelineWorkflowTemplate's step list may reference -- kept in sync with
+// backend/app/core/pipeline_workflow.py's SUPPORTED_TOOLS.
+export const PIPELINE_WORKFLOW_TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"] as const;
+export type PipelineWorkflowTool = (typeof PIPELINE_WORKFLOW_TOOLS)[number];
+
+export type PipelineWorkflowStep = {
+  tool: PipelineWorkflowTool;
+  enabled: boolean;
+};
+
+export type PipelineWorkflowTemplate = {
+  id: number;
+  workspace_id: number;
+  name: string;
+  steps: PipelineWorkflowStep[];
+  created_by_user_id: number;
+  created_at: string;
+  updated_at: string;
 };
 
 export type Group = {
@@ -720,6 +748,37 @@ export const api = {
     }),
   getPipelineIntegrationBatch: (batchId: number) =>
     jsonFetch<PipelineIntegrationBatch>(`/api/targets/bulk-pipeline-integrate/${batchId}`),
+  // Issue #35 (Mass CI/CD Rollout Engine): scope-based sibling to
+  // bulkPipelineIntegrate above -- resolves an entire workspace/group/"all
+  // accessible" scope into a target set server-side instead of an explicit
+  // target_ids list, reusing the exact same batch tracking + polling
+  // (getPipelineIntegrationBatch above works for both).
+  massPipelineRollout: (payload: {
+    scope: "workspace" | "group" | "all";
+    workspace_id?: number;
+    group_id?: number;
+    workflow_template_id?: number;
+  }) =>
+    jsonFetch<{ batch_id: number; total: number; status: RunStatus; scope_label: string }>(
+      "/api/targets/mass-pipeline-rollout",
+      { method: "POST", body: JSON.stringify(payload) }
+    ),
+  // Custom Workflow Builder (issue #35): workspace-scoped
+  // PipelineWorkflowTemplate CRUD, consumed by massPipelineRollout above
+  // (and reusable later from the single-target integrate flow).
+  pipelineTemplates: (workspaceId?: number) =>
+    jsonFetch<PipelineWorkflowTemplate[]>(
+      `/api/pipeline-templates${workspaceId ? `?workspace_id=${workspaceId}` : ""}`
+    ),
+  createPipelineTemplate: (t: { workspace_id: number; name: string; steps: PipelineWorkflowStep[] }) =>
+    jsonFetch<PipelineWorkflowTemplate>("/api/pipeline-templates", { method: "POST", body: JSON.stringify(t) }),
+  updatePipelineTemplate: (id: number, patch: { name?: string; steps?: PipelineWorkflowStep[] }) =>
+    jsonFetch<PipelineWorkflowTemplate>(`/api/pipeline-templates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  deletePipelineTemplate: (id: number) =>
+    jsonFetch<{ deleted: boolean }>(`/api/pipeline-templates/${id}`, { method: "DELETE" }),
   activity: (targetId: number) => jsonFetch<CommitEvent[]>(`/api/github/activity/${targetId}`),
   orgActivity: () => jsonFetch<(CommitEvent & { target: string })[]>("/api/github/org-activity"),
   prs: (targetId: number) => jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`),

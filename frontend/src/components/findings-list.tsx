@@ -25,6 +25,9 @@ export function FindingsList({
   targets?: Target[];
 }) {
   const repoUrlByTargetId = new Map(targets.map((t) => [t.id, t.repo_url]));
+  // Issue #117: criticality chip + target name shown next to each finding's
+  // target -- see Target.label in backend/app/models/models.py.
+  const targetById = new Map(targets.map((t) => [t.id, t]));
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -111,6 +114,8 @@ export function FindingsList({
             key={f.id}
             finding={f}
             repoUrl={repoUrlByTargetId.get(f.target_id)}
+            targetName={targetById.get(f.target_id)?.name}
+            targetLabel={targetById.get(f.target_id)?.label}
             selectable
             selected={selected.has(f.id)}
             onSelectChange={(checked) => toggleOne(f.id, checked)}

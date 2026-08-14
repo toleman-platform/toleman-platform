@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FindingRow } from "@/components/finding-row";
+import { BrandMark } from "@/components/brand-mark";
 import { CheckCircle2, XCircle, Github, ArrowRight } from "lucide-react";
 
 const STEPS = [
@@ -197,11 +198,16 @@ export default function OnboardingPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Get started with Rikugan</h1>
-          <p className="text-sm text-muted-foreground">
-            Connect a repo, run a scan, and see what Rikugan finds — in under a minute.
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent">
+            <BrandMark size={22} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Get started with Rikugan</h1>
+            <p className="text-sm text-muted-foreground">
+              Connect a repo, run a scan, and see what Rikugan finds — in under a minute.
+            </p>
+          </div>
         </div>
         <Link href="/" className="text-xs text-muted-foreground underline hover:text-foreground">
           Skip onboarding

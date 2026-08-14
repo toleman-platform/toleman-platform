@@ -9,6 +9,7 @@ from app.core.epss import fetch_epss_scores
 from app.core.kev import fetch_kev_cve_set
 from app.core.jira_integration import create_jira_ticket_for_finding, jira_configured
 from app.core.notifications import dispatch_notification
+from app.core.fp_learning import apply_auto_suppression, find_matching_rule
 
 logger = logging.getLogger(__name__)
 
@@ -157,11 +158,29 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
 
     session.commit()
 
+    # False-positive auto-suppression (issue #76) -- runs before the Jira/
+    # notification hooks below, on purpose: a finding matching a learned
+    # false-positive rule (same rule_id+tool+file basename previously
+    # triaged FALSE_POSITIVE, anywhere in this workspace -- see
+    # app.core.fp_learning) is not a real net-new alert, so it must not
+    # trigger a Jira ticket or a critical/KEV notification. It's still
+    # created as a real Finding row (not silently dropped) so it stays
+    # visible/auditable/revertable in the normal findings UI, just already
+    # in the FALSE_POSITIVE state instead of Open.
+    for finding in newly_created:
+        session.refresh(finding)
+        rule = find_matching_rule(session, target.workspace_id, finding.rule_id, finding.tool, finding.file_path)
+        if rule:
+            apply_auto_suppression(session, rule, finding)
+    session.commit()
+
     # Auto-create Jira tickets for net-new findings meeting the configured
     # severity threshold (issue #74 v1) -- after commit so each finding has
     # a real id to reference/link. Best-effort, never blocks ingestion.
     for finding in newly_created:
         session.refresh(finding)
+        if finding.state == FindingState.FALSE_POSITIVE:
+            continue  # auto-suppressed above -- not a real net-new alert
         _maybe_auto_create_jira_ticket(session, finding)
         _maybe_notify_new_finding(session, target, finding)
 

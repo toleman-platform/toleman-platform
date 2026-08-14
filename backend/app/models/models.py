@@ -681,6 +681,79 @@ class NotificationPreference(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class FalsePositiveRule(SQLModel, table=True):
+    """A learned suppression rule (issue #76), created automatically the
+    moment a user triages a Finding to FindingState.FALSE_POSITIVE (see
+    app.core.fp_learning.learn_suppression_rule, called from
+    app.api.findings._apply_triage) and consumed at ingestion time
+    (app.core.ingestion.ingest_findings) to auto-suppress newly-created
+    Findings that match the same signature -- so the same false positive
+    doesn't have to be re-triaged every time it reappears, including in a
+    *different* repo (ROADMAP's "cross-repo suppression").
+
+    Scoped to `workspace_id`, not a single Target -- a Workspace already
+    groups multiple repos (Targets) in this codebase (see Target.workspace_id
+    everywhere else), so "cross-repo within an org" in practice means
+    "matches any Target under this workspace", the same granularity
+    PolicyRule/SlaRule already use for workspace-wide config. True
+    cross-*workspace* suppression isn't implemented in this first version --
+    consistent with this codebase's existing single-tenant-per-Organization
+    shape (Organization -> Workspace -> Target) where nothing else reaches
+    across workspace boundaries either.
+
+    Signature = (rule_id, tool, file_path_pattern). rule_id/tool are exact
+    matches against the scanner's own rule_id/tool (same fields Finding
+    already carries and PolicyRule.SUPPRESS_RULE already keys off).
+    file_path_pattern is the *basename* of the file the false positive was
+    found in (e.g. "settings.py", not "backend/app/core/settings.py") --
+    deliberately not the full path, since an identical full path recurring
+    in a *different* repo would be the exception rather than the rule,
+    while the same filename (test fixtures, generated code, vendored
+    dependencies, common config filenames) recurring across repos is a very
+    common real false-positive shape. NULL means "any file" -- the broadest
+    form, settable via PATCH by a security engineer/admin who wants to widen
+    an existing rule rather than only narrow/revoke it.
+
+    Deliberately no snippet_hash field (even though the issue text mentions
+    one as optional): Finding never persists the raw matched code snippet
+    anywhere in this codebase (app.core.dedup.compute_dedup_hash consumes it
+    only to produce a one-way SHA-256 dedup_hash) -- there is nothing to
+    re-derive a comparable snippet signature from for an already-ingested
+    Finding, so a snippet_hash field would be permanently unpopulated dead
+    weight rather than a real second signal. rule_id + tool + file_path
+    basename is the real, honest signature this codebase can support today.
+
+    Soft-revocable via `active` (same pattern as PolicyRule) rather than
+    hard-deleted by default -- DELETE is still offered for real removal, but
+    PATCH .../active lets a security engineer "expire" a rule (stop it
+    firing) while keeping the audit trail of what it used to suppress and
+    how many times, which a hard delete would destroy.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    rule_id: str = Field(index=True)
+    tool: str
+    file_path_pattern: Optional[str] = None
+
+    # Audit trail: which Finding/triage action originally taught this rule,
+    # and who (actor string, same free-text convention as
+    # FindingStateLog.actor -- "user"/"system"/etc, not a User FK, since
+    # bulk-triage's actor is caller-supplied free text too).
+    source_finding_id: Optional[int] = Field(default=None, foreign_key="finding.id")
+    created_by: str = "system"
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    active: bool = True
+    # Incremented + stamped every time app.core.ingestion.ingest_findings
+    # auto-suppresses a new Finding against this rule -- feeds both the
+    # per-rule "fired N times" UI and (via Finding.state_reason's matching
+    # marker string, see fp_learning.AUTO_SUPPRESS_REASON_PREFIX) the
+    # dashboard's "X findings auto-suppressed this month" figure without
+    # needing a second event-log table.
+    match_count: int = 0
+    last_matched_at: Optional[datetime] = None
+
+
 class DashboardLayout(SQLModel, table=True):
     """A user's configurable dashboard composition (issue #69), replacing
     the previous single fixed layout in frontend/(dashboard)/page.tsx.

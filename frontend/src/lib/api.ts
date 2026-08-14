@@ -432,6 +432,27 @@ export type PolicyRule = {
   active: boolean;
 };
 
+// Issue #76: a learned false-positive suppression rule -- created
+// automatically when a Finding is triaged to "False Positive" (see
+// app.core.fp_learning.learn_suppression_rule), consumed at ingestion time
+// to auto-suppress matching new Findings anywhere in the workspace
+// (cross-repo). file_path_pattern is a filename basename (e.g.
+// "settings.py"), or null meaning "any file for this rule_id+tool".
+export type FalsePositiveRule = {
+  id: number;
+  workspace_id: number;
+  rule_id: string;
+  tool: string;
+  file_path_pattern: string | null;
+  source_finding_id: number | null;
+  created_by: string;
+  created_at: string;
+  active: boolean;
+  match_count: number;
+  last_matched_at: string | null;
+};
+export type FpRuleStats = { active_rules: number; total_matches: number };
+
 // The ephemeral (non-persisted-id) shape returned inline in a scan's
 // response body -- distinct from PrGuardrailFinding below, which is the
 // persisted row with its own id and ignore-request lifecycle.
@@ -513,7 +534,8 @@ export type WidgetId =
   | "sla_compliance"
   | "top_risky_repos"
   | "recent_findings"
-  | "security_score";
+  | "security_score"
+  | "fp_auto_suppressions";
 
 export type WidgetCatalogEntry = { widget_id: WidgetId; name: string; description: string };
 
@@ -557,6 +579,8 @@ export type RecentFindingItem = {
   sla_violated: boolean;
 };
 export type RecentFindingsData = { items: RecentFindingItem[] };
+// Issue #76: "X findings auto-suppressed this month" widget data.
+export type FpAutoSuppressionsData = { count: number; since: string };
 
 export type WidgetDataMap = {
   kpi_cards: KpiCardsData;
@@ -566,6 +590,7 @@ export type WidgetDataMap = {
   top_risky_repos: TopRiskyReposData;
   recent_findings: RecentFindingsData;
   security_score: SecurityScore;
+  fp_auto_suppressions: FpAutoSuppressionsData;
 };
 
 export type WidgetDataEntry =
@@ -909,4 +934,19 @@ export const api = {
   createPolicy: (p: { workspace_id: number; rule_type: PolicyRuleType; value: string; reason?: string }) =>
     jsonFetch<PolicyRule>("/api/policies", { method: "POST", body: JSON.stringify(p) }),
   deletePolicy: (id: number) => jsonFetch<PolicyRule>(`/api/policies/${id}`, { method: "DELETE" }),
+  // Issue #76: false-positive learning engine -- rules are learned
+  // automatically from triage, this is view/expire/revoke only (see
+  // app/api/fp_rules.py's module docstring for why there's no manual POST).
+  fpRules: (workspaceId?: number) =>
+    jsonFetch<FalsePositiveRule[]>(`/api/fp-rules${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  fpRuleStats: (workspaceId?: number) =>
+    jsonFetch<FpRuleStats>(`/api/fp-rules/stats${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  setFpRuleActive: (id: number, active: boolean) =>
+    jsonFetch<FalsePositiveRule>(`/api/fp-rules/${id}`, { method: "PATCH", body: JSON.stringify({ active }) }),
+  widenFpRule: (id: number) =>
+    jsonFetch<FalsePositiveRule>(`/api/fp-rules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ clear_file_path_pattern: true }),
+    }),
+  deleteFpRule: (id: number) => jsonFetch<{ ok: boolean }>(`/api/fp-rules/${id}`, { method: "DELETE" }),
 };

@@ -194,6 +194,46 @@ def test_search_matches_rule_id(client, engine):
     assert body["items"][0]["rule_id"] == "python.sql-injection"
 
 
+def test_search_matches_cve_id(client, engine):
+    # Issue #122: AI Analysis' finding-search typeahead searches by
+    # "title/CVE/target", reusing this endpoint -- cve_id must be in scope.
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="A", rule_id="r1", cve_id="CVE-2020-28483")
+    _make_finding(engine, target_id, title="B", rule_id="r2", cve_id="CVE-2019-0001")
+
+    resp = client.get("/api/findings", params={"search": "2020-28483"})
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["cve_id"] == "CVE-2020-28483"
+
+
+def test_search_matches_target_name(client, engine):
+    _login(client, engine)
+    target_a = _make_target(engine, name="govwa")
+    target_b = _make_target(engine, name="gotest")
+    _make_finding(engine, target_a, title="A", rule_id="r1")
+    _make_finding(engine, target_b, title="B", rule_id="r2")
+
+    resp = client.get("/api/findings", params={"search": "govwa"})
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["title"] == "A"
+
+
+def test_search_by_target_name_respects_workspace_scoping_for_admin_query_too(client, engine):
+    # Regression guard: adding the Target join for search must not change
+    # result counts when ws_ids is None (admin, already joined) vs. not
+    # None -- same target shouldn't appear twice due to a double join.
+    _login(client, engine)
+    target_id = _make_target(engine, name="unique-target-xyz")
+    _make_finding(engine, target_id, title="Only one", rule_id="r1")
+
+    resp = client.get("/api/findings", params={"search": "unique-target-xyz"})
+    body = resp.json()
+    assert body["total"] == 1
+
+
 def test_pagination_limits_page_size_and_reports_total(client, engine):
     _login(client, engine)
     target_id = _make_target(engine)

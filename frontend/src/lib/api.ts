@@ -237,6 +237,22 @@ export type AiStatus = {
   provider: AiProvider;
 };
 
+// Issue #122: one entry from GET /api/ai/recent -- a finding this user has
+// previously run AI analysis on, most-recently-analyzed first. Backed by
+// AiAnalysisRun (one row per user+finding, upserted on repeat analysis),
+// not a full analysis-history log -- there's no stored analysis text here,
+// just enough to re-open the finding and re-run analysis.
+export type AiRecentAnalysis = {
+  finding_id: number;
+  title: string;
+  severity: "Critical" | "High" | "Medium" | "Low" | "Informational";
+  cve_id: string | null;
+  target_id: number;
+  target_name: string;
+  state: string;
+  last_analyzed_at: string;
+};
+
 export type PlatformConfigView = {
   anthropic_api_key_set: boolean;
   ai_provider: AiProvider;
@@ -917,6 +933,7 @@ export const api = {
   aiStatus: () => jsonFetch<AiStatus>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),
+  aiRecentAnalyses: () => jsonFetch<AiRecentAnalysis[]>("/api/ai/recent"),
   auditLog: () => jsonFetch<AuditEvent[]>("/api/audit/log"),
   users: () => jsonFetch<AuthUser[]>("/api/admin/users"),
   createUser: (u: { email: string; name: string; password: string; role: string }) =>

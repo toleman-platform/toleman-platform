@@ -195,6 +195,60 @@ def parse_nuclei(raw: list[dict]) -> list[dict]:
     return out
 
 
+def parse_checkov(raw: dict | list) -> list[dict]:
+    """Checkov JSON output (issue #75 IaC integration).
+
+    Shape varies with how many IaC frameworks Checkov found files for in
+    the scanned repo: a single dict (one framework, e.g. only Terraform
+    present) or a list of per-framework dicts (Terraform + Kubernetes +
+    ...). Normalize both to a flat list of "reports" before walking
+    results.failed_checks -- only failed checks are findings; passed_checks
+    are intentionally not surfaced as anything (there's no "informational
+    passed control" concept in OSP's Finding model).
+    """
+    reports = raw if isinstance(raw, list) else [raw]
+    out = []
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        results = report.get("results") or {}
+        for check in results.get("failed_checks", []) or []:
+            file_line_range = check.get("file_line_range") or [None, None]
+            out.append({
+                "rule_id": check.get("check_id", "unknown"),
+                "title": (check.get("check_name") or check.get("check_id", ""))[:200],
+                "description": check.get("check_name", ""),
+                "file_path": check.get("file_path", "").lstrip("/"),
+                "line_start": file_line_range[0] if file_line_range else None,
+                "line_end": file_line_range[1] if len(file_line_range) > 1 else None,
+                "severity": _map_severity(check.get("severity") or "medium"),
+                "snippet": check.get("resource", ""),
+                "cve_id": None,
+            })
+    return out
+
+
+def parse_tfsec(raw: dict) -> list[dict]:
+    """tfsec JSON output (`tfsec <path> --format json`), issue #75 IaC
+    integration. `results` is null (not an empty list) when tfsec finds
+    nothing, so this must tolerate `raw.get("results")` being `None`."""
+    out = []
+    for r in raw.get("results") or []:
+        location = r.get("location") or {}
+        out.append({
+            "rule_id": r.get("long_id") or r.get("rule_id", "unknown"),
+            "title": (r.get("description") or r.get("rule_description") or "")[:200],
+            "description": r.get("description", ""),
+            "file_path": location.get("filename", ""),
+            "line_start": location.get("start_line"),
+            "line_end": location.get("end_line"),
+            "severity": _map_severity(r.get("severity", "")),
+            "snippet": r.get("resource", ""),
+            "cve_id": None,
+        })
+    return out
+
+
 def parse_sarif(raw: dict) -> list[dict]:
     """Generic SARIF 2.1.0 parser — covers most CI-pushed SAST tool output."""
     out = []
@@ -240,4 +294,6 @@ PARSER_MAP = {
     "trivy-license": parse_trivy_license,
     "trivy-sbom": parse_trivy_sbom,
     "gosec": parse_gosec,
+    "checkov": parse_checkov,
+    "tfsec": parse_tfsec,
 }

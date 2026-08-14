@@ -15,6 +15,7 @@ import {
   TrendingDown,
   TrendingUp,
   Minus,
+  ShieldCheck,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,6 +33,7 @@ import type {
   TopRiskyReposData,
   RecentFindingsData,
   SecurityScore,
+  FpAutoSuppressionsData,
   Group,
   Target,
 } from "@/lib/api";
@@ -49,6 +51,7 @@ export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementT
   top_risky_repos: { label: "Top Risky Repos", icon: GitBranch },
   cve_timeline: { label: "CVE Timeline", icon: Bug, colSpanClass: "lg:col-span-2" },
   recent_findings: { label: "Recent Findings", icon: ListChecks },
+  fp_auto_suppressions: { label: "Auto-Suppressed Findings", icon: ShieldCheck },
 };
 
 // Locale-independent date formatting (YYYY-MM-DD from the ISO timestamp
@@ -118,6 +121,29 @@ function SlaComplianceWidget({ data }: { data: SlaComplianceData }) {
       <div>
         <p className="text-2xl font-bold text-chart-5">{data.compliant}</p>
         <p className="text-xs text-muted-foreground">Within SLA</p>
+      </div>
+    </div>
+  );
+}
+
+function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
+  if (data.count === 0) {
+    return (
+      <EmptyState>
+        No findings auto-suppressed since {formatDate(data.since)}. Rules are learned when a finding is triaged{" "}
+        &quot;False Positive&quot; -- manage them on the{" "}
+        <Link href="/admin" className="text-primary underline">
+          Admin &rsaquo; False Positive Rules
+        </Link>{" "}
+        tab.
+      </EmptyState>
+    );
+  }
+  return (
+    <div className="flex items-center gap-6">
+      <div>
+        <p className="text-2xl font-bold text-foreground">{data.count}</p>
+        <p className="text-xs text-muted-foreground">Auto-suppressed since {formatDate(data.since)}</p>
       </div>
     </div>
   );
@@ -334,6 +360,8 @@ export function WidgetBody({ entry }: { entry: WidgetDataEntry | undefined }) {
       return <RecentFindingsWidget data={entry.data as RecentFindingsData} />;
     case "security_score":
       return <SecurityScoreWidget initialData={entry.data as SecurityScore} />;
+    case "fp_auto_suppressions":
+      return <FpAutoSuppressionsWidget data={entry.data as FpAutoSuppressionsData} />;
     default:
       return <ErrorState message={`unknown widget type: ${entry.widget_id}`} />;
   }

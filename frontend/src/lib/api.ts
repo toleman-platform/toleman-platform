@@ -139,6 +139,38 @@ export type Finding = {
   sla_violated: boolean;
 };
 
+// Issue #75: one entry from GET /api/tools/registry -- every OSS scanner
+// OSP knows about (app.core.tool_registry.TOOL_REGISTRY), merged with a
+// real live health check the same way the original 4-tool /health always
+// worked. `integrated` is false for a registry-only tool (e.g. kics) with
+// no real TOOL_COMMANDS entry -- OSP can show it and check for the binary,
+// but can't actually dispatch a scan for it yet.
+export type ToolRegistryEntry = {
+  tool: string;
+  display_name: string;
+  category: string;
+  languages: string[];
+  description: string;
+  install_cmd: string;
+  docs_url: string;
+  integrated: boolean;
+  installed: boolean;
+  version: string | null;
+  response_ms: number | null;
+};
+
+// Issue #75: per-workspace usage assignment for one tool. `is_default` is
+// true when there's no saved WorkspaceToolConfig row yet and the platform's
+// built-in default is being shown instead of an explicit choice.
+export type ToolAssignment = {
+  tool: string;
+  on_demand_scan: boolean;
+  ci_pipeline: boolean;
+  api_scan: boolean;
+  pr_guardrail: boolean;
+  is_default: boolean;
+};
+
 // A single workspace-scoped SLA (days-to-fix) rule, keyed by severity and
 // optionally a repo Group (issue #70) -- group_id null means "workspace
 // default", applied to targets with no group-specific rule for that
@@ -403,6 +435,27 @@ export type PolicyRule = {
   active: boolean;
 };
 
+// Issue #76: a learned false-positive suppression rule -- created
+// automatically when a Finding is triaged to "False Positive" (see
+// app.core.fp_learning.learn_suppression_rule), consumed at ingestion time
+// to auto-suppress matching new Findings anywhere in the workspace
+// (cross-repo). file_path_pattern is a filename basename (e.g.
+// "settings.py"), or null meaning "any file for this rule_id+tool".
+export type FalsePositiveRule = {
+  id: number;
+  workspace_id: number;
+  rule_id: string;
+  tool: string;
+  file_path_pattern: string | null;
+  source_finding_id: number | null;
+  created_by: string;
+  created_at: string;
+  active: boolean;
+  match_count: number;
+  last_matched_at: string | null;
+};
+export type FpRuleStats = { active_rules: number; total_matches: number };
+
 // The ephemeral (non-persisted-id) shape returned inline in a scan's
 // response body -- distinct from PrGuardrailFinding below, which is the
 // persisted row with its own id and ignore-request lifecycle.
@@ -484,7 +537,8 @@ export type WidgetId =
   | "sla_compliance"
   | "top_risky_repos"
   | "recent_findings"
-  | "security_score";
+  | "security_score"
+  | "fp_auto_suppressions";
 
 export type WidgetCatalogEntry = { widget_id: WidgetId; name: string; description: string };
 
@@ -528,6 +582,8 @@ export type RecentFindingItem = {
   sla_violated: boolean;
 };
 export type RecentFindingsData = { items: RecentFindingItem[] };
+// Issue #76: "X findings auto-suppressed this month" widget data.
+export type FpAutoSuppressionsData = { count: number; since: string };
 
 export type WidgetDataMap = {
   kpi_cards: KpiCardsData;
@@ -537,6 +593,7 @@ export type WidgetDataMap = {
   top_risky_repos: TopRiskyReposData;
   recent_findings: RecentFindingsData;
   security_score: SecurityScore;
+  fp_auto_suppressions: FpAutoSuppressionsData;
 };
 
 export type WidgetDataEntry =
@@ -847,6 +904,21 @@ export const api = {
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(
       "/api/tools/health"
     ),
+  // Issue #75: tool marketplace registry (every supported OSS scanner,
+  // SAST/SCA/Secrets/Container/IaC/License, real live health check merged
+  // in) and per-workspace usage assignment (which of on-demand/CI
+  // pipeline/API scan/PR guardrail a tool is enabled for).
+  toolsRegistry: () => jsonFetch<ToolRegistryEntry[]>("/api/tools/registry"),
+  toolAssignments: (workspaceId: number) =>
+    jsonFetch<ToolAssignment[]>(`/api/tools/assignments?workspace_id=${workspaceId}`),
+  saveToolAssignment: (a: {
+    workspace_id: number;
+    tool: string;
+    on_demand_scan: boolean;
+    ci_pipeline: boolean;
+    api_scan: boolean;
+    pr_guardrail: boolean;
+  }) => jsonFetch<ToolAssignment>("/api/tools/assignments", { method: "PUT", body: JSON.stringify(a) }),
   runPrGuardrailScan: (targetId: number, prNumber: number) =>
     jsonFetch<PrGuardrailScanResult>(
       `/api/pr-guardrail/scan?target_id=${targetId}&pr_number=${prNumber}`,
@@ -878,4 +950,19 @@ export const api = {
   createPolicy: (p: { workspace_id: number; rule_type: PolicyRuleType; value: string; reason?: string }) =>
     jsonFetch<PolicyRule>("/api/policies", { method: "POST", body: JSON.stringify(p) }),
   deletePolicy: (id: number) => jsonFetch<PolicyRule>(`/api/policies/${id}`, { method: "DELETE" }),
+  // Issue #76: false-positive learning engine -- rules are learned
+  // automatically from triage, this is view/expire/revoke only (see
+  // app/api/fp_rules.py's module docstring for why there's no manual POST).
+  fpRules: (workspaceId?: number) =>
+    jsonFetch<FalsePositiveRule[]>(`/api/fp-rules${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  fpRuleStats: (workspaceId?: number) =>
+    jsonFetch<FpRuleStats>(`/api/fp-rules/stats${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  setFpRuleActive: (id: number, active: boolean) =>
+    jsonFetch<FalsePositiveRule>(`/api/fp-rules/${id}`, { method: "PATCH", body: JSON.stringify({ active }) }),
+  widenFpRule: (id: number) =>
+    jsonFetch<FalsePositiveRule>(`/api/fp-rules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ clear_file_path_pattern: true }),
+    }),
+  deleteFpRule: (id: number) => jsonFetch<{ ok: boolean }>(`/api/fp-rules/${id}`, { method: "DELETE" }),
 };

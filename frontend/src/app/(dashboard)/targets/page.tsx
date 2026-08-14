@@ -1,9 +1,10 @@
 import { GitBranch } from "lucide-react";
 import { api } from "@/lib/api";
-import { ConnectGithubCard } from "@/components/connect-github-card";
 import { AddTargetToggle } from "./add-target-toggle";
 import { ConnectedRefresher } from "./connected-refresher";
+import { IntegrationSummary } from "./integration-summary";
 import { GroupFilter } from "@/components/group-filter";
+import { TargetsFilterBar } from "./targets-filter-bar";
 import { TargetsList } from "./targets-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
@@ -32,7 +33,7 @@ export default async function TargetsPage({
   const targets = targetsResult ?? [];
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-6">
       <ConnectedRefresher />
 
       <div>
@@ -40,15 +41,25 @@ export default async function TargetsPage({
         <p className="text-sm text-muted-foreground">Repositories under management</p>
       </div>
 
-      <ConnectGithubCard />
+      {/* Issue #125: integration admin config (connect button, webhook status,
+          org sync controls) collapsed to a one-line summary by default so it
+          doesn't push the actual target inventory below the fold -- expand to
+          reach the full ConnectGithubCard. */}
+      <IntegrationSummary
+        installed={githubStatus.installed}
+        accountLogin={githubStatus.account_login}
+        targetsCount={targets.length}
+        defaultOpen={!githubStatus.installed && targets.length === 0}
+      />
 
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-muted-foreground">
             Targets {targets.length > 0 && `(${targets.length})`}
           </h2>
           {groups.length > 0 && <GroupFilter groups={groups} />}
         </div>
+        <TargetsFilterBar />
         {targetsFailed && (
           <ErrorState description="The target list couldn't be loaded from the API." action={<ReloadButton />} />
         )}
@@ -61,8 +72,8 @@ export default async function TargetsPage({
               group_id
                 ? "Add a target to this group, or clear the group filter."
                 : githubStatus.installed
-                  ? 'Click "Sync Repos Now" above, or add one manually below.'
-                  : "Connect GitHub above, or add one manually below."
+                  ? 'Expand "GitHub App connected" above to sync repos now, or add one manually below.'
+                  : "Expand the connection summary above to connect GitHub, or add one manually below."
             }
           />
         )}

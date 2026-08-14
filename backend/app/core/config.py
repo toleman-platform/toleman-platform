@@ -33,6 +33,18 @@ class Settings(BaseSettings):
     # below. Set via the ENVIRONMENT env var.
     environment: str = "local"
 
+    # Issue #72 (Active API Scanning): nuclei CLI invocation knobs. Defaults
+    # are deliberately conservative -- exclude tags known to send disruptive
+    # traffic (dos/fuzz can crash a target; intrusive templates attempt
+    # actual exploitation, not just detection) so a first-run scan against a
+    # real deployed API defaults to passive/safe detection templates only.
+    # An operator can widen this via env var once they understand the
+    # implications for their own infrastructure.
+    nuclei_binary: str = "nuclei"
+    nuclei_timeout_seconds: int = 300
+    nuclei_rate_limit: int = 10
+    nuclei_exclude_tags: str = "dos,fuzz,intrusive"
+
     class Config:
         env_file = ".env"
 

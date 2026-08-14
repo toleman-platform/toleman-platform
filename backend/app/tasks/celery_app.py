@@ -17,6 +17,7 @@ celery_app = Celery(
         "app.tasks.discovery_tasks",
         "app.tasks.sbom_tasks",
         "app.tasks.pipeline_tasks",
+        "app.tasks.api_scan_tasks",
     ],
 )
 celery_app.conf.task_routes = {
@@ -32,6 +33,10 @@ celery_app.conf.task_routes = {
     # routed to the same queue rather than standing up a new one for a
     # single task.
     "app.tasks.pipeline_tasks.*": {"queue": "scans"},
+    # api_scan_tasks (#72): a real subprocess (nuclei) invocation, same class
+    # of off-request-thread work as the clone+subprocess tasks above, even
+    # though it doesn't clone a repo -- same queue, no new worker needed.
+    "app.tasks.api_scan_tasks.*": {"queue": "scans"},
 }
 
 # task_acks_late + reject_on_worker_lost: if a worker dies mid-scan (OOM, pod

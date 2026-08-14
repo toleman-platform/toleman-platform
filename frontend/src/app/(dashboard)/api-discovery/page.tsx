@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, Target, Endpoint } from "@/lib/api";
+import { api, Target, Endpoint, ScanRun } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,14 @@ export default function ApiDiscoveryPage() {
   const [scanSummary, setScanSummary] = useState<{ new_count: number } | null>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
 
+  // Issue #72: Active API Scanning against the endpoints listed above.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [apiScanRunning, setApiScanRunning] = useState(false);
+  const [apiScanError, setApiScanError] = useState<string | null>(null);
+  const [lastApiScan, setLastApiScan] = useState<ScanRun | null>(null);
+  const cancelApiScanPollRef = useRef<(() => void) | null>(null);
+  const currentTarget = targets.find((t) => t.id === targetId) ?? null;
+
   useEffect(() => {
     api.targets().then((ts) => {
       setTargets(ts);
@@ -39,16 +48,22 @@ export default function ApiDiscoveryPage() {
 
   useEffect(() => {
     // Stop polling if the component unmounts (e.g. navigating away) mid-run.
-    return () => cancelPollRef.current?.();
+    return () => {
+      cancelPollRef.current?.();
+      cancelApiScanPollRef.current?.();
+    };
   }, []);
 
   const loadPersisted = useCallback(async (id: number) => {
     setLoading(true);
     setError(null);
     setScanSummary(null);
+    setSelected(new Set());
+    setApiScanError(null);
     try {
-      const res = await api.getDiscoveredEndpoints(id);
+      const [res, latest] = await Promise.all([api.getDiscoveredEndpoints(id), api.getLatestApiScan(id)]);
       setEndpoints(res.endpoints);
+      setLastApiScan(latest.scan);
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to load discovered endpoints");
     } finally {
@@ -97,6 +112,61 @@ export default function ApiDiscoveryPage() {
     }
   }
 
+  function toggleEndpoint(id: number, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleAll(checked: boolean) {
+    setSelected(checked && endpoints ? new Set(endpoints.map((e) => e.id)) : new Set());
+  }
+
+  async function runApiScan() {
+    if (targetId === null) return;
+    const scanTargetId = targetId;
+    setApiScanRunning(true);
+    setApiScanError(null);
+    cancelApiScanPollRef.current?.();
+    try {
+      // POST /api/api-scan/{target_id} dispatches a Celery task (nuclei
+      // against already-discovered endpoints) and returns immediately
+      // (#72, same async pattern as runScan/runDiscovery) -- poll
+      // GET /api/scans/{scan_id} until status leaves "running".
+      const dispatch = await api.runApiScan(scanTargetId, selected.size > 0 ? Array.from(selected) : undefined);
+      cancelApiScanPollRef.current = pollUntilSettled(
+        async () => {
+          const scan = await api.getScan(dispatch.scan_id);
+          // Normalize the { error } shape (e.g. scan row not found) into a
+          // "failed" status so pollUntilSettled's status-based loop can
+          // still stop -- polling would otherwise spin forever. Same
+          // pattern as scan-buttons.tsx.
+          if ("error" in scan) return { status: "failed" as const, scan: null, message: scan.error };
+          return { status: scan.status, scan, message: null };
+        },
+        (result) => {
+          if (result.status === "completed" || result.status === "failed") {
+            if (result.scan) setLastApiScan(result.scan);
+            else if (result.message) setApiScanError(result.message);
+            setApiScanRunning(false);
+          }
+        },
+        {
+          onError: (e) => {
+            setApiScanError(e instanceof Error ? e.message : "active scan failed");
+            setApiScanRunning(false);
+          },
+        },
+      );
+    } catch (e) {
+      setApiScanError(e instanceof Error ? e.message : "active scan failed to start");
+      setApiScanRunning(false);
+    }
+  }
+
   const showBusy = loading || running;
 
   return (
@@ -130,12 +200,84 @@ export default function ApiDiscoveryPage() {
       {showBusy && <SkeletonList count={3} />}
 
       {!showBusy && endpoints && (
-        <div className="flex flex-col gap-2">
-          <p className="text-sm text-muted-foreground">{endpoints.length} endpoints found</p>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">{endpoints.length} endpoints found</p>
+            {endpoints.length > 0 && (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  aria-label="Select all endpoints"
+                  className="h-4 w-4 accent-primary"
+                  checked={selected.size > 0 && selected.size === endpoints.length}
+                  onChange={(e) => toggleAll(e.target.checked)}
+                />
+                <span>Select all</span>
+              </div>
+            )}
+          </div>
+
+          {endpoints.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-secondary/50 p-3">
+              <span className="text-xs font-medium text-foreground">
+                {selected.size > 0 ? `${selected.size} endpoint${selected.size === 1 ? "" : "s"} selected` : "Active API Scanning"}
+              </span>
+              <Button
+                size="sm"
+                className="h-7 text-xs"
+                onClick={runApiScan}
+                disabled={apiScanRunning || !currentTarget?.api_base_url}
+                aria-label={selected.size > 0 ? `Scan ${selected.size} selected endpoints for vulnerabilities` : "Scan all discovered endpoints for vulnerabilities"}
+              >
+                {apiScanRunning
+                  ? "Scanning..."
+                  : selected.size > 0
+                    ? `Scan ${selected.size} selected for vulnerabilities`
+                    : "Scan all for vulnerabilities"}
+              </Button>
+              {!currentTarget?.api_base_url && (
+                <span className="text-xs text-muted-foreground">
+                  Set this target&apos;s API base URL on its{" "}
+                  <Link href={`/targets/${targetId}`} className="underline">
+                    detail page
+                  </Link>{" "}
+                  first.
+                </span>
+              )}
+            </div>
+          )}
+
+          {apiScanError && <p className="text-xs text-destructive">{apiScanError}</p>}
+
+          {lastApiScan && !apiScanRunning && (
+            <p className="text-xs text-foreground">
+              {lastApiScan.status === "completed"
+                ? `Last active scan: ${lastApiScan.findings_count} finding${lastApiScan.findings_count === 1 ? "" : "s"} (tool=api-scan)`
+                : lastApiScan.status === "failed"
+                  ? "Last active scan failed."
+                  : `Last active scan: ${lastApiScan.status}`}
+              {lastApiScan.status === "completed" && lastApiScan.findings_count > 0 && targetId !== null && (
+                <>
+                  {" — "}
+                  <Link href={`/targets/${targetId}`} className="underline">
+                    view findings
+                  </Link>
+                </>
+              )}
+            </p>
+          )}
+
           {endpoints.map((e) => (
             <Card key={e.id} className="border-border bg-card">
               <CardContent className="flex items-center justify-between px-4 py-2.5">
                 <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${e.method} ${e.route}`}
+                    className="h-4 w-4 accent-primary"
+                    checked={selected.has(e.id)}
+                    onChange={(ev) => toggleEndpoint(e.id, ev.target.checked)}
+                  />
                   <Badge variant="outline">{e.method}</Badge>
                   <span className="font-mono text-sm text-foreground">{e.route}</span>
                   {scanSummary && e.is_new && (

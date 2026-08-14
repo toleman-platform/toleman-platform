@@ -157,6 +157,44 @@ def parse_gosec(raw: dict) -> list[dict]:
     return out
 
 
+def parse_nuclei(raw: list[dict]) -> list[dict]:
+    """Issue #72: nuclei `-jsonl` output -> standard Finding schema.
+
+    Unlike every other parser here, this is ACTIVE-scan output (a real HTTP
+    probe against a live endpoint), not a static source-code finding --
+    `file_path` deliberately carries the discovered route/matched URL
+    instead of a repo-relative path, since there's no source file for a
+    runtime detection to point at. `cve_id` is pulled from nuclei's own
+    classification metadata when the matched template maps to one (many
+    nuclei templates -- default-login checks, misconfig detections -- have
+    no CVE at all, which is fine; cve_id stays None rather than fabricated).
+    """
+    out = []
+    for r in raw:
+        info = r.get("info", {}) or {}
+        classification = info.get("classification") or {}
+        cve_id = classification.get("cve-id")
+        if isinstance(cve_id, list):
+            cve_id = cve_id[0] if cve_id else None
+        template_id = r.get("template-id", "unknown")
+        name = info.get("name", template_id)
+        matched_at = r.get("matched-at") or r.get("host", "")
+        extracted = r.get("extracted-results") or []
+        snippet = r.get("matcher-name") or (extracted[0] if extracted else "")
+        out.append({
+            "rule_id": template_id,
+            "title": name[:200],
+            "description": info.get("description", "") or name,
+            "file_path": matched_at,
+            "line_start": None,
+            "line_end": None,
+            "severity": _map_severity(info.get("severity", "")),
+            "snippet": snippet,
+            "cve_id": cve_id,
+        })
+    return out
+
+
 def parse_sarif(raw: dict) -> list[dict]:
     """Generic SARIF 2.1.0 parser — covers most CI-pushed SAST tool output."""
     out = []

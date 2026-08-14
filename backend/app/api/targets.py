@@ -1,4 +1,5 @@
 import re
+import secrets
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -204,6 +205,40 @@ def get_workspace_key(target_id: int, session: Session = Depends(get_session), u
     if ws_ids is not None and target.workspace_id not in ws_ids:
         raise HTTPException(status_code=404, detail="target not found")
     workspace = session.get(Workspace, target.workspace_id)
+    return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
+
+
+@router.post("/{target_id}/workspace-key/regenerate")
+def regenerate_workspace_key(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Issue #129: the workspace API key (X-API-Key, used for CI push
+    ingestion via /api/ingest/{target_id} -- see app.api.deps.require_workspace)
+    had no rotation path at all. Rotating a CI-push-capable credential is at
+    least as sensitive as the other workspace-settings writes gated at
+    DEVELOPER (PATCH /api/targets/{id}, PATCH /api/workspaces/{id}) via
+    require_workspace_role, so this matches that bar rather than inventing a
+    new one -- require_workspace_role's dependency already resolves the
+    workspace from this route's target_id path param.
+
+    The old key is overwritten in place (not soft-revoked/kept around), so
+    it stops authenticating against require_workspace (app/api/deps.py)
+    immediately on commit -- no grace period, since none of the existing
+    secret-rotation patterns in this codebase (e.g. session token_version
+    bump on password change) leave a stale credential valid.
+    """
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    workspace = session.get(Workspace, target.workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    workspace.api_key = secrets.token_urlsafe(24)
+    session.add(workspace)
+    session.commit()
+    session.refresh(workspace)
     return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
 
 

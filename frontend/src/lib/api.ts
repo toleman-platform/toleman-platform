@@ -790,6 +790,14 @@ export const api = {
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   workspaceKey: (targetId: number) =>
     jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(`/api/targets/${targetId}/workspace-key`),
+  // Issue #129: rotate the workspace's CI-push-ingestion API key. The old
+  // key stops authenticating against /api/ingest immediately (no grace
+  // period) once this resolves.
+  regenerateWorkspaceKey: (targetId: number) =>
+    jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(
+      `/api/targets/${targetId}/workspace-key/regenerate`,
+      { method: "POST" }
+    ),
   // Issue #66: generate/inspect the per-target CI/CD scan workflow, and open
   // a real PR against the target's GitHub repo adding it.
   pipelineWorkflow: (targetId: number) =>

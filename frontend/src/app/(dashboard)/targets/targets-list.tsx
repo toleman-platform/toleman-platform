@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Group, PipelineIntegrationBatch, PipelineWorkflowTemplate, Target, WorkspaceSummary, api } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GroupBadge } from "@/components/group-badge";
+import { CriticalityChip } from "@/components/criticality-chip";
+import { EmptyState } from "@/components/ui/empty-state";
 import { pollUntilSettled } from "@/lib/poll";
 import { Rocket, X } from "lucide-react";
 
@@ -41,10 +43,29 @@ function itemBadgeClass(status: string): string {
 // inventing a new one.
 export function TargetsList({ targets }: { targets: Target[] }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [batch, setBatch] = useState<PipelineIntegrationBatch | null>(null);
   const [batchError, setBatchError] = useState<string | null>(null);
+
+  // Issue #125: search/criticality applied client-side over the already
+  // -fetched target list, same as targets-filter-bar.tsx's URL-param
+  // convention -- group_id stays a separate server-refetching filter
+  // (components/group-filter.tsx).
+  const search = (searchParams.get("search") ?? "").trim().toLowerCase();
+  const criticality = searchParams.get("criticality") ?? "";
+
+  const filtered = useMemo(() => {
+    return targets.filter((t) => {
+      if (search) {
+        const haystack = `${t.name} ${t.repo_url}`.toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      if (criticality && t.label !== criticality) return false;
+      return true;
+    });
+  }, [targets, search, criticality]);
 
   useEffect(() => {
     if (!batch || batch.status !== "running") return;
@@ -67,7 +88,7 @@ export function TargetsList({ targets }: { targets: Target[] }) {
   }
 
   function toggleAll(checked: boolean) {
-    setSelected(checked ? new Set(targets.map((t) => t.id)) : new Set());
+    setSelected(checked ? new Set(filtered.map((t) => t.id)) : new Set());
   }
 
   async function addPipelineBulk() {
@@ -188,12 +209,12 @@ export function TargetsList({ targets }: { targets: Target[] }) {
     }
   }
 
-  const allSelected = targets.length > 0 && targets.every((t) => selected.has(t.id));
+  const allSelected = filtered.length > 0 && filtered.every((t) => selected.has(t.id));
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        {targets.length > 0 ? (
+        {filtered.length > 0 ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <input
               type="checkbox"
@@ -202,7 +223,9 @@ export function TargetsList({ targets }: { targets: Target[] }) {
               checked={allSelected}
               onChange={(e) => toggleAll(e.target.checked)}
             />
-            <span>Select all</span>
+            <span>
+              Select all {(search || criticality) && `(${filtered.length} of ${targets.length} shown)`}
+            </span>
           </div>
         ) : (
           <span />
@@ -362,7 +385,15 @@ export function TargetsList({ targets }: { targets: Target[] }) {
         </div>
       )}
 
-      {targets.map((t) => (
+      {filtered.length === 0 && targets.length > 0 && (
+        <EmptyState
+          icon={Rocket}
+          title="No targets match these filters"
+          description="Try clearing search or the criticality filter."
+        />
+      )}
+
+      {filtered.map((t) => (
         <Card key={t.id} className="border-border bg-card transition-colors hover:border-primary/40">
           <CardContent className="flex items-center gap-3 px-4 py-3">
             <input
@@ -375,7 +406,10 @@ export function TargetsList({ targets }: { targets: Target[] }) {
             />
             <Link href={`/targets/${t.id}`} className="flex flex-1 items-center justify-between">
               <div>
-                <div className="font-medium text-foreground">{t.name}</div>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-foreground">{t.name}</span>
+                  <CriticalityChip label={t.label} />
+                </div>
                 <div className="text-xs text-muted-foreground">{t.repo_url}</div>
                 {t.groups.length > 0 && (
                   <div className="mt-1.5 flex flex-wrap gap-1">
@@ -391,9 +425,7 @@ export function TargetsList({ targets }: { targets: Target[] }) {
                     Pipeline integrated
                   </Badge>
                 )}
-                <span className="text-xs text-muted-foreground">
-                  {t.label} · weight {t.criticality_weight}
-                </span>
+                <span className="text-xs text-muted-foreground">weight {t.criticality_weight}</span>
               </div>
             </Link>
           </CardContent>

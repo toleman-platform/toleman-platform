@@ -1,5 +1,6 @@
 import { ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
+import { CriticalityChip } from "@/components/criticality-chip";
 import { ScanButtons } from "./scan-buttons";
 import { FindingRow } from "@/components/finding-row";
 import { TargetGroups } from "./target-groups";
@@ -27,8 +28,11 @@ export default async function TargetDetailPage({
         <div>
           <h1 className="text-2xl font-bold text-foreground">{target.name}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{target.repo_url}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {target.label} · criticality weight {target.criticality_weight} · branch {target.default_branch}
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <CriticalityChip label={target.label} />
+            <span>
+              · criticality weight {target.criticality_weight} · branch {target.default_branch}
+            </span>
           </p>
         </div>
         <ScanButtons targetId={targetId} />

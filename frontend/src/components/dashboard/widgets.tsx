@@ -92,7 +92,10 @@ function EmptyState({ children, icon: Icon = Inbox }: { children: React.ReactNod
 
 function KpiCardsWidget({ data }: { data: KpiCardsData }) {
   const items = [
-    { icon: ShieldAlert, iconClass: "bg-destructive/10 text-destructive", value: data.open, label: "Open Vulnerabilities" },
+    // Label unified to "Findings" (#116) -- was "Open Vulnerabilities" while
+    // the sidebar nav said "Vulnerabilities" and the page header said
+    // "Findings"; all three now use the same term.
+    { icon: ShieldAlert, iconClass: "bg-destructive/10 text-destructive", value: data.open, label: "Open Findings" },
     { icon: AlertTriangle, iconClass: "bg-chart-3/10 text-chart-3", value: data.critical, label: "Critical Issues" },
     { icon: GitBranch, iconClass: "bg-primary/10 text-accent-strong", value: data.targets, label: "Targets Onboarded" },
     { icon: CheckCircle2, iconClass: "bg-chart-5/10 text-chart-5", value: data.mitigated, label: "Mitigated" },

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, EnforcementMode, Group, WorkspaceSummary } from "@/lib/api";
+import { api, EnforcementMode, Group, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -135,7 +135,7 @@ export function Groups() {
             >
               {workspaces.map((w) => (
                 <option key={w.id} value={w.id}>
-                  {w.name}
+                  {workspaceDisplayName(w, workspaces)}
                 </option>
               ))}
             </select>

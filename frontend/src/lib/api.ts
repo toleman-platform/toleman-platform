@@ -237,6 +237,22 @@ export type AiStatus = {
   provider: AiProvider;
 };
 
+// Issue #122: one entry from GET /api/ai/recent -- a finding this user has
+// previously run AI analysis on, most-recently-analyzed first. Backed by
+// AiAnalysisRun (one row per user+finding, upserted on repeat analysis),
+// not a full analysis-history log -- there's no stored analysis text here,
+// just enough to re-open the finding and re-run analysis.
+export type AiRecentAnalysis = {
+  finding_id: number;
+  title: string;
+  severity: "Critical" | "High" | "Medium" | "Low" | "Informational";
+  cve_id: string | null;
+  target_id: number;
+  target_name: string;
+  state: string;
+  last_analyzed_at: string;
+};
+
 export type PlatformConfigView = {
   anthropic_api_key_set: boolean;
   ai_provider: AiProvider;
@@ -335,6 +351,21 @@ export type WorkspaceSummary = {
   // falls back to the hardcoded "block" default).
   enforcement_mode: EnforcementMode | null;
 };
+
+// Issue #118: real seeded data has multiple workspaces named "default"
+// (e.g. ids 1 and 7, each in a different organization) that are otherwise
+// indistinguishable in every workspace picker across the admin tabs. Append
+// a disambiguator only when a name collides within the given list, so a
+// single-workspace org's clean "acme-corp" label stays untouched. Used by
+// every admin-tab workspace `<select>` (workspace-roles, groups, sla-rules,
+// workflow-templates, fp-rules, policies).
+export function workspaceDisplayName(
+  workspace: Pick<WorkspaceSummary, "id" | "name">,
+  allWorkspaces: Pick<WorkspaceSummary, "id" | "name">[]
+): string {
+  const isDuplicate = allWorkspaces.filter((w) => w.name === workspace.name).length > 1;
+  return isDuplicate ? `${workspace.name} (#${workspace.id})` : workspace.name;
+}
 
 export type WorkspaceRole = "viewer" | "developer" | "security_engineer";
 
@@ -947,6 +978,7 @@ export const api = {
   aiStatus: () => jsonFetch<AiStatus>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),
+  aiRecentAnalyses: () => jsonFetch<AiRecentAnalysis[]>("/api/ai/recent"),
   auditLog: (query: AuditLogQuery = {}) => {
     const params = new URLSearchParams();
     if (query.event_type) params.set("event_type", query.event_type);

@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Copy, Eye, EyeOff, RotateCw } from "lucide-react";
+import { Copy, Eye, EyeOff, RotateCw, UserCircle, Bell, Cog, type LucideIcon } from "lucide-react";
 import { api, AuthUser, NotificationChannel, NotificationEventType, NotificationPreference, Target } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 
 const MASKED_KEY = "•".repeat(32);
 
@@ -352,7 +353,7 @@ function NotificationPreferencesSection() {
   );
 }
 
-export default function SettingsPage() {
+function WorkspaceSection() {
   const [targets, setTargets] = useState<Target[]>([]);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [form, setForm] = useState<Partial<Target>>({});
@@ -391,19 +392,6 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-          <p className="text-sm text-muted-foreground">Target configuration and workspace credentials</p>
-        </div>
-        <Link href="/onboarding" className="text-xs text-accent-strong underline">
-          Replay guided onboarding
-        </Link>
-      </div>
-
-      <ProfileSection />
-      <NotificationPreferencesSection />
-
       <div>
         <h2 className="mb-3 text-sm font-medium text-foreground">Target Configuration</h2>
         <TargetPicker targets={targets} value={targetId} onChange={setTargetId} />
@@ -458,6 +446,70 @@ export default function SettingsPage() {
       )}
 
       {targetId !== null && <WorkspaceKeyCard key={targetId} targetId={targetId} />}
+    </div>
+  );
+}
+
+// Issue #130: Settings was one long unsectioned scroll (Profile -> Password
+// -> Notifications -> Target Configuration -> API key), inconsistent with
+// Admin's grouped section-nav (#118) for a conceptually similar
+// multi-section page. Reuses that exact pattern -- a strip of pill buttons,
+// `min-w-0 overflow-x-auto` so an overflowing strip scrolls within its own
+// bounded container instead of pushing width overflow up onto `<main>`
+// (see #118's admin/page.tsx for the full mechanism writeup) -- so the two
+// pages stay visually and behaviorally consistent rather than inventing a
+// second nav pattern.
+const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
+  { id: "account", label: "Account", icon: UserCircle },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "workspace", label: "Workspace", icon: Cog },
+];
+
+type SectionId = (typeof SECTIONS)[number]["id"];
+
+export default function SettingsPage() {
+  const [section, setSection] = useState<SectionId>("account");
+  const sectionsById = useMemo(() => new Map(SECTIONS.map((s) => [s.id, s])), []);
+  const activeSection = sectionsById.get(section) ?? SECTIONS[0];
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+          <p className="text-sm text-muted-foreground">Profile, notifications, target configuration, and workspace credentials</p>
+        </div>
+        <Link href="/onboarding" className="text-xs text-accent-strong underline">
+          Replay guided onboarding
+        </Link>
+      </div>
+
+      {/* Section-nav strip, same pattern as Admin's group-level nav (#118):
+          a handful of pills, bounded within its own overflow-x-auto
+          container so it never overflows the page width. */}
+      <div className="min-w-0 overflow-x-auto border-b border-border">
+        <div className="flex w-max min-w-full gap-1">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setSection(s.id)}
+              className={cn(
+                "flex shrink-0 items-center gap-2 border-b-2 px-4 py-2 text-sm transition-colors",
+                activeSection.id === s.id
+                  ? "border-accent-strong text-accent-strong"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <s.icon className="h-4 w-4" />
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {section === "account" && <ProfileSection />}
+      {section === "notifications" && <NotificationPreferencesSection />}
+      {section === "workspace" && <WorkspaceSection />}
     </div>
   );
 }

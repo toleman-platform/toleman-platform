@@ -65,8 +65,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
       <Sidebar user={user} initialTheme={initialTheme} />
       <main className="flex-1 overflow-y-auto">
         <div
-          className="mx-auto max-w-6xl px-6"
-          style={{ paddingTop: "var(--density-page-py)", paddingBottom: "var(--density-page-py)" }}
+          className="mx-auto max-w-6xl px-6 pt-14 md:pt-[var(--density-page-py)]"
+          style={{ paddingBottom: "var(--density-page-py)" }}
         >
           {children}
         </div>

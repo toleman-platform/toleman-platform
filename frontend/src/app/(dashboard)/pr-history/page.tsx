@@ -1,15 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, Target, PullRequest } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { api, ApiError, Target, PullRequest } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
 import { PrScanAction } from "@/components/pr-scan-action";
 import { PrGuardrailLog } from "@/components/pr-guardrail-log";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
+import { DocGenStep, DocumentGeneratorPanel } from "@/components/document-generator-panel";
 import { GitPullRequest } from "lucide-react";
+
+function isSessionError(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401;
+}
 
 export default function PrHistoryPage() {
   const [targets, setTargets] = useState<Target[]>([]);
@@ -17,6 +25,7 @@ export default function PrHistoryPage() {
   const [prs, setPrs] = useState<PullRequest[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   const isOrgWide = targetId === ALL_TARGETS;
 
@@ -27,7 +36,7 @@ export default function PrHistoryPage() {
     });
   }, []);
 
-  useEffect(() => {
+  const loadPrs = useCallback(() => {
     // GitHub's PR API is inherently single-repo, so "All repositories" has
     // no PR list to fetch here -- it only drives the aggregated PR
     // Guardrail scan log below (issue #64).
@@ -37,12 +46,20 @@ export default function PrHistoryPage() {
     }
     setLoading(true);
     setError(null);
+    setSessionExpired(false);
     api
       .prs(targetId)
       .then(setPrs)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load PRs"))
+      .catch((e) => {
+        if (isSessionError(e)) setSessionExpired(true);
+        else setError(e instanceof Error ? e.message : "failed to load PRs");
+      })
       .finally(() => setLoading(false));
   }, [targetId, isOrgWide]);
+
+  useEffect(() => {
+    loadPrs();
+  }, [loadPrs]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -54,7 +71,14 @@ export default function PrHistoryPage() {
         </p>
       </div>
 
-      <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+      <DocumentGeneratorPanel
+        layout="stacked"
+        steps={[
+          <DocGenStep key="target" n={1} label="Repo">
+            <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+          </DocGenStep>,
+        ]}
+      />
 
       {isOrgWide ? (
         <p className="text-sm text-muted-foreground">
@@ -64,11 +88,23 @@ export default function PrHistoryPage() {
         </p>
       ) : (
         <>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {sessionExpired && (
+            <ErrorState
+              title="Your session has expired"
+              description="You were signed out after a period of inactivity, or your access was revoked by an admin. Log back in to keep viewing PR guardrail history."
+              action={
+                <Button size="sm" asChild>
+                  <Link href="/login">Log in again</Link>
+                </Button>
+              }
+            />
+          )}
 
-          {loading && <SkeletonList count={4} />}
+          {!sessionExpired && error && <ErrorState description={error} onRetry={loadPrs} />}
 
-          {!loading && (
+          {!sessionExpired && loading && <SkeletonList count={4} />}
+
+          {!sessionExpired && !loading && (
             <div className="flex flex-col gap-2">
               {prs.map((pr) => (
                 <Card key={pr.number} className="border-border bg-card">

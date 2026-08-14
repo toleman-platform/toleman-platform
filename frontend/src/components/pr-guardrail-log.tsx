@@ -1,16 +1,22 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
 import { ExternalLink, ShieldQuestion } from "lucide-react";
-import { api, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
+import { api, ApiError, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { IGNORE_STATUS_COLOR, SEVERITY_COLOR } from "@/lib/severity";
 import { ALL_TARGETS } from "@/components/target-picker";
+
+function isSessionError(e: unknown): boolean {
+  return e instanceof ApiError && e.status === 401;
+}
 
 const LOG_STATUS_COLOR: Record<string, string> = {
   running: "border-chart-1/20 bg-chart-1/10 text-chart-1",
@@ -212,12 +218,18 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
   const [stats, setStats] = useState<PrGuardrailOrgStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
     if (targetId === null) return;
     setLoading(true);
     setError(null);
+    setSessionExpired(false);
+    const handleError = (e: unknown) => {
+      if (isSessionError(e)) setSessionExpired(true);
+      else setError(e instanceof Error ? e.message : "failed to load PR guardrail log");
+    };
     if (isOrgWide) {
       api
         .getPrGuardrailOrgLog()
@@ -225,7 +237,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
           setLog(res.scans);
           setStats(res.stats);
         })
-        .catch((e) => setError(e instanceof Error ? e.message : "failed to load PR guardrail log"))
+        .catch(handleError)
         .finally(() => setLoading(false));
     } else {
       api
@@ -234,7 +246,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
           setLog(entries);
           setStats(null);
         })
-        .catch((e) => setError(e instanceof Error ? e.message : "failed to load PR guardrail log"))
+        .catch(handleError)
         .finally(() => setLoading(false));
     }
   }, [targetId, isOrgWide]);
@@ -256,11 +268,24 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
         </p>
       </div>
 
-      {stats && <OrgStatsBar stats={stats} />}
+      {sessionExpired && (
+        <ErrorState
+          title="Your session has expired"
+          description="You were signed out after a period of inactivity, or your access was revoked by an admin. Log back in to keep viewing PR guardrail history."
+          action={
+            <Button size="sm" asChild>
+              <Link href="/login">Log in again</Link>
+            </Button>
+          }
+        />
+      )}
 
-      {loading && <SkeletonList count={3} />}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {!sessionExpired && stats && <OrgStatsBar stats={stats} />}
 
+      {!sessionExpired && loading && <SkeletonList count={3} />}
+      {!sessionExpired && error && <ErrorState description={error} onRetry={refresh} />}
+
+      {!sessionExpired && (
       <div className="flex flex-col gap-2">
         {log.map((entry) => {
           const isExpanded = expanded === entry.id;
@@ -340,6 +365,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
           />
         )}
       </div>
+      )}
     </div>
   );
 }

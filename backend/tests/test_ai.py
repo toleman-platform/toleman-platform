@@ -17,7 +17,19 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
-from app.models.models import Finding, Organization, PlatformConfig, Severity, Target, User, UserRole, Workspace
+from app.models.models import (
+    AiAnalysisRun,
+    Finding,
+    Organization,
+    PlatformConfig,
+    Severity,
+    Target,
+    User,
+    UserRole,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 
 
 @pytest.fixture()
@@ -358,3 +370,225 @@ def test_update_config_partial_update_leaves_other_fields_unchanged(client, engi
 def test_update_config_rejects_unknown_provider(client, engine):
     resp = client.post("/api/config", json={"ai_provider": "not-a-real-provider"})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Issue #122: AI Analysis real entry point -- recent-analyses tracking +
+# GET /api/ai/recent
+# ---------------------------------------------------------------------------
+
+
+def _make_finding_with_ids(engine, target_name="Target A") -> tuple[int, int, int]:
+    """Same as _make_finding but also returns (target_id, workspace_id) for
+    workspace-scoping tests."""
+    with Session(engine) as session:
+        org = Organization(name="Org")
+        session.add(org)
+        session.commit()
+        session.refresh(org)
+
+        workspace = Workspace(organization_id=org.id, name="WS", api_key=f"key-{target_name}")
+        session.add(workspace)
+        session.commit()
+        session.refresh(workspace)
+
+        target = Target(workspace_id=workspace.id, name=target_name, repo_url="https://github.com/a/b")
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+
+        finding = Finding(
+            target_id=target.id,
+            dedup_hash=f"hash-{target_name}",
+            tool="semgrep",
+            rule_id="sql-injection",
+            title="SQL Injection",
+            description="Unsanitized input reaches a raw query.",
+            file_path="app.py",
+            line_start=42,
+            severity=Severity.HIGH,
+        )
+        session.add(finding)
+        session.commit()
+        session.refresh(finding)
+        return finding.id, target.id, workspace.id
+
+
+def test_successful_analyze_records_an_ai_analysis_run(client, engine, monkeypatch):
+    finding_id = _make_finding(engine)
+    _set_config(engine, ai_provider="anthropic", anthropic_api_key="sk-ant-test")
+
+    class FakeBlock:
+        text = "Sanitize the input."
+
+    class FakeResponse:
+        content = [FakeBlock()]
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeAnthropic:
+        def __init__(self, api_key):
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+
+    resp = client.post(f"/api/ai/analyze/{finding_id}")
+    assert resp.status_code == 200
+
+    with Session(engine) as session:
+        runs = session.exec(select(AiAnalysisRun).where(AiAnalysisRun.finding_id == finding_id)).all()
+        assert len(runs) == 1
+        assert runs[0].analysis_count == 1
+
+
+def test_analyzing_same_finding_twice_upserts_rather_than_duplicates(client, engine, monkeypatch):
+    finding_id = _make_finding(engine)
+    _set_config(engine, ai_provider="anthropic", anthropic_api_key="sk-ant-test")
+
+    class FakeBlock:
+        text = "Sanitize the input."
+
+    class FakeResponse:
+        content = [FakeBlock()]
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeAnthropic:
+        def __init__(self, api_key):
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+
+    client.post(f"/api/ai/analyze/{finding_id}")
+    resp2 = client.post(f"/api/ai/analyze/{finding_id}")
+    assert resp2.status_code == 200
+
+    with Session(engine) as session:
+        runs = session.exec(select(AiAnalysisRun).where(AiAnalysisRun.finding_id == finding_id)).all()
+        assert len(runs) == 1  # upserted, not a second row
+        assert runs[0].analysis_count == 2
+
+
+def test_recent_analyses_empty_when_nothing_analyzed_yet(client, engine):
+    resp = client.get("/api/ai/recent")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_recent_analyses_lists_findings_this_user_has_analyzed(client, engine, monkeypatch):
+    finding_id, target_id, _ws_id = _make_finding_with_ids(engine)
+    _set_config(engine, ai_provider="anthropic", anthropic_api_key="sk-ant-test")
+
+    class FakeBlock:
+        text = "Sanitize the input."
+
+    class FakeResponse:
+        content = [FakeBlock()]
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeAnthropic:
+        def __init__(self, api_key):
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+    client.post(f"/api/ai/analyze/{finding_id}")
+
+    resp = client.get("/api/ai/recent")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["finding_id"] == finding_id
+    assert body[0]["title"] == "SQL Injection"
+    assert body[0]["severity"] == "High"
+    assert body[0]["target_id"] == target_id
+    assert body[0]["target_name"] == "Target A"
+
+
+def test_recent_analyses_is_scoped_to_the_calling_user_not_global(client, engine, monkeypatch):
+    finding_id = _make_finding(engine)
+    _set_config(engine, ai_provider="anthropic", anthropic_api_key="sk-ant-test")
+
+    class FakeBlock:
+        text = "Sanitize the input."
+
+    class FakeResponse:
+        content = [FakeBlock()]
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeAnthropic:
+        def __init__(self, api_key):
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+    client.post(f"/api/ai/analyze/{finding_id}")
+
+    # A second, different logged-in user should not see the first user's
+    # recent-analyses entry.
+    _login(client, engine, email="other@example.com")
+    resp = client.get("/api/ai/recent")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_analyze_returns_404_for_finding_outside_non_admin_callers_workspace(client, engine):
+    finding_id, _target_id, _ws_id = _make_finding_with_ids(engine, target_name="Other Target")
+    _set_config(engine, ai_provider="anthropic", anthropic_api_key="sk-ant-test")
+
+    # Log in as a plain (non-admin) user with no WorkspaceMembership at all
+    # -- accessible_workspace_ids() returns [] for them, so the finding
+    # (which belongs to a workspace they're not a member of) must 404, not
+    # leak via a successful analysis.
+    with Session(engine) as session:
+        user = User(email="dev@example.com", name="Dev", password_hash=hash_password("whatever123"), role=UserRole.USER)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        token = create_session_token(user.id)
+    client.cookies.set("rikugan_session", token)
+
+    resp = client.post(f"/api/ai/analyze/{finding_id}")
+    assert resp.status_code == 404
+
+
+def test_analyze_succeeds_for_finding_in_non_admin_callers_own_workspace(client, engine, monkeypatch):
+    finding_id, _target_id, ws_id = _make_finding_with_ids(engine, target_name="My Target")
+    _set_config(engine, ai_provider="anthropic", anthropic_api_key="sk-ant-test")
+
+    class FakeBlock:
+        text = "Sanitize the input."
+
+    class FakeResponse:
+        content = [FakeBlock()]
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeAnthropic:
+        def __init__(self, api_key):
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr("anthropic.Anthropic", FakeAnthropic)
+
+    with Session(engine) as session:
+        user = User(email="dev2@example.com", name="Dev2", password_hash=hash_password("whatever123"), role=UserRole.USER)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        session.add(WorkspaceMembership(user_id=user.id, workspace_id=ws_id, role=WorkspaceRole.DEVELOPER))
+        session.commit()
+        token = create_session_token(user.id)
+    client.cookies.set("rikugan_session", token)
+
+    resp = client.post(f"/api/ai/analyze/{finding_id}")
+    assert resp.status_code == 200

@@ -1,12 +1,15 @@
+from datetime import datetime
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from app.api.auth import accessible_workspace_ids, current_user
 from app.api.config import get_platform_config
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.crypto import decrypt_secret
-from app.models.models import Finding, PlatformConfig
+from app.models.models import AiAnalysisRun, Finding, PlatformConfig, Target, User
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -119,8 +122,30 @@ def status(session: Session = Depends(get_session)):
     return {"configured": configured, "provider": provider}
 
 
+def _record_analysis_run(session: Session, user: User, finding_id: int) -> None:
+    """Issue #122: upsert the (user, finding) "recently analyzed" marker --
+    see AiAnalysisRun's docstring for why this is an upsert, not an insert.
+    Best-effort: a failure here must never fail the analysis response
+    itself (same "never break the primary action" philosophy as the
+    Jira/Slack/notification hooks elsewhere in this codebase)."""
+    try:
+        existing = session.exec(
+            select(AiAnalysisRun).where(AiAnalysisRun.user_id == user.id, AiAnalysisRun.finding_id == finding_id)
+        ).first()
+        now = datetime.utcnow()
+        if existing:
+            existing.last_analyzed_at = now
+            existing.analysis_count += 1
+            session.add(existing)
+        else:
+            session.add(AiAnalysisRun(user_id=user.id, finding_id=finding_id, created_at=now, last_analyzed_at=now))
+        session.commit()
+    except Exception:
+        session.rollback()
+
+
 @router.post("/analyze/{finding_id}")
-def analyze_finding(finding_id: int, session: Session = Depends(get_session)):
+def analyze_finding(finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Real remediation suggestion via the configured AI provider (Admin >
     Global Integrations): Anthropic's Claude API, or any OpenAI-compatible
     chat completions endpoint (Kimi/Moonshot, Ollama, vLLM, LM Studio, ...).
@@ -130,6 +155,15 @@ def analyze_finding(finding_id: int, session: Session = Depends(get_session)):
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
 
+    # Issue #57-style workspace scoping: a non-admin caller shouldn't be
+    # able to run analysis on (or discover the existence of) a finding
+    # outside their accessible workspaces.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        target = session.get(Target, finding.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="finding not found")
+
     provider = _resolve_provider(session)
     if provider == "openai_compatible":
         config = get_platform_config(session)
@@ -137,4 +171,54 @@ def analyze_finding(finding_id: int, session: Session = Depends(get_session)):
     else:
         text = _analyze_with_anthropic(session, finding)
 
+    _record_analysis_run(session, user, finding_id)
+
     return {"finding_id": finding_id, "analysis": text}
+
+
+@router.get("/recent")
+def recent_analyses(
+    limit: int = 8, session: Session = Depends(get_session), user: User = Depends(current_user)
+) -> list[dict]:
+    """Issue #122: "recent analyses" landing state for the AI Analysis page
+    -- findings this user has previously run AI analysis on, most-recent
+    first. Deliberately per-user (not workspace-wide) since AiAnalysisRun
+    tracks who ran the analysis; still re-checked against the caller's
+    current accessible workspaces (not just filtered at write time) so a
+    since-revoked workspace membership can't leak a finding's
+    title/severity through this list."""
+    ws_ids = accessible_workspace_ids(session, user)
+    limit = max(min(limit, 50), 1)
+
+    rows = session.exec(
+        select(AiAnalysisRun)
+        .where(AiAnalysisRun.user_id == user.id)
+        .order_by(AiAnalysisRun.last_analyzed_at.desc())
+        .limit(limit * 2)  # headroom for post-filtering findings that no longer resolve/are in scope
+    ).all()
+
+    results: list[dict] = []
+    for row in rows:
+        if len(results) >= limit:
+            break
+        finding = session.get(Finding, row.finding_id)
+        if not finding:
+            continue
+        target = session.get(Target, finding.target_id)
+        if not target:
+            continue
+        if ws_ids is not None and target.workspace_id not in ws_ids:
+            continue
+        results.append(
+            {
+                "finding_id": finding.id,
+                "title": finding.title,
+                "severity": finding.severity,
+                "cve_id": finding.cve_id,
+                "target_id": target.id,
+                "target_name": target.name,
+                "state": finding.state,
+                "last_analyzed_at": row.last_analyzed_at,
+            }
+        )
+    return results

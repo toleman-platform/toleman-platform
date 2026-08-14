@@ -170,7 +170,8 @@ def list_findings(
         return FindingListResponse(items=[], total=0)
 
     query = select(Finding)
-    if ws_ids is not None:
+    target_joined = ws_ids is not None
+    if target_joined:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     if group_id is not None:
         # Issue #61: findings for targets tagged with this group. Joined on
@@ -191,12 +192,21 @@ def list_findings(
     if tool is not None:
         query = query.where(Finding.tool == tool)
     if search:
+        # Issue #122: AI Analysis' finding-search typeahead reuses this
+        # query param rather than new backend search logic, and searches by
+        # "title/CVE/target" per that issue -- so cve_id and the target's
+        # name need to be in scope here too, not just title/file_path/rule_id.
+        if not target_joined:
+            query = query.join(Target, Target.id == Finding.target_id)
+            target_joined = True
         like = f"%{search}%"
         query = query.where(
             or_(
                 Finding.title.ilike(like),
                 Finding.file_path.ilike(like),
                 Finding.rule_id.ilike(like),
+                Finding.cve_id.ilike(like),
+                Target.name.ilike(like),
             )
         )
 

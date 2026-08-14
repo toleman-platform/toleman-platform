@@ -831,3 +831,25 @@ class DashboardLayout(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", unique=True, index=True)
     widgets: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AiAnalysisRun(SQLModel, table=True):
+    """Issue #122: minimal tracking of "which findings has this user run AI
+    analysis on", so the AI Analysis page has a real "recent analyses"
+    landing state instead of only being reachable via a deep link. This is
+    deliberately not a full audit trail (no stored analysis text, no
+    per-request history) -- one row per (user, finding), upserted on every
+    POST /api/ai/analyze/{finding_id}: `last_analyzed_at` is bumped on
+    repeat analysis of the same finding rather than inserting a new row, so
+    "recent analyses" reflects the finding's most recent analysis time, not
+    a growing log. `analysis_count` is incidental (not surfaced yet) but
+    cheap to keep for a future "analyzed N times" affordance."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    finding_id: int = Field(foreign_key="finding.id", index=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_analyzed_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    analysis_count: int = 1
+
+    __table_args__ = (UniqueConstraint("user_id", "finding_id", name="uq_ai_analysis_run_user_finding"),)

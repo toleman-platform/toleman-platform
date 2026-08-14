@@ -136,7 +136,7 @@ def test_login_rate_limit_is_scoped_per_ip_key_not_global(client, engine):
 def test_scan_run_rate_limit_triggers_per_user(client, engine):
     user = _make_user(engine, email="scanner@example.com", password="whatever123")
     token = create_session_token(user.id)
-    client.cookies.set("osp_session", token)
+    client.cookies.set("rikugan_session", token)
 
     responses = []
     for _ in range(11):

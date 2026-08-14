@@ -196,7 +196,7 @@ def render_csv(data: dict) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
 
-    writer.writerow(["OSP Compliance Posture Report"])
+    writer.writerow(["Rikugan Compliance Posture Report"])
     writer.writerow(["Generated At", data["generated_at"]])
     writer.writerow(["Scope", data["scope"]])
     writer.writerow(["Target Count", data["target_count"]])
@@ -274,11 +274,11 @@ def render_pdf(data: dict) -> bytes:
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, title="OSP Compliance Posture Report")
+    doc = SimpleDocTemplate(buf, pagesize=letter, title="Rikugan Compliance Posture Report")
     styles = getSampleStyleSheet()
     story = []
 
-    story.append(Paragraph("OSP Compliance Posture Report", styles["Title"]))
+    story.append(Paragraph("Rikugan Compliance Posture Report", styles["Title"]))
     story.append(Paragraph(f"Generated: {data['generated_at']}", styles["Normal"]))
     story.append(Paragraph(f"Scope: {data['scope']}", styles["Normal"]))
     story.append(Paragraph(f"Targets in scope: {data['target_count']}", styles["Normal"]))
@@ -389,7 +389,7 @@ def posture_report(
 
     if format == "pdf":
         pdf_bytes = render_pdf(data)
-        filename = f"osp-posture-report-{scope_slug}-{date_slug}.pdf"
+        filename = f"rikugan-posture-report-{scope_slug}-{date_slug}.pdf"
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
@@ -397,7 +397,7 @@ def posture_report(
         )
 
     csv_text = render_csv(data)
-    filename = f"osp-posture-report-{scope_slug}-{date_slug}.csv"
+    filename = f"rikugan-posture-report-{scope_slug}-{date_slug}.csv"
     return StreamingResponse(
         iter([csv_text]),
         media_type="text/csv",

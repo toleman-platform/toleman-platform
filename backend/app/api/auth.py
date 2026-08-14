@@ -13,7 +13,7 @@ LOGIN_RATE_WINDOW_SECONDS = 60
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-SESSION_COOKIE = "osp_session"
+SESSION_COOKIE = "rikugan_session"
 
 
 class LoginRequest(BaseModel):
@@ -30,11 +30,11 @@ class UserOut(BaseModel):
 
 def current_user(
     session: Session = Depends(get_session),
-    osp_session: str | None = Cookie(default=None),
+    rikugan_session: str | None = Cookie(default=None),
 ) -> User:
-    if not osp_session:
+    if not rikugan_session:
         raise HTTPException(status_code=401, detail="not authenticated")
-    payload = decode_session_token(osp_session)
+    payload = decode_session_token(rikugan_session)
     if not payload:
         raise HTTPException(status_code=401, detail="invalid or expired session")
     user = session.get(User, payload["uid"])

@@ -38,7 +38,7 @@ export default function ReportsPage() {
       const blob = await api.exportPostureReport(targetId, format);
       const url = URL.createObjectURL(blob);
       const dateSlug = new Date().toISOString().slice(0, 10);
-      const filename = `osp-posture-report-${scopeLabel.replace(/\s+/g, "-")}-${dateSlug}.${format}`;
+      const filename = `rikugan-posture-report-${scopeLabel.replace(/\s+/g, "-")}-${dateSlug}.${format}`;
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;

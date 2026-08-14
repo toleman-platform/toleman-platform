@@ -12,10 +12,10 @@ const ONBOARDING_EXEMPT_PATHS = ["/onboarding", "/settings", "/admin"];
 
 async function getCurrentUser(): Promise<AuthUser | null> {
   const cookieStore = await cookies();
-  const session = cookieStore.get("osp_session");
+  const session = cookieStore.get("rikugan_session");
   if (!session) return null;
   const res = await fetch(`${API_URL}/api/auth/me`, {
-    headers: { Cookie: `osp_session=${session.value}` },
+    headers: { Cookie: `rikugan_session=${session.value}` },
     cache: "no-store",
   });
   if (!res.ok) return null;
@@ -24,10 +24,10 @@ async function getCurrentUser(): Promise<AuthUser | null> {
 
 async function getTargets(): Promise<Target[]> {
   const cookieStore = await cookies();
-  const session = cookieStore.get("osp_session");
+  const session = cookieStore.get("rikugan_session");
   if (!session) return [];
   const res = await fetch(`${API_URL}/api/targets`, {
-    headers: { Cookie: `osp_session=${session.value}` },
+    headers: { Cookie: `rikugan_session=${session.value}` },
     cache: "no-store",
   });
   if (!res.ok) return [];

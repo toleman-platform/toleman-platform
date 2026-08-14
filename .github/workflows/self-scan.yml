@@ -1,11 +1,11 @@
 name: Self Scan (dogfooding)
 
-# Runs the same open-source tools OSP wraps (Semgrep, Gitleaks, Trivy) against
+# Runs the same open-source tools Rikugan wraps (Semgrep, Gitleaks, Trivy) against
 # this repo itself. Results go to workflow artifacts + the job summary, not
 # GitHub code scanning: SARIF-to-Security-tab upload requires GitHub Advanced
 # Security, which isn't available on private repos on this plan (confirmed by
 # a real failed run - "Code scanning is not enabled for this repository").
-# Also can't push to our own OSP backend from here: it's local-dev-only and
+# Also can't push to our own Rikugan backend from here: it's local-dev-only and
 # unreachable from GitHub's cloud runners. gosec is intentionally excluded:
 # it's Go-specific and this repo has no Go source.
 

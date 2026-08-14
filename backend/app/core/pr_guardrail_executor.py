@@ -110,9 +110,9 @@ def render_comment(
     pr_scan_id: int,
 ) -> str:
     if not findings and not new_endpoints:
-        return "**OSP PR Guardrail**: no net-new findings or API changes vs the default branch. ✅"
+        return "**Rikugan PR Guardrail**: no net-new findings or API changes vs the default branch. ✅"
 
-    lines = ["**OSP PR Guardrail**", ""]
+    lines = ["**Rikugan PR Guardrail**", ""]
 
     if findings:
         lines.append(f"**{len(findings)} net-new vulnerability finding(s)** vs the default branch:")
@@ -139,7 +139,7 @@ def render_comment(
         lines.append("")
 
     if status == PRGuardrailStatus.BLOCKED:
-        lines.append("This PR is **blocked** pending fix or AppSec override — [review in OSP]"
+        lines.append("This PR is **blocked** pending fix or AppSec override — [review in Rikugan]"
                       f"({FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}).")
 
     return "\n".join(lines)
@@ -195,7 +195,7 @@ def set_commit_status(session: Session, target: Target, sha: str, state: str, de
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
             json={
                 "state": state,
-                "context": "osp/pr-guardrail",
+                "context": "rikugan/pr-guardrail",
                 "description": description[:140],
                 "target_url": "http://localhost:3000/pr-history",
             },

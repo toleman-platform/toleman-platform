@@ -204,7 +204,7 @@ def parse_checkov(raw: dict | list) -> list[dict]:
     ...). Normalize both to a flat list of "reports" before walking
     results.failed_checks -- only failed checks are findings; passed_checks
     are intentionally not surfaced as anything (there's no "informational
-    passed control" concept in OSP's Finding model).
+    passed control" concept in Rikugan's Finding model).
     """
     reports = raw if isinstance(raw, list) else [raw]
     out = []

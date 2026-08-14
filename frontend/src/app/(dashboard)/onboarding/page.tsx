@@ -198,9 +198,9 @@ export default function OnboardingPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Get started with OSP</h1>
+          <h1 className="text-2xl font-bold text-foreground">Get started with Rikugan</h1>
           <p className="text-sm text-muted-foreground">
-            Connect a repo, run a scan, and see what OSP finds — in under a minute.
+            Connect a repo, run a scan, and see what Rikugan finds — in under a minute.
           </p>
         </div>
         <Link href="/" className="text-xs text-muted-foreground underline hover:text-foreground">
@@ -243,7 +243,7 @@ export default function OnboardingPage() {
                 <div>
                   <div className="font-medium text-foreground">Connect via GitHub</div>
                   <div className="text-xs text-muted-foreground">
-                    Install the OSP GitHub App to sync and auto-discover repos
+                    Install the Rikugan GitHub App to sync and auto-discover repos
                   </div>
                 </div>
               </div>
@@ -454,7 +454,7 @@ export default function OnboardingPage() {
               You&apos;re all set
             </div>
             <p className="text-sm text-muted-foreground">
-              Your repo is connected and OSP has scanned it at least once. From here you can explore the full
+              Your repo is connected and Rikugan has scanned it at least once. From here you can explore the full
               dashboard, browse all findings, or connect more repos any time from Settings.
             </p>
             <div className="flex gap-3">

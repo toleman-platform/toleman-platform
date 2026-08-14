@@ -62,7 +62,7 @@ def _login(client, engine, email="user@example.com", password="whatever123"):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-    client.cookies.set("osp_session", token)
+    client.cookies.set("rikugan_session", token)
     return client
 
 

@@ -95,7 +95,7 @@ export function Sidebar({ user }: { user: AuthUser | null }) {
         </div>
         {!collapsed && (
           <div className="flex flex-col">
-            <span className="text-sm font-bold text-sidebar-foreground">OSP</span>
+            <span className="text-sm font-bold text-sidebar-foreground">Rikugan</span>
             <span className="text-[10px] text-muted-foreground">Security Dashboard</span>
           </div>
         )}

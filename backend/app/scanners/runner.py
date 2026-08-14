@@ -163,7 +163,7 @@ def clone_error_message(exc: Exception) -> str:
 def normalize_file_path(file_path: str, repo_path: Path) -> str:
     """Strip the scan-scoped clone directory prefix so file_path is relative
     to the repo root, e.g. "vulnerability/idor/idor.go" not
-    "/tmp/osp-scans/govwa-<scan-id>/vulnerability/idor/idor.go".
+    "/tmp/rikugan-scans/govwa-<scan-id>/vulnerability/idor/idor.go".
 
     This matters beyond cosmetics: compute_dedup_hash includes file_path, and
     since clone_repo (above) gives every scan its own unique directory name

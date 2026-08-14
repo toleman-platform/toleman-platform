@@ -84,7 +84,7 @@ The "operational, not just a dashboard" story — founder's highest-priority man
 
 ## Sprint 10 — Platform Differentiation (#75, #72, #76, #35)
 
-The largest, highest-effort items — the features that make OSP more than a free Snyk clone.
+The largest, highest-effort items — the features that make Rikugan more than a free Snyk clone.
 
 - **#75** Tool marketplace / health page (registry, install-from-UI, per-tool usage assignment, IaC tools).
 - **#72** Active API scanning against discovered endpoints (Nuclei/ZAP integration).

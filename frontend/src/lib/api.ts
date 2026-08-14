@@ -38,7 +38,7 @@ export type Target = {
   criticality_weight: number;
   groups: GroupBadge[];
   // Pipeline integration (issue #66): whether a PR adding
-  // .github/workflows/osp-scan.yml has been opened against this target's repo.
+  // .github/workflows/rikugan-scan.yml has been opened against this target's repo.
   pipeline_integrated: boolean;
   pipeline_pr_url: string | null;
   // Issue #62. enforcement_mode is this target's own raw override (null =
@@ -168,10 +168,10 @@ export type Finding = {
 };
 
 // Issue #75: one entry from GET /api/tools/registry -- every OSS scanner
-// OSP knows about (app.core.tool_registry.TOOL_REGISTRY), merged with a
+// Rikugan knows about (app.core.tool_registry.TOOL_REGISTRY), merged with a
 // real live health check the same way the original 4-tool /health always
 // worked. `integrated` is false for a registry-only tool (e.g. kics) with
-// no real TOOL_COMMANDS entry -- OSP can show it and check for the binary,
+// no real TOOL_COMMANDS entry -- Rikugan can show it and check for the binary,
 // but can't actually dispatch a scan for it yet.
 export type ToolRegistryEntry = {
   tool: string;
@@ -644,9 +644,9 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (typeof window === "undefined") {
     const { cookies } = await import("next/headers");
     const cookieStore = await cookies();
-    const session = cookieStore.get("osp_session");
+    const session = cookieStore.get("rikugan_session");
     if (session) {
-      headers["Cookie"] = `osp_session=${session.value}`;
+      headers["Cookie"] = `rikugan_session=${session.value}`;
     }
   }
 

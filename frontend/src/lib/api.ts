@@ -380,6 +380,10 @@ export type WorkspaceMembership = {
 };
 
 export type CommitEvent = { sha: string; message: string; author: string; date: string; url: string };
+
+export type OrgActivityEvent = CommitEvent & { target: string; target_id: number };
+export type OrgActivityQuery = { target_id?: number; date_from?: string; date_to?: string; page?: number; page_size?: number };
+export type OrgActivityResult = { items: OrgActivityEvent[]; total: number };
 export type PullRequest = {
   number: number;
   title: string;
@@ -465,7 +469,25 @@ export type OrgSbomResult = {
   unique_component_count: number;
   components: OrgSbomComponent[];
 };
-export type AuditEvent = { type: string; timestamp: string; actor: string; summary: string; reason: string };
+export type AuditEventExpandItem = { finding_id: number; title: string | null; from_state: string; to_state: string; timestamp: string };
+export type AuditEvent = {
+  type: string;
+  timestamp: string;
+  actor: string;
+  summary: string;
+  reason: string;
+  grouped_count: number;
+  expand: AuditEventExpandItem[] | null;
+};
+export type AuditLogQuery = {
+  event_type?: string;
+  actor?: string;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  page_size?: number;
+};
+export type AuditLogResult = { items: AuditEvent[]; total: number };
 
 export type SearchResults = { findings: Finding[]; targets: Target[] };
 
@@ -879,7 +901,15 @@ export const api = {
   deletePipelineTemplate: (id: number) =>
     jsonFetch<{ deleted: boolean }>(`/api/pipeline-templates/${id}`, { method: "DELETE" }),
   activity: (targetId: number) => jsonFetch<CommitEvent[]>(`/api/github/activity/${targetId}`),
-  orgActivity: () => jsonFetch<(CommitEvent & { target: string })[]>("/api/github/org-activity"),
+  orgActivity: (query: OrgActivityQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.target_id) params.set("target_id", String(query.target_id));
+    if (query.date_from) params.set("date_from", query.date_from);
+    if (query.date_to) params.set("date_to", query.date_to);
+    if (query.page) params.set("page", String(query.page));
+    if (query.page_size) params.set("page_size", String(query.page_size));
+    return jsonFetch<OrgActivityResult>(`/api/github/org-activity?${params.toString()}`);
+  },
   prs: (targetId: number) => jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`),
   getDiscoveredEndpoints: (targetId: number) =>
     jsonFetch<{ target_id: number; count: number; endpoints: Endpoint[] }>(`/api/discovery/${targetId}`),
@@ -949,7 +979,17 @@ export const api = {
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),
   aiRecentAnalyses: () => jsonFetch<AiRecentAnalysis[]>("/api/ai/recent"),
-  auditLog: () => jsonFetch<AuditEvent[]>("/api/audit/log"),
+  auditLog: (query: AuditLogQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.event_type) params.set("event_type", query.event_type);
+    if (query.actor) params.set("actor", query.actor);
+    if (query.date_from) params.set("date_from", query.date_from);
+    if (query.date_to) params.set("date_to", query.date_to);
+    if (query.page) params.set("page", String(query.page));
+    if (query.page_size) params.set("page_size", String(query.page_size));
+    return jsonFetch<AuditLogResult>(`/api/audit/log?${params.toString()}`);
+  },
+  auditActors: () => jsonFetch<string[]>("/api/audit/actors"),
   users: () => jsonFetch<AuthUser[]>("/api/admin/users"),
   createUser: (u: { email: string; name: string; password: string; role: string }) =>
     jsonFetch<AuthUser>("/api/admin/users", { method: "POST", body: JSON.stringify(u) }),

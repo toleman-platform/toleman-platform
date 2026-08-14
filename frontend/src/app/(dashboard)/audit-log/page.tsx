@@ -1,41 +1,50 @@
-import { ScrollText } from "lucide-react";
 import { api } from "@/lib/api";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { EmptyState } from "@/components/ui/empty-state";
+import { AuditLogFilterBar } from "@/components/audit-log-filter-bar";
+import { AuditLogList } from "@/components/audit-log-list";
+import { ErrorState } from "@/components/ui/error-state";
+import { ReloadButton } from "@/components/reload-button";
+import { settleOrNull } from "@/lib/settle";
 
-export default async function AuditLogPage() {
-  const events = await api.auditLog().catch(() => []);
+const PAGE_SIZE = 25;
+
+function firstValue(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+export default async function AuditLogPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const event_type = firstValue(sp.event_type);
+  const actor = firstValue(sp.actor);
+  const date_from = firstValue(sp.date_from);
+  const date_to = firstValue(sp.date_to);
+  const pageRaw = firstValue(sp.page);
+  const page = pageRaw && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
+
+  const [auditResult, actors] = await Promise.all([
+    settleOrNull(api.auditLog({ event_type, actor, date_from, date_to, page, page_size: PAGE_SIZE })),
+    api.auditActors().catch(() => []),
+  ]);
+  const result = auditResult ?? { items: [], total: 0 };
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Audit Log</h1>
-        <p className="text-sm text-muted-foreground">Triage decisions and scan runs, most recent first</p>
+        <p className="text-sm text-muted-foreground">
+          Every triage decision and scan run recorded against your data — {result.total} events, most recent first. A
+          bulk triage action shows up as one grouped entry you can expand, not one card per finding.
+        </p>
       </div>
-
-      <div className="flex flex-col gap-2">
-        {events.map((e, i) => (
-          <Card key={i} className="border-border bg-card">
-            <CardContent className="flex items-center justify-between px-4 py-2.5">
-              <div>
-                <div className="text-sm text-foreground">{e.summary}</div>
-                {e.reason && <div className="text-xs text-muted-foreground">reason: {e.reason}</div>}
-              </div>
-              <div className="flex items-center gap-2 text-right">
-                <Badge variant="outline" className="capitalize">
-                  {e.type}
-                </Badge>
-                <span className="text-xs text-muted-foreground">{e.actor}</span>
-                <span className="text-xs text-muted-foreground">{new Date(e.timestamp).toLocaleString()}</span>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        {events.length === 0 && (
-          <EmptyState icon={ScrollText} title="No audit events yet" description="Triage decisions and scan runs will show up here as they happen." />
-        )}
-      </div>
+      <AuditLogFilterBar actors={actors} />
+      {auditResult === null ? (
+        <ErrorState description="The audit log couldn't be loaded from the API." action={<ReloadButton />} />
+      ) : (
+        <AuditLogList events={result.items} total={result.total} page={page} pageSize={PAGE_SIZE} />
+      )}
     </div>
   );
 }

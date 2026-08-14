@@ -1,46 +1,51 @@
-import { Github } from "lucide-react";
 import { api } from "@/lib/api";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { EmptyState } from "@/components/ui/empty-state";
+import { GithubOrgLogsFilterBar } from "@/components/github-org-logs-filter-bar";
+import { GithubOrgLogsList } from "@/components/github-org-logs-list";
+import { ErrorState } from "@/components/ui/error-state";
+import { ReloadButton } from "@/components/reload-button";
+import { settleOrNull } from "@/lib/settle";
 
-export default async function GithubOrgLogsPage() {
-  const events = await api.orgActivity().catch(() => []);
+const PAGE_SIZE = 25;
+
+function firstValue(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
+
+export default async function GithubOrgLogsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const sp = await searchParams;
+  const targetIdRaw = firstValue(sp.target_id);
+  const target_id = targetIdRaw ? Number(targetIdRaw) : undefined;
+  const date_from = firstValue(sp.date_from);
+  const date_to = firstValue(sp.date_to);
+  const pageRaw = firstValue(sp.page);
+  const page = pageRaw && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
+
+  const [activityResult, targets] = await Promise.all([
+    settleOrNull(api.orgActivity({ target_id, date_from, date_to, page, page_size: PAGE_SIZE })),
+    api.targets().catch(() => []),
+  ]);
+  const result = activityResult ?? { items: [], total: 0 };
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">GitHub Org Logs</h1>
         <p className="text-sm text-muted-foreground">
-          Recent commit activity across every integrated target. A true GitHub org audit log needs an
-          Enterprise/paid-org scope not available for personal accounts, so this shows real per-repo
-          commit activity instead of fabricating org-level events.
+          A true organization-level audit trail is a GitHub Enterprise feature not available on personal accounts. In
+          its place, this page shows real commit activity pulled live from every repository you&apos;ve connected —
+          nothing here is simulated or backfilled.
         </p>
       </div>
-
-      <div className="flex flex-col gap-2">
-        {events.map((e, i) => (
-          <Card key={i} className="border-border bg-card">
-            <CardContent className="flex items-center justify-between px-4 py-2.5">
-              <div>
-                <a href={e.url} target="_blank" rel="noreferrer" className="text-sm text-foreground hover:underline">
-                  {e.message}
-                </a>
-                <div className="text-xs text-muted-foreground">
-                  {e.author} · {e.sha}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge variant="outline">{e.target}</Badge>
-                <span className="text-xs text-muted-foreground">{e.date ? new Date(e.date).toLocaleString() : ""}</span>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-        {events.length === 0 && (
-          <EmptyState icon={Github} title="No activity found" description="Recent commit activity from your integrated targets will appear here." />
-        )}
-      </div>
+      <GithubOrgLogsFilterBar targets={targets} />
+      {activityResult === null ? (
+        <ErrorState description="GitHub org activity couldn't be loaded from the API." action={<ReloadButton />} />
+      ) : (
+        <GithubOrgLogsList events={result.items} total={result.total} page={page} pageSize={PAGE_SIZE} />
+      )}
     </div>
   );
 }

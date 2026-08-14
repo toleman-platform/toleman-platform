@@ -372,6 +372,15 @@ class FindingStateLog(SQLModel, table=True):
     reason: str = ""
     actor: str = "system"
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Issue #123: a bulk-triage call (findings.bulk_triage_findings) still
+    # writes one row per finding here -- that's the right granularity for
+    # per-finding history (finding_history reads it unfiltered) -- but tags
+    # every row from the same call with a shared batch_id so the Audit Log
+    # can collapse them into a single "N findings ..." feed item at read
+    # time instead of flooding the feed with near-identical rows. Nullable:
+    # single-finding triages (and every row written before this column
+    # existed) have no batch and are never grouped.
+    batch_id: Optional[str] = Field(default=None, index=True)
 
 
 class PRGuardrailStatus(str, Enum):

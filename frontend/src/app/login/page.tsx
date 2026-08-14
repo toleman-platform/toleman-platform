@@ -2,11 +2,12 @@
 
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Shield, Loader2, Eye, EyeOff } from "lucide-react";
+import { Loader2, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { BrandMark } from "@/components/brand-mark";
 import { api } from "@/lib/api";
 
 function LoginForm() {
@@ -41,8 +42,8 @@ function LoginForm() {
       </div>
       <Card className="relative z-10 w-full max-w-md border-border bg-card">
         <CardHeader className="items-center gap-4 pb-2">
-          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10 text-accent-strong">
-            <Shield className="h-8 w-8" />
+          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-accent">
+            <BrandMark size={30} />
           </div>
           <div className="text-center">
             <h1 className="text-2xl font-bold tracking-tight text-foreground">Rikugan</h1>
@@ -56,7 +57,7 @@ function LoginForm() {
               <Input
                 id="email"
                 type="email"
-                placeholder="admin@rikugan.io"
+                placeholder="you@company.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

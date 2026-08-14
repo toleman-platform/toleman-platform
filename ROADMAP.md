@@ -91,9 +91,41 @@ The largest, highest-effort items — the features that make Rikugan more than a
 - **#76** False positive learning engine (cross-repo suppression rules, auto-suppress on ingestion).
 - **#35** Mass CI/CD Rollout Engine + Custom Workflow Builder (moved from Sprint 5 — depends on #66's single-repo pipeline mechanism from Sprint 8).
 
-## Continuous — UI polish (#77)
+## Sprint 11 — Design System Foundation (#115)
 
-Not sprint-bound — typography, spacing/density, micro-interactions, empty/loading/error states, consistent icon set, branding. Iterate alongside every sprint above rather than as a single dedicated pass.
+Blocker for every sprint below — the light/dark token system every other redesign issue builds against. Land and merge alone before dispatching Sprint 12+; every other frontend issue building against the old hardcoded colors first just means redoing it once this lands.
+
+- **#115** Light/dark theme tokens + toggle. Real values (not auto-inverted) from the published design board: https://claude.ai/code/artifact/48eb6411-7e34-4a7d-83f0-024000bdcef4 — see issue comment for a concrete pitfall already found in the design artifact itself (partially-themed components: one CSS property tokenized, a sibling property still hardcoded — invisible until you actually toggle themes).
+
+## Sprint 12 — Shell & Shared Components (depends on #115)
+
+Establishes the components other sprints consume: #117's criticality-chip/tooltip/risk-score pattern (needed by #119, #120, #125) and #116's branding wordmark (needed by #124, #131).
+
+- **#116** Global shell: sidebar IA regroup, responsive/collapse strategy, branding wordmark.
+- **#117** Findings page polish: truncation tooltips, labeled risk score, Prod/Internal/Dev criticality chips.
+- **#118** Admin: grouped sub-navigation (fixes a real tab-strip scroll-clip bug), destructive-action confirmation dialogs, duplicate-workspace disambiguation.
+
+## Sprint 13 — Consumers of Sprint 12's components (depends on #116 + #117)
+
+- **#119** Dashboard: fix the duplicate-row bug, reuse #117's tooltip fix.
+- **#120** Scans page rebuild: search/filter/multi-select, reuses #117's criticality chips, Prod-aware confirmation modal.
+- **#125** Targets: separate integration config from inventory list, reuses #117's criticality chips.
+- **#124** Login: remove hardcoded admin-email placeholder, apply #116's wordmark.
+- **#131** Onboarding: light-touch pass applying #116's wordmark.
+- **#130** Settings: grouped section-nav matching #118's pattern.
+
+## Sprint 14 — Reporting & Activity Surfaces (depends on #115 only — can run parallel to Sprint 12/13)
+
+- **#121** Shared "generate a document" pattern across SBOM, API Discovery, PR History, Reports — plus export-format parity and a real PR History error state.
+- **#122** AI Analysis: real entry point (finding selector / recent-analyses list) — currently a dead end.
+- **#123** Audit Log + GitHub Org Logs: shared filter/pagination pattern, bulk-action grouping (a real data-layer fix, not just visual), QA-disclaimer copy rewrite.
+
+## Sprint 15 — Independent fixes (no dependency on #115 or any other sprint — can run anytime, good parallel filler)
+
+- **#126** Branded 404 page.
+- **#127** GitHub PR comment redesign (markdown/GFM, not component-library — severity table, collapsible sections) + a real functional bug fix: `post_pr_comment()` always posts a new comment instead of updating in place, spamming PR threads on every rescan.
+- **#128** Fix: expired/revoked session renders a broken authenticated shell instead of redirecting to login.
+- **#129** Fix: workspace API key shown in cleartext with no mask/reveal/rotate UX.
 
 ## Explicitly not planned
 

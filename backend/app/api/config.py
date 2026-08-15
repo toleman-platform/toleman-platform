@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 from app.api.deps import get_session
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.jira_integration import test_jira_connection
+from app.core.siem_export import test_siem_webhook
 from app.core.slack_integration import test_slack_webhook
 from app.models.models import PlatformConfig, Severity
 
@@ -33,6 +34,9 @@ class UpdateConfigRequest(BaseModel):
     # "Critical"/"High"/"Medium"/"Low"/"Informational", or "" to disable
     # auto-create. None = leave unchanged.
     jira_auto_create_severity: str | None = None
+    # SIEM export (issue #114). None = leave unchanged; "" clears the field.
+    siem_webhook_url: str | None = None
+    siem_export_severity: str | None = None
 
 
 class TestSlackRequest(BaseModel):
@@ -45,6 +49,10 @@ class TestSlackRequest(BaseModel):
 class TestJiraRequest(BaseModel):
     jira_url: str | None = None
     jira_api_token: str | None = None
+
+
+class TestSiemRequest(BaseModel):
+    webhook_url: str | None = None
 
 
 def get_platform_config(session: Session) -> PlatformConfig | None:
@@ -71,6 +79,11 @@ def _serialize(config: PlatformConfig | None) -> dict:
         "jira_project_key": (config.jira_project_key if config else "") or "",
         "jira_issue_type": (config.jira_issue_type if config else "") or "Task",
         "jira_auto_create_severity": (config.jira_auto_create_severity if config else None),
+        # SIEM export (issue #114) - webhook URL follows the never-echo-raw-
+        # secret pattern; export threshold returned as-is like the Jira
+        # auto-create threshold above.
+        "siem_webhook_url_set": bool(config and config.siem_webhook_url),
+        "siem_export_severity": (config.siem_export_severity if config else None),
     }
 
 
@@ -118,6 +131,18 @@ def update_config(payload: UpdateConfigRequest, session: Session = Depends(get_s
             )
         else:
             config.jira_auto_create_severity = payload.jira_auto_create_severity
+    if payload.siem_webhook_url is not None:
+        config.siem_webhook_url = encrypt_secret(payload.siem_webhook_url)
+    if payload.siem_export_severity is not None:
+        if payload.siem_export_severity == "":
+            config.siem_export_severity = None
+        elif payload.siem_export_severity not in VALID_AUTO_CREATE_SEVERITIES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"siem_export_severity must be one of {sorted(VALID_AUTO_CREATE_SEVERITIES)}",
+            )
+        else:
+            config.siem_export_severity = payload.siem_export_severity
 
     session.add(config)
     session.commit()
@@ -162,6 +187,25 @@ def test_jira(payload: TestJiraRequest, session: Session = Depends(get_session))
         raise HTTPException(status_code=400, detail="Jira URL and API token are required")
 
     ok, message = test_jira_connection(jira_url, api_token)
+    if not ok:
+        raise HTTPException(status_code=502, detail=message)
+    return {"success": True, "message": message}
+
+
+@router.post("/test-siem")
+def test_siem(payload: TestSiemRequest, session: Session = Depends(get_session)):
+    """Real test event POSTed to the configured (or supplied) SIEM webhook.
+    Never fabricates success -- returns the real HTTP outcome."""
+    webhook_url = payload.webhook_url
+    if not webhook_url:
+        config = get_platform_config(session)
+        if config and config.siem_webhook_url:
+            webhook_url = decrypt_secret(config.siem_webhook_url)
+
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="No SIEM webhook URL configured or supplied")
+
+    ok, message = test_siem_webhook(webhook_url)
     if not ok:
         raise HTTPException(status_code=502, detail=message)
     return {"success": True, "message": message}

@@ -323,6 +323,17 @@ class PlatformConfig(SQLModel, table=True):
     # PolicyRule/SlaRule for the shape a future multi-rule version could grow
     # into if needed.
     jira_auto_create_severity: Optional[str] = None
+    # SIEM export (issue #114): a generic outbound webhook -- one JSON POST
+    # per net-new finding at or above the configured severity threshold, the
+    # same shape virtually every SIEM/log pipeline can ingest (Splunk HEC,
+    # Elastic/Datadog generic webhook input, or a plain middleware relay) --
+    # deliberately not one specific vendor's proprietary wire format for this
+    # first version. Encrypted at rest, same pattern as slack_webhook_url --
+    # a webhook URL is a bearer credential. Auto-export threshold mirrors
+    # jira_auto_create_severity's single-scalar shape exactly (same
+    # "start simple, grow into a rule table only if needed" reasoning).
+    siem_webhook_url: str = ""
+    siem_export_severity: Optional[str] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 

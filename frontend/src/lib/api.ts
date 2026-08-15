@@ -265,6 +265,8 @@ export type PlatformConfigView = {
   jira_project_key: string;
   jira_issue_type: string;
   jira_auto_create_severity: string | null;
+  siem_webhook_url_set: boolean;
+  siem_export_severity: string | null;
 };
 
 export type UpdateConfigPayload = {
@@ -279,6 +281,8 @@ export type UpdateConfigPayload = {
   jira_project_key?: string;
   jira_issue_type?: string;
   jira_auto_create_severity?: string;
+  siem_webhook_url?: string;
+  siem_export_severity?: string;
 };
 
 export type TestConnectionResult = {
@@ -1102,6 +1106,11 @@ export const api = {
     jsonFetch<TestConnectionResult>("/api/config/test-jira", {
       method: "POST",
       body: JSON.stringify({ jira_url: jiraUrl || undefined, jira_api_token: apiToken || undefined }),
+    }),
+  testSiem: (webhookUrl?: string) =>
+    jsonFetch<TestConnectionResult>("/api/config/test-siem", {
+      method: "POST",
+      body: JSON.stringify({ webhook_url: webhookUrl || undefined }),
     }),
   toolsHealth: () =>
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(

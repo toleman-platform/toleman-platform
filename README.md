@@ -13,6 +13,15 @@ cp .env.example .env   # optional — every var has a working local-dev default
 docker compose up --build
 ```
 
+Prefer not to build from source? Prebuilt images are published to GHCR on tagged releases (`.github/workflows/publish-images.yml`) — private, same access as this repo. Pull instead of building:
+
+```bash
+docker pull ghcr.io/geekshiv/rikugan-platform-backend:latest
+docker pull ghcr.io/geekshiv/rikugan-platform-frontend:latest
+```
+
+then swap `build:` for `image: ghcr.io/geekshiv/rikugan-platform-backend:latest` (and `-frontend` for the frontend service) in `docker-compose.yml`.
+
 This builds and starts five containers:
 
 - `postgres` (16) and `redis` (7), each gated by a real healthcheck (`pg_isready`, `redis-cli ping`)

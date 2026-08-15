@@ -1,0 +1,17 @@
+<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Rikugan">
+  <defs>
+    <linearGradient id="rikugan-brand-mark-gradient" x1="0" y1="0" x2="40" y2="40">
+      <stop offset="0" stop-color="#06b6d4" stop-opacity="0.85" />
+      <stop offset="1" stop-color="#06b6d4" stop-opacity="0.55" />
+    </linearGradient>
+  </defs>
+  <path
+    d="M20 2 L36 11 V29 L20 38 L4 29 V11 Z"
+    stroke="url(#rikugan-brand-mark-gradient)"
+    stroke-width="2.4"
+    fill="#06b6d4"
+    fill-opacity="0.08"
+  />
+  <path d="M20 13 L28 20 L20 27 L12 20 Z" fill="url(#rikugan-brand-mark-gradient)" />
+  <circle cx="20" cy="20" r="3" fill="#0a0e17" />
+</svg>

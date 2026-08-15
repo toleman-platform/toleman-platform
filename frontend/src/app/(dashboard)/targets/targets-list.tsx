@@ -3,7 +3,18 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Group, PipelineIntegrationBatch, PipelineWorkflowTemplate, Target, WorkspaceSummary, api } from "@/lib/api";
+import {
+  Group,
+  PipelineIntegrationBatch,
+  PipelineWorkflowTemplate,
+  ScanSummary,
+  Target,
+  TargetSummary,
+  TargetSummaryEntry,
+  WorkspaceSummary,
+  api,
+} from "@/lib/api";
+import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,12 +47,61 @@ function itemBadgeClass(status: string): string {
   }
 }
 
+// Issue #117 / backend/app/core/scoring.py: criticality_weight is the 1-5
+// multiplier a target contributes to every finding's risk score. The Repo
+// Sync card used to render it as a bare "weight 2" with no label, no units
+// and no tooltip, on every row -- unreadable as anything but a constant.
+const CRITICALITY_WEIGHT_EXPLANATION =
+  "How much this repo amplifies the risk score of its findings: severity × this weight × 40. " +
+  "Set per target (1-5) alongside its criticality label.";
+
+// Open findings on the target's default branch (#174). Renders nothing at
+// all when the summary is missing rather than a fabricated "0" -- a failed
+// /api/targets/summary and a genuinely clean repo are different facts.
+function OpenFindingsSummary({ entry, scanned }: { entry?: TargetSummaryEntry; scanned: boolean }) {
+  if (!entry) return null;
+  if (entry.open === 0) {
+    // A repo that has never been scanned has zero findings because nobody
+    // looked, not because it's clean -- claiming "No open findings" there
+    // (in success green, no less) would be a fabricated all-clear. The
+    // "never scanned" half of the line above already states the real fact.
+    if (!scanned) return null;
+    return <span className="text-xs text-muted-foreground">No open findings</span>;
+  }
+  return (
+    <span className="flex items-center gap-1.5 text-xs">
+      <span className="font-medium text-foreground">{entry.open} open</span>
+      {entry.critical > 0 && (
+        <Badge variant="outline" className="border-destructive/40 px-1.5 py-0 text-[10px] text-destructive">
+          {entry.critical} critical
+        </Badge>
+      )}
+      {entry.high > 0 && (
+        <Badge variant="outline" className="border-chart-3/40 px-1.5 py-0 text-[10px] text-chart-3">
+          {entry.high} high
+        </Badge>
+      )}
+    </span>
+  );
+}
+
 // Issue #68: multi-select wrapper around #66's per-target "Add Pipeline"
 // mechanism (see targets/[id]/pipeline-integration.tsx). Checkbox selection
 // + bulk action bar UX follows the established pattern in
 // components/findings-list.tsx (findings' bulk-triage bar) rather than
 // inventing a new one.
-export function TargetsList({ targets }: { targets: Target[] }) {
+export function TargetsList({
+  targets,
+  scanSummary = {},
+  targetSummary = {},
+}: {
+  targets: Target[];
+  // Issue #174: real per-target scan history and open-finding counts. Both
+  // optional and defaulted -- callers without them (and a failed fetch on
+  // the page, which degrades to {}) just render the card without that line.
+  scanSummary?: ScanSummary;
+  targetSummary?: TargetSummary;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -394,8 +454,14 @@ export function TargetsList({ targets }: { targets: Target[] }) {
       )}
 
       {filtered.map((t) => (
-        <Card key={t.id} className="border-border bg-card transition-colors hover:border-primary/40">
-          <CardContent className="flex items-center gap-3 px-4 py-3">
+        <Card key={t.id} className="border-border bg-card py-0 transition-colors hover:border-primary/40">
+          {/* `py-0` above + the density token here, for the same reason as
+              finding-row.tsx: the base Card's `py-6` was 48px of padding no
+              density setting could reach (#172). */}
+          <CardContent
+            className="flex items-center gap-3 px-4"
+            style={{ paddingTop: "var(--density-row-py)", paddingBottom: "var(--density-row-py)" }}
+          >
             <input
               type="checkbox"
               aria-label={`Select ${t.name}`}
@@ -404,28 +470,43 @@ export function TargetsList({ targets }: { targets: Target[] }) {
               onChange={(e) => toggleOne(t.id, e.target.checked)}
               onClick={(e) => e.stopPropagation()}
             />
-            <Link href={`/targets/${t.id}`} className="flex flex-1 items-center justify-between">
-              <div>
+            <Link href={`/targets/${t.id}`} className="flex min-w-0 flex-1 items-center justify-between gap-3">
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="font-medium text-foreground">{t.name}</span>
+                  <span className="truncate font-medium text-foreground">{t.name}</span>
                   <CriticalityChip label={t.label} />
+                  {t.groups.map((g) => (
+                    <GroupBadge key={g.id} group={g} />
+                  ))}
                 </div>
-                <div className="text-xs text-muted-foreground">{t.repo_url}</div>
-                {t.groups.length > 0 && (
-                  <div className="mt-1.5 flex flex-wrap gap-1">
-                    {t.groups.map((g) => (
-                      <GroupBadge key={g.id} group={g} />
-                    ))}
-                  </div>
-                )}
+                {/* Issue #174: the card used to stop at the clone URL, so the
+                    inventory couldn't answer whether a repo had ever been
+                    scanned or had anything open. Same shape as the per-row
+                    line /scans already renders from the same scanSummary. */}
+                <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                  {t.default_branch} ·{" "}
+                  {scanSummary[String(t.id)]?.last_scan_at
+                    ? `last scan ${timeAgo(scanSummary[String(t.id)].last_scan_at as string)}`
+                    : "never scanned"}
+                </div>
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">{t.repo_url}</div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 {t.pipeline_integrated && (
                   <Badge variant="outline" className="border-chart-5/40 text-chart-5">
                     Pipeline integrated
                   </Badge>
                 )}
-                <span className="text-xs text-muted-foreground">weight {t.criticality_weight}</span>
+                <OpenFindingsSummary
+                  entry={targetSummary[String(t.id)]}
+                  scanned={Boolean(scanSummary[String(t.id)]?.last_scan_at)}
+                />
+                <span
+                  className="text-xs text-muted-foreground"
+                  title={CRITICALITY_WEIGHT_EXPLANATION}
+                >
+                  Risk weight {t.criticality_weight}/5
+                </span>
               </div>
             </Link>
           </CardContent>

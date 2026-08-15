@@ -108,7 +108,9 @@ export function FindingsList({
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
+      {/* gap tracks density too (#172) -- 25 rows of an 8px gap is another
+          200px of scroll on a page whose whole point is scanning a list. */}
+      <div className="flex flex-col" style={{ gap: "var(--density-list-gap)" }}>
         {findings.map((f) => (
           <FindingRow
             key={f.id}

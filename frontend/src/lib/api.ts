@@ -472,6 +472,17 @@ export type ScanSummaryEntry = {
 };
 export type ScanSummary = Record<string, ScanSummaryEntry>;
 
+// Issue #174: per-target open-finding counts for the Repo Sync inventory,
+// keyed by target id (string) exactly like ScanSummary above so both index
+// the same way. Default-branch + open-state scoped server-side, matching the
+// Posture dashboard and the security score.
+export type TargetSummaryEntry = {
+  open: number;
+  critical: number;
+  high: number;
+};
+export type TargetSummary = Record<string, TargetSummaryEntry>;
+
 export type DiscoveryRunResult = {
   run_id: number;
   target_id: number;
@@ -897,6 +908,7 @@ export const api = {
     ),
   getScan: (scanId: number) => jsonFetch<ScanRun | { error: string }>(`/api/scans/${scanId}`),
   scanSummary: () => jsonFetch<ScanSummary>("/api/scans/summary"),
+  targetsSummary: () => jsonFetch<TargetSummary>("/api/targets/summary"),
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   workspaceKey: (targetId: number) =>

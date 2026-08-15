@@ -255,7 +255,15 @@ export function FindingRow({
   }
 
   return (
-    <Card interactive className={`border-border bg-card border-l-4 ${SEVERITY_BORDER_COLOR[finding.severity]}`}>
+    // `py-0` cancels the base Card's `py-6`. Without it every row carried
+    // 48px of padding that no density token could reach, on top of
+    // CardContent's own `--density-row-py` -- which is why switching to
+    // Compact only ever moved about 7% of the row height (#172). The token
+    // now actually governs the row.
+    <Card
+      interactive
+      className={`border-border bg-card border-l-4 py-0 ${SEVERITY_BORDER_COLOR[finding.severity]}`}
+    >
       <CardContent className="px-4" style={{ paddingTop: "var(--density-row-py)", paddingBottom: "var(--density-row-py)" }}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
@@ -311,34 +319,49 @@ export function FindingRow({
                   />
                 </button>
               </div>
-              <div className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
-                <span className="truncate">
-                  {finding.tool} · {finding.file_path}
-                  {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
-                </span>
-                {repoUrl && finding.file_path && (
-                  <a
-                    href={githubBlobUrl(repoUrl, finding.branch, finding.file_path, finding.line_start)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open this line on GitHub"
-                    onClick={(e) => e.stopPropagation()}
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
+              {/* Issue #172: these two secondary lines each take a full line
+                  in comfortable density and collapse onto one wrapping line
+                  in compact -- see .density-stack in globals.css. */}
+              <div className="density-stack">
+                <div className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
+                  <span className="truncate">
+                    {finding.tool} · {finding.file_path}
+                    {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
+                  </span>
+                  {repoUrl && finding.file_path && (
+                    <a
+                      href={githubBlobUrl(repoUrl, finding.branch, finding.file_path, finding.line_start)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open this line on GitHub"
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </div>
+                {(targetLabel || targetName) && (
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {targetLabel && <CriticalityChip label={targetLabel} />}
+                    {targetName && <span className="truncate">{targetName}</span>}
+                  </div>
                 )}
               </div>
-              {(targetLabel || targetName) && (
-                <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {targetLabel && <CriticalityChip label={targetLabel} />}
-                  {targetName && <span className="truncate">{targetName}</span>}
-                </div>
-              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <SlaBadge finding={finding} />
+            {/* Compact moves the Triage trigger up here, so the row doesn't
+                need the full-width block below it at all (#172). */}
+            {!open && (
+              <button
+                onClick={() => setOpen(true)}
+                className="density-compact-only text-xs text-muted-foreground underline hover:text-foreground"
+              >
+                Triage
+              </button>
+            )}
             <div className="flex flex-col items-end gap-1">
               <RiskScore score={finding.priority_score} />
               <div className={`text-xs ${STATE_COLOR[finding.state] || "text-muted-foreground"}`}>{finding.state}</div>
@@ -353,7 +376,7 @@ export function FindingRow({
           </div>
         )}
 
-        <div className="mt-2">
+        <div className={open ? "mt-2" : "density-comfortable-only mt-2"}>
           {!open ? (
             <button onClick={() => setOpen(true)} className="text-xs text-muted-foreground underline hover:text-foreground">
               Triage

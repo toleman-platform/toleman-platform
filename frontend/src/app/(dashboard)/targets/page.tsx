@@ -24,10 +24,16 @@ export default async function TargetsPage({
   const groupIdRaw = firstValue(sp.group_id);
   const group_id = groupIdRaw ? Number(groupIdRaw) : undefined;
 
-  const [targetsResult, githubStatus, groups] = await Promise.all([
+  // Issue #174: scan history + open-finding counts alongside the inventory,
+  // so a Repo Sync card can say which repos actually need attention instead
+  // of just naming them. Both summaries degrade to {} on failure -- a card
+  // then renders without its metadata line rather than failing the page.
+  const [targetsResult, githubStatus, groups, scanSummary, targetSummary] = await Promise.all([
     settleOrNull(api.targets({ group_id })),
     api.githubAppStatus().catch(() => ({ app_configured: false, app_slug: null, installed: false, account_login: null })),
     api.groups().catch(() => []),
+    api.scanSummary().catch(() => ({})),
+    api.targetsSummary().catch(() => ({})),
   ]);
   const targetsFailed = targetsResult === null;
   const targets = targetsResult ?? [];
@@ -63,7 +69,9 @@ export default async function TargetsPage({
         {targetsFailed && (
           <ErrorState description="The target list couldn't be loaded from the API." action={<ReloadButton />} />
         )}
-        {!targetsFailed && targets.length > 0 && <TargetsList targets={targets} />}
+        {!targetsFailed && targets.length > 0 && (
+          <TargetsList targets={targets} scanSummary={scanSummary} targetSummary={targetSummary} />
+        )}
         {!targetsFailed && targets.length === 0 && (
           <EmptyState
             icon={GitBranch}

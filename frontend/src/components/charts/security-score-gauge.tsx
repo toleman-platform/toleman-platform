@@ -15,8 +15,12 @@ const GRADE_COLOR: Record<string, string> = {
   F: "var(--color-destructive)",
 };
 
-const CHART_WIDTH = 220;
-const CHART_HEIGHT = 130;
+// Issue #173: bumped from 220x130. The widget spans the full dashboard
+// width and the gauge is its headline number, but at 220px it read as an
+// afterthought beside the component breakdown. Kept at a 2:1 ratio so the
+// semicircle still fills the box (cy sits on the bottom edge).
+const CHART_WIDTH = 280;
+const CHART_HEIGHT = 160;
 
 export function SecurityScoreGauge({ score, grade }: { score: number; grade: string | null }) {
   const color = grade ? GRADE_COLOR[grade] ?? "var(--color-chart-1)" : "var(--color-muted-foreground)";

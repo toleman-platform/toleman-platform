@@ -12,13 +12,16 @@ from app.api.deps import get_session
 from app.core.enforcement import VALID_ENFORCEMENT_MODES, resolve_enforcement_mode_with_source
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
+from app.core.security_score import OPEN_STATES
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import (
     WORKSPACE_ROLE_RANK,
+    Finding,
     Group,
     PipelineIntegrationBatch,
     PipelineIntegrationBatchItem,
     PipelineWorkflowTemplate,
+    Severity,
     Target,
     TargetGroup,
     User,
@@ -134,6 +137,58 @@ def list_targets(
     targets = session.exec(query).all()
     groups_by_target = _groups_by_target(session, [t.id for t in targets])
     return [_with_groups(t, groups_by_target) for t in targets]
+
+
+@router.get("/summary")
+def targets_summary(
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Per-target open-finding counts for the Repo Sync inventory (#174),
+    keyed by target_id (string, matching /api/scans/summary's convention so
+    both summaries index the same way on the client).
+
+    Repo Sync previously showed only a name, a clone URL and a bare
+    `weight N`, so the page couldn't answer the one question it exists to
+    answer -- which of these repos actually needs attention. This is the
+    same default-branch + open-state scoping the Posture dashboard and the
+    security score already use (app.core.security_score.OPEN_STATES), so the
+    number here can't disagree with those surfaces.
+
+    Declared before /{target_id} so "summary" isn't captured as a target id.
+    One query for findings plus one for targets, not N+1.
+    """
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return {}
+
+    target_query = select(Target)
+    if ws_ids is not None:
+        target_query = target_query.where(Target.workspace_id.in_(ws_ids))
+    targets = session.exec(target_query).all()
+    if not targets:
+        return {}
+
+    default_branch_by_target = {t.id: t.default_branch for t in targets}
+    finding_rows = session.exec(
+        select(Finding.target_id, Finding.severity, Finding.branch).where(
+            Finding.target_id.in_(list(default_branch_by_target.keys())),
+            Finding.state.in_(OPEN_STATES),
+        )
+    ).all()
+
+    summary: dict[int, dict] = {t.id: {"open": 0, "critical": 0, "high": 0} for t in targets}
+    for target_id, severity, branch in finding_rows:
+        if branch != default_branch_by_target.get(target_id):
+            continue
+        entry = summary[target_id]
+        entry["open"] += 1
+        if severity == Severity.CRITICAL:
+            entry["critical"] += 1
+        elif severity == Severity.HIGH:
+            entry["high"] += 1
+
+    return {str(target_id): counts for target_id, counts in summary.items()}
 
 
 @router.post("")

@@ -17,6 +17,18 @@ client like Claude Desktop/Code, not a long-running network service) --
 authenticates to Rikugan using a personal access token (see
 rikugan-docs Public API Reference), exactly like any other public-API
 client.
+
+A note on `mcp`'s own CVEs (checked at pin time, mcp==1.23.0): every
+currently-known advisory against this package (GHSA-9h52-p55h-vw2f fixed
+in 1.23.0; GHSA-jpw9-pfvf-9f58, GHSA-vj7q-gjh5-988w still open as of
+1.23.0/latest 1.x) is scoped to the HTTP/SSE/WebSocket transport code
+paths and the experimental task-handler feature -- none of which this
+server invokes, since `mcp.run(transport="stdio")` below is the only
+entry point exercised. `2.0.0` has none of these open, but requires
+starlette/pydantic versions incompatible with this project (see above),
+so isn't a real option yet. Re-check this comment before bumping to a
+new 1.x release or when 2.0.0 stabilizes and its dependency floor is
+re-evaluated.
 """
 import os
 

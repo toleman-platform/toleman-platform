@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -89,6 +89,24 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // "More nav below the fold" affordance -- see the comment on the nav
+  // element itself. Recomputed on scroll and on resize, since which items
+  // fit depends entirely on viewport height.
+  const navRef = useRef<HTMLElement | null>(null);
+  const [navHasMore, setNavHasMore] = useState(false);
+
+  const updateNavScroll = useCallback(() => {
+    const el = navRef.current;
+    if (!el) return;
+    setNavHasMore(el.scrollHeight - el.scrollTop - el.clientHeight > 4);
+  }, []);
+
+  useEffect(() => {
+    updateNavScroll();
+    window.addEventListener("resize", updateNavScroll);
+    return () => window.removeEventListener("resize", updateNavScroll);
+  }, [updateNavScroll, collapsed, user]);
 
   // Responsive strategy (#116): the sidebar was previously a fixed 240px
   // desktop panel with no breakpoint handling, confirmed broken below
@@ -203,7 +221,14 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
           <GlobalSearch collapsed={iconRail} />
         </div>
 
-        <nav className="flex flex-1 flex-col gap-3 overflow-y-auto p-2">
+        {/* The nav scrolls, but macOS overlay scrollbars stay invisible until
+            you actually scroll, so on a 900px-tall viewport the list simply
+            looked complete while Audit Log, GitHub Org Logs, Settings and
+            Admin sat below the fold with no cue they existed (measured: 134px
+            of nav hidden at 900px, 234px at 800px). The fade below is that
+            missing cue -- it only shows while there's more to scroll to. */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        <nav ref={navRef} onScroll={updateNavScroll} className="flex flex-1 flex-col gap-3 overflow-y-auto p-2">
           {NAV_GROUPS.map((group) => {
             const items = group.items.filter(
               (item) => !item.adminOnly || user?.role === "admin" || user?.role === "security_engineer"
@@ -221,6 +246,13 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
             );
           })}
         </nav>
+          {navHasMore && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-sidebar to-transparent"
+            />
+          )}
+        </div>
 
         <div className="flex flex-col gap-1 border-t border-sidebar-border p-2">
           <div className={cn("mt-1 flex items-center gap-3 rounded-md border border-sidebar-border bg-sidebar-accent/30 px-3 py-2", iconRail && "justify-center px-2")}>

@@ -45,6 +45,7 @@ export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[
         <Input
           className="h-8 bg-secondary text-xs"
           placeholder="Search title, file path, rule id..."
+          aria-label="Search findings"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />

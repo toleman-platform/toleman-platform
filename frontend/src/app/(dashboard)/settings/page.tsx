@@ -339,7 +339,7 @@ function ProfileSection() {
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">Name</label>
             <div className="flex gap-2">
-              <Input className="bg-secondary" value={name} onChange={(e) => setName(e.target.value)} />
+              <Input className="bg-secondary" aria-label="Display name" value={name} onChange={(e) => setName(e.target.value)} />
               <Button onClick={saveName} disabled={nameSaving} className="shrink-0">
                 {nameSaving ? "Saving..." : "Save"}
               </Button>
@@ -353,6 +353,7 @@ function ProfileSection() {
           <Input
             type="password"
             placeholder="Current password"
+            aria-label="Current password"
             className="bg-secondary"
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
@@ -360,6 +361,7 @@ function ProfileSection() {
           <Input
             type="password"
             placeholder="New password (min 8 characters)"
+            aria-label="New password"
             className="bg-secondary"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
@@ -367,6 +369,7 @@ function ProfileSection() {
           <Input
             type="password"
             placeholder="Confirm new password"
+            aria-label="Confirm new password"
             className="bg-secondary"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}

@@ -3,10 +3,14 @@
 import { useLayoutEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { THEME_COOKIE_KEY, THEME_STORAGE_KEY, type Theme } from "@/lib/theme";
 
-export type Theme = "dark" | "light";
-export const THEME_STORAGE_KEY = "rikugan-theme";
-export const THEME_COOKIE_KEY = "rikugan-theme";
+// Re-exported for existing importers. Server Components must import these
+// from "@/lib/theme" directly -- see that module's comment for why importing
+// them from this ("use client") file silently breaks the server-side read.
+export { THEME_COOKIE_KEY, THEME_STORAGE_KEY };
+export type { Theme };
+
 const STORAGE_KEY = THEME_STORAGE_KEY;
 
 /**

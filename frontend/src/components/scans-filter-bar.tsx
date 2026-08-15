@@ -57,6 +57,7 @@ export function ScansFilterBar({ tools }: { tools: string[] }) {
         <Input
           className="h-8 bg-secondary text-xs"
           placeholder="Search target name, repo, tag..."
+          aria-label="Search targets to scan"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />

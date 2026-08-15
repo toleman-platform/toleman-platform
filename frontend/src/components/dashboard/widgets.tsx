@@ -246,12 +246,34 @@ function RecentFindingsWidget({ data }: { data: RecentFindingsData }) {
 }
 
 const SCORE_COMPONENT_LABEL: Record<string, string> = {
-  findings: "Open findings",
-  sla: "SLA compliance",
-  coverage: "Scan coverage",
-  fp_rate: "False-positive rate",
-  trend: "Trend (7d)",
+  findings: "Open findings score",
+  sla: "SLA compliance score",
+  coverage: "Scan coverage score",
+  fp_rate: "False-positive rate score",
+  trend: "Trend (7d) score",
 };
+
+// Real underlying metric shown alongside each 0-100 sub-score so it can't be
+// misread as a raw count (e.g. "Open findings score: 0" previously looked
+// like "0 open findings" when it actually meant "worst possible score" --
+// the real count (often in the hundreds) lives in c.open_findings on the
+// findings component, same field the KPI Cards widget's "Open Findings"
+// count is derived from, just default-branch-scoped here vs. all-branches
+// there).
+function scoreComponentDetail(key: string, c: SecurityScore["components"][keyof SecurityScore["components"]]): string | null {
+  switch (key) {
+    case "findings":
+      return `${(c as SecurityScore["components"]["findings"]).open_findings} open on default branch`;
+    case "sla":
+      return `${(c as SecurityScore["components"]["sla"]).in_violation} in violation`;
+    case "coverage":
+      return `${(c as SecurityScore["components"]["coverage"]).scanned_targets}/${(c as SecurityScore["components"]["coverage"]).total_targets} scanned`;
+    case "fp_rate":
+      return `${(c as SecurityScore["components"]["fp_rate"]).false_positives}/${(c as SecurityScore["components"]["fp_rate"]).total_findings} false positives`;
+    default:
+      return null;
+  }
+}
 
 type ScoreScope = { kind: "org" } | { kind: "group"; id: number } | { kind: "target"; id: number };
 
@@ -306,6 +328,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
     <div className="flex flex-col gap-3">
       <select
         className="self-end rounded-md border border-input bg-secondary px-2 py-1 text-xs text-foreground"
+        aria-label="Security score scope"
         value={scoreScopeKey(scope)}
         onChange={(e) => {
           const [kind, id] = e.target.value.split(":");
@@ -349,13 +372,15 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;
+              const detail = scoreComponentDetail(key, c);
               return (
                 <div key={key} className={`flex items-center justify-between rounded-md px-2 py-1 ${isWeakest ? "bg-destructive/10" : ""}`}>
                   <span className={isWeakest ? "font-medium text-destructive" : "text-muted-foreground"}>
                     {SCORE_COMPONENT_LABEL[key]}
                     {key === "trend" && <TrendIcon direction={score.components.trend.direction} />}
+                    {detail && <span className="ml-1.5 text-[10px] text-muted-foreground/70">({detail})</span>}
                   </span>
-                  <span className={isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}>{Math.round(c.score)}</span>
+                  <span className={isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}>{Math.round(c.score)}/100</span>
                 </div>
               );
             })}

@@ -2,7 +2,9 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/sidebar";
 import { AuthUser, Target } from "@/lib/api";
-import { THEME_COOKIE_KEY, Theme } from "@/components/theme-toggle";
+// Plain module, not theme-toggle.tsx -- see @/lib/theme for why a Server
+// Component must not import these from a "use client" file.
+import { THEME_COOKIE_KEY, type Theme } from "@/lib/theme";
 
 // See the matching comment in src/lib/api.ts -- API_INTERNAL_URL lets the
 // Next.js server (inside the frontend container) reach the backend over the

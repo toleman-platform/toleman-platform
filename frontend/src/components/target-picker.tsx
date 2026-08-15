@@ -11,15 +11,20 @@ export function TargetPicker({
   value,
   onChange,
   allowAll = false,
+  label = "Repository",
 }: {
   targets: Target[];
   value: number | null;
   onChange: (id: number) => void;
   allowAll?: boolean;
+  /** Accessible name for the select -- callers that render a visible
+   * heading instead of a <label> should pass what that heading says. */
+  label?: string;
 }) {
   return (
     <select
       className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
+      aria-label={label}
       value={value ?? ""}
       onChange={(e) => onChange(Number(e.target.value))}
     >

@@ -5,7 +5,6 @@ import { api, AuthUser } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
@@ -97,12 +96,16 @@ export function UserManagement() {
     <div className="flex flex-col gap-6">
       <Card className="border-border bg-card">
         <CardContent className="px-4 py-4">
-          <form onSubmit={onCreate} className="grid grid-cols-4 gap-3">
-            <Input className="bg-secondary" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
-            <Input className="bg-secondary" placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            <Input className="bg-secondary" placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+          {/* One row on desktop, two columns on small screens: at 390px the
+              fixed grid-cols-4 squeezed all four controls onto one line and
+              clipped their placeholders to "Passw" / "use". */}
+          <form onSubmit={onCreate} className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Input className="bg-secondary" placeholder="Name" aria-label="New user name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <Input className="bg-secondary" placeholder="Email" aria-label="New user email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <Input className="bg-secondary" placeholder="Password" aria-label="New user password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
             <select
               className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
+              aria-label="New user role"
               value={role}
               onChange={(e) => setRole(e.target.value)}
             >
@@ -112,7 +115,7 @@ export function UserManagement() {
                 </option>
               ))}
             </select>
-            <Button type="submit" disabled={submitting} className="col-span-4 self-start">
+            <Button type="submit" disabled={submitting} className="col-span-2 self-start md:col-span-4">
               {submitting ? "Creating..." : "Create User"}
             </Button>
           </form>
@@ -126,14 +129,23 @@ export function UserManagement() {
       <div className="flex flex-col gap-2">
         {users.map((u) => (
           <Card key={u.id} className="border-border bg-card">
-            <CardContent className="flex items-center justify-between px-4 py-3">
-              <div>
+            {/* Wraps rather than overflowing: this row used to run the role
+                control and Delete straight off the right edge of the card on
+                a phone, clipping both and the user's email with them. */}
+            <CardContent className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3">
+              <div className="min-w-0">
                 <div className="font-medium text-foreground">{u.name}</div>
-                <div className="text-xs text-muted-foreground">{u.email}</div>
+                <div className="truncate text-xs text-muted-foreground">{u.email}</div>
               </div>
               <div className="flex items-center gap-2">
+                {/* The role `<select>` already displays the current role; the
+                    Badge that used to sit beside it repeated the identical
+                    value (it can never differ -- the select is controlled
+                    straight off `u.role`) and left the Delete column ragged,
+                    since each role string is a different width. */}
                 <select
                   className="rounded-md border border-input bg-secondary px-2 py-1 text-xs text-foreground"
+                  aria-label={`Role for ${u.name}`}
                   value={u.role}
                   onChange={(e) => requestRoleChange(u, e.target.value)}
                 >
@@ -143,7 +155,6 @@ export function UserManagement() {
                     </option>
                   ))}
                 </select>
-                <Badge variant="outline">{u.role}</Badge>
                 <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setPendingDelete(u)}>
                   Delete
                 </Button>

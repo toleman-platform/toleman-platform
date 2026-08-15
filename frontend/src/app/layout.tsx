@@ -2,7 +2,11 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { Plus_Jakarta_Sans, Geist_Mono } from "next/font/google";
 import { DensityInit } from "@/components/density-toggle";
-import { ThemeInit, THEME_COOKIE_KEY } from "@/components/theme-toggle";
+import { ThemeInit } from "@/components/theme-toggle";
+// Imported from the plain module, not from theme-toggle.tsx: that file is a
+// Client Component, and a Server Component importing a constant from one
+// gets a client reference stub instead of the string (see @/lib/theme).
+import { THEME_COOKIE_KEY } from "@/lib/theme";
 import "./globals.css";
 
 // Plus Jakarta Sans: distinctive geometric grotesque, used everywhere in the

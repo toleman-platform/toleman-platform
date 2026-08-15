@@ -51,6 +51,7 @@ export function TargetsFilterBar() {
         <Input
           className="h-8 bg-secondary text-xs"
           placeholder="Search target name, repo..."
+          aria-label="Search targets"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />

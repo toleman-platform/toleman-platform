@@ -7,8 +7,10 @@ from app.core.dedup import compute_dedup_hash
 from app.core.scoring import compute_priority_score
 from app.core.epss import fetch_epss_scores
 from app.core.kev import fetch_kev_cve_set
+from app.core.crypto import decrypt_secret
 from app.core.jira_integration import create_jira_ticket_for_finding, jira_configured
 from app.core.notifications import dispatch_notification
+from app.core.siem_export import send_finding_to_siem
 from app.core.fp_learning import apply_auto_suppression, find_matching_rule
 
 logger = logging.getLogger(__name__)
@@ -49,6 +51,28 @@ def _maybe_auto_create_jira_ticket(session: Session, finding: Finding) -> None:
 
     if not ok:
         logger.warning("Auto-create Jira ticket failed for finding %s: %s", finding.id, result)
+
+
+def _maybe_export_to_siem(session: Session, target: Target, finding: Finding) -> None:
+    """Issue #114: fires a real webhook POST when PlatformConfig.siem_webhook_url
+    is set and this new finding's severity meets siem_export_severity. Same
+    best-effort philosophy as the Jira hook above -- a SIEM webhook outage
+    must not fail the whole ingestion/scan."""
+    config = session.exec(select(PlatformConfig)).first()
+    if not config or not config.siem_webhook_url or not config.siem_export_severity:
+        return
+    if not _meets_auto_create_threshold(finding.severity, config.siem_export_severity):
+        return
+
+    try:
+        webhook_url = decrypt_secret(config.siem_webhook_url)
+        ok, result = send_finding_to_siem(webhook_url, finding, target)
+    except Exception:
+        logger.exception("SIEM export failed for finding %s", finding.id)
+        return
+
+    if not ok:
+        logger.warning("SIEM export failed for finding %s: %s", finding.id, result)
 
 
 def _maybe_notify_new_finding(session: Session, target: Target, finding: Finding) -> None:
@@ -182,6 +206,7 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
         if finding.state == FindingState.FALSE_POSITIVE:
             continue  # auto-suppressed above -- not a real net-new alert
         _maybe_auto_create_jira_ticket(session, finding)
+        _maybe_export_to_siem(session, target, finding)
         _maybe_notify_new_finding(session, target, finding)
 
     # mark findings absent from this run (same target+branch+tool, still Open) as Mitigated

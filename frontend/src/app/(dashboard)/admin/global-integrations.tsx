@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { BrainCircuit, CheckCircle2, MessageSquare, Ticket } from "lucide-react";
+import { BrainCircuit, CheckCircle2, MessageSquare, Send, Ticket } from "lucide-react";
 import { ConnectGithubCard } from "@/components/connect-github-card";
 import { SEVERITY_ORDER } from "@/lib/severity";
 
@@ -46,6 +46,15 @@ export function GlobalIntegrations() {
   const [jiraError, setJiraError] = useState<string | null>(null);
   const [jiraTestResult, setJiraTestResult] = useState<string | null>(null);
 
+  // SIEM export (issue #114)
+  const [siemWebhookUrl, setSiemWebhookUrl] = useState("");
+  const [siemExportSeverity, setSiemExportSeverity] = useState("");
+  const [siemSaving, setSiemSaving] = useState(false);
+  const [siemTesting, setSiemTesting] = useState(false);
+  const [siemSaved, setSiemSaved] = useState(false);
+  const [siemError, setSiemError] = useState<string | null>(null);
+  const [siemTestResult, setSiemTestResult] = useState<string | null>(null);
+
   function refresh() {
     api.getConfig().then((c) => {
       setConfig(c);
@@ -56,6 +65,7 @@ export function GlobalIntegrations() {
       setJiraProjectKey(c.jira_project_key);
       setJiraIssueType(c.jira_issue_type || "Task");
       setJiraAutoCreateSeverity(c.jira_auto_create_severity || "");
+      setSiemExportSeverity(c.siem_export_severity || "");
     });
   }
 
@@ -127,6 +137,39 @@ export function GlobalIntegrations() {
       setJiraError(e instanceof Error ? e.message : "test connection failed");
     } finally {
       setJiraTesting(false);
+    }
+  }
+
+  async function saveSiem() {
+    setSiemSaving(true);
+    setSiemError(null);
+    setSiemSaved(false);
+    setSiemTestResult(null);
+    try {
+      const payload: Parameters<typeof api.updateConfig>[0] = { siem_export_severity: siemExportSeverity };
+      if (siemWebhookUrl.trim()) payload.siem_webhook_url = siemWebhookUrl.trim();
+      await api.updateConfig(payload);
+      setSiemWebhookUrl("");
+      setSiemSaved(true);
+      refresh();
+    } catch (e) {
+      setSiemError(e instanceof Error ? e.message : "failed to save");
+    } finally {
+      setSiemSaving(false);
+    }
+  }
+
+  async function testSiem() {
+    setSiemTesting(true);
+    setSiemError(null);
+    setSiemTestResult(null);
+    try {
+      const result = await api.testSiem(siemWebhookUrl.trim() || undefined);
+      setSiemTestResult(result.message || "Test event sent successfully.");
+    } catch (e) {
+      setSiemError(e instanceof Error ? e.message : "test connection failed");
+    } finally {
+      setSiemTesting(false);
     }
   }
 
@@ -459,6 +502,90 @@ export function GlobalIntegrations() {
           <p className="text-xs text-muted-foreground">
             Test Connection makes a real authenticated call to your Jira instance. A ticket is auto-created for every
             new finding at or above the selected severity. API token stored encrypted in the database (Admin-only).
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border bg-card">
+        <CardContent className="flex flex-col gap-4 px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
+              <Send className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-medium text-foreground">SIEM Export</div>
+              <div className="text-xs text-muted-foreground">Generic webhook -- one JSON event per qualifying finding</div>
+            </div>
+          </div>
+
+          {config?.siem_webhook_url_set && (
+            <div className="flex items-center gap-2 text-sm text-chart-5">
+              <CheckCircle2 className="h-4 w-4" />
+              Configured
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="siem-webhook-url" className="text-xs text-muted-foreground">
+                Webhook URL
+              </Label>
+              <Input
+                id="siem-webhook-url"
+                type="password"
+                className="bg-secondary"
+                placeholder={config?.siem_webhook_url_set ? "Replace webhook URL..." : "https://your-siem.example.com/ingest"}
+                value={siemWebhookUrl}
+                onChange={(e) => {
+                  setSiemWebhookUrl(e.target.value);
+                  setSiemSaved(false);
+                  setSiemTestResult(null);
+                }}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="siem-export-severity" className="text-xs text-muted-foreground">
+                Auto-export threshold
+              </Label>
+              <select
+                id="siem-export-severity"
+                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                value={siemExportSeverity}
+                onChange={(e) => {
+                  setSiemExportSeverity(e.target.value);
+                  setSiemSaved(false);
+                }}
+              >
+                <option value="">Disabled</option>
+                {SEVERITY_ORDER.map((s) => (
+                  <option key={s} value={s}>
+                    {s} and above
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={saveSiem} disabled={siemSaving} className="self-start">
+              {siemSaving ? "Saving..." : "Save"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={testSiem}
+              disabled={siemTesting || (!siemWebhookUrl.trim() && !config?.siem_webhook_url_set)}
+              className="self-start"
+            >
+              {siemTesting ? "Testing..." : "Test Connection"}
+            </Button>
+          </div>
+
+          {siemSaved && !siemError && <p className="text-xs text-chart-5">Saved.</p>}
+          {siemTestResult && !siemError && <p className="text-xs text-chart-5">{siemTestResult}</p>}
+          {siemError && <p className="text-xs text-destructive">{siemError}</p>}
+          <p className="text-xs text-muted-foreground">
+            A real test event is posted to this webhook when you click Test Connection. A JSON event is sent for every
+            new finding at or above the selected severity. Stored encrypted in the database (Admin-only).
           </p>
         </CardContent>
       </Card>

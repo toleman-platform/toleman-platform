@@ -267,7 +267,10 @@ def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dic
     DESCRIBES relationship from the document root, same shape a real SPDX
     consumer (e.g. an org's compliance tooling) expects to parse."""
     now = datetime.utcnow().isoformat() + "Z"
-    doc_namespace = f"https://rikugan.io/spdx/{target.name}-{uuid.uuid4()}"
+    # rikugan.local, not rikugan.io -- the project doesn't own that domain;
+    # SPDX only requires this namespace be a unique URI, not a resolvable
+    # one, so a non-registrable domain is safe here (#154).
+    doc_namespace = f"https://rikugan.local/spdx/{target.name}-{uuid.uuid4()}"
     root_id = "SPDXRef-DOCUMENT"
     packages = [
         {

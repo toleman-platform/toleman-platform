@@ -17,7 +17,10 @@ class Settings(BaseSettings):
     # Set True in any production/HTTPS deployment so the session cookie is
     # only ever sent over TLS. Defaults to False so local http:// dev works.
     cookie_secure: bool = False
-    admin_email: str = "admin@rikugan.io"
+    # rikugan.local, not rikugan.io -- the project doesn't own that domain
+    # and shipping it as a public-repo default could mislead someone into
+    # thinking it's a real, owned address (#154).
+    admin_email: str = "admin@rikugan.local"
     admin_password: str = DEFAULT_ADMIN_PASSWORD
     admin_name: str = "Admin"
     anthropic_api_key: str = ""

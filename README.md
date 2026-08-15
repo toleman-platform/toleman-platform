@@ -22,7 +22,7 @@ This builds and starts five containers:
 
 Once it's up:
 
-- Frontend: http://localhost:3000 — sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in `.env`, defaults to `admin@rikugan.io` / `changeme123`)
+- Frontend: http://localhost:3000 — sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in `.env`, defaults to `admin@rikugan.local` / `changeme123`)
 - Backend: http://localhost:8000 (`/docs` for the OpenAPI UI, `/health` for a liveness check)
 - Scanner install sanity check: `curl http://localhost:8000/api/tools/health` reports real installed versions for all four tools, running inside the `backend` container
 
@@ -108,7 +108,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 — redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@rikugan.io` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API — no mock data.
+Open http://localhost:3000 — redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@rikugan.local` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API — no mock data.
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
 

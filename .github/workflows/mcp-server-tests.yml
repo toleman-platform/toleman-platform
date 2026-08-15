@@ -1,0 +1,35 @@
+name: MCP Server Tests
+
+on:
+  pull_request:
+    paths:
+      - "mcp-server/**"
+      - ".github/workflows/mcp-server-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "mcp-server/**"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    env:
+      RIKUGAN_API_TOKEN: rikugan_pat_test
+      RIKUGAN_API_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: python -m pytest -v

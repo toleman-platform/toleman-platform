@@ -32,11 +32,13 @@ See `.env.example` for every variable Compose reads (Postgres credentials, backe
 
 To stop everything: `docker compose down` (add `-v` to also drop the Postgres volume and start fully fresh next time).
 
-## Manual setup (macOS, Homebrew)
+## Manual setup (macOS/Linux/Windows)
 
 Prefer running the backend/frontend directly on your machine instead of in containers — e.g. for faster iteration with hot reload, or to attach a debugger. Skip this section if you used Docker Compose above.
 
 ### Prerequisites
+
+**macOS (Homebrew)**
 
 ```bash
 brew install postgresql@16 redis semgrep trivy gitleaks gosec python@3.12
@@ -45,6 +47,27 @@ brew services start redis
 ```
 
 Homebrew's bundled `redis.conf` references modules that aren't shipped — if redis fails to start, comment out the `loadmodule` lines under `/usr/local/etc/redis.conf`.
+
+**Linux (Debian/Ubuntu, apt)**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y postgresql-16 redis-server python3.12 python3.12-venv
+sudo systemctl start postgresql redis-server
+# Semgrep/gosec aren't in apt; install via their own installers:
+python3.12 -m pip install --user semgrep
+go install github.com/securego/gosec/v2/cmd/gosec@latest   # requires Go
+# Trivy and Gitleaks ship .deb packages -- see their release pages for the
+# current version, e.g.:
+curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+curl -sfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/scripts/install.sh | sh -s -- -b /usr/local/bin
+```
+
+Package names/repos vary by distro (Fedora/RHEL: `dnf install postgresql16-server redis python3.12`, then `systemctl` the same way) — the point is the same five tools as macOS, just via your distro's package manager plus each scanner's own installer where there's no distro package.
+
+**Windows**
+
+The scanner CLIs (Semgrep/Trivy/Gitleaks/gosec) are Linux/macOS-first tools with inconsistent native Windows support. **WSL2 is the recommended path**: install WSL2 with an Ubuntu distro, then follow the Linux instructions above entirely inside it (clone the repo into the WSL filesystem, not a Windows path, for usable I/O performance). Running natively on Windows without WSL2 is unsupported — use Docker Compose above instead if you'd rather not set up WSL2.
 
 Create the database:
 

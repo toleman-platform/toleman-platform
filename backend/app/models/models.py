@@ -867,3 +867,43 @@ class AiAnalysisRun(SQLModel, table=True):
     analysis_count: int = 1
 
     __table_args__ = (UniqueConstraint("user_id", "finding_id", name="uq_ai_analysis_run_user_finding"),)
+
+
+class ApiTokenScope(str, Enum):
+    READ = "read"
+    READ_WRITE = "read_write"
+
+
+class ApiToken(SQLModel, table=True):
+    """Issue #109: a user-issued Personal Access Token for the public API
+    (`/api/public/v1/*`), distinct from `Workspace.api_key` -- that key is a
+    single, un-scoped, CI-ingest-only secret shared by the whole workspace
+    (`POST /api/ingest/{target_id}`); this is a per-user, named, revocable
+    token for third-party/scripted read (and optionally write) access.
+
+    Only `token_hash` (sha256, not pbkdf2 -- the token itself is
+    high-entropy random, not a human-chosen password, so slow-hashing buys
+    nothing and would make every public-API request pay a 200k-iteration
+    cost) is stored; the plaintext token is returned exactly once at
+    creation time and never again, same "never echo a secret back"
+    philosophy as `PlatformConfig`'s `*_set: bool` pattern.
+    `token_prefix` (first 12 chars of the plaintext) is stored only so the
+    UI can show "which token is this" (e.g. `rikugan_pat_a1b2c3...`)
+    without ever re-deriving or displaying the full value.
+
+    `scope` is a single flat read/read_write flag -- deliberately not a
+    granular per-endpoint permission model for this first version, same
+    "simple scalar over a rule table until proven necessary" choice made
+    for `jira_auto_create_severity` (#74). Read-only is the default; a
+    caller must explicitly request read_write at creation time.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    name: str
+    token_hash: str = Field(unique=True, index=True)
+    token_prefix: str
+    scope: ApiTokenScope = ApiTokenScope.READ
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None

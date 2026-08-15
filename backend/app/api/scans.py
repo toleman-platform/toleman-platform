@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.core.rate_limit import enforce_rate_limit
+from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User
 from app.scanners import parsers
 from app.tasks.scan_tasks import run_scan
@@ -121,6 +122,7 @@ def get_scan(
     scan = session.get(Scan, scan_id)
     if not scan:
         return {"error": "scan not found"}
+    mark_stale_if_needed(session, scan)
     return {
         "scan_id": scan.id,
         "target_id": scan.target_id,
@@ -130,4 +132,5 @@ def get_scan(
         "findings_count": scan.findings_count,
         "started_at": scan.started_at,
         "completed_at": scan.completed_at,
+        "error_message": scan.error,
     }

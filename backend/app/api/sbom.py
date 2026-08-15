@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
 from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
+from app.core.staleness import mark_stale_if_needed
 from app.models.models import SbomComponent, SbomRun, Target, User, WorkspaceRole
 from app.tasks.sbom_tasks import run_sbom_generation
 
@@ -187,6 +188,7 @@ def get_sbom_run(target_id: int, run_id: int, session: Session = Depends(get_ses
     run = session.get(SbomRun, run_id)
     if not run or run.target_id != target_id:
         raise HTTPException(status_code=404, detail="sbom run not found")
+    mark_stale_if_needed(session, run)
 
     target = _get_target(target_id, session)
     payload = {

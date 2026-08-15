@@ -204,6 +204,11 @@ class Scan(SQLModel, table=True):
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
     findings_count: int = 0
+    # (#153) human-readable failure reason -- clone/tool errors and stale-job
+    # timeouts (app/core/staleness.py) both write here so GET /api/scans/{id}
+    # can surface *why* a scan failed instead of leaving the frontend with
+    # only a bare "failed" status.
+    error: str = ""
 
 
 class Finding(SQLModel, table=True):

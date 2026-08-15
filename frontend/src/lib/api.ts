@@ -437,6 +437,12 @@ export type ScanRun = {
   findings_count: number;
   started_at: string;
   completed_at: string | null;
+  // (#153) failure reason -- set on real clone/tool errors and on the
+  // lazy stale-job timeout (app/core/staleness.py); "" while running/completed.
+  // Deliberately not named `error` -- the sibling { error: string } shape
+  // (scan/target not found) is used as a discriminator via `"error" in scan`
+  // elsewhere, and this field must not collide with that check.
+  error_message: string;
 };
 
 // GET /api/scans/summary (#120): per-target scan history so the Scans page

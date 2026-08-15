@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     nuclei_rate_limit: int = 10
     nuclei_exclude_tags: str = "dos,fuzz,intrusive"
 
+    # Issue #153: a Scan/DiscoveryRun/SbomRun/PipelineIntegrationBatch row can
+    # be left "running" forever if its Celery task never actually reaches a
+    # worker (e.g. a worker listening on the wrong queue) or the worker
+    # process dies mid-task -- there's no beat/cron in this project to sweep
+    # for that, so app/core/staleness.py checks lazily on read instead. 15
+    # minutes comfortably exceeds every real tool's own timeout (nuclei's
+    # above included) so this only fires for jobs that are actually stuck,
+    # not ones that are just slow.
+    stale_job_timeout_seconds: int = 900
+
     class Config:
         env_file = ".env"
 

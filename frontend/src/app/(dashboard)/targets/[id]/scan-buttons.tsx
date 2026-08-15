@@ -44,7 +44,7 @@ export function ScanButtons({ targetId }: { targetId: number }) {
           // "failed" status so pollUntilSettled's status-based loop can
           // still stop -- polling would otherwise spin forever.
           if ("error" in scan) return { status: "failed" as const, message: scan.error };
-          return { status: scan.status, findings_count: scan.findings_count };
+          return { status: scan.status, findings_count: scan.findings_count, message: scan.error_message };
         },
         (scan) => {
           if (scan.status === "completed") {
@@ -52,7 +52,7 @@ export function ScanButtons({ targetId }: { targetId: number }) {
             setRunning(null);
             router.refresh();
           } else if (scan.status === "failed") {
-            setResult(`${tool}: ${scan.message ?? "scan failed"}`);
+            setResult(`${tool}: ${scan.message || "scan failed"}`);
             setRunning(null);
           }
         },

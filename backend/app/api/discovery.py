@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
 from app.core.discovery_ingestion import upsert_endpoints  # noqa: F401 -- re-exported, see docstring below
+from app.core.staleness import mark_stale_if_needed
 from app.models.models import ApiEndpoint, DiscoveryRun, Target, User, WorkspaceRole
 from app.tasks.discovery_tasks import run_discovery as run_discovery_task
 
@@ -63,6 +64,7 @@ def get_discovery_run(target_id: int, run_id: int, session: Session = Depends(ge
     run = session.get(DiscoveryRun, run_id)
     if not run or run.target_id != target_id:
         raise HTTPException(status_code=404, detail="discovery run not found")
+    mark_stale_if_needed(session, run)
 
     target = _get_target(target_id, session)
     payload = {

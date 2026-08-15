@@ -280,7 +280,7 @@ export default function ApiDiscoveryPage() {
               {lastApiScan.status === "completed"
                 ? `Last active scan: ${lastApiScan.findings_count} finding${lastApiScan.findings_count === 1 ? "" : "s"} (tool=api-scan)`
                 : lastApiScan.status === "failed"
-                  ? "Last active scan failed."
+                  ? `Last active scan failed${lastApiScan.error_message ? `: ${lastApiScan.error_message}` : "."}`
                   : `Last active scan: ${lastApiScan.status}`}
               {lastApiScan.status === "completed" && lastApiScan.findings_count > 0 && targetId !== null && (
                 <>

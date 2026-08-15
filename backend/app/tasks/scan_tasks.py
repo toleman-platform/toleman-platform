@@ -104,17 +104,19 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             # the next attempt with backoff -- this scan row stays "running" until then.
             if self.request.retries >= self.max_retries:
                 scan.status = "failed"
+                scan.error = "git clone failed after retries"
                 session.add(scan)
                 session.commit()
                 _notify_scan_failure(session, target, tool, "git clone failed after retries")
             raise
         except Exception as exc:
             # Non-transient failure -- retrying would fail the same way, so fail now.
-            scan.status = "failed"
-            session.add(scan)
-            session.commit()
             # runner.clone_error_message avoids echoing raw subprocess argv/paths
             # (and, historically, an embedded GitHub token) back into scan state.
             error_message = runner.clone_error_message(exc)
+            scan.status = "failed"
+            scan.error = error_message
+            session.add(scan)
+            session.commit()
             _notify_scan_failure(session, target, tool, error_message)
             return {"error": error_message, "scan_id": scan.id}

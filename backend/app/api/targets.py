@@ -12,6 +12,7 @@ from app.api.deps import get_session
 from app.core.enforcement import VALID_ENFORCEMENT_MODES, resolve_enforcement_mode_with_source
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
+from app.core.staleness import mark_stale_if_needed
 from app.models.models import (
     WORKSPACE_ROLE_RANK,
     Group,
@@ -385,6 +386,7 @@ def get_bulk_pipeline_integrate_batch(
     batch = session.get(PipelineIntegrationBatch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="batch not found")
+    mark_stale_if_needed(session, batch)
 
     ws_ids = accessible_workspace_ids(session, user)
     items = session.exec(

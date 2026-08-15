@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, require_workspace_role
 from app.api.deps import get_session
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
+from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User, WorkspaceRole
 from app.tasks.api_scan_tasks import run_api_scan
 
@@ -93,6 +94,7 @@ def get_latest_api_scan(target_id: int, session: Session = Depends(get_session),
     ).first()
     if not scan:
         return {"target_id": target_id, "scan": None}
+    mark_stale_if_needed(session, scan)
     return {
         "target_id": target_id,
         "scan": {
@@ -104,5 +106,6 @@ def get_latest_api_scan(target_id: int, session: Session = Depends(get_session),
             "findings_count": scan.findings_count,
             "started_at": scan.started_at,
             "completed_at": scan.completed_at,
+            "error_message": scan.error,
         },
     }

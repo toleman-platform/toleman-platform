@@ -162,7 +162,7 @@ export default function OnboardingPage() {
         async () => {
           const scan = await api.getScan(scanId);
           if ("error" in scan) return { status: "failed" as const, message: scan.error };
-          return { status: scan.status, findings_count: scan.findings_count };
+          return { status: scan.status, findings_count: scan.findings_count, message: scan.error_message };
         },
         async (scan) => {
           if (scan.status === "completed") {
@@ -176,7 +176,7 @@ export default function OnboardingPage() {
             setStep(3);
             setScanning(false);
           } else if (scan.status === "failed") {
-            setScanError(scan.message ?? "scan failed");
+            setScanError(scan.message || "scan failed");
             setScanning(false);
           }
         },

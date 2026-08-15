@@ -135,6 +135,15 @@ Logged 2026-08-15, not yet started. All three need real scoping (auth model, too
 - **#108** Add a Rikugan MCP server — exposing findings/targets/scans as tools an AI agent can call. Needs: which operations to expose as MCP tools (read-only triage assistant vs. write-capable scan trigger), auth (reuse workspace API key vs. new token type), and whether it ships as a separate package/process or a mode of the existing backend.
 - **#114** SIEM export support. Needs: which format/destination first (Splunk HEC, generic syslog, S3/webhook) — no format chosen yet, this is a real product decision, not an engineering default.
 
+## Sprint 17 — UI polish follow-ups from the manual review (#171, #172, #173, #174)
+
+Logged 2026-08-15. All four came out of a manual UI review pass over every route at 1440x900 and 390x844 in both themes. The unambiguous **defects** from that review (server-side theme cookie never read, security-score gauge label printed over the grade badge, Recharts hydration error, nav items hidden below the fold with no affordance, admin rows overflowing on mobile, 20 unlabeled form controls) already shipped in PR #170 — these four are the leftovers that are design calls rather than bugs, so none of them is a green light to just start changing pixels.
+
+- **#171** On-Demand Scan renders roughly half its rows with solid destructive-red Scan buttons, bound to target criticality. Deliberate in #117/#118, but the action is read-only and the red PROD chip plus the Prod-aware ConfirmDialog already carry the weight. Decision needed on whether the colour stays.
+- **#172** "Compact" density reclaims only 7% (findings card 175px -> 163px), so the list still shows about four of 1410 findings per screen. Needs a decision on whether Compact should change layout, not just padding tokens.
+- **#173** Security Score widget strands a 220px gauge in a full-width (~1100px) card. Now that the label collision is fixed there is room to either enlarge the gauge or tighten the row.
+- **#174** Repo Sync cards spend ~120px on two lines and an unexplained `weight 2`, while omitting last-scan time and finding counts that `/scans` already renders per row from real data.
+
 ## Explicitly not planned
 
 - Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.

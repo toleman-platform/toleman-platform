@@ -342,6 +342,18 @@ export type NotificationChannel = "email" | "slack";
 export type NotificationEventType = "critical_finding" | "kev_cve" | "sla_breach" | "scan_failure";
 export type NotificationPreference = { channel: NotificationChannel; event_type: NotificationEventType; enabled: boolean };
 
+// Issue #109: public API personal access tokens.
+export type ApiTokenScope = "read" | "read_write";
+export type ApiToken = {
+  id: number;
+  name: string;
+  token_prefix: string;
+  scope: ApiTokenScope;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+};
+
 export type WorkspaceSummary = {
   id: number;
   name: string;
@@ -893,6 +905,16 @@ export const api = {
       `/api/targets/${targetId}/workspace-key/regenerate`,
       { method: "POST" }
     ),
+  // Issue #109: personal access tokens for the public API
+  // (/api/public/v1/*, Bearer-token auth) -- distinct from the workspace
+  // API key above, which is CI-ingest-only and shared workspace-wide.
+  apiTokens: () => jsonFetch<ApiToken[]>("/api/api-tokens"),
+  createApiToken: (name: string, scope: ApiTokenScope) =>
+    jsonFetch<ApiToken & { token: string }>("/api/api-tokens", {
+      method: "POST",
+      body: JSON.stringify({ name, scope }),
+    }),
+  revokeApiToken: (id: number) => jsonFetch<ApiToken>(`/api/api-tokens/${id}/revoke`, { method: "POST" }),
   // Issue #66: generate/inspect the per-target CI/CD scan workflow, and open
   // a real PR against the target's GitHub repo adding it.
   pipelineWorkflow: (targetId: number) =>

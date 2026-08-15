@@ -3,11 +3,14 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import time
 
 from app.core.config import DEFAULT_SESSION_SECRET, settings
 
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
+
+API_TOKEN_PREFIX = "rikugan_pat_"
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -68,3 +71,25 @@ def decode_session_token(token: str) -> dict | None:
 def verify_session_token(token: str) -> int | None:
     payload = decode_session_token(token)
     return payload["uid"] if payload else None
+
+
+def generate_api_token() -> tuple[str, str, str]:
+    """Issue #109: mint a new public-API personal access token. Returns
+    (plaintext, token_hash, token_prefix) -- the caller persists only
+    token_hash/token_prefix and returns plaintext to the client exactly
+    once; it can never be re-derived from what's stored.
+
+    sha256 (not pbkdf2_hmac like hash_password) on purpose: this token is
+    32 bytes of os.urandom-backed entropy via secrets.token_urlsafe, not a
+    human-chosen password, so a slow hash defends against nothing here and
+    would make every public-API request pay a 200k-iteration cost for no
+    security benefit.
+    """
+    plaintext = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(plaintext.encode()).hexdigest()
+    token_prefix = plaintext[: len(API_TOKEN_PREFIX) + 8]
+    return plaintext, token_hash, token_prefix
+
+
+def hash_api_token(plaintext: str) -> str:
+    return hashlib.sha256(plaintext.encode()).hexdigest()

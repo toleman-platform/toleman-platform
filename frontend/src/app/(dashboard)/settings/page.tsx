@@ -3,7 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Copy, Eye, EyeOff, RotateCw, UserCircle, Bell, Cog, type LucideIcon } from "lucide-react";
-import { api, AuthUser, NotificationChannel, NotificationEventType, NotificationPreference, Target } from "@/lib/api";
+import {
+  api,
+  ApiToken,
+  ApiTokenScope,
+  AuthUser,
+  NotificationChannel,
+  NotificationEventType,
+  NotificationPreference,
+  Target,
+} from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -111,6 +120,141 @@ function WorkspaceKeyCard({ targetId }: { targetId: number }) {
             </div>
           )}
           {error && <p className="text-xs text-destructive">{error}</p>}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ApiTokensCard() {
+  const [tokens, setTokens] = useState<ApiToken[] | null>(null);
+  const [name, setName] = useState("");
+  const [scope, setScope] = useState<ApiTokenScope>("read");
+  const [creating, setCreating] = useState(false);
+  const [justCreated, setJustCreated] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  function refresh() {
+    api.apiTokens().then(setTokens);
+  }
+
+  useEffect(refresh, []);
+
+  async function create() {
+    if (!name.trim()) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const created = await api.createApiToken(name.trim(), scope);
+      setJustCreated(created.token);
+      setName("");
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to create token");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function revoke(id: number) {
+    await api.revokeApiToken(id);
+    refresh();
+  }
+
+  return (
+    <Card className="border-border bg-card">
+      <CardContent className="flex flex-col gap-4 px-4 py-4">
+        <div>
+          <h2 className="text-sm font-medium text-foreground">API Tokens</h2>
+          <p className="text-xs text-muted-foreground">
+            Personal access tokens for the public API (<code>/api/public/v1/*</code>, <code>Authorization: Bearer
+            &lt;token&gt;</code>) -- separate from the workspace API key above, which is CI-ingest-only. Default
+            scope is read-only; request read/write to also trigger scans via the public API.
+          </p>
+        </div>
+
+        {justCreated && (
+          <div className="flex flex-col gap-2 rounded-md border border-chart-5/40 bg-chart-5/5 p-3">
+            <p className="text-xs text-foreground">
+              Copy this token now -- it won&apos;t be shown again.
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 break-all rounded-md bg-secondary px-3 py-2 text-sm text-foreground">
+                {justCreated}
+              </code>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Copy token"
+                onClick={() => navigator.clipboard.writeText(justCreated)}
+              >
+                <Copy />
+              </Button>
+            </div>
+            <Button variant="outline" size="sm" className="self-start" onClick={() => setJustCreated(null)}>
+              Done
+            </Button>
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            className="h-9 min-w-[160px] flex-1 bg-secondary"
+            placeholder="Token name (e.g. ci-pipeline)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <select
+            className="h-9 rounded-md border border-input bg-secondary px-3 text-sm text-foreground"
+            value={scope}
+            onChange={(e) => setScope(e.target.value as ApiTokenScope)}
+          >
+            <option value="read">Read-only</option>
+            <option value="read_write">Read/write</option>
+          </select>
+          <Button size="sm" disabled={creating || !name.trim()} onClick={create}>
+            {creating ? "Creating..." : "Create token"}
+          </Button>
+        </div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
+          {tokens === null && <p className="text-xs text-muted-foreground">Loading...</p>}
+          {tokens?.length === 0 && <p className="text-xs text-muted-foreground">No API tokens yet.</p>}
+          {tokens?.map((t) => (
+            <div
+              key={t.id}
+              className="flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/40 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm font-medium text-foreground">{t.name}</span>
+                  <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">
+                    {t.scope === "read_write" ? "read/write" : "read-only"}
+                  </span>
+                  {t.revoked_at && (
+                    <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">
+                      revoked
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">
+                  {t.token_prefix}... · created {new Date(t.created_at).toLocaleDateString()}
+                  {t.last_used_at ? ` · last used ${new Date(t.last_used_at).toLocaleDateString()}` : " · never used"}
+                </div>
+              </div>
+              {!t.revoked_at && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0 text-destructive hover:text-destructive"
+                  onClick={() => revoke(t.id)}
+                >
+                  Revoke
+                </Button>
+              )}
+            </div>
+          ))}
         </div>
       </CardContent>
     </Card>
@@ -446,6 +590,8 @@ function WorkspaceSection() {
       )}
 
       {targetId !== null && <WorkspaceKeyCard key={targetId} targetId={targetId} />}
+
+      <ApiTokensCard />
     </div>
   );
 }

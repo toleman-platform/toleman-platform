@@ -1,12 +1,23 @@
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
+from datetime import datetime
+
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.rate_limit import enforce_rate_limit
-from app.core.security import create_session_token, decode_session_token, hash_password, verify_password
-from app.models.models import WORKSPACE_ROLE_RANK, Finding, Target, User, WorkspaceMembership, WorkspaceRole
+from app.core.security import create_session_token, decode_session_token, hash_api_token, hash_password, verify_password
+from app.models.models import (
+    WORKSPACE_ROLE_RANK,
+    ApiToken,
+    ApiTokenScope,
+    Finding,
+    Target,
+    User,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 
 LOGIN_RATE_LIMIT = 5
 LOGIN_RATE_WINDOW_SECONDS = 60
@@ -43,6 +54,56 @@ def current_user(
     if payload.get("tv") != user.token_version:
         raise HTTPException(status_code=401, detail="session revoked")
     return user
+
+
+def _resolve_api_token(session: Session, authorization: str | None) -> ApiToken:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
+    plaintext = authorization.removeprefix("Bearer ").strip()
+    token_hash = hash_api_token(plaintext)
+    token = session.exec(select(ApiToken).where(ApiToken.token_hash == token_hash)).first()
+    if not token or token.revoked_at is not None:
+        raise HTTPException(status_code=401, detail="invalid or revoked API token")
+    return token
+
+
+def current_api_token_user(
+    session: Session = Depends(get_session),
+    authorization: str | None = Header(default=None),
+) -> User:
+    """Issue #109: resolves the caller of `/api/public/v1/*` from an
+    `Authorization: Bearer <token>` header instead of the session cookie
+    `current_user` uses -- the public API is meant for scripts/CI/third-
+    party integrations, not browser sessions.
+
+    Returns the token's owning `User` (so downstream handlers can reuse
+    `accessible_workspace_ids(session, user)` unchanged) and bumps
+    `last_used_at` so a token's dashboard entry shows real recency instead
+    of only creation time. Write-scope checking lives in the separate
+    `require_api_token_write_scope` dependency below, not here -- most
+    public-API endpoints only need read access.
+    """
+    token = _resolve_api_token(session, authorization)
+    user = session.get(User, token.user_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="user not found")
+
+    token.last_used_at = datetime.utcnow()
+    session.add(token)
+    session.commit()
+    return user
+
+
+def require_api_token_write_scope(
+    session: Session = Depends(get_session),
+    authorization: str | None = Header(default=None),
+) -> None:
+    """Gate for public-API endpoints that mutate state (e.g. triggering a
+    scan) -- a `read`-scoped token must not be able to do this even though
+    it authenticates fine for GETs."""
+    token = _resolve_api_token(session, authorization)
+    if token.scope != ApiTokenScope.READ_WRITE:
+        raise HTTPException(status_code=403, detail="this token is read-only; a read_write token is required")
 
 
 @router.post("/login", response_model=UserOut)

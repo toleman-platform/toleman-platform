@@ -16,12 +16,13 @@ from app.core.dedup import compute_dedup_hash
 from app.core.enforcement import resolve_enforcement_mode
 from app.core.github import get_github_token, github_get, repo_slug_from_url
 from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
-from app.core.policy import apply_policies
+from app.core.policy import apply_policies, effective_blocking_severities
 from app.core.pr_guardrail import SEVERITY_ORDER, compute_net_new, highest_severity, should_block
 from app.models.models import (
     ApiEndpoint,
     Finding,
     FindingState,
+    IgnoreStatus,
     PolicyRule,
     PRGuardrailFinding,
     PRGuardrailScan,
@@ -491,3 +492,70 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             # (and, historically, an embedded GitHub token) back in the response.
             "error": runner.clone_error_message(exc),
         }
+
+
+def recompute_pr_scan_status(session: Session, pr_scan: PRGuardrailScan) -> None:
+    """Re-evaluate a BLOCKED PRGuardrailScan after an individual finding's
+    ignore-request is approved (#112). Before this, the only way to unblock
+    a PR was the blunt whole-scan `override` -- approving every one of a
+    PR's blocking findings individually still left the scan (and GitHub
+    commit status) stuck on BLOCKED forever, since approve_ignore only
+    touched the finding row, never the scan.
+
+    No-op for scans not currently BLOCKED: a PASSED scan has nothing to
+    recompute, and OVERRIDDEN is a deliberate accept-everything escape hatch
+    that a later per-finding approval shouldn't silently reverse.
+    """
+    if pr_scan.status != PRGuardrailStatus.BLOCKED:
+        return
+
+    target = session.get(Target, pr_scan.target_id)
+    if not target:
+        return
+
+    findings = session.exec(
+        select(PRGuardrailFinding).where(PRGuardrailFinding.pr_scan_id == pr_scan.id)
+    ).all()
+    still_open = [f for f in findings if f.ignore_status != IgnoreStatus.APPROVED]
+
+    policies = session.exec(
+        select(PolicyRule).where(
+            PolicyRule.workspace_id == target.workspace_id,
+            PolicyRule.active == True,  # noqa: E712
+        )
+    ).all()
+    blocking_severities = effective_blocking_severities(policies)
+
+    if any(f.severity in blocking_severities for f in still_open):
+        return  # a still-open (non-approved) finding legitimately keeps this blocked
+
+    pr_scan.status = PRGuardrailStatus.PASSED
+    session.add(pr_scan)
+    session.commit()
+    session.refresh(pr_scan)
+
+    enforcement_mode = resolve_enforcement_mode(session, target)
+    if enforcement_mode == "disabled":
+        return
+    try:
+        slug = repo_slug_from_url(target.repo_url)
+        pr_res = github_get(f"/repos/{slug}/pulls/{pr_scan.pr_number}")
+        pr_res.raise_for_status()
+        head_sha = pr_res.json()["head"]["sha"]
+        set_commit_status(
+            session,
+            target,
+            head_sha,
+            "success",
+            "All blocking findings individually approved for ignore",
+        )
+    except Exception:
+        # Best-effort, same philosophy as the rest of this module's GitHub
+        # calls -- the scan row itself is already correctly updated above;
+        # a failure here just means GitHub's commit status lags until the
+        # next real scan or a retry, not a failed approval.
+        logger.exception(
+            "PR guardrail: failed to update commit status after per-finding "
+            "ignore approval for scan %s",
+            pr_scan.id,
+        )

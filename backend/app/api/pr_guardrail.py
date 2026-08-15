@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, require_security_reviewer, require_workspace_role
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
-from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, set_commit_status
+from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, recompute_pr_scan_status, set_commit_status
 from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User, WorkspaceRole
 
 logger = logging.getLogger(__name__)
@@ -255,6 +255,14 @@ def approve_ignore(
     session.add(finding)
     session.commit()
     session.refresh(finding)
+
+    # #112: don't leave the whole-PR status stuck BLOCKED once every
+    # blocking finding has been individually approved for ignore -- the
+    # blunt whole-scan override used to be the only way out of that.
+    pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
+    if pr_scan:
+        recompute_pr_scan_status(session, pr_scan)
+
     return _finding_out(finding)
 
 

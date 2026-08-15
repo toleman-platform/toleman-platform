@@ -260,9 +260,17 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                       {entry && entry.tools.length > 0 ? ` · ${entry.tools.join(", ")}` : ""}
                     </div>
                   </div>
+                  {/* Issue #171: this used to be `destructive` on Prod rows,
+                      which painted roughly half the page solid red for what
+                      is a read-only action. The Prod signal is already
+                      carried twice -- by the red CriticalityChip above and by
+                      the Prod-aware ConfirmDialog below -- so the third copy
+                      only diluted what `destructive` means everywhere else in
+                      the app. The bulk-action button keeps the destructive
+                      variant: one click there fires N scans at once. */}
                   <Button
                     size="sm"
-                    variant={t.label === "Prod" ? "destructive" : "outline"}
+                    variant="outline"
                     className="h-8 shrink-0 text-xs"
                     disabled={busy}
                     onClick={() => requestScan([t.id])}

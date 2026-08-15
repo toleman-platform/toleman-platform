@@ -76,6 +76,7 @@
   --density-row-py: 0.75rem;
   --density-page-py: 2rem;
   --density-gap: 1.5rem;
+  --density-list-gap: 0.5rem;
 }
 
 /* Light mode (#115) -- real, individually-chosen values from the design
@@ -127,6 +128,45 @@
   --density-row-py: 0.375rem;
   --density-page-py: 1.25rem;
   --density-gap: 1rem;
+  --density-list-gap: 0.25rem;
+}
+
+/* Issue #172: the density tokens above only ever moved padding, so Compact
+   reclaimed about 7% (a findings card went 175px -> 163px) and a triage
+   session still showed roughly four of 1410 findings per screen. Compact now
+   changes list-row *layout* as well, via these two CSS-only switches.
+   CSS-only is deliberate: `data-density` is applied by DensityInit in a
+   layout effect, so branching on it in React state instead would reintroduce
+   exactly the server/client divergence this app has already been bitten by
+   twice (see the FOUC note in theme-toggle.tsx and the Recharts id mismatch
+   in security-score-gauge.tsx). A stylesheet has no hydration to mismatch. */
+.density-comfortable-only {
+  display: block;
+}
+.density-compact-only {
+  display: none;
+}
+[data-density="compact"] .density-comfortable-only {
+  display: none;
+}
+[data-density="compact"] .density-compact-only {
+  display: block;
+}
+
+/* Stacked secondary lines (file path, target chip) that collapse onto one
+   wrapping line in compact. Each child owns a full line by default. */
+.density-stack > * {
+  width: 100%;
+}
+[data-density="compact"] .density-stack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 0.5rem;
+}
+[data-density="compact"] .density-stack > * {
+  width: auto;
+  margin-top: 0;
 }
 
 @theme inline {

@@ -366,9 +366,15 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
       ) : score.target_count === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">No targets in scope.</p>
       ) : (
-        <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:justify-around">
+        <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-center sm:justify-center sm:gap-10">
+          {/* Issue #173: this row used to be `justify-around`, which stranded
+              a 220px gauge and a max-w-sm list inside a ~1100px full-width
+              card with dead space around both. It's now a centred row with an
+              explicit gap so the two halves read as one unit, and the
+              breakdown list is allowed to grow (its parenthetical detail text
+              was cramped at max-w-sm) without stretching to the full card. */}
           <SecurityScoreGauge score={score.score} grade={score.grade} />
-          <div className="grid w-full max-w-sm grid-cols-1 gap-1.5 text-xs">
+          <div className="grid w-full max-w-md grid-cols-1 gap-1.5 text-xs">
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;

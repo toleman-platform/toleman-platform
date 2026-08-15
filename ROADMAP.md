@@ -127,6 +127,15 @@ Establishes the components other sprints consume: #117's criticality-chip/toolti
 - **#128** Fix: expired/revoked session renders a broken authenticated shell instead of redirecting to login.
 - **#129** Fix: workspace API key shown in cleartext with no mask/reveal/rotate UX.
 
+## Sprint 16 — Public surfaces (#109, #108, #114)
+
+Logged 2026-08-15, not yet started. All three need real scoping (auth model, tool surface, export destinations) before implementation — this entry tracks them as a sprint, it isn't a green light to build blind.
+
+- **#109** Public API with API token support — the rikugan-docs Reference page's "coming soon" placeholder. Needs: token scope/permission model (distinct from the existing workspace API key, which is CI-ingest-only today), rate limiting, versioning strategy, and real OpenAPI docs generation.
+- **#108** Add a Rikugan MCP server — exposing findings/targets/scans as tools an AI agent can call. Needs: which operations to expose as MCP tools (read-only triage assistant vs. write-capable scan trigger), auth (reuse workspace API key vs. new token type), and whether it ships as a separate package/process or a mode of the existing backend.
+- **#114** SIEM export support. Needs: which format/destination first (Splunk HEC, generic syslog, S3/webhook) — no format chosen yet, this is a real product decision, not an engineering default.
+
 ## Explicitly not planned
 
 - Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.
+- **#113** SSO integration (SAML/OIDC) — directly conflicts with the line above. Flagged 2026-08-15: recommend closing #113 as won't-fix per this roadmap's own stated product direction, or explicitly revising this "not planned" line first if the direction has actually changed. Not implementing until that conflict is resolved by the maintainer.

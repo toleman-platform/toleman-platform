@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ChevronLeft } from "lucide-react";
 import { api } from "@/lib/api";
 import { CriticalityChip } from "@/components/criticality-chip";
 import { FindingsList } from "@/components/findings-list";
@@ -9,6 +11,7 @@ import { ApiScanConfig } from "./api-scan-config";
 import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { settleOrNull } from "@/lib/settle";
+import { pageSizeFromParams } from "@/lib/pagination";
 
 // Issue #197: the target detail page used to be one long scroll stacking
 // posture, findings and five separate config sections. The settings alone
@@ -29,12 +32,22 @@ export default async function TargetDetailPage({
   const targetId = Number(id);
   const tab = normalizeTab(sp.tab);
 
-  const [target, findingsResult, scanSummary] = await Promise.all([
+  const page = Math.max(1, Number(Array.isArray(sp.page) ? sp.page[0] : sp.page) || 1);
+  const pageSize = pageSizeFromParams(sp.page_size);
+
+  const [target, findingsResult, scanSummary, targetSummary] = await Promise.all([
     api.target(targetId),
-    api.findings({ target_id: targetId, page_size: 500 }),
+    // Real pagination. This used to fetch page_size: 500 and hand the whole
+    // lot to FindingsList with pageSize = findings.length, which meant the
+    // pager rendered "Showing 1-500 of 1137" while the rows-per-page
+    // selector said 25 -- and on a target with 1137 findings it shipped 500
+    // rows to the browser in one response.
+    api.findings({ target_id: targetId, page, page_size: pageSize }),
     // Degrades to {} rather than failing the page -- the overview then shows
     // "Never" for last scan, which is honest about not knowing.
     settleOrNull(api.scanSummary()).then((s) => s ?? {}),
+    // Overview counts must cover the whole target, not the fetched page.
+    settleOrNull(api.targetsSummary()).then((s) => s ?? {}),
   ]);
   const findings = findingsResult.items;
   const scanEntry = scanSummary[String(targetId)];
@@ -47,6 +60,17 @@ export default async function TargetDetailPage({
           1440px. A header should say what this is, not compete with the
           actions you can take on it. */}
       <div className="flex flex-col gap-3">
+        {/* A detail page reached from a list needs a way back to that list.
+            The sidebar's Targets link goes to an unfiltered page 1, losing
+            whatever search/sort/page the reader came from; this is the
+            standard back affordance they expect and it costs one row. */}
+        <Link
+          href="/targets"
+          className="flex w-fit items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          All targets
+        </Link>
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-foreground">{target.name}</h1>
           <p className="mt-1 truncate text-sm text-muted-foreground">{target.repo_url}</p>
@@ -63,7 +87,7 @@ export default async function TargetDetailPage({
       <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={findingsResult.total} />
 
       {tab === "overview" && (
-        <TargetOverview target={target} findings={findings} scanEntry={scanEntry} />
+        <TargetOverview target={target} summaryEntry={targetSummary[String(targetId)]} scanEntry={scanEntry} />
       )}
 
       {tab === "vulnerabilities" && (
@@ -74,8 +98,8 @@ export default async function TargetDetailPage({
         <FindingsList
           findings={findings}
           total={findingsResult.total}
-          page={1}
-          pageSize={Math.max(findings.length, 1)}
+          page={page}
+          pageSize={pageSize}
           targets={[target]}
         />
       )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError, Target, PullRequest } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,6 +15,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { DocGenStep, DocumentGeneratorPanel } from "@/components/document-generator-panel";
 import { GitPullRequest } from "lucide-react";
+import { ActivityPagination } from "@/components/activity-pagination";
+import { pageSizeFromParams } from "@/lib/pagination";
 
 function isSessionError(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;
@@ -23,6 +26,12 @@ export default function PrHistoryPage() {
   const [targets, setTargets] = useState<Target[]>([]);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [prs, setPrs] = useState<PullRequest[]>([]);
+  const prSearchParams = useSearchParams();
+  const prPageSize = pageSizeFromParams(prSearchParams.get("page_size") ?? undefined);
+  const prPageRaw = Math.max(1, Number(prSearchParams.get("page") ?? "1") || 1);
+  const prTotalPages = Math.max(1, Math.ceil(prs.length / prPageSize));
+  const prPage = Math.min(prPageRaw, prTotalPages);
+  const visiblePrs = prs.slice((prPage - 1) * prPageSize, prPage * prPageSize);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
@@ -106,7 +115,11 @@ export default function PrHistoryPage() {
 
           {!sessionExpired && !loading && (
             <div className="flex flex-col gap-2">
-              {prs.map((pr) => (
+              {/* PR History rendered every PR the GitHub API returned, with no
+                  pager. On an active repo that is an unbounded list. Paged
+                  client-side because the PRs are already fetched here. */}
+              <ActivityPagination total={prs.length} page={prPage} pageSize={prPageSize} position="top" />
+              {visiblePrs.map((pr) => (
                 <Card key={pr.number} className="border-border bg-card">
                   <CardContent className="flex items-center justify-between px-4 py-3">
                     <div>

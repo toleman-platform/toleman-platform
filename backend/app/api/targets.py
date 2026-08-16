@@ -192,16 +192,30 @@ def targets_summary(
         )
     ).all()
 
-    summary: dict[int, dict] = {t.id: {"open": 0, "critical": 0, "high": 0} for t in targets}
+    # Full severity breakdown, not just critical/high: the target Overview
+    # (#197) renders open-findings-by-severity and must count the whole
+    # target rather than whichever page of findings the UI happens to have
+    # fetched. Deriving it from a paged list silently reports "3 Medium" for
+    # a target with 1137 findings.
+    def _blank() -> dict:
+        return {"open": 0, "critical": 0, "high": 0, "medium": 0, "low": 0, "informational": 0}
+
+    summary: dict[int, dict] = {t.id: _blank() for t in targets}
+    severity_key = {
+        Severity.CRITICAL: "critical",
+        Severity.HIGH: "high",
+        Severity.MEDIUM: "medium",
+        Severity.LOW: "low",
+        Severity.INFO: "informational",
+    }
     for target_id, severity, branch in finding_rows:
         if branch != default_branch_by_target.get(target_id):
             continue
         entry = summary[target_id]
         entry["open"] += 1
-        if severity == Severity.CRITICAL:
-            entry["critical"] += 1
-        elif severity == Severity.HIGH:
-            entry["high"] += 1
+        key = severity_key.get(severity)
+        if key:
+            entry[key] += 1
 
     return {str(target_id): counts for target_id, counts in summary.items()}
 

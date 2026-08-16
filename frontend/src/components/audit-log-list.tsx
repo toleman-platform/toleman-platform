@@ -69,6 +69,7 @@ function AuditEventCard({ event }: { event: AuditEvent }) {
 export function AuditLogList({ events, total, page, pageSize }: { events: AuditEvent[]; total: number; page: number; pageSize: number }) {
   return (
     <div className="flex flex-col gap-3">
+      <ActivityPagination total={total} page={page} pageSize={pageSize} position="top" />
       <div className="flex flex-col gap-2">
         {events.map((e, i) => (
           <AuditEventCard key={i} event={e} />

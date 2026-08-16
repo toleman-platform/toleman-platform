@@ -7,6 +7,19 @@ import { Button } from "@/components/ui/button";
 
 const CRITICALITY_OPTIONS = ["Prod", "Internal", "Dev"];
 
+// Sort options. "Most findings" is the default because it answers the
+// question this page exists to answer -- which repo needs attention -- and
+// an alphabetical inventory buries the one repo with 1137 open findings
+// somewhere in the middle of 35 rows.
+export const SORT_OPTIONS = [
+  { value: "findings", label: "Most findings" },
+  { value: "severity", label: "Most severe" },
+  { value: "stale", label: "Least recently scanned" },
+  { value: "name", label: "Name (A-Z)" },
+] as const;
+
+export type TargetSort = (typeof SORT_OPTIONS)[number]["value"];
+
 const SELECT_CLASS =
   "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
@@ -35,13 +48,14 @@ export function TargetsFilterBar() {
     updateParam("search", search);
   }
 
-  const hasFilters = ["criticality", "search"].some((k) => searchParams.get(k));
+  const hasFilters = ["criticality", "search", "sort"].some((k) => searchParams.get(k));
 
   function clearAll() {
     setSearch("");
     const params = new URLSearchParams(searchParams.toString());
     params.delete("search");
     params.delete("criticality");
+    params.delete("sort");
     router.push(`${pathname}?${params.toString()}`);
   }
 
@@ -70,6 +84,19 @@ export function TargetsFilterBar() {
         {CRITICALITY_OPTIONS.map((c) => (
           <option key={c} value={c}>
             {c}
+          </option>
+        ))}
+      </select>
+
+      <select
+        aria-label="Sort targets"
+        className={SELECT_CLASS}
+        value={searchParams.get("sort") ?? "findings"}
+        onChange={(e) => updateParam("sort", e.target.value)}
+      >
+        {SORT_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
           </option>
         ))}
       </select>

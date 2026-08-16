@@ -8,6 +8,7 @@ import { FindingRow } from "@/components/finding-row";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ActivityPagination } from "@/components/activity-pagination";
 
 const BULK_TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
@@ -108,6 +109,8 @@ export function FindingsList({
         </div>
       )}
 
+      {total > pageSize && <ActivityPagination total={total} page={page} pageSize={pageSize} position="top" />}
+
       {/* gap tracks density too (#172) -- 25 rows of an 8px gap is another
           200px of scroll on a page whose whole point is scanning a list. */}
       <div className="flex flex-col" style={{ gap: "var(--density-list-gap)" }}>
@@ -147,30 +150,10 @@ export function FindingsList({
         )}
       </div>
 
-      {total > 0 && (
-        <div className="flex items-center justify-between border-t border-border pt-3 text-xs text-muted-foreground">
-          <span>
-            Showing {rangeStart}-{rangeEnd} of {total}
-          </span>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={page <= 1} onClick={() => goToPage(page - 1)}>
-              Previous
-            </Button>
-            <span>
-              Page {page} of {totalPages}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              disabled={page >= totalPages}
-              onClick={() => goToPage(page + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
+      {/* Footer pager, now the shared component rather than a hand-rolled
+          copy of it -- the top one above states the result-set size before
+          the reader scrolls 3700px looking for it. */}
+      {total > 0 && <ActivityPagination total={total} page={page} pageSize={pageSize} />}
     </div>
   );
 }

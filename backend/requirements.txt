@@ -18,3 +18,4 @@ pytest-mock==3.14.0
 reportlab==4.2.5
 pypdf==6.15.0
 PyYAML==6.0.3
+modelscan==0.8.8

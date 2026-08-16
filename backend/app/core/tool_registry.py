@@ -106,7 +106,7 @@ TOOL_REGISTRY = [
         "display_name": "ModelScan",
         "category": "AI/ML",
         "languages": ["python (pickle, joblib, dill)", "pytorch", "tensorflow", "keras"],
-        "description": "Scans serialized model files for unsafe deserialization. Loading a pickled model executes code, so a hostile .pkl/.pt is RCE at load time with no exploit chain -- ordinary SAST never looks at binary weights. Native execution isn't wired up yet; see #186.",
+        "description": "Scans serialized model files for unsafe deserialization. Loading a pickled model executes code, so a hostile .pkl/.pt is RCE at load time with no exploit chain -- ordinary SAST never looks at binary weights. Runs only against repos detected as AI/ML (#185).",
         "install_cmd": "pip install 'modelscan[tensorflow,h5py]'",
         "docs_url": "https://github.com/protectai/modelscan#getting-started",
         "version_cmd": ["modelscan", "-v"],

@@ -1,11 +1,12 @@
 import logging
 import subprocess
+from datetime import datetime
 
 from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.db import engine
-from app.core.ai_repo_status import refresh_ai_repo_status
+from app.core.ai_repo_status import effective_is_ai_repo, refresh_ai_repo_status
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
 from app.models.models import NotificationEventType, Scan, Target
@@ -101,6 +102,18 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                 refresh_ai_repo_status(session, target, repo_path=repo_path)
             except Exception:
                 logger.exception("AI-repo detection failed for target %s", target.id)
+
+            # Issue #186: modelscan only runs on AI/ML repos. Skipping is
+            # recorded as a real completed scan with zero findings rather
+            # than a failure -- "this repo has no models to scan" is a
+            # legitimate clean result, and a silent skip would leave no
+            # evidence the decision was made.
+            if tool == "modelscan" and not effective_is_ai_repo(target):
+                scan.status = "completed"
+                scan.completed_at = datetime.utcnow()
+                session.add(scan)
+                session.commit()
+                return {"scan_id": scan.id, "ingested": 0, "skipped": "not an AI/ML repo"}
 
             raw = runner.run_tool(tool, repo_path)
             parsed = PARSER_MAP[tool](raw)

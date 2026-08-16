@@ -249,6 +249,61 @@ def parse_tfsec(raw: dict) -> list[dict]:
     return out
 
 
+# Pickle opcodes that hand an attacker arbitrary code execution the instant
+# a model is loaded. modelscan already rates these CRITICAL itself, but the
+# floor is applied independently (issue #186): this is the one severity in
+# the platform that must not be able to drift down through a settings file,
+# a scanner-config change, or a future modelscan release retuning its own
+# ratings. There is no such thing as a low-severity arbitrary-code primitive
+# sitting in a checked-in weights file.
+UNSAFE_DESERIALIZATION_OPERATORS = frozenset(
+    {"system", "exec", "eval", "popen", "spawn", "fork", "run", "check_output", "call", "load", "loads"}
+)
+UNSAFE_DESERIALIZATION_MODULES = frozenset(
+    {"os", "posix", "nt", "subprocess", "builtins", "__builtin__", "commands", "pty", "socket"}
+)
+
+
+def parse_modelscan(raw: dict) -> list[dict]:
+    """modelscan JSON output (issue #186) -- unsafe operators found in
+    serialized model files. Shape pinned against a real modelscan 0.8.8 run
+    against a pickle whose __reduce__ calls os.system, not a guessed schema:
+
+        {"summary": {...}, "issues": [{"description", "operator", "module",
+         "source", "scanner", "severity"}], "errors": []}
+
+    `source` is the model file, relative to the scanned path. There is no
+    line number -- the finding is the file itself, which is why line_start
+    and line_end are None rather than a fabricated 1.
+    """
+    out = []
+    for issue in raw.get("issues") or []:
+        operator = (issue.get("operator") or "").strip()
+        module = (issue.get("module") or "").strip()
+
+        severity = _map_severity(issue.get("severity", ""))
+        if operator.lower() in UNSAFE_DESERIALIZATION_OPERATORS and module.lower() in UNSAFE_DESERIALIZATION_MODULES:
+            severity = Severity.CRITICAL
+
+        qualified = f"{module}.{operator}" if module and operator else (operator or "unknown")
+        description = issue.get("description") or f"Unsafe operator {qualified} in a serialized model file"
+        out.append({
+            "rule_id": issue.get("scanner") or "modelscan",
+            "title": f"Unsafe operator '{qualified}' in model file"[:200],
+            "description": (
+                f"{description} Loading this file executes the operator: deserializing an untrusted "
+                f"model is arbitrary code execution, not a parsing step."
+            ),
+            "file_path": issue.get("source", ""),
+            "line_start": None,
+            "line_end": None,
+            "severity": severity,
+            "snippet": qualified,
+            "cve_id": None,
+        })
+    return out
+
+
 def parse_sarif(raw: dict) -> list[dict]:
     """Generic SARIF 2.1.0 parser — covers most CI-pushed SAST tool output."""
     out = []
@@ -296,4 +351,5 @@ PARSER_MAP = {
     "gosec": parse_gosec,
     "checkov": parse_checkov,
     "tfsec": parse_tfsec,
+    "modelscan": parse_modelscan,
 }

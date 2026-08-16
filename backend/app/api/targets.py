@@ -12,6 +12,7 @@ from app.api.deps import get_session
 from app.core.enforcement import VALID_ENFORCEMENT_MODES, resolve_enforcement_mode_with_source
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
+from app.core.ai_repo_status import effective_is_ai_repo
 from app.core.security_score import OPEN_STATES
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import (
@@ -77,6 +78,11 @@ class UpdateTargetRequest(BaseModel):
     # semantics as enforcement_mode above).
     api_base_url: str | None = None
 
+    # Issue #185: human override of AI-repo detection. Explicit null clears
+    # it (back to following detection) -- same exclude_unset semantics as
+    # enforcement_mode above, so omitting the field leaves it untouched.
+    is_ai_repo_override: bool | None = None
+
     @field_validator("enforcement_mode")
     @classmethod
     def _check_enforcement_mode(cls, v: str | None) -> str | None:
@@ -113,7 +119,16 @@ def _groups_by_target(session: Session, target_ids: list[int]) -> dict[int, list
 
 
 def _with_groups(target: Target, groups_by_target: dict[int, list[dict]]) -> dict:
-    return {**target.model_dump(), "groups": groups_by_target.get(target.id, [])}
+    # `is_ai_repo_effective` (issue #185) is what callers should gate on --
+    # it folds the human override over detection, so a client never has to
+    # reimplement that precedence and get it subtly wrong. The raw
+    # is_ai_repo / is_ai_repo_override fields ride along via model_dump()
+    # so the UI can still distinguish "auto-detected" from "forced".
+    return {
+        **target.model_dump(),
+        "groups": groups_by_target.get(target.id, []),
+        "is_ai_repo_effective": effective_is_ai_repo(target),
+    }
 
 
 @router.get("")

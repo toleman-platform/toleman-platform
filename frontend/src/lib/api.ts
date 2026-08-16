@@ -41,6 +41,17 @@ export type Target = {
   // .github/workflows/rikugan-scan.yml has been opened against this target's repo.
   pipeline_integrated: boolean;
   pipeline_pr_url: string | null;
+  // AI/ML repo detection (issue #185). `is_ai_repo_effective` is the one to
+  // gate on -- the server folds the human override over detection so the
+  // client never reimplements that precedence. The raw fields are kept so
+  // the UI can distinguish auto-detected from manually forced:
+  //   is_ai_repo          what detection concluded
+  //   is_ai_repo_signals  why it concluded that (human-readable)
+  //   is_ai_repo_override null = follow detection, true/false = a human decided
+  is_ai_repo: boolean;
+  is_ai_repo_signals: string;
+  is_ai_repo_override: boolean | null;
+  is_ai_repo_effective: boolean;
   // Issue #62. enforcement_mode is this target's own raw override (null =
   // no override, inherit). effective_enforcement_mode/enforcement_mode_source
   // are only present on GET /api/targets/{id} (single-target detail), not

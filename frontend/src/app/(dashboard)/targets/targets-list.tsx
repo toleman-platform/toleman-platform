@@ -55,6 +55,28 @@ const CRITICALITY_WEIGHT_EXPLANATION =
   "How much this repo amplifies the risk score of its findings: severity × this weight × 40. " +
   "Set per target (1-5) alongside its criticality label.";
 
+// Issue #185: AI/ML repo marker. The tooltip carries the detection signals
+// because a bare badge isn't contestable -- someone who thinks the platform
+// is wrong needs to see what it matched on. A manual override is labelled as
+// such so "the platform detected this" and "a human forced this" stay
+// distinguishable.
+function AiRepoBadge({ target }: { target: Target }) {
+  if (!target.is_ai_repo_effective) return null;
+  const forced = target.is_ai_repo_override === true && !target.is_ai_repo;
+  const title = forced
+    ? "Marked as an AI/ML repo manually (auto-detection did not match)"
+    : target.is_ai_repo_signals || "Detected as an AI/ML repo";
+  return (
+    <Badge
+      variant="outline"
+      title={title}
+      className="shrink-0 border-chart-2/40 px-1.5 py-0 text-[10px] text-chart-2"
+    >
+      AI/ML{forced ? " (manual)" : ""}
+    </Badge>
+  );
+}
+
 // Open findings on the target's default branch (#174). Renders nothing at
 // all when the summary is missing rather than a fabricated "0" -- a failed
 // /api/targets/summary and a genuinely clean repo are different facts.
@@ -475,6 +497,7 @@ export function TargetsList({
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium text-foreground">{t.name}</span>
                   <CriticalityChip label={t.label} />
+                  <AiRepoBadge target={t} />
                   {t.groups.map((g) => (
                     <GroupBadge key={g.id} group={g} />
                   ))}

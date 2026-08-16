@@ -5,6 +5,7 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.db import engine
+from app.core.ai_repo_status import refresh_ai_repo_status
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
 from app.models.models import NotificationEventType, Scan, Target
@@ -92,6 +93,15 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             repo_path = runner.clone_repo(
                 target.repo_url, target.default_branch, settings.github_token, scan_id=scan.id
             )
+            # Issue #185: recompute AI-repo detection from the fresh
+            # checkout while we have one. Best-effort -- a detection failure
+            # must never fail a scan that otherwise succeeded, so the flag
+            # simply keeps its previous value.
+            try:
+                refresh_ai_repo_status(session, target, repo_path=repo_path)
+            except Exception:
+                logger.exception("AI-repo detection failed for target %s", target.id)
+
             raw = runner.run_tool(tool, repo_path)
             parsed = PARSER_MAP[tool](raw)
             for item in parsed:

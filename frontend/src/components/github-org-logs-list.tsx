@@ -18,6 +18,7 @@ export function GithubOrgLogsList({
 }) {
   return (
     <div className="flex flex-col gap-3">
+      <ActivityPagination total={total} page={page} pageSize={pageSize} position="top" />
       <div className="flex flex-col gap-2">
         {events.map((e, i) => (
           <Card key={i} className="border-border bg-card">

@@ -22,6 +22,8 @@ import { GroupBadge } from "@/components/group-badge";
 import { CriticalityChip } from "@/components/criticality-chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { pollUntilSettled } from "@/lib/poll";
+import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
+import type { TargetSort } from "./targets-filter-bar";
 import { Rocket, X } from "lucide-react";
 
 const ITEM_STATUS_LABEL: Record<string, string> = {
@@ -80,30 +82,80 @@ function AiRepoBadge({ target }: { target: Target }) {
 // Open findings on the target's default branch (#174). Renders nothing at
 // all when the summary is missing rather than a fabricated "0" -- a failed
 // /api/targets/summary and a genuinely clean repo are different facts.
-function OpenFindingsSummary({ entry, scanned }: { entry?: TargetSummaryEntry; scanned: boolean }) {
-  if (!entry) return null;
-  if (entry.open === 0) {
-    // A repo that has never been scanned has zero findings because nobody
-    // looked, not because it's clean -- claiming "No open findings" there
-    // (in success green, no less) would be a fabricated all-clear. The
-    // "never scanned" half of the line above already states the real fact.
-    if (!scanned) return null;
-    return <span className="text-xs text-muted-foreground">No open findings</span>;
+// github.com/org/repo.git -> org/repo. The full URL was the widest element
+// on the card and the least informative -- it is kept as a title tooltip.
+function repoSlug(repoUrl: string): string {
+  return repoUrl
+    .replace(/^https?:\/\/(www\.)?github\.com\//, "")
+    .replace(/\.git$/, "")
+    .replace(/\/$/, "");
+}
+
+// Scan age, coloured only when it is genuinely stale. A repo scanned today
+// and one scanned last quarter read identically as plain grey text
+// otherwise, which defeats the point of showing the date at all.
+function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
+  if (!lastScanAt) {
+    return (
+      <span className="text-chart-3" title="This repository has never been scanned">
+        never scanned
+      </span>
+    );
   }
+  const ageDays = (Date.now() - new Date(lastScanAt).getTime()) / 86_400_000;
   return (
-    <span className="flex items-center gap-1.5 text-xs">
-      <span className="font-medium text-foreground">{entry.open} open</span>
-      {entry.critical > 0 && (
-        <Badge variant="outline" className="border-destructive/40 px-1.5 py-0 text-[10px] text-destructive">
-          {entry.critical} critical
-        </Badge>
-      )}
-      {entry.high > 0 && (
-        <Badge variant="outline" className="border-chart-3/40 px-1.5 py-0 text-[10px] text-chart-3">
-          {entry.high} high
-        </Badge>
-      )}
+    <span
+      className={ageDays > 30 ? "text-chart-3" : undefined}
+      title={`Last scanned ${new Date(lastScanAt).toLocaleString()}`}
+    >
+      scanned {timeAgo(lastScanAt)}
     </span>
+  );
+}
+
+// The findings count is the single most useful number on this page, so it
+// gets typographic weight and a fixed-width column rather than being one more
+// item in a right-aligned run of text. Everything in the column lines up
+// across rows, which is what makes 35 of them scannable instead of readable.
+function FindingsColumn({ entry, scanned }: { entry?: TargetSummaryEntry; scanned: boolean }) {
+  // Missing summary and never-scanned are different from clean, and neither
+  // may render as a reassuring zero -- a repo nobody looked at is unknown,
+  // not safe (#174).
+  if (!entry || (entry.open === 0 && !scanned)) {
+    return (
+      <div className="w-28 shrink-0 text-right">
+        <div className="text-sm text-muted-foreground/60">--</div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60">not scanned</div>
+      </div>
+    );
+  }
+
+  if (entry.open === 0) {
+    return (
+      <div className="w-28 shrink-0 text-right">
+        <div className="text-sm font-medium text-chart-5">0</div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">open findings</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-28 shrink-0 text-right">
+      <div className="flex items-baseline justify-end gap-1.5">
+        <span className="text-lg font-semibold leading-none text-foreground">{entry.open}</span>
+        {entry.critical > 0 && (
+          <span className="text-xs font-medium text-destructive" title={`${entry.critical} critical`}>
+            {entry.critical}C
+          </span>
+        )}
+        {entry.high > 0 && (
+          <span className="text-xs font-medium text-chart-3" title={`${entry.high} high`}>
+            {entry.high}H
+          </span>
+        )}
+      </div>
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">open findings</div>
+    </div>
   );
 }
 
@@ -137,9 +189,12 @@ export function TargetsList({
   // (components/group-filter.tsx).
   const search = (searchParams.get("search") ?? "").trim().toLowerCase();
   const criticality = searchParams.get("criticality") ?? "";
+  const sort = (searchParams.get("sort") ?? "findings") as TargetSort;
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const pageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
 
   const filtered = useMemo(() => {
-    return targets.filter((t) => {
+    const matched = targets.filter((t) => {
       if (search) {
         const haystack = `${t.name} ${t.repo_url}`.toLowerCase();
         if (!haystack.includes(search)) return false;
@@ -147,7 +202,39 @@ export function TargetsList({
       if (criticality && t.label !== criticality) return false;
       return true;
     });
-  }, [targets, search, criticality]);
+
+    // Default sort is "most findings", because that is the question this
+    // page exists to answer. Alphabetical buried the one repo with 1137 open
+    // findings in the middle of 35 rows.
+    const openOf = (t: Target) => targetSummary[String(t.id)]?.open ?? 0;
+    const criticalOf = (t: Target) => targetSummary[String(t.id)]?.critical ?? 0;
+    const highOf = (t: Target) => targetSummary[String(t.id)]?.high ?? 0;
+    const scannedAt = (t: Target) => {
+      const at = scanSummary[String(t.id)]?.last_scan_at;
+      return at ? new Date(at).getTime() : 0;
+    };
+
+    const byName = (a: Target, b: Target) => a.name.localeCompare(b.name);
+
+    return [...matched].sort((a, b) => {
+      switch (sort) {
+        case "name":
+          return byName(a, b);
+        case "stale":
+          // Never-scanned first: an unscanned repo is the least-known, not
+          // the most recently checked. scannedAt() returns 0 for them, which
+          // sorts them to the front under ascending order.
+          return scannedAt(a) - scannedAt(b) || byName(a, b);
+        case "severity":
+          return (
+            criticalOf(b) - criticalOf(a) || highOf(b) - highOf(a) || openOf(b) - openOf(a) || byName(a, b)
+          );
+        case "findings":
+        default:
+          return openOf(b) - openOf(a) || criticalOf(b) - criticalOf(a) || byName(a, b);
+      }
+    });
+  }, [targets, search, criticality, sort, targetSummary, scanSummary]);
 
   useEffect(() => {
     if (!batch || batch.status !== "running") return;
@@ -170,7 +257,8 @@ export function TargetsList({
   }
 
   function toggleAll(checked: boolean) {
-    setSelected(checked ? new Set(filtered.map((t) => t.id)) : new Set());
+    // Acts on the visible page, matching Findings' "Select all on this page".
+    setSelected(checked ? new Set(visible.map((t) => t.id)) : new Set());
   }
 
   async function addPipelineBulk() {
@@ -291,7 +379,17 @@ export function TargetsList({
     }
   }
 
-  const allSelected = filtered.length > 0 && filtered.every((t) => selected.has(t.id));
+  // The list rendered every target with no pagination: 35 rows is ~3000px of
+  // scroll today, and this page is the inventory for an org that may onboard
+  // hundreds. Paged client-side rather than server-side because search,
+  // criticality and sort already filter the already-fetched list here --
+  // adding a server round-trip just for slicing would make those three
+  // interactions slower for no gain.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const clampedPage = Math.min(page, totalPages);
+  const visible = filtered.slice((clampedPage - 1) * pageSize, clampedPage * pageSize);
+
+  const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
 
   return (
     <div className="flex flex-col gap-2">
@@ -306,7 +404,8 @@ export function TargetsList({
               onChange={(e) => toggleAll(e.target.checked)}
             />
             <span>
-              Select all {(search || criticality) && `(${filtered.length} of ${targets.length} shown)`}
+              Select all on this page{" "}
+              {(search || criticality) && `(${filtered.length} of ${targets.length} match)`}
             </span>
           </div>
         ) : (
@@ -475,7 +574,12 @@ export function TargetsList({
         />
       )}
 
-      {filtered.map((t) => (
+      {/* Unconditional: ActivityPagination self-gates. Gating here on
+          filtered.length > pageSize hid the rows-per-page selector as soon as
+          the user picked a size larger than the result set, stranding them. */}
+      <ActivityPagination total={filtered.length} page={clampedPage} pageSize={pageSize} position="top" />
+
+      {visible.map((t) => (
         <Card key={t.id} className="border-border bg-card py-0 transition-colors hover:border-primary/40">
           {/* `py-0` above + the density token here, for the same reason as
               finding-row.tsx: the base Card's `py-6` was 48px of padding no
@@ -492,49 +596,59 @@ export function TargetsList({
               onChange={(e) => toggleOne(t.id, e.target.checked)}
               onClick={(e) => e.stopPropagation()}
             />
-            <Link href={`/targets/${t.id}`} className="flex min-w-0 flex-1 items-center justify-between gap-3">
-              <div className="min-w-0">
+            <Link href={`/targets/${t.id}`} className="flex min-w-0 flex-1 items-center gap-4">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium text-foreground">{t.name}</span>
                   <CriticalityChip label={t.label} />
                   <AiRepoBadge target={t} />
+                  {t.pipeline_integrated && (
+                    <Badge
+                      variant="outline"
+                      title="CI pipeline scanning integrated"
+                      className="shrink-0 border-chart-5/40 px-1.5 py-0 text-[10px] text-chart-5"
+                    >
+                      CI
+                    </Badge>
+                  )}
                   {t.groups.map((g) => (
                     <GroupBadge key={g.id} group={g} />
                   ))}
                 </div>
-                {/* Issue #174: the card used to stop at the clone URL, so the
-                    inventory couldn't answer whether a repo had ever been
-                    scanned or had anything open. Same shape as the per-row
-                    line /scans already renders from the same scanSummary. */}
-                <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                  {t.default_branch} ·{" "}
-                  {scanSummary[String(t.id)]?.last_scan_at
-                    ? `last scan ${timeAgo(scanSummary[String(t.id)].last_scan_at as string)}`
-                    : "never scanned"}
+                {/* One metadata line instead of two. The clone URL was the
+                    widest thing on the card and the least useful -- the repo
+                    name above already identifies it, and the card links
+                    through. Owner/name is kept so forks stay distinguishable;
+                    the full URL is on hover and on the detail page. */}
+                <div className="mt-0.5 flex items-center gap-2 truncate text-[11px] text-muted-foreground">
+                  <span className="font-mono" title={t.repo_url}>
+                    {repoSlug(t.repo_url)}
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono">{t.default_branch}</span>
+                  <span aria-hidden="true">·</span>
+                  <ScanFreshness lastScanAt={scanSummary[String(t.id)]?.last_scan_at ?? null} />
                 </div>
-                <div className="mt-0.5 truncate text-xs text-muted-foreground">{t.repo_url}</div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {t.pipeline_integrated && (
-                  <Badge variant="outline" className="border-chart-5/40 text-chart-5">
-                    Pipeline integrated
-                  </Badge>
-                )}
-                <OpenFindingsSummary
-                  entry={targetSummary[String(t.id)]}
-                  scanned={Boolean(scanSummary[String(t.id)]?.last_scan_at)}
-                />
-                <span
-                  className="text-xs text-muted-foreground"
-                  title={CRITICALITY_WEIGHT_EXPLANATION}
-                >
-                  Risk weight {t.criticality_weight}/5
-                </span>
+              <FindingsColumn
+                entry={targetSummary[String(t.id)]}
+                scanned={Boolean(scanSummary[String(t.id)]?.last_scan_at)}
+              />
+              {/* Labelled like the findings column beside it. A bare "2/5"
+                  floating at the row end is unreadable as anything -- the
+                  same complaint #174 fixed for the old bare "weight 2". */}
+              <div className="w-12 shrink-0 text-right" title={CRITICALITY_WEIGHT_EXPLANATION}>
+                <div className="text-sm text-muted-foreground">{t.criticality_weight}/5</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">risk</div>
               </div>
             </Link>
           </CardContent>
         </Card>
       ))}
+
+      {filtered.length > pageSize && (
+        <ActivityPagination total={filtered.length} page={clampedPage} pageSize={pageSize} />
+      )}
     </div>
   );
 }

@@ -44,7 +44,7 @@ export function DensityInit() {
   return null;
 }
 
-export function DensityToggle({ collapsed }: { collapsed?: boolean }) {
+export function DensityToggle({ collapsed, compact }: { collapsed?: boolean; compact?: boolean }) {
   // Lazy initializer (not an effect + setState) so this reads localStorage
   // exactly once on mount without the "setState synchronously in an effect"
   // cascading-render smell -- <DensityInit /> (rendered once, near the top
@@ -64,12 +64,17 @@ export function DensityToggle({ collapsed }: { collapsed?: boolean }) {
       onClick={toggle}
       title={density === "comfortable" ? "Switch to compact density" : "Switch to comfortable density"}
       className={cn(
-        "flex w-full items-center justify-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground",
-        collapsed && "px-2"
+        "flex items-center justify-center gap-2 rounded-md text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground",
+        // `compact` is the sidebar footer's icon-row mode (see sidebar.tsx):
+        // three full-width stacked rows cost ~90px of vertical space for
+        // controls used once a session. `collapsed` is the separate icon-rail
+        // case, where the rail is too narrow to fit three across.
+        compact ? "h-8 w-8 shrink-0" : "w-full px-3 py-1.5",
+        collapsed && !compact && "px-2"
       )}
     >
       {density === "comfortable" ? <Rows3 className="h-4 w-4" /> : <AlignJustify className="h-4 w-4" />}
-      {!collapsed && <span>{density === "comfortable" ? "Comfortable" : "Compact"}</span>}
+      {!collapsed && !compact && <span>{density === "comfortable" ? "Comfortable" : "Compact"}</span>}
     </button>
   );
 }

@@ -1,5 +1,5 @@
 import { AlertTriangle, Boxes, GitBranch, ScanLine, ShieldCheck } from "lucide-react";
-import { Finding, ScanSummaryEntry, Target } from "@/lib/api";
+import { ScanSummaryEntry, Target, TargetSummaryEntry } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { CriticalityChip } from "@/components/criticality-chip";
@@ -10,7 +10,17 @@ import { timeAgo } from "@/lib/utils";
 // Issue #197: current posture for one target, so a repo owner can answer
 // "is my repo OK?" without reading the findings list. Everything here is
 // derived from data the page already fetched -- no extra round-trips.
-const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Informational"] as const;
+// Counts come from GET /api/targets/summary, never from the findings array
+// the page fetched. That array is one *page* of findings, so deriving the
+// breakdown from it reported "3 Medium" for a target with 1137 open findings
+// the moment this page became properly paginated.
+const SEVERITY_ROWS = [
+  { label: "Critical", key: "critical" },
+  { label: "High", key: "high" },
+  { label: "Medium", key: "medium" },
+  { label: "Low", key: "low" },
+  { label: "Informational", key: "informational" },
+] as const;
 
 function StatCard({
   icon: Icon,
@@ -41,17 +51,17 @@ function StatCard({
 
 export function TargetOverview({
   target,
-  findings,
+  summaryEntry,
   scanEntry,
 }: {
   target: Target;
-  findings: Finding[];
+  summaryEntry?: TargetSummaryEntry;
   scanEntry?: ScanSummaryEntry;
 }) {
-  const open = findings.filter((f) => f.state === "Open" || f.state === "Reopened");
-  const bySeverity = SEVERITY_ORDER.map((sev) => ({
-    severity: sev,
-    count: open.filter((f) => f.severity === sev).length,
+  const openCount = summaryEntry?.open ?? 0;
+  const bySeverity = SEVERITY_ROWS.map((row) => ({
+    severity: row.label,
+    count: summaryEntry?.[row.key] ?? 0,
   })).filter((s) => s.count > 0);
 
   const lastScan = scanEntry?.last_scan_at;
@@ -63,8 +73,8 @@ export function TargetOverview({
         <StatCard
           icon={AlertTriangle}
           label="Open findings"
-          value={String(open.length)}
-          hint={open.length === 0 && lastScan ? "scanned, nothing open" : undefined}
+          value={String(openCount)}
+          hint={openCount === 0 && lastScan ? "scanned, nothing open" : undefined}
         />
         <StatCard
           icon={ScanLine}

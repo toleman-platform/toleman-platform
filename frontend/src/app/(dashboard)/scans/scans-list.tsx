@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { CriticalityChip } from "@/components/criticality-chip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
 import { Scan as ScanIcon } from "lucide-react";
 
 // A minimum spacing between dispatched POST /api/scans/run calls so a bulk
@@ -56,6 +57,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
   const criticality = searchParams.get("criticality") ?? "";
   const tool = searchParams.get("tool") ?? "";
   const lastScanned = searchParams.get("last_scanned") ?? "";
+  const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const pageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
 
   const filtered = useMemo(() => {
     return targets.filter((t) => {
@@ -80,11 +83,15 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
     });
   }
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const clampedPage = Math.min(page, totalPages);
+  const visible = filtered.slice((clampedPage - 1) * pageSize, clampedPage * pageSize);
+
   function toggleAll(checked: boolean) {
-    setSelected(checked ? new Set(filtered.map((t) => t.id)) : new Set());
+    setSelected(checked ? new Set(visible.map((t) => t.id)) : new Set());
   }
 
-  const allSelected = filtered.length > 0 && filtered.every((t) => selected.has(t.id));
+  const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
 
   // "Scan" re-runs whichever on-demand-triggerable tools this target has
   // real history for, falling back to the full default set for a
@@ -185,7 +192,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
             onChange={(e) => toggleAll(e.target.checked)}
           />
           <span>
-            Select all ({filtered.length} of {targets.length} shown)
+            Select all on this page ({filtered.length} of {targets.length} match)
           </span>
         </div>
       )}
@@ -227,8 +234,10 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
           description="Try clearing search, criticality, tool, or last-scanned filters."
         />
       ) : (
+        <>
+        <ActivityPagination total={filtered.length} page={clampedPage} pageSize={pageSize} position="top" />
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-          {filtered.map((t) => {
+          {visible.map((t) => {
             const entry = summary[String(t.id)];
             const state = scanState[t.id] ?? "idle";
             const busy = state === "queued" || state === "running";
@@ -282,6 +291,10 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
             );
           })}
         </div>
+        {filtered.length > pageSize && (
+          <ActivityPagination total={filtered.length} page={clampedPage} pageSize={pageSize} />
+        )}
+        </>
       )}
 
       <ConfirmDialog

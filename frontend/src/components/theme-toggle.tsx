@@ -65,7 +65,15 @@ export function ThemeInit() {
   return null;
 }
 
-export function ThemeToggle({ collapsed, initialTheme = "dark" }: { collapsed?: boolean; initialTheme?: Theme }) {
+export function ThemeToggle({
+  collapsed,
+  compact,
+  initialTheme = "dark",
+}: {
+  collapsed?: boolean;
+  compact?: boolean;
+  initialTheme?: Theme;
+}) {
   // `initialTheme` comes from the same server-side cookie read that drives
   // the `data-theme` attribute in src/app/layout.tsx (threaded down through
   // DashboardLayout -> Sidebar -> here) so the very first client render
@@ -100,12 +108,17 @@ export function ThemeToggle({ collapsed, initialTheme = "dark" }: { collapsed?: 
       onClick={toggle}
       title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
       className={cn(
-        "flex w-full items-center justify-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground",
-        collapsed && "px-2"
+        "flex items-center justify-center gap-2 rounded-md text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground",
+        // `compact` is the sidebar footer's icon-row mode (see sidebar.tsx):
+        // three full-width stacked rows cost ~90px of vertical space for
+        // controls used once a session. `collapsed` is the separate icon-rail
+        // case, where the rail is too narrow to fit three across.
+        compact ? "h-8 w-8 shrink-0" : "w-full px-3 py-1.5",
+        collapsed && !compact && "px-2"
       )}
     >
       {theme === "dark" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-      {!collapsed && <span>{theme === "dark" ? "Dark" : "Light"}</span>}
+      {!collapsed && !compact && <span>{theme === "dark" ? "Dark" : "Light"}</span>}
     </button>
   );
 }

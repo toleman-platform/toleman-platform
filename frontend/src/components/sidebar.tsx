@@ -272,16 +272,30 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
             )}
           </div>
 
-          <DensityToggle collapsed={iconRail} />
-          <ThemeToggle collapsed={iconRail} initialTheme={initialTheme} />
+          {/* Density, theme and collapse were three full-width stacked rows,
+              costing ~90px of sidebar height for controls a user touches once
+              a session -- height the nav list actually needs, since it
+              already overflows below the fold (hence the scroll fade above).
+              They now sit side by side as an icon row, with titles and
+              aria-labels carrying the meaning the visible labels used to.
 
-          <button
-            onClick={() => setCollapsed((v) => !v)}
-            className="mt-1 hidden w-full items-center justify-center gap-2 rounded-md px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground md:flex"
-          >
-            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-            {!iconRail && <span>Collapse</span>}
-          </button>
+              The icon rail keeps them stacked: at ~64px wide it cannot fit
+              three controls across. */}
+          <div className={cn("mt-1 flex gap-1", iconRail ? "flex-col" : "items-center justify-center")}>
+            <DensityToggle collapsed={iconRail} compact={!iconRail} />
+            <ThemeToggle collapsed={iconRail} compact={!iconRail} initialTheme={initialTheme} />
+            <button
+              onClick={() => setCollapsed((v) => !v)}
+              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              className={cn(
+                "hidden items-center justify-center gap-2 rounded-md text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground md:flex",
+                iconRail ? "w-full px-2 py-1.5" : "h-8 w-8 shrink-0"
+              )}
+            >
+              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </button>
+          </div>
         </div>
       </aside>
     </>

@@ -491,6 +491,9 @@ export type TargetSummaryEntry = {
   open: number;
   critical: number;
   high: number;
+  medium: number;
+  low: number;
+  informational: number;
 };
 export type TargetSummary = Record<string, TargetSummaryEntry>;
 

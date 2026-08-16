@@ -16,7 +16,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
+import { useSearchParams } from "next/navigation";
 import { AiBomPanel } from "@/components/aibom-panel";
+import { ActivityPagination } from "@/components/activity-pagination";
+import { pageSizeFromParams } from "@/lib/pagination";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FindingsList } from "@/components/findings-list";
@@ -107,6 +110,12 @@ export default function SbomPage() {
     null,
   );
   const [tab, setTab] = useState<Tab>("components");
+  const searchParams = useSearchParams();
+  const sbomPageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
+  const sbomPageRaw = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const sbomTotalPages = Math.max(1, Math.ceil((components?.length ?? 0) / sbomPageSize));
+  const sbomPage = Math.min(sbomPageRaw, sbomTotalPages);
+  const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
   const [exporting, setExporting] = useState(false);
   const [format, setFormat] = useState<SbomExportFormat>("cyclonedx-json");
 
@@ -486,7 +495,15 @@ export default function SbomPage() {
                   <p className="text-sm text-muted-foreground">
                     {components.length} components found
                   </p>
-                  {components.map((c) => (
+                  {/* 1396 components on a real target -- rendering them all
+                      was the single longest scroll in the app. */}
+                  <ActivityPagination
+                    total={components.length}
+                    page={sbomPage}
+                    pageSize={sbomPageSize}
+                    position="top"
+                  />
+                  {visibleComponents.map((c) => (
                     <Card key={c.id} className="border-border bg-card">
                       <CardContent className="flex items-center justify-between px-4 py-2.5">
                         <div className="flex items-center gap-3">

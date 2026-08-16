@@ -60,9 +60,18 @@ export function BrandLockup({
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <BrandMark size={markSize} />
-      <div className="flex flex-col gap-0 leading-none">
-        <span className="text-[16px] font-extrabold tracking-tight text-sidebar-foreground">Rikugan</span>
-        <span className="font-mono text-[9px] font-medium uppercase tracking-[0.16em] text-accent-strong">
+      {/* The two lines were `gap-0` + `leading-none`, which jammed the
+          wordmark onto the tagline with no breathing room. The tagline also
+          carried tracking-[0.16em], whose trailing letter-space is rendered
+          after the final "N" -- so the block sat visibly left of the
+          wordmark's optical centre. Slightly tighter tracking plus a
+          matching negative right margin cancels that trailing space, and a
+          2px gap separates the lines without loosening either. */}
+      <div className="flex flex-col gap-[2px]">
+        <span className="text-[16px] font-extrabold leading-none tracking-tight text-sidebar-foreground">
+          Rikugan
+        </span>
+        <span className="-mr-[0.13em] font-mono text-[9px] font-medium uppercase leading-none tracking-[0.13em] text-accent-strong">
           Security Terrain
         </span>
       </div>

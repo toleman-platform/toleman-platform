@@ -138,7 +138,14 @@ def test_counts_open_findings_by_severity(client, engine):
     _make_finding(engine, target_id, "h3", severity=Severity.LOW)
 
     body = client.get("/api/targets/summary").json()
-    assert body[str(target_id)] == {"open": 3, "critical": 1, "high": 1}
+    assert body[str(target_id)] == {
+        "open": 3,
+        "critical": 1,
+        "high": 1,
+        "medium": 0,
+        "low": 1,
+        "informational": 0,
+    }
 
 
 def test_reopened_counts_as_open_but_closed_states_do_not(client, engine):
@@ -175,7 +182,14 @@ def test_target_with_no_findings_reports_zero_not_missing(client, engine):
     target_id = _make_target(engine, ws)
 
     body = client.get("/api/targets/summary").json()
-    assert body[str(target_id)] == {"open": 0, "critical": 0, "high": 0}
+    assert body[str(target_id)] == {
+        "open": 0,
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "informational": 0,
+    }
 
 
 def test_scoped_to_accessible_workspaces(client, engine):

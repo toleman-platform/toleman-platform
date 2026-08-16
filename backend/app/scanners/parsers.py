@@ -344,6 +344,9 @@ def parse_sarif(raw: dict) -> list[dict]:
 # tool name to pick the parser for runner.run_tool's raw output.
 PARSER_MAP = {
     "semgrep": parse_semgrep,
+    # Issue #189: same output shape as semgrep -- it *is* semgrep, just with
+    # Rikugan's curated LLM ruleset -- so it reuses the parser verbatim.
+    "semgrep-llm": parse_semgrep,
     "gitleaks": parse_gitleaks,
     "trivy": parse_trivy,
     "trivy-license": parse_trivy_license,

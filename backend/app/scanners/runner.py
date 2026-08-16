@@ -23,8 +23,23 @@ from app.core.config import settings
 # is rejected outright rather than handed to `git clone`.
 ALLOWED_CLONE_HOSTS = {"github.com"}
 
+# Curated LLM-security rules (issue #189), shipped in-repo rather than pulled
+# from a registry. See the ruleset headers for why precision is prioritised
+# over coverage. Resolved off __file__ so it works the same in the container
+# image and a local checkout.
+LLM_RULES_DIR = Path(__file__).parent / "rules" / "llm"
+
 TOOL_COMMANDS = {
     "semgrep": lambda path: ["semgrep", "scan", "--config=auto", "--json", "--quiet", path],
+    # Issue #189: the LLM ruleset runs as its own tool rather than as an extra
+    # --config on the semgrep entry above. Findings then carry tool
+    # "semgrep-llm", so per-tool coverage reporting, usage assignment (#75)
+    # and triage can all distinguish "the registry's generic rules" from
+    # "Rikugan's LLM rules" instead of merging them into one bucket. Same
+    # reasoning as trivy vs trivy-license already being separate entries.
+    "semgrep-llm": lambda path: [
+        "semgrep", "scan", f"--config={LLM_RULES_DIR}", "--json", "--quiet", path
+    ],
     "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", "/dev/stdout", "--no-git", "--exit-code", "0"],
     "trivy": lambda path: ["trivy", "fs", "--format", "json", "--quiet", path],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],

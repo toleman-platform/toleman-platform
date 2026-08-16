@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.db import engine
 from app.core.notifications import dispatch_notification
+from app.core.aibom import extract_ai_components, upsert_aibom_components
 from app.core.sbom_ingestion import upsert_components
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
@@ -76,6 +77,16 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             raw = runner.run_tool("trivy-sbom", repo_path)
             discovered = parse_trivy_sbom(raw)
             new_components = upsert_components(session, target_id, target.default_branch, discovered)
+
+            # Issue #190: extract the AIBOM from the same checkout. Free --
+            # the clone above already happened, and extraction is regexes
+            # over source, no extra tooling. Best-effort: an AIBOM failure
+            # must not fail an otherwise-successful SBOM run.
+            try:
+                ai_components = extract_ai_components(repo_path)
+                upsert_aibom_components(session, target_id, target.default_branch, ai_components)
+            except Exception:
+                logger.exception("AIBOM extraction failed for target %s", target_id)
 
             all_count = len(
                 session.exec(

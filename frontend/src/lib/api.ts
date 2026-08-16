@@ -494,6 +494,30 @@ export type TargetSummaryEntry = {
 };
 export type TargetSummary = Record<string, TargetSummaryEntry>;
 
+// AI Bill of Materials (issue #190). `generated` distinguishes "we looked
+// and found no models" from "no AIBOM has ever been generated" -- collapsing
+// those would let an unanalysed repo read as one with no AI dependencies.
+export type AiBomComponent = {
+  id: number;
+  name: string;
+  component_type: "machine-learning-model" | "data";
+  version: string;
+  source: string;
+  evidence: string;
+  unpinned: boolean;
+  first_seen: string;
+  last_seen: string;
+};
+
+export type AiBomView = {
+  target_id: number;
+  target_name: string;
+  branch: string;
+  generated: boolean;
+  summary: { models: number; datasets: number; unpinned: number; hosted_api_models: number };
+  components: AiBomComponent[];
+};
+
 export type DiscoveryRunResult = {
   run_id: number;
   target_id: number;
@@ -919,6 +943,7 @@ export const api = {
     ),
   getScan: (scanId: number) => jsonFetch<ScanRun | { error: string }>(`/api/scans/${scanId}`),
   scanSummary: () => jsonFetch<ScanSummary>("/api/scans/summary"),
+  aibom: (targetId: number) => jsonFetch<AiBomView>(`/api/sbom/${targetId}/aibom`),
   targetsSummary: () => jsonFetch<TargetSummary>("/api/targets/summary"),
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),

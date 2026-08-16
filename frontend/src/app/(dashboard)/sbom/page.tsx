@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
+import { AiBomPanel } from "@/components/aibom-panel";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FindingsList } from "@/components/findings-list";
@@ -51,7 +52,7 @@ function formatSince(iso: string): string {
   return `since ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
 
-type Tab = "components" | "vulnerabilities";
+type Tab = "components" | "vulnerabilities" | "aibom";
 
 function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
   const [expanded, setExpanded] = useState(false);
@@ -462,6 +463,19 @@ export default function SbomPage() {
             >
               OSS Vulnerabilities{ossFindings ? ` (${ossTotal})` : ""}
             </button>
+            {/* Issue #190: models and datasets, the part a package SBOM is
+                blind to. Populated by the same generation run. */}
+            <button
+              onClick={() => setTab("aibom")}
+              className={cn(
+                "px-3 py-2 text-sm font-medium transition-colors",
+                tab === "aibom"
+                  ? "border-b-2 border-primary text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              AI Bill of Materials
+            </button>
           </div>
 
           {tab === "components" && (
@@ -507,6 +521,10 @@ export default function SbomPage() {
                 </div>
               )}
             </>
+          )}
+
+          {tab === "aibom" && targetId !== null && targetId !== ALL_TARGETS && (
+            <AiBomPanel targetId={targetId} targetName={currentTarget?.name} />
           )}
 
           {tab === "vulnerabilities" && (

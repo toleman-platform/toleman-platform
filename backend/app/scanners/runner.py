@@ -37,7 +37,31 @@ TOOL_COMMANDS = {
     # execution failure.
     "checkov": lambda path: ["checkov", "-d", path, "--output", "json", "--compact", "--quiet", "--soft-fail"],
     "tfsec": lambda path: ["tfsec", path, "--format", "json", "--soft-fail"],
+    # Model-file scanning (issue #186). `-o` is filled in by run_tool below,
+    # not here -- see MODELSCAN_REPORT_PLACEHOLDER for why modelscan can't
+    # just write JSON to stdout like every other tool.
+    "modelscan": lambda path: ["modelscan", "-p", path, "-r", "json", "-o", MODELSCAN_REPORT_PLACEHOLDER],
 }
+
+# modelscan is the one tool here whose JSON can't be read off stdout.
+# Verified against modelscan 0.8.8:
+#   - `-r json` with no `-o` interleaves progress lines ("Scanning <file>
+#     using modelscan.scanners...") with the JSON on *stdout*, so the stream
+#     isn't parseable as a document.
+#   - `-o /dev/stdout` routes it through rich's console renderer, which hard
+#     -wraps at terminal width and corrupts the JSON mid-token.
+# So run_tool substitutes a real temp file for this placeholder and reads the
+# report back from disk.
+MODELSCAN_REPORT_PLACEHOLDER = "__RIKUGAN_MODELSCAN_REPORT__"
+
+
+class ToolExecutionError(Exception):
+    """A scanner failed to execute (as opposed to running fine and finding
+    nothing). Raised where a tool's exit code genuinely means "I broke",
+    so scan_tasks marks the Scan failed instead of recording an empty,
+    successful-looking result -- a scan that silently reports zero findings
+    because the tool crashed is a false all-clear.
+    """
 
 
 class RepoCloneError(Exception):
@@ -267,12 +291,51 @@ def run_nuclei(urls: list[str]) -> list[dict]:
     return results
 
 
+def _run_modelscan(cmd: list[str]) -> dict:
+    """Run modelscan with its report directed at a temp file and read it back
+    (issue #186). See MODELSCAN_REPORT_PLACEHOLDER for why stdout is unusable.
+
+    Exit codes are modelscan's own and do NOT follow the usual convention:
+        0  scan ok, nothing found
+        1  scan ok, *vulnerabilities found*   <- success, not failure
+        2  modelscan itself errored
+        3  no supported files provided
+        4  invalid CLI options
+    Only 2 and 4 are real failures. Treating 1 as an error would discard
+    exactly the findings this tool exists to produce -- the same hazard
+    checkov/tfsec avoid above with --soft-fail, which modelscan has no
+    equivalent of.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        report_path = Path(tmpdir) / "modelscan-report.json"
+        resolved = [str(report_path) if part == MODELSCAN_REPORT_PLACEHOLDER else part for part in cmd]
+        proc = subprocess.run(resolved, capture_output=True, text=True)
+
+        if proc.returncode in (2, 4):
+            raise ToolExecutionError(f"modelscan failed (exit {proc.returncode})")
+
+        if not report_path.exists():
+            # Exit 3 (nothing supported to scan) legitimately writes no
+            # report. That is a clean, successful scan of a repo with no
+            # model files -- not an error, and not a silent skip.
+            return {"summary": {"total_issues": 0}, "issues": [], "errors": []}
+
+        try:
+            return json.loads(report_path.read_text())
+        except json.JSONDecodeError as exc:
+            raise ToolExecutionError(f"modelscan produced unreadable JSON: {exc}") from exc
+
+
 def run_tool(tool: str, repo_path: Path) -> dict | list:
     if tool not in TOOL_COMMANDS:
         raise ValueError(f"unsupported tool: {tool}")
 
     cmd = TOOL_COMMANDS[tool](str(repo_path))
     cwd = str(repo_path) if tool == "gosec" else None
+
+    if tool == "modelscan":
+        return _run_modelscan(cmd)
+
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
 
     # checkov's JSON shape depends on how many IaC frameworks it found files

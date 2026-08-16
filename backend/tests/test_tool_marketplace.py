@@ -252,6 +252,12 @@ def test_admin_bypasses_workspace_membership_for_read_and_write(client, engine):
 
 AI_ML_TOOLS = {"modelscan", "garak", "medusa", "snyk-agent-scan", "cisco-aibom"}
 
+# Of those, the ones still catalog-only. modelscan graduated out of this set
+# in #186 when it got a real TOOL_COMMANDS entry -- the not-integrated
+# assertions below deliberately failed at that moment, which is what they
+# are for. Move a tool out of here when it gets wired up for real.
+AI_ML_CATALOG_ONLY_TOOLS = AI_ML_TOOLS - {"modelscan"}
+
 
 def test_ai_ml_tools_are_registered(client, engine):
     client, _ = _login(client, engine, role=UserRole.ADMIN)
@@ -269,7 +275,7 @@ def test_ai_ml_tools_report_as_not_integrated(client, engine):
     real, this assertion is the reminder to move it out of catalog-only."""
     client, _ = _login(client, engine, role=UserRole.ADMIN)
     by_tool = {t["tool"]: t for t in client.get("/api/tools/registry").json()}
-    for tool in AI_ML_TOOLS:
+    for tool in AI_ML_CATALOG_ONLY_TOOLS:
         assert by_tool[tool]["integrated"] is False, tool
 
 
@@ -281,7 +287,7 @@ def test_ai_ml_tools_default_every_usage_surface_off(client, engine):
     client, _ = _login(client, engine, role=UserRole.ADMIN)
     assignments = client.get(f"/api/tools/assignments?workspace_id={ws_id}").json()
     by_tool = {a["tool"]: a for a in assignments}
-    for tool in AI_ML_TOOLS:
+    for tool in AI_ML_CATALOG_ONLY_TOOLS:
         entry = by_tool[tool]
         for surface in ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail"):
             assert entry[surface] is False, f"{tool}.{surface} defaulted on"
@@ -307,3 +313,17 @@ def test_medusa_entry_surfaces_its_agpl_licence(client, engine):
     client, _ = _login(client, engine, role=UserRole.ADMIN)
     by_tool = {t["tool"]: t for t in client.get("/api/tools/registry").json()}
     assert "AGPL" in by_tool["medusa"]["description"]
+
+
+def test_modelscan_is_integrated_after_186(client, engine):
+    """Counterpart to the catalog-only assertions above: modelscan has a real
+    TOOL_COMMANDS entry now, so it must report as integrated and default its
+    usage surfaces ON like any other working scanner."""
+    ws_id = _make_workspace(engine)
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+
+    by_tool = {t["tool"]: t for t in client.get("/api/tools/registry").json()}
+    assert by_tool["modelscan"]["integrated"] is True
+
+    assignments = {a["tool"]: a for a in client.get(f"/api/tools/assignments?workspace_id={ws_id}").json()}
+    assert assignments["modelscan"]["on_demand_scan"] is True

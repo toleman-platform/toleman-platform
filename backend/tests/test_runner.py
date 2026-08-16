@@ -1,3 +1,4 @@
+import base64
 import subprocess
 from pathlib import Path
 
@@ -141,8 +142,17 @@ def test_token_delivered_via_env_header_not_url(recorded_calls):
     assert "@" not in url_arg
 
     env = recorded_calls[0]["env"]
-    assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Bearer {token}"
+    # HTTP Basic, not Bearer -- git's http backend rejects gho_ OAuth tokens
+    # under Bearer (see clone_repo's docstring). The token must still never
+    # appear in the header verbatim as a bare Bearer credential, and must
+    # never reach the URL, which the assertions above cover.
+    expected = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {expected}"
     assert env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+    # The decoded header still carries the token, so it must be confined to
+    # the environment -- never argv, where it would leak into str(exc) on a
+    # failed clone. That is the property this test exists to protect.
+    assert not any(token in part for part in cmd)
 
 
 def test_no_token_env_vars_set_when_no_token_given(recorded_calls):

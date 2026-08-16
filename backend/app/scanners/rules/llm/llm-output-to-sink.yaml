@@ -1,0 +1,136 @@
+## Issue #189: LLM output reaching a dangerous sink.
+##
+## This is the highest-value rule in the set and the one worth being
+## strictest about. It is ordinary injection -- the only novelty is that the
+## untrusted source is a model rather than a request parameter. Treating
+## model output as trusted is the most common real mistake in LLM code.
+##
+## Every rule here uses `mode: taint`, i.e. real dataflow from an LLM call to
+## a sink. That is not a stylistic choice. Written as plain `patterns` with a
+## `pattern-sources` block, Semgrep silently ignores the sources and matches
+## the sink alone -- which was caught live: `os.system("ls -la")` with a
+## literal argument was reported as an LLM-output-to-shell finding in a file
+## that merely happened to also call an LLM. A rule that flags every
+## subprocess call in any file touching an LLM is worse than no rule, because
+## this platform already carries a false-positive learning engine (#76) and
+## noise is a known problem here. Precision over coverage, deliberately.
+rules:
+  - id: rikugan-llm-output-to-code-execution
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Output from an LLM call flows into a code-execution sink (eval/exec/compile).
+      Model output is untrusted input: a prompt-injected or simply hallucinated
+      response becomes arbitrary code execution. Parse and validate the response
+      into a known shape before acting on it, and never execute it directly.
+    metadata:
+      category: security
+      cwe: "CWE-94: Improper Control of Generation of Code ('Code Injection')"
+      owasp-llm: "LLM02:2025 Insecure Output Handling"
+      confidence: HIGH
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $CLIENT.chat.completions.create(...)
+              - pattern: $CLIENT.messages.create(...)
+              - pattern: $CLIENT.completions.create(...)
+              - pattern: $CLIENT.generate_content(...)
+              # LangChain-style calls are matched only when the receiver is
+              # *named* like an LLM object. A bare `$CHAIN.run(...)` matches
+              # any method called `run` -- including subprocess.run(), which
+              # made every subprocess call in this very repo both a source
+              # and a sink and so tainted itself. Six false positives on real
+              # code, caught by running the rules against this repo before
+              # shipping them.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $CHAIN.invoke(...)
+                      - pattern: $CHAIN.run(...)
+                      - pattern: $CHAIN.predict(...)
+                      - pattern: $CHAIN.generate(...)
+                  - metavariable-regex:
+                      metavariable: $CHAIN
+                      regex: (?i).*(llm|chain|agent|model|gpt|claude|chat|completion|prompt).*
+    pattern-sinks:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+          - pattern: compile(...)
+
+  - id: rikugan-llm-output-to-shell
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Output from an LLM call flows into a shell/subprocess sink. A
+      prompt-injected response becomes command execution on the host. If the
+      model is choosing an action, map its output onto a fixed allowlist of
+      commands rather than passing the string through.
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      owasp-llm: "LLM02:2025 Insecure Output Handling"
+      confidence: HIGH
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $CLIENT.chat.completions.create(...)
+              - pattern: $CLIENT.messages.create(...)
+              - pattern: $CLIENT.completions.create(...)
+              - pattern: $CLIENT.generate_content(...)
+              # LangChain-style calls are matched only when the receiver is
+              # *named* like an LLM object. A bare `$CHAIN.run(...)` matches
+              # any method called `run` -- including subprocess.run(), which
+              # made every subprocess call in this very repo both a source
+              # and a sink and so tainted itself. Six false positives on real
+              # code, caught by running the rules against this repo before
+              # shipping them.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $CHAIN.invoke(...)
+                      - pattern: $CHAIN.run(...)
+                      - pattern: $CHAIN.predict(...)
+                      - pattern: $CHAIN.generate(...)
+                  - metavariable-regex:
+                      metavariable: $CHAIN
+                      regex: (?i).*(llm|chain|agent|model|gpt|claude|chat|completion|prompt).*
+    pattern-sinks:
+      - pattern-either:
+          - pattern: os.system(...)
+          - pattern: os.popen(...)
+          - pattern: subprocess.run(...)
+          - pattern: subprocess.call(...)
+          - pattern: subprocess.Popen(...)
+          - pattern: subprocess.check_output(...)
+
+  - id: rikugan-llm-output-to-sql
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Output from an LLM call is executed as SQL. Text-to-SQL is a legitimate
+      pattern, but the generated statement must run against a read-only,
+      least-privilege connection and be validated -- not passed straight to
+      execute().
+    metadata:
+      category: security
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      owasp-llm: "LLM02:2025 Insecure Output Handling"
+      confidence: MEDIUM
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: $CLIENT.chat.completions.create(...)
+              - pattern: $CLIENT.messages.create(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $CHAIN.invoke(...)
+                      - pattern: $CHAIN.run(...)
+                  - metavariable-regex:
+                      metavariable: $CHAIN
+                      regex: (?i).*(llm|chain|agent|model|gpt|claude|chat|completion|prompt).*
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $CURSOR.execute(...)
+          - pattern: $CURSOR.executescript(...)

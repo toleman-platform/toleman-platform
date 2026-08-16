@@ -112,6 +112,16 @@ TOOL_REGISTRY = [
         "version_cmd": ["modelscan", "-v"],
     },
     {
+        "tool": "semgrep-llm",
+        "display_name": "Semgrep (LLM rules)",
+        "category": "AI/ML",
+        "languages": ["python"],
+        "description": "Rikugan's curated OWASP LLM Top 10 ruleset: LLM output reaching eval/shell/SQL sinks, unsafe model deserialization, and unpinned Hugging Face model references. Runs the Semgrep engine against rules shipped in-repo, not a hosted registry, so results are reproducible offline. Only runs on repos detected as AI/ML (#185).",
+        "install_cmd": "pip install semgrep",
+        "docs_url": "https://semgrep.dev/docs/writing-rules/rule-syntax/",
+        "version_cmd": ["semgrep", "--version"],
+    },
+    {
         "tool": "garak",
         "display_name": "garak",
         "category": "AI/ML",

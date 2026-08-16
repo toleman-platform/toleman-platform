@@ -1,0 +1,72 @@
+## Issue #189: code that loads models unsafely.
+##
+## Complements #186. That scans model files committed to the repo; these
+## catch the code that will load a model at runtime -- including models
+## fetched from the network, which never appear in the checkout at all and so
+## are invisible to a file scanner.
+rules:
+  - id: rikugan-torch-load-without-weights-only
+    languages: [python]
+    severity: ERROR
+    message: >-
+      torch.load() without weights_only=True unpickles arbitrary Python objects,
+      so loading an untrusted checkpoint is arbitrary code execution. Pass
+      weights_only=True (the default since torch 2.6, but pin it explicitly --
+      this code may run against an older runtime), or use safetensors.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp-llm: "LLM05:2025 Supply Chain Vulnerabilities"
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern: torch.load(...)
+          - pattern: torch.jit.load(...)
+      - pattern-not: torch.load(..., weights_only=True, ...)
+      - pattern-not: torch.jit.load(..., weights_only=True, ...)
+
+  - id: rikugan-pickle-load-of-model-artifact
+    languages: [python]
+    severity: ERROR
+    message: >-
+      pickle/joblib/dill load executes code during deserialization. If this
+      artifact is downloaded, user-supplied, or shipped by a third party,
+      loading it is remote code execution. Prefer safetensors or a
+      non-executable format for model weights.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp-llm: "LLM05:2025 Supply Chain Vulnerabilities"
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+      - pattern: joblib.load(...)
+      - pattern: dill.load(...)
+      - pattern: dill.loads(...)
+
+  - id: rikugan-unpinned-huggingface-model
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Model loaded from the Hugging Face Hub with no `revision` pin. The
+      referenced repo can be updated -- or taken over -- after review, so the
+      weights you audited are not necessarily the weights you run. This is the
+      model-supply-chain equivalent of an unpinned dependency. Pass
+      revision="<commit-sha>".
+    metadata:
+      category: security
+      cwe: "CWE-494: Download of Code Without Integrity Check"
+      owasp-llm: "LLM05:2025 Supply Chain Vulnerabilities"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: $CLS.from_pretrained("$MODEL", ...)
+          - pattern: hf_hub_download(...)
+          - pattern: snapshot_download(...)
+      - pattern-not: $CLS.from_pretrained(..., revision=..., ...)
+      - pattern-not: hf_hub_download(..., revision=..., ...)
+      - pattern-not: snapshot_download(..., revision=..., ...)
+      # A local directory isn't a hub reference -- a hub repo id always
+      # contains exactly one "/" and no path separators beyond it.
+      - pattern-not: $CLS.from_pretrained("=~/^\\.{0,2}\\//", ...)

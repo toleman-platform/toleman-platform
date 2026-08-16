@@ -15,6 +15,12 @@ from app.tasks.celery_app import celery_app
 
 PARSER_MAP = parsers.PARSER_MAP
 
+# Tools that only make sense against an AI/ML repo (#185 gates them). On any
+# other target they record a completed scan with zero findings rather than
+# running: modelscan would find no model files, and the LLM ruleset would
+# find no LLM calls, so running them everywhere is wasted scan budget.
+AI_ONLY_TOOLS = ("modelscan", "semgrep-llm")
+
 logger = logging.getLogger(__name__)
 
 # Only subprocess.CalledProcessError is auto-retried: today it can only come from
@@ -108,7 +114,7 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             # than a failure -- "this repo has no models to scan" is a
             # legitimate clean result, and a silent skip would leave no
             # evidence the decision was made.
-            if tool == "modelscan" and not effective_is_ai_repo(target):
+            if tool in AI_ONLY_TOOLS and not effective_is_ai_repo(target):
                 scan.status = "completed"
                 scan.completed_at = datetime.utcnow()
                 session.add(scan)

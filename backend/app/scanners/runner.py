@@ -5,6 +5,7 @@ review flagged this as a blocker before mass-scale/multi-tenant rollout — fine
 single-user local/dev use, must move to ephemeral containers (K8s Job) before
 that feature ships.
 """
+import base64
 import json
 import os
 import shutil
@@ -108,6 +109,17 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
       verbatim -- if the token were on the command line (e.g. via `git -c
       http.extraHeader=...` as an argv entry), it would leak into any log
       line or API response that ever surfaces str(exc) for a failed clone.
+    - The header uses HTTP Basic (base64 "x-access-token:<token>"), not
+      Bearer. get_github_token() (app/core/github.py) can return either a
+      GITHUB_TOKEN PAT (ghp_/github_pat_) or, as a fallback, whatever `gh
+      auth token` has cached -- which for a `gh auth login` session is an
+      OAuth App user-to-server token (gho_). Verified live: gho_ tokens are
+      accepted by GitHub's REST API and by git-over-http with Basic auth
+      (in the x-access-token:<token> form), but git's http backend rejects
+      them under `Authorization: Bearer <token>` with "could not read
+      Username for 'https://github.com/'" (exit 128) -- Bearer only works
+      for ghp_/github_pat_ there. Basic works for all three token shapes,
+      so it's used unconditionally rather than branching on token prefix.
     """
     _validate_repo_url(repo_url)
     _validate_branch(branch)
@@ -124,9 +136,10 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
 
     env = os.environ.copy()
     if github_token:
+        basic = base64.b64encode(f"x-access-token:{github_token}".encode()).decode()
         env["GIT_CONFIG_COUNT"] = "1"
         env["GIT_CONFIG_KEY_0"] = "http.extraheader"
-        env["GIT_CONFIG_VALUE_0"] = f"Authorization: Bearer {github_token}"
+        env["GIT_CONFIG_VALUE_0"] = f"Authorization: Basic {basic}"
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)

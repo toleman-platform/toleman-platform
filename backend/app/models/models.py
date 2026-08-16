@@ -145,6 +145,24 @@ class Target(SQLModel, table=True):
     # declared as belonging to it.
     api_base_url: Optional[str] = None
 
+    # AI/ML repo detection (issue #185) -- the gate every AI-specific
+    # scanner in epic #192 runs behind. Recomputed on each scan by
+    # app.core.ai_repo_detection, so a repo becomes an AI repo the day
+    # someone adds `openai` to package.json, with no human action.
+    #
+    # `is_ai_repo_signals` records *why* it fired ("AI/ML dependencies:
+    # torch, transformers"). A bare boolean isn't contestable; a user who
+    # thinks the platform is wrong needs to see what it matched on.
+    is_ai_repo: bool = False
+    is_ai_repo_signals: str = ""
+    # Explicit override, in either direction, and it wins over detection.
+    # None = follow detection (the default). True/False = a human decided.
+    # Kept separate from `is_ai_repo` rather than just writing the override
+    # into it, so detection can keep updating underneath without clobbering
+    # the human's decision -- and so "auto-detected as AI" and "someone
+    # forced this on" stay distinguishable in the UI.
+    is_ai_repo_override: Optional[bool] = None
+
 
 class Group(SQLModel, table=True):
     """A workspace-scoped tag/group for organizing Targets at scale (issue

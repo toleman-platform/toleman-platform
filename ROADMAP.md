@@ -144,6 +144,18 @@ Logged 2026-08-15. All four came out of a manual UI review pass over every route
 - **#173** Security Score widget strands a 220px gauge in a full-width (~1100px) card. Now that the label collision is fixed there is room to either enlarge the gauge or tighten the row.
 - **#174** Repo Sync cards spend ~120px on two lines and an unexplained `weight 2`, while omitting last-scan time and finding counts that `/scans` already renders per row from real data.
 
+## Sprint 18 — Supply-chain malware + SAST engine (contributor-filed: #177, #182, #183)
+
+Logged 2026-08-16 from three issues filed by @r0075h3ll. Each was scoped against the live API and this codebase before being written up, and each carries acceptance criteria — these are open for contributor pickup.
+
+**#177 — OSV malicious-package tracking & blocking.** The strongest of the three and the recommended starting point: OSV is already a dependency (`app/core/osv.py`, #71) but only for CVE enrichment, `SbomComponent` already holds the package inventory the check needs, and `pr_guardrail.should_block()` decides on severity alone — so emitting malicious packages as Critical gets PR blocking with no guardrail changes. Split into #180 (pure OSV client, good first issue), #181 (SBOM integration + Finding persistence), #179 (notification event).
+
+**#182 — Evaluate opengrep.** More urgent than it first looked, and not primarily a licensing matter: `runner.py` runs `semgrep scan --config=auto`, which fetches rules from Semgrep's hosted registry at scan time — outbound calls on every scan, broken air-gapped installs, and non-reproducible scan results. Opengrep is LGPL-2.1 and restores taint analysis and inter-procedural scanning that Semgrep dropped from CE. Scoped as an evaluation producing evidence; changing the default engine stays a maintainer decision.
+
+**#183 — Reachability analysis (trailmark).** Design spike, lowest priority. Valuable in principle — 1382 open findings on a live instance, mostly transitive dependency CVEs — but unresolved on schema, scan cost, and interaction with #76's auto-suppression. Filed as a proposal-first issue rather than an implementation one.
+
+A constraint shared by all of these: **a failed or absent check must never render as "clean."** Same reasoning as #174's never-scanned repos, and it is the difference between a security feature and a false all-clear.
+
 ## Explicitly not planned
 
 - Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.

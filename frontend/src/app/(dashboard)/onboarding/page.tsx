@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FindingRow } from "@/components/finding-row";
 import { BrandMark } from "@/components/brand-mark";
+import { SetupQuestionnaire } from "./setup-questionnaire";
 import { CheckCircle2, XCircle, Github, ArrowRight } from "lucide-react";
 
 const STEPS = [
@@ -29,6 +30,13 @@ export default function OnboardingPage() {
 
   const [step, setStep] = useState(1);
   const [loadingInitial, setLoadingInitial] = useState(true);
+
+  // Issue #203: the stack questionnaire runs before the connect-repo wizard.
+  // `should_prompt` is computed server-side (see app/api/onboarding.py) so
+  // the condition that decides whether a fresh deployment interrupts the
+  // admin lives in one place rather than being re-derived here.
+  const [showQuestionnaire, setShowQuestionnaire] = useState(false);
+  const [questionnaireChecked, setQuestionnaireChecked] = useState(false);
 
   const [targets, setTargets] = useState<Target[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
@@ -77,6 +85,14 @@ export default function OnboardingPage() {
     }
     return ts;
   }
+  useEffect(() => {
+    api
+      .onboardingProfile()
+      .then((p) => setShowQuestionnaire(Boolean(p.should_prompt)))
+      .catch(() => setShowQuestionnaire(false))
+      .finally(() => setQuestionnaireChecked(true));
+  }, []);
+
 
   useEffect(() => {
     loadTargetsAndStatus().finally(() => setLoadingInitial(false));
@@ -229,7 +245,11 @@ export default function OnboardingPage() {
         ))}
       </div>
 
-      {loadingInitial && (
+      {questionnaireChecked && showQuestionnaire && (
+        <SetupQuestionnaire onDone={() => setShowQuestionnaire(false)} />
+      )}
+
+      {!showQuestionnaire && loadingInitial && (
         <Card className="border-border bg-card">
           <CardContent className="flex flex-col gap-2 px-4 py-4">
             <Skeleton className="h-4 w-3/4" />
@@ -238,7 +258,7 @@ export default function OnboardingPage() {
         </Card>
       )}
 
-      {!loadingInitial && step === 1 && (
+      {!showQuestionnaire && !loadingInitial && step === 1 && (
         <div className="flex flex-col gap-4">
           <Card className="border-border bg-card">
             <CardContent className="flex flex-col gap-4 px-4 py-4">
@@ -369,7 +389,7 @@ export default function OnboardingPage() {
         </div>
       )}
 
-      {!loadingInitial && step === 2 && (
+      {!showQuestionnaire && !loadingInitial && step === 2 && (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
             {targets.length} target{targets.length === 1 ? "" : "s"} connected. Pick one to run your first scan
@@ -404,7 +424,7 @@ export default function OnboardingPage() {
         </div>
       )}
 
-      {!loadingInitial && step === 3 && (
+      {!showQuestionnaire && !loadingInitial && step === 3 && (
         <div className="flex flex-col gap-4">
           {scanResult && (
             <p className="text-sm text-muted-foreground">
@@ -452,7 +472,7 @@ export default function OnboardingPage() {
         </div>
       )}
 
-      {!loadingInitial && step === 4 && (
+      {!showQuestionnaire && !loadingInitial && step === 4 && (
         <Card className="border-border bg-card">
           <CardContent className="flex flex-col items-start gap-4 px-4 py-6">
             <div className="flex items-center gap-2 text-lg font-semibold text-foreground">

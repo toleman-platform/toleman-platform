@@ -181,7 +181,7 @@ export function WorkflowTemplates() {
               <div className="text-xs text-muted-foreground">
                 Named, ordered scanner step lists for CI/CD pipeline rollout -- pick which of Rikugan&apos;s
                 scanners run (and in what order) instead of the default full set. Used by Mass Rollout on
-                the Repo Sync page.
+                the Targets page.
               </div>
             </div>
           </div>

@@ -1,80 +1,114 @@
-import { ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import { CriticalityChip } from "@/components/criticality-chip";
+import { FindingsList } from "@/components/findings-list";
 import { ScanButtons } from "./scan-buttons";
-import { FindingRow } from "@/components/finding-row";
 import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
 import { TargetEnforcement } from "./target-enforcement";
 import { ApiScanConfig } from "./api-scan-config";
-import { EmptyState } from "@/components/ui/empty-state";
+import { TargetTabs, normalizeTab } from "./target-tabs";
+import { TargetOverview } from "./target-overview";
+import { settleOrNull } from "@/lib/settle";
 
+// Issue #197: the target detail page used to be one long scroll stacking
+// posture, findings and five separate config sections. The settings alone
+// span #61, #62, #66, #72 and #185, and were reachable from several
+// different surfaces. Splitting them into sub-pages gives each concern its
+// own URL, which is what makes a target linkable from a finding, a PR
+// comment or a Slack alert -- see target-tabs.tsx for why tab state lives in
+// the query string rather than in component state.
 export default async function TargetDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  const sp = await searchParams;
   const targetId = Number(id);
-  const [target, findingsResult] = await Promise.all([
+  const tab = normalizeTab(sp.tab);
+
+  const [target, findingsResult, scanSummary] = await Promise.all([
     api.target(targetId),
     api.findings({ target_id: targetId, page_size: 500 }),
+    // Degrades to {} rather than failing the page -- the overview then shows
+    // "Never" for last scan, which is honest about not knowing.
+    settleOrNull(api.scanSummary()).then((s) => s ?? {}),
   ]);
   const findings = findingsResult.items;
+  const scanEntry = scanSummary[String(targetId)];
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex items-start justify-between">
-        <div>
+    <div className="flex flex-col gap-6">
+      {/* Identity gets the full width; scan actions sit on their own row
+          below. #186 and #189 took this from 5 tools to 7, and sharing a row
+          with them truncated the repo URL and the branch line even at
+          1440px. A header should say what this is, not compete with the
+          actions you can take on it. */}
+      <div className="flex flex-col gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-foreground">{target.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">{target.repo_url}</p>
+          <p className="mt-1 truncate text-sm text-muted-foreground">{target.repo_url}</p>
           <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
             <CriticalityChip label={target.label} />
-            <span>
-              · criticality weight {target.criticality_weight} · branch {target.default_branch}
+            <span className="truncate">
+              · risk weight {target.criticality_weight}/5 · branch {target.default_branch}
             </span>
           </p>
         </div>
         <ScanButtons targetId={targetId} />
       </div>
 
-      <div>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Groups</h2>
-        <TargetGroups targetId={targetId} workspaceId={target.workspace_id} />
-      </div>
+      <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={findingsResult.total} />
 
-      <div>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">PR Guardrail</h2>
-        <TargetEnforcement
-          targetId={targetId}
-          initialMode={target.enforcement_mode}
-          initialEffectiveMode={target.effective_enforcement_mode ?? "block"}
-          initialSource={target.enforcement_mode_source ?? "default"}
+      {tab === "overview" && (
+        <TargetOverview target={target} findings={findings} scanEntry={scanEntry} />
+      )}
+
+      {tab === "vulnerabilities" && (
+        // Reuses the shared findings components rather than forking them, so
+        // bulk triage, severity styling, SLA badges, enrichment and the
+        // density behaviour from #172 all come along unchanged. The target
+        // column is redundant here, hence passing only this target.
+        <FindingsList
+          findings={findings}
+          total={findingsResult.total}
+          page={1}
+          pageSize={Math.max(findings.length, 1)}
+          targets={[target]}
         />
-      </div>
+      )}
 
-      <div>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Active API Scanning</h2>
-        <ApiScanConfig targetId={targetId} initialApiBaseUrl={target.api_base_url} />
-      </div>
+      {tab === "settings" && (
+        <div className="flex flex-col gap-8">
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Groups</h2>
+            <TargetGroups targetId={targetId} workspaceId={target.workspace_id} />
+          </div>
 
-      <PipelineIntegration
-        targetId={targetId}
-        initialIntegrated={target.pipeline_integrated}
-        initialPrUrl={target.pipeline_pr_url}
-      />
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">PR Guardrail</h2>
+            <TargetEnforcement
+              targetId={targetId}
+              initialMode={target.enforcement_mode}
+              initialEffectiveMode={target.effective_enforcement_mode ?? "block"}
+              initialSource={target.enforcement_mode_source ?? "default"}
+            />
+          </div>
 
-      <div>
-        <h2 className="mb-3 text-sm font-medium text-muted-foreground">Findings ({findings.length})</h2>
-        <div className="flex flex-col gap-2">
-          {findings.map((f) => (
-            <FindingRow key={f.id} finding={f} repoUrl={target.repo_url} />
-          ))}
-          {findings.length === 0 && (
-            <EmptyState icon={ShieldCheck} title="No findings yet" description="Run a scan above to start surfacing issues for this target." />
-          )}
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Active API Scanning</h2>
+            <ApiScanConfig targetId={targetId} initialApiBaseUrl={target.api_base_url} />
+          </div>
+
+          <PipelineIntegration
+            targetId={targetId}
+            initialIntegrated={target.pipeline_integrated}
+            initialPrUrl={target.pipeline_pr_url}
+          />
         </div>
-      </div>
+      )}
     </div>
   );
 }

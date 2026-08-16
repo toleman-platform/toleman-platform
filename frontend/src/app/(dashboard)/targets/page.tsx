@@ -43,7 +43,7 @@ export default async function TargetsPage({
       <ConnectedRefresher />
 
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Repo Sync</h1>
+        <h1 className="text-2xl font-bold text-foreground">Targets</h1>
         <p className="text-sm text-muted-foreground">Repositories under management</p>
       </div>
 

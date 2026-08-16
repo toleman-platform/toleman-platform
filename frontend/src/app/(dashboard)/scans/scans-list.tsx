@@ -164,7 +164,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
       <EmptyState
         icon={ScanIcon}
         title="No targets yet"
-        description="Add a repository in Repo Sync before you can trigger a scan."
+        description="Add a repository in Targets before you can trigger a scan."
       />
     );
   }

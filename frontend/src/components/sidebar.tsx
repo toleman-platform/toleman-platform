@@ -45,7 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Discover",
     items: [
-      { href: "/targets", label: "Repo Sync", icon: GitBranch },
+      { href: "/targets", label: "Targets", icon: GitBranch },
       { href: "/api-discovery", label: "API Discovery", icon: Globe },
     ],
   },

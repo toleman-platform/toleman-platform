@@ -71,7 +71,9 @@ export function ScanButtons({ targetId }: { targetId: number }) {
 
   return (
     <div className="space-y-2 text-right">
-      <div className="flex gap-2">
+      {/* Wraps: #186 and #189 took this from 5 tools to 7, and a single
+          non-wrapping row squeezed the target header beside it (#197). */}
+      <div className="flex flex-wrap justify-end gap-2">
         {TOOLS.map((tool) => (
           <Button key={tool} size="sm" variant="outline" disabled={running !== null} onClick={() => run(tool)}>
             {running === tool ? "Running..." : `Run ${tool}`}

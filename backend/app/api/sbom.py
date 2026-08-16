@@ -10,9 +10,11 @@ from sqlmodel import Session, select
 
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
+from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
+from app.core.aibom import AiComponent, aibom_summary, build_aibom
 from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
 from app.core.staleness import mark_stale_if_needed
-from app.models.models import SbomComponent, SbomRun, Target, User, WorkspaceRole
+from app.models.models import AiBomComponent, SbomComponent, SbomRun, Target, User, WorkspaceRole
 from app.tasks.sbom_tasks import run_sbom_generation
 
 router = APIRouter(prefix="/api/sbom", tags=["sbom"])
@@ -363,6 +365,101 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
         story.append(Paragraph("No components recorded.", styles["Normal"]))
     doc.build(story)
     return buf.getvalue()
+
+
+@router.get("/{target_id}/aibom")
+def get_aibom(target_id: int, session: Session = Depends(get_session)):
+    """AI Bill of Materials for a target (issue #190) -- models and datasets,
+    the parts a package SBOM is blind to.
+
+    Populated during SBOM generation (app/tasks/sbom_tasks.py), so this reads
+    persisted rows rather than re-scanning, same as the SBOM view above.
+
+    `generated` distinguishes "we looked and found no models" from "no AIBOM
+    has ever been generated for this target". Collapsing those two into an
+    empty list would let a repo that has never been analysed read as a repo
+    with no AI dependencies, which is the failure mode this whole feature is
+    supposed to prevent.
+    """
+    target = _get_target(target_id, session)
+    rows = session.exec(
+        select(AiBomComponent)
+        .where(AiBomComponent.target_id == target_id, AiBomComponent.branch == target.default_branch)
+        .order_by(AiBomComponent.component_type, AiBomComponent.name)
+    ).all()
+
+    has_run = session.exec(
+        select(SbomRun).where(SbomRun.target_id == target_id, SbomRun.status == "completed").limit(1)
+    ).first() is not None
+
+    components = [
+        AiComponent(
+            name=r.name,
+            component_type=r.component_type,
+            version=r.version,
+            source=r.source,
+            evidence=[e.strip() for e in r.evidence.split(",") if e.strip()],
+        )
+        for r in rows
+    ]
+
+    return {
+        "target_id": target_id,
+        "target_name": target.name,
+        "branch": target.default_branch,
+        "generated": has_run,
+        "summary": aibom_summary(components),
+        "components": [
+            {
+                "id": r.id,
+                "name": r.name,
+                "component_type": r.component_type,
+                "version": r.version,
+                "source": r.source,
+                "evidence": r.evidence,
+                "unpinned": r.version == AIBOM_UNKNOWN,
+                "first_seen": r.first_seen.isoformat() + "Z",
+                "last_seen": r.last_seen.isoformat() + "Z",
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/{target_id}/aibom/export")
+def export_aibom(target_id: int, session: Session = Depends(get_session)):
+    """Downloadable CycloneDX 1.6 AIBOM. Validated against the published
+    schema in tests -- a malformed BOM offered as a compliance artifact is
+    worse than none."""
+    target = _get_target(target_id, session)
+    rows = session.exec(
+        select(AiBomComponent)
+        .where(AiBomComponent.target_id == target_id, AiBomComponent.branch == target.default_branch)
+        .order_by(AiBomComponent.component_type, AiBomComponent.name)
+    ).all()
+
+    components = [
+        AiComponent(
+            name=r.name,
+            component_type=r.component_type,
+            version=r.version,
+            source=r.source,
+            evidence=[e.strip() for e in r.evidence.split(",") if e.strip()],
+        )
+        for r in rows
+    ]
+    document = build_aibom(
+        components,
+        target_name=target.name,
+        repo_url=target.repo_url,
+        branch=target.default_branch,
+        timestamp=datetime.utcnow().isoformat() + "Z",
+    )
+    base = f"aibom-{target.name}-{target.default_branch}"
+    return JSONResponse(
+        content=document,
+        headers={"Content-Disposition": f'attachment; filename="{base}.cdx.json"'},
+    )
 
 
 @router.get("/{target_id}/export")

@@ -486,6 +486,41 @@ class SbomComponent(SQLModel, table=True):
     last_seen: datetime = Field(default_factory=datetime.utcnow)
 
 
+class AiBomComponent(SQLModel, table=True):
+    """A model or dataset a target depends on (issue #190).
+
+    Deliberately a separate table from SbomComponent rather than a `kind`
+    column on it. They are different things with different keys: an
+    SbomComponent is a resolved package at a concrete version from a
+    lockfile, an AiBomComponent is a *reference* to a model or dataset whose
+    version is very often genuinely unknown. Sharing a table would force
+    either nullable columns that mean different things per row, or a fake
+    version on every model -- and fabricating a version is precisely what
+    this feature exists not to do.
+
+    Populated during the existing SBOM generation run, which already has a
+    checkout (app/tasks/sbom_tasks.py), so no extra clone.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    branch: str
+    name: str
+    # "machine-learning-model" or "data" -- CycloneDX 1.6 component types.
+    component_type: str
+    # "unknown" when the reference carries no pinned revision. Stored as the
+    # literal string rather than NULL so a reader sees the field was
+    # considered; see app.core.aibom.UNKNOWN.
+    version: str = "unknown"
+    # huggingface / hosted-api / local
+    source: str = "unknown"
+    # Comma-separated repo-relative paths this reference was found in, so an
+    # over-inclusive row can be judged and dismissed rather than argued with.
+    evidence: str = ""
+    first_seen: datetime = Field(default_factory=datetime.utcnow)
+    last_seen: datetime = Field(default_factory=datetime.utcnow)
+
+
 class SbomRun(SQLModel, table=True):
     """Tracks a single async SBOM generation run dispatched via Celery
     (#59) -- same running/completed/failed lifecycle as DiscoveryRun above,

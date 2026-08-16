@@ -244,3 +244,66 @@ def test_admin_bypasses_workspace_membership_for_read_and_write(client, engine):
         },
     )
     assert res2.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# AI/ML catalog entries (issue #187)
+# ---------------------------------------------------------------------------
+
+AI_ML_TOOLS = {"modelscan", "garak", "medusa", "snyk-agent-scan", "cisco-aibom"}
+
+
+def test_ai_ml_tools_are_registered(client, engine):
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    res = client.get("/api/tools/registry")
+    assert res.status_code == 200
+    by_tool = {t["tool"]: t for t in res.json()}
+    assert AI_ML_TOOLS <= by_tool.keys()
+    for tool in AI_ML_TOOLS:
+        assert by_tool[tool]["category"] == "AI/ML"
+
+
+def test_ai_ml_tools_report_as_not_integrated(client, engine):
+    """None of them has a TOOL_COMMANDS entry yet, so `integrated` must be
+    False -- the same invariant kics relies on. If someone wires one up for
+    real, this assertion is the reminder to move it out of catalog-only."""
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    by_tool = {t["tool"]: t for t in client.get("/api/tools/registry").json()}
+    for tool in AI_ML_TOOLS:
+        assert by_tool[tool]["integrated"] is False, tool
+
+
+def test_ai_ml_tools_default_every_usage_surface_off(client, engine):
+    """Per default_usage_for()'s docstring: enabling a surface for a tool
+    with nothing to run would be a silent no-op that misleads an admin into
+    thinking it's active."""
+    ws_id = _make_workspace(engine)
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    assignments = client.get(f"/api/tools/assignments?workspace_id={ws_id}").json()
+    by_tool = {a["tool"]: a for a in assignments}
+    for tool in AI_ML_TOOLS:
+        entry = by_tool[tool]
+        for surface in ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail"):
+            assert entry[surface] is False, f"{tool}.{surface} defaulted on"
+
+
+def test_ai_ml_entries_carry_install_and_docs_metadata(client, engine):
+    """install_cmd is display-only text an admin copies and runs by hand
+    (see tool_registry's module docstring), so an empty or missing one is a
+    real defect rather than cosmetic."""
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    by_tool = {t["tool"]: t for t in client.get("/api/tools/registry").json()}
+    for tool in AI_ML_TOOLS:
+        entry = by_tool[tool]
+        assert entry["install_cmd"].strip()
+        assert entry["docs_url"].startswith("https://")
+        assert entry["description"].strip()
+
+
+def test_medusa_entry_surfaces_its_agpl_licence(client, engine):
+    """Every other bundled scanner is permissive; MEDUSA is AGPL-3.0. The
+    licence has to be visible at the point an admin decides to install it,
+    not buried in a PR description (see #182 for the parallel discussion)."""
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    by_tool = {t["tool"]: t for t in client.get("/api/tools/registry").json()}
+    assert "AGPL" in by_tool["medusa"]["description"]

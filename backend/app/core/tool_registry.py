@@ -95,6 +95,62 @@ TOOL_REGISTRY = [
         "docs_url": "https://aquasecurity.github.io/tfsec/latest/guides/installation/",
         "version_cmd": ["tfsec", "--version"],
     },
+    # AI/ML security tooling (issue #187). All catalog-only, same status as
+    # kics below: registered for visibility + health-check, no TOOL_COMMANDS
+    # entry, so `integrated` computes False and default_usage_for() forces
+    # every usage surface off. Integration is tracked separately (#185 for
+    # AI-repo detection, #186 for modelscan) so the catalog can be useful
+    # before any of it is wired up.
+    {
+        "tool": "modelscan",
+        "display_name": "ModelScan",
+        "category": "AI/ML",
+        "languages": ["python (pickle, joblib, dill)", "pytorch", "tensorflow", "keras"],
+        "description": "Scans serialized model files for unsafe deserialization. Loading a pickled model executes code, so a hostile .pkl/.pt is RCE at load time with no exploit chain -- ordinary SAST never looks at binary weights. Native execution isn't wired up yet; see #186.",
+        "install_cmd": "pip install 'modelscan[tensorflow,h5py]'",
+        "docs_url": "https://github.com/protectai/modelscan#getting-started",
+        "version_cmd": ["modelscan", "-v"],
+    },
+    {
+        "tool": "garak",
+        "display_name": "garak",
+        "category": "AI/ML",
+        "languages": ["language-agnostic (probes a live model endpoint)"],
+        "description": "LLM red-teaming: prompt injection, jailbreaks, data leakage, toxic output. Unlike every other tool here it needs a live model endpoint rather than a checkout, so it belongs with #72's active API scanning rather than the repo-scanner path. Results are non-deterministic, which the finding model would have to account for.",
+        "install_cmd": "python -m pip install -U garak",
+        "docs_url": "https://github.com/NVIDIA/garak#getting-started",
+        "version_cmd": ["garak", "--version"],
+    },
+    {
+        "tool": "medusa",
+        "display_name": "MEDUSA",
+        "category": "AI/ML",
+        "languages": ["python", "javascript", "typescript", "go", "rust", "php", "many more"],
+        "description": "AI-first SAST with rules for agentic AI, MCP servers and RAG pipelines (OWASP LLM Top 10), plus scanning of agent config files. NOTE: AGPL-3.0-or-later -- the only copyleft-with-network-clause tool in this registry, so bundling it is a deliberate licensing decision, not a default. Young project (created 2025-11) and effectively single-maintainer; evaluate before running it against user code.",
+        "install_cmd": "pip install medusa-security",
+        "docs_url": "https://github.com/Pantheon-Security/medusa#readme",
+        "version_cmd": ["medusa", "--version"],
+    },
+    {
+        "tool": "snyk-agent-scan",
+        "display_name": "Snyk Agent Scan",
+        "category": "AI/ML",
+        "languages": ["language-agnostic (MCP server + agent skill manifests)"],
+        "description": "Scans MCP servers and agent skills for prompt injection, tool poisoning and rug pulls. Formerly Invariant Labs' mcp-scan; the `mcp-scan` PyPI package is deprecated and redirects here. Directly relevant to Rikugan's own MCP server (#108).",
+        "install_cmd": "pip install snyk-agent-scan",
+        "docs_url": "https://github.com/snyk/agent-scan#readme",
+        "version_cmd": ["snyk-agent-scan", "--version"],
+    },
+    {
+        "tool": "cisco-aibom",
+        "display_name": "Cisco AIBOM",
+        "category": "AI/ML",
+        "languages": ["python", "language-agnostic (source-code scan)"],
+        "description": "Generates an AI Bill of Materials from source -- models, datasets and lineage, the parts a conventional SBOM is blind to. Complements the CycloneDX SBOM Trivy already produces rather than replacing it.",
+        "install_cmd": "pip install cisco-aibom",
+        "docs_url": "https://github.com/cisco-ai-defense/aibom#readme",
+        "version_cmd": ["cisco-aibom", "--version"],
+    },
     {
         "tool": "kics",
         "display_name": "KICS",

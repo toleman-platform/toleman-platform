@@ -156,6 +156,21 @@ Logged 2026-08-16 from three issues filed by @r0075h3ll. Each was scoped against
 
 A constraint shared by all of these: **a failed or absent check must never render as "clean."** Same reasoning as #174's never-scanned repos, and it is the difference between a security feature and a false all-clear.
 
+## Sprint 19 — AI/LLM repo security coverage (epic #192)
+
+Logged 2026-08-16. Scanning repos that **are** AI products or carry AI features — a surface conventional SAST/SCA is blind to. Every tool named was verified against PyPI and GitHub (licence, maintenance, current package name) before being written up.
+
+The gap, concretely: `pickle.load()` on a hostile model file is RCE at load time and nothing currently inspects binary weights; a package SBOM says `transformers==4.44.0` but nothing about which model is pulled at runtime or from where; model output reaching `eval`/SQL/shell is classic injection that registry rules don't cover; and agent/MCP surfaces (tool poisoning, rug pulls) matter directly since Rikugan ships its own MCP server (#108).
+
+- **#187** Tool marketplace AI/ML category — **shipped**. Five catalog-only entries (ModelScan, garak, MEDUSA, Snyk Agent Scan, Cisco AIBOM), none wired for execution, same status as `kics`. Flags MEDUSA's AGPL-3.0 as a deliberate licensing decision rather than something arriving silently via a registry entry.
+- **#185** Auto-detect AI/ML repos — foundation, everything gates on it. Detects from model artifacts in the checkout or AI/ML dependencies already in `SbomComponent`, so it costs a path check and a DB query. Rejected an explicit per-target flag: an unflagged AI repo silently getting zero coverage is the exact failure this feature exists to prevent.
+- **#186** Model-file scanning (ModelScan) — highest signal-to-noise. Emitting unsafe-deserialization at `Critical` means `should_block()` blocks it with no guardrail changes.
+- **#189** LLM-usage SAST rules — cheapest of the set: curated Semgrep rules, no new binary and no parser work. Note AI provider **secret** detection was descoped after verification — gitleaks v8.30.1 already ships seven AI-provider key rules.
+- **#190** AIBOM (CycloneDX 1.6 ML components) — extends the CycloneDX SBOM pipeline that already exists. EU AI Act Art. 11 / Annex IV duties took effect 2 August 2026, so this is current rather than anticipatory.
+- **#191** garak LLM red-teaming — largest and riskiest; needs a live endpoint and produces non-deterministic results that break dedup, triage and SLA assumptions. Follows #72's active-API-scan precedent, not the scanner pattern, and is deliberately **not** wired into PR blocking. Sequenced last.
+
+Constraint running through all of them: **a failed, skipped or unknown check must never render as "clean."** An unscanned repo is not a safe repo, an unpinned model revision is unknown rather than fine, and a probe that didn't reproduce is not a fixed vulnerability. Same principle as #174's never-scanned repos.
+
 ## Explicitly not planned
 
 - Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.

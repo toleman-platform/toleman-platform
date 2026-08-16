@@ -521,6 +521,33 @@ export type AiBomView = {
   components: AiBomComponent[];
 };
 
+// First-run onboarding questionnaire (issue #203).
+export type OnboardingChoice = { value: string; label: string };
+export type OnboardingChoices = {
+  languages: OnboardingChoice[];
+  cloud_providers: OnboardingChoice[];
+  pr_enforcement: OnboardingChoice[];
+};
+export type OnboardingProfile = {
+  exists: boolean;
+  completed: boolean;
+  skipped: boolean;
+  should_prompt?: boolean;
+  languages: string[];
+  cloud_providers: string[];
+  uses_iac: boolean | null;
+  builds_ai_features: boolean | null;
+  ships_containers: boolean | null;
+  pr_enforcement_preference: string | null;
+  uses_slack: boolean | null;
+  uses_jira: boolean | null;
+  applied?: { tool: string; reason: string }[];
+};
+export type OnboardingRecommendations = {
+  recommendations: { tool: string; enabled: boolean; reason: string }[];
+  summary: { enabled: number; disabled: number; disabled_tools: { tool: string; reason: string }[] };
+};
+
 export type DiscoveryRunResult = {
   run_id: number;
   target_id: number;
@@ -947,6 +974,13 @@ export const api = {
   getScan: (scanId: number) => jsonFetch<ScanRun | { error: string }>(`/api/scans/${scanId}`),
   scanSummary: () => jsonFetch<ScanSummary>("/api/scans/summary"),
   aibom: (targetId: number) => jsonFetch<AiBomView>(`/api/sbom/${targetId}/aibom`),
+  onboardingChoices: () => jsonFetch<OnboardingChoices>("/api/onboarding/choices"),
+  onboardingProfile: () => jsonFetch<OnboardingProfile>("/api/onboarding/profile"),
+  saveOnboardingProfile: (payload: Record<string, unknown>) =>
+    jsonFetch<OnboardingProfile>("/api/onboarding/profile", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   targetsSummary: () => jsonFetch<TargetSummary>("/api/targets/summary"),
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),

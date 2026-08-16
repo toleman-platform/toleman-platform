@@ -731,6 +731,50 @@ class SlaRule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class OnboardingProfile(SQLModel, table=True):
+    """Answers to the first-run questionnaire (issue #203) -- what kind of
+    estate this deployment is protecting, captured once on the first admin
+    login so tooling defaults match the operator's stack instead of enabling
+    every scanner regardless.
+
+    Persisted rather than merely acted on: a later "why is gosec off?" needs
+    an answer, and the estate changes, so the questionnaire must be
+    re-runnable. Answers are advisory input to WorkspaceToolConfig (#75) --
+    they are never a second, competing place where tools get enabled.
+
+    One row per organization. Every field is optional: the wizard is
+    skippable end to end, and a skipped answer means "not stated", which is
+    different from a "no" and must not be read as one.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    organization_id: int = Field(foreign_key="organization.id", index=True, unique=True)
+
+    # Comma-separated slugs from app.core.onboarding_profile.LANGUAGE_CHOICES
+    # etc. Stored as text rather than child tables: this is a handful of
+    # checkbox answers read as a unit, and normalising it would add four
+    # join tables for something never queried by value.
+    languages: str = ""
+    cloud_providers: str = ""
+
+    uses_iac: Optional[bool] = None
+    builds_ai_features: Optional[bool] = None
+    ships_containers: Optional[bool] = None
+
+    # "block" | "alert" | None (not stated -> keep the platform default)
+    pr_enforcement_preference: Optional[str] = None
+
+    # Whether the operator said they use Slack/Jira, so the wizard can link
+    # straight to those integrations instead of leaving them buried in Admin.
+    uses_slack: Optional[bool] = None
+    uses_jira: Optional[bool] = None
+
+    completed_at: Optional[datetime] = None
+    skipped: bool = False
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class WorkspaceToolConfig(SQLModel, table=True):
     """Per-workspace, per-tool usage assignment (issue #75): which of the
     tool registry's four usage surfaces (`app.core.tool_registry.

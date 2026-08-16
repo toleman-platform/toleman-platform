@@ -15,7 +15,7 @@ const USAGE_SURFACES = [
   { key: "pr_guardrail" as const, label: "PR guardrail" },
 ];
 
-const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License", "API/DAST"];
+const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License", "API/DAST", "AI/ML"];
 
 // Issue #75: tool marketplace / health page. Extends the original Sprint 1
 // Tools Health tab (still available separately at the "tools" admin tab,
@@ -98,7 +98,7 @@ export function ToolMarketplace() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-sm text-muted-foreground">
-          Every supported OSS security tool across SAST, SCA, secrets, container, IaC, and license scanning, with a
+          Every supported OSS security tool across SAST, SCA, secrets, container, IaC, license, and AI/ML scanning, with a
           real <code className="text-foreground">--version</code> health check and per-workspace usage assignment.
           Installation is shown as a copyable command, not executed from the browser.
         </p>

@@ -119,7 +119,7 @@ def test_bundled_tool_check_agrees_with_the_environment_when_tools_are_present()
     # A light smoke test for the local/dev case. The real assertion lives in
     # scripts/verify_tools.py, which runs in CI inside the built image where
     # every bundled tool is guaranteed to be installed.
-    from app.api.tools import _check_one
+    from app.api.tools.health import _check_one
 
     entry = next(e for e in TOOL_REGISTRY if e["tool"] == "semgrep")
     result = _check_one("semgrep", entry["version_cmd"])

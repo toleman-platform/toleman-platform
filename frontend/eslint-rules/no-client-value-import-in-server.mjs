@@ -129,6 +129,12 @@ export default {
     const filename = context.filename ?? context.getFilename();
     if (!filename || filename === "<input>") return {};
 
+    // Test files are not Server Components -- they run in vitest under jsdom,
+    // where importing a hook out of a "use client" module is exactly what a
+    // test is supposed to do. Caught by dogfooding: the rule flagged this
+    // project's own use-selection.test.tsx on the first run.
+    if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(filename)) return {};
+
     const sourceText = context.sourceCode.getText();
     // Only Server Components are at risk. A client module importing from
     // another client module is entirely fine.

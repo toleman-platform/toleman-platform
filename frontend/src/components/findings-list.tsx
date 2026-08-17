@@ -9,6 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination } from "@/components/activity-pagination";
+import { BulkActionBar } from "@/components/ui/bulk-action-bar";
+import { SelectAllVisible } from "@/components/ui/list-row";
+import { useSelection } from "@/hooks/use-selection";
 
 const BULK_TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
@@ -32,31 +35,23 @@ export function FindingsList({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const allSelected = findings.length > 0 && findings.every((f) => selected.has(f.id));
-
-  function toggleOne(id: number, checked: boolean) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  function toggleAll(checked: boolean) {
-    setSelected(checked ? new Set(findings.map((f) => f.id)) : new Set());
-  }
+  // Issue #210: selection state now comes from useSelection, which is page-
+  // aware by construction. The hand-rolled version here computed "select all"
+  // against the rendered array, which was correct only because this list is
+  // server-paginated -- the same code in targets-list was not, and silently
+  // selected rows the user could not see (#204).
+  const visibleIds = useMemo(() => findings.map((f) => f.id), [findings]);
+  const selection = useSelection(visibleIds);
 
   async function bulkTriage(toState: string) {
-    if (selected.size === 0) return;
+    if (selection.count === 0) return;
     setSubmitting(true);
     try {
-      await api.bulkTriage(Array.from(selected), toState, reason);
-      setSelected(new Set());
+      await api.bulkTriage(selection.selectedIds, toState, reason);
+      selection.clear();
       setReason("");
       router.refresh();
     } finally {
@@ -64,50 +59,34 @@ export function FindingsList({
     }
   }
 
-  function goToPage(nextPage: number) {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("page", String(nextPage));
-    router.push(`${pathname}?${params.toString()}`);
-  }
-
-  const totalPages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
-  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const rangeEnd = Math.min(page * pageSize, total);
-
   return (
     <div className="flex flex-col gap-3">
       {findings.length > 0 && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            aria-label="Select all findings on this page"
-            className="h-4 w-4 accent-primary"
-            checked={allSelected}
-            onChange={(e) => toggleAll(e.target.checked)}
-          />
-          <span>Select all on this page</span>
-        </div>
+        <SelectAllVisible
+          allSelected={selection.allVisibleSelected}
+          someSelected={selection.someVisibleSelected}
+          onChange={selection.toggleAllVisible}
+        />
       )}
 
-      {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/50 p-3">
-          <span className="text-xs font-medium text-foreground">{selected.size} selected:</span>
-          <Input
-            className="h-7 min-w-[160px] flex-1 bg-secondary text-xs"
-            placeholder="Reason (applies to all selected)"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-          {BULK_TRIAGE_STATES.map((s) => (
-            <Button key={s} size="sm" variant="outline" disabled={submitting} onClick={() => bulkTriage(s)} className="h-7 text-xs">
-              {s}
-            </Button>
-          ))}
-          <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground underline">
-            clear selection
-          </button>
-        </div>
-      )}
+      <BulkActionBar
+        count={selection.count}
+        itemNoun="finding"
+        onClear={selection.clear}
+        actions={BULK_TRIAGE_STATES.map((s) => ({
+          label: s,
+          onClick: () => bulkTriage(s),
+          disabled: submitting,
+        }))}
+      >
+        <Input
+          className="h-7 min-w-[160px] flex-1 bg-secondary text-xs"
+          aria-label="Reason, applied to every selected finding"
+          placeholder="Reason (applies to all selected)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+      </BulkActionBar>
 
       {total > pageSize && <ActivityPagination total={total} page={page} pageSize={pageSize} position="top" />}
 
@@ -122,8 +101,8 @@ export function FindingsList({
             targetName={targetById.get(f.target_id)?.name}
             targetLabel={targetById.get(f.target_id)?.label}
             selectable
-            selected={selected.has(f.id)}
-            onSelectChange={(checked) => toggleOne(f.id, checked)}
+            selected={selection.isSelected(f.id)}
+            onSelectChange={(checked) => selection.toggle(f.id, checked)}
           />
         ))}
         {findings.length === 0 && (

@@ -43,6 +43,7 @@ from typing import Optional
 
 from sqlmodel import Session
 
+from app.core import tool_health_cache
 from app.core.tool_registry import TOOL_REGISTRY
 
 # A big dependency tree (modelscan pulls tensorflow) is genuinely slow, but
@@ -172,3 +173,12 @@ def _finish(session: Session, run, *, status: str, error: str = "", version: str
     session.add(run)
     session.commit()
     session.refresh(run)
+
+    # (#221) Whatever GET /api/tools/registry cached for this tool is now
+    # stale by definition -- an install just settled, successfully or not.
+    # Invalidating here rather than waiting out the cache's own TTL means
+    # the tool an admin just watched install shows correctly on the very
+    # next registry fetch (the frontend's useToolInstall calls that fetch
+    # itself once this row settles), instead of on whichever refresh happens
+    # to land after the TTL expires.
+    tool_health_cache.invalidate(run.tool)

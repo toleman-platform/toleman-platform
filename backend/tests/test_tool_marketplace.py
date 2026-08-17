@@ -327,3 +327,120 @@ def test_modelscan_is_integrated_after_186(client, engine):
 
     assignments = {a["tool"]: a for a in client.get(f"/api/tools/assignments?workspace_id={ws_id}").json()}
     assert assignments["modelscan"]["on_demand_scan"] is True
+
+
+# ---------------------------------------------------------------------------
+# Registry health-check caching (#221) -- see app.core.tool_health_cache.
+# GET /api/tools/registry used to run a live subprocess `--version` check
+# for every registry entry on every request; that check is now cached for
+# a short TTL and invalidated the moment an install through this UI settles.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolated_tool_health_cache():
+    """The cache module holds process-global state keyed only by tool name,
+    with no per-test namespace -- forced onto the in-memory fallback here
+    (same technique as test_tool_health_cache.py) so these tests are
+    deterministic regardless of whether a real Redis happens to be
+    reachable in whatever environment runs the suite, and so a health entry
+    a real subprocess check wrote for "semgrep" in one test can never bleed
+    into the next one's assertions."""
+    from unittest.mock import patch
+
+    from app.core import tool_health_cache
+
+    with patch("app.core.tool_health_cache._get_redis", return_value=None):
+        tool_health_cache._memory_cache.clear()
+        yield
+    tool_health_cache._memory_cache.clear()
+
+
+def test_registry_reuses_a_cached_health_check_on_the_second_request(client, engine):
+    from unittest.mock import patch
+
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    fake_health = {"tool": "semgrep", "installed": True, "version": "1.0.0", "response_ms": 5}
+
+    with patch("app.api.tools._check_one", return_value=fake_health) as mocked:
+        first = client.get("/api/tools/registry").json()
+        second = client.get("/api/tools/registry").json()
+
+    # One subprocess check per tool across both requests combined, not one
+    # per tool per request -- this is the entire point of the cache.
+    semgrep_calls = [c for c in mocked.call_args_list if c.args[0] == "semgrep"]
+    assert len(semgrep_calls) == 1
+
+    semgrep_first = next(e for e in first if e["tool"] == "semgrep")
+    semgrep_second = next(e for e in second if e["tool"] == "semgrep")
+    assert semgrep_first["version"] == "1.0.0"
+    assert semgrep_second["version"] == "1.0.0"
+
+
+def test_registry_response_is_unchanged_by_caching(client, engine):
+    # The response shape/content must be identical to the uncached version --
+    # this is a performance change, not a behavior change.
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    uncached = client.get("/api/tools/registry").json()
+    cached = client.get("/api/tools/registry").json()
+    assert uncached == cached
+
+
+def test_a_stale_cache_entry_is_rechecked(client, engine):
+    from unittest.mock import patch
+
+    from app.core import tool_health_cache
+
+    client, _ = _login(client, engine, role=UserRole.ADMIN)
+    tool_health_cache.set(
+        "semgrep", {"tool": "semgrep", "installed": True, "version": "0.0.1", "response_ms": 1}
+    )
+    # Force expiry rather than sleeping TTL_SECONDS in a test.
+    with tool_health_cache._memory_lock:
+        _, health = tool_health_cache._memory_cache["semgrep"]
+        tool_health_cache._memory_cache["semgrep"] = (0, health)
+
+    fresh = {"tool": "semgrep", "installed": True, "version": "9.9.9", "response_ms": 5}
+    with patch("app.api.tools._check_one", return_value=fresh):
+        body = client.get("/api/tools/registry").json()
+
+    assert next(e for e in body if e["tool"] == "semgrep")["version"] == "9.9.9"
+
+
+def test_an_install_settling_invalidates_that_tools_cached_health(engine):
+    # The property that makes the cache safe to add on top of #216: the
+    # exact tool an admin just watched install must never keep showing its
+    # pre-install state, even though everything else can be briefly stale.
+    from app.core import tool_health_cache, tool_install
+    from app.models.models import ToolInstallRun
+
+    tool_health_cache.set("checkov", {"tool": "checkov", "installed": False, "version": None})
+
+    with Session(engine) as session:
+        run = ToolInstallRun(tool="checkov", package="checkov", status="running")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+        tool_install._finish(session, run, status="completed", version="3.3.11")
+
+    assert tool_health_cache.get("checkov") is None
+
+
+def test_a_failed_install_also_invalidates_the_cache(engine):
+    # Failure is still new information -- "we just tried and it did not
+    # work" is exactly as stale-cache-worthy as a success.
+    from app.core import tool_health_cache, tool_install
+    from app.models.models import ToolInstallRun
+
+    tool_health_cache.set("checkov", {"tool": "checkov", "installed": False, "version": None})
+
+    with Session(engine) as session:
+        run = ToolInstallRun(tool="checkov", package="checkov", status="running")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+        tool_install._finish(session, run, status="failed", error="pip exited 1")
+
+    assert tool_health_cache.get("checkov") is None

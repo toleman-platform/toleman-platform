@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
+from app.core import scan_eta
 from app.core.rate_limit import enforce_rate_limit
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User
@@ -112,6 +113,56 @@ def run_native_scan(
     return JSONResponse(status_code=202, content={"scan_id": scan.id, "status": scan.status})
 
 
+@router.get("/active")
+def active_scans(
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Every scan currently running, grouped by target (#212).
+
+    A scan dispatched from the Scans page used to be invisible everywhere
+    else in the app: Targets showed "last scanned 3 days ago" while a scan
+    was in flight, and the target detail page showed nothing at all. This is
+    what lets any surface render running state without having been the one
+    that triggered it.
+
+    Stale rows are swept here as well as in the single-scan poll. This
+    endpoint is read by list views, so it is often the first thing to touch a
+    row that a dead worker left "running" -- without the sweep those rows
+    would render as permanently in-flight, which is indistinguishable from a
+    hung platform.
+
+    Workspace-scoped like every other GET/list over workspace-owned
+    resources (None = admin/no filter, [] = no memberships yet).
+    """
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return {}
+
+    query = select(Scan).where(Scan.status == "running")
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
+    running = session.exec(query).all()
+
+    by_target: dict[int, list] = {}
+    for scan in running:
+        # Re-check after the sweep: a row that just timed out is no longer
+        # active and must not be reported as such.
+        if mark_stale_if_needed(session, scan):
+            continue
+        by_target.setdefault(scan.target_id, []).append(
+            {
+                "scan_id": scan.id,
+                "tool": scan.tool,
+                "branch": scan.branch,
+                "started_at": scan.started_at.isoformat() + "Z",
+                **scan_eta.progress_for(session, scan),
+            }
+        )
+
+    return {str(target_id): scans for target_id, scans in by_target.items()}
+
+
 @router.get("/{scan_id}")
 def get_scan(
     scan_id: int,
@@ -122,6 +173,9 @@ def get_scan(
     scan = session.get(Scan, scan_id)
     if not scan:
         return {"error": "scan not found"}
+    # A row swept to "failed" here carries its timeout reason in `error`,
+    # which the response already surfaces as error_message -- the UI shows
+    # that instead of a spinner that would never resolve.
     mark_stale_if_needed(session, scan)
     return {
         "scan_id": scan.id,
@@ -133,4 +187,5 @@ def get_scan(
         "started_at": scan.started_at,
         "completed_at": scan.completed_at,
         "error_message": scan.error,
+        **scan_eta.progress_for(session, scan),
     }

@@ -1,85 +1,90 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { pollUntilSettled } from "@/lib/poll";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
 import { Button } from "@/components/ui/button";
+import { ScanProgress } from "@/components/scan-status";
+import { useScanRun } from "@/hooks/use-scan-run";
 
 const TOOLS = SCAN_TOOLS;
 
 export function ScanButtons({ targetId }: { targetId: number }) {
   const router = useRouter();
-  const [running, setRunning] = useState<string | null>(null);
+  const [tool, setTool] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
-  const cancelPollRef = useRef<(() => void) | null>(null);
 
-  useEffect(() => {
-    // Stop polling if the component unmounts (e.g. navigating away) mid-scan.
-    return () => cancelPollRef.current?.();
-  }, []);
+  // Issue #212: this used to say "Running..." on one button and nothing
+  // else -- no indication of how long the scan had been going, whether it
+  // had started at all, or (on failure) why it stopped. The polling and the
+  // countdown live in useScanRun now, so this component only decides what to
+  // show and what to do when the run settles.
+  //
+  // `toolRef` rather than the `tool` state: these callbacks are invoked from
+  // the poll timer, which closed over whichever render created it.
+  const toolRef = useRef<string | null>(null);
+  const scan = useScanRun({
+    onCompleted: (findingsCount) => {
+      setResult(`${toolRef.current}: ${findingsCount} findings ingested`);
+      setTool(null);
+      // New findings only appear on a server render, so the page is
+      // refreshed when the scan actually lands -- not when it was dispatched,
+      // which is what the old version effectively did.
+      router.refresh();
+    },
+    onFailed: (message) => {
+      setResult(`${toolRef.current}: ${message}`);
+      setTool(null);
+    },
+  });
 
-  async function run(tool: string) {
-    setRunning(tool);
+  async function run(nextTool: string) {
+    setTool(nextTool);
+    toolRef.current = nextTool;
     setResult(null);
-    cancelPollRef.current?.();
+    scan.reset();
     try {
-      // POST /api/scans/run now dispatches a Celery task and returns
-      // immediately with status: "running" (#59) instead of blocking until
-      // the clone+scan finishes -- poll GET /api/scans/{scan_id} until it's
-      // done.
-      const res = await api.runScan(targetId, tool);
+      const res = await api.runScan(targetId, nextTool);
       if ("error" in res) {
-        setResult(`${tool}: ${res.error}`);
-        setRunning(null);
+        // A rejected dispatch (rate limit, unsupported tool) never produces
+        // a scan id, so it is reported through the same failure path rather
+        // than a second one that could word it differently.
+        scan.fail(res.error);
         return;
       }
-
-      const scanId = res.scan_id;
-      cancelPollRef.current = pollUntilSettled(
-        async () => {
-          const scan = await api.getScan(scanId);
-          // Normalize the { error } shape (e.g. scan row not found) into a
-          // "failed" status so pollUntilSettled's status-based loop can
-          // still stop -- polling would otherwise spin forever.
-          if ("error" in scan) return { status: "failed" as const, message: scan.error };
-          return { status: scan.status, findings_count: scan.findings_count, message: scan.error_message };
-        },
-        (scan) => {
-          if (scan.status === "completed") {
-            setResult(`${tool}: ${scan.findings_count} findings ingested`);
-            setRunning(null);
-            router.refresh();
-          } else if (scan.status === "failed") {
-            setResult(`${tool}: ${scan.message || "scan failed"}`);
-            setRunning(null);
-          }
-        },
-        {
-          onError: (err) => {
-            setResult(`${tool}: ${err instanceof Error ? err.message : "failed"}`);
-            setRunning(null);
-          },
-        },
-      );
+      scan.track(res.scan_id);
     } catch (err) {
-      setResult(`${tool}: ${err instanceof Error ? err.message : "failed"}`);
-      setRunning(null);
+      scan.fail(err instanceof Error ? err.message : "failed");
     }
   }
+
+  const busy = tool !== null;
 
   return (
     <div className="space-y-2 text-right">
       {/* Wraps: #186 and #189 took this from 5 tools to 7, and a single
           non-wrapping row squeezed the target header beside it (#197). */}
       <div className="flex flex-wrap justify-end gap-2">
-        {TOOLS.map((tool) => (
-          <Button key={tool} size="sm" variant="outline" disabled={running !== null} onClick={() => run(tool)}>
-            {running === tool ? "Running..." : `Run ${tool}`}
+        {TOOLS.map((t) => (
+          <Button key={t} size="sm" variant="outline" disabled={busy} onClick={() => run(t)}>
+            {tool === t ? "Running..." : `Run ${t}`}
           </Button>
         ))}
       </div>
+
+      {busy && scan.phase && (
+        <div className="flex justify-end">
+          <ScanProgress
+            phase={scan.phase}
+            tool={tool ?? undefined}
+            elapsedSeconds={scan.elapsedSeconds}
+            etaSeconds={scan.etaSeconds}
+            error={scan.error}
+          />
+        </div>
+      )}
+
       {result && <p className="text-xs text-muted-foreground">{result}</p>}
     </div>
   );

@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, Target, ScanRun } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useScanRun } from "@/hooks/use-scan-run";
+import { ScanProgress } from "@/components/scan-status";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,18 +44,25 @@ export default function ApiDiscoveryPage() {
 
   // Issue #72: Active API Scanning against the endpoints listed above.
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [apiScanRunning, setApiScanRunning] = useState(false);
+  const scanTargetRef = useRef<number | null>(null);
   const [apiScanError, setApiScanError] = useState<string | null>(null);
   const [apiScanResult, setApiScanResult] = useState<{ targetId: number; scan: ScanRun } | null>(null);
-  const cancelApiScanPollRef = useRef<(() => void) | null>(null);
+  const apiScan = useScanRun({
+    onCompleted: () => {
+      // Re-read the persisted latest scan rather than keeping the polled
+      // copy: it is the same row, and one owner beats two.
+      const id = scanTargetRef.current;
+      if (id !== null) void api.getLatestApiScan(id).then((res) => setApiScanResult({ targetId: id, scan: res.scan! }));
+    },
+    onFailed: (message) => setApiScanError(message),
+  });
+  const apiScanRunning = apiScan.phase === "queued" || apiScan.phase === "running";
   const currentTarget = targets.find((t) => t.id === targetId) ?? null;
 
   useEffect(() => {
-    // Stop polling if the component unmounts (e.g. navigating away) mid-run.
-    return () => {
-      cancelPollRef.current?.();
-      cancelApiScanPollRef.current?.();
-    };
+    // Stop the discovery poll if the component unmounts mid-run. The active
+    // API scan cleans up its own poll inside useScanRun.
+    return () => cancelPollRef.current?.();
   }, []);
 
   const {
@@ -134,42 +143,21 @@ export default function ApiDiscoveryPage() {
   async function runApiScan() {
     if (targetId === null) return;
     const scanTargetId = targetId;
-    setApiScanRunning(true);
+    scanTargetRef.current = scanTargetId;
     setApiScanError(null);
-    cancelApiScanPollRef.current?.();
+    apiScan.reset();
     try {
       // POST /api/api-scan/{target_id} dispatches a Celery task (nuclei
       // against already-discovered endpoints) and returns immediately
-      // (#72, same async pattern as runScan/runDiscovery) -- poll
-      // GET /api/scans/{scan_id} until status leaves "running".
+      // (#72, same async pattern as runScan/runDiscovery). Issue #212: the
+      // poll, the elapsed counter and the ETA now come from useScanRun, so
+      // a DAST run -- which is typically the longest-running scan here --
+      // reports progress the same way a SAST run does instead of showing a
+      // bare "Scanning...".
       const dispatch = await api.runApiScan(scanTargetId, selected.size > 0 ? Array.from(selected) : undefined);
-      cancelApiScanPollRef.current = pollUntilSettled(
-        async () => {
-          const scan = await api.getScan(dispatch.scan_id);
-          // Normalize the { error } shape (e.g. scan row not found) into a
-          // "failed" status so pollUntilSettled's status-based loop can
-          // still stop -- polling would otherwise spin forever. Same
-          // pattern as scan-buttons.tsx.
-          if ("error" in scan) return { status: "failed" as const, scan: null, message: scan.error };
-          return { status: scan.status, scan, message: null };
-        },
-        (result) => {
-          if (result.status === "completed" || result.status === "failed") {
-            if (result.scan) setApiScanResult({ targetId: scanTargetId, scan: result.scan });
-            else if (result.message) setApiScanError(result.message);
-            setApiScanRunning(false);
-          }
-        },
-        {
-          onError: (e) => {
-            setApiScanError(e instanceof Error ? e.message : "active scan failed");
-            setApiScanRunning(false);
-          },
-        },
-      );
+      apiScan.track(dispatch.scan_id);
     } catch (e) {
-      setApiScanError(e instanceof Error ? e.message : "active scan failed to start");
-      setApiScanRunning(false);
+      apiScan.fail(e instanceof Error ? e.message : "active scan failed to start");
     }
   }
 
@@ -274,6 +262,15 @@ export default function ApiDiscoveryPage() {
                 </span>
               )}
             </div>
+          )}
+
+          {apiScanRunning && apiScan.phase && (
+            <ScanProgress
+              phase={apiScan.phase}
+              tool="api-scan"
+              elapsedSeconds={apiScan.elapsedSeconds}
+              etaSeconds={apiScan.etaSeconds}
+            />
           )}
 
           {apiScanError && <p className="text-xs text-destructive">{apiScanError}</p>}

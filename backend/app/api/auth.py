@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -67,9 +68,26 @@ def _resolve_api_token(session: Session, authorization: str | None) -> ApiToken:
     return token
 
 
+# Declared so the generated OpenAPI document actually describes how to
+# authenticate against /api/public/v1 (#109). Reading the header manually
+# works at runtime but is invisible to the schema, so Swagger UI, Postman
+# imports and generated clients all showed the endpoints as unauthenticated
+# and had no way to send a token. auto_error=False keeps the existing 401
+# bodies from _resolve_api_token rather than letting FastAPI substitute its
+# own, so behaviour is unchanged for existing callers.
+api_token_scheme = HTTPBearer(
+    scheme_name="ApiToken",
+    description=(
+        "Personal access token from Settings -> Workspace. Send as "
+        "`Authorization: Bearer rikugan_pat_...`."
+    ),
+    auto_error=False,
+)
+
+
 def current_api_token_user(
     session: Session = Depends(get_session),
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(api_token_scheme),
 ) -> User:
     """Issue #109: resolves the caller of `/api/public/v1/*` from an
     `Authorization: Bearer <token>` header instead of the session cookie
@@ -83,6 +101,7 @@ def current_api_token_user(
     `require_api_token_write_scope` dependency below, not here -- most
     public-API endpoints only need read access.
     """
+    authorization = f"{credentials.scheme} {credentials.credentials}" if credentials else None
     token = _resolve_api_token(session, authorization)
     user = session.get(User, token.user_id)
     if not user:
@@ -96,11 +115,12 @@ def current_api_token_user(
 
 def require_api_token_write_scope(
     session: Session = Depends(get_session),
-    authorization: str | None = Header(default=None),
+    credentials: HTTPAuthorizationCredentials | None = Depends(api_token_scheme),
 ) -> None:
     """Gate for public-API endpoints that mutate state (e.g. triggering a
     scan) -- a `read`-scoped token must not be able to do this even though
     it authenticates fine for GETs."""
+    authorization = f"{credentials.scheme} {credentials.credentials}" if credentials else None
     token = _resolve_api_token(session, authorization)
     if token.scope != ApiTokenScope.READ_WRITE:
         raise HTTPException(status_code=403, detail="this token is read-only; a read_write token is required")

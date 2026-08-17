@@ -239,3 +239,30 @@ def test_read_write_scoped_token_can_trigger_scan(client, engine, monkeypatch):
     with Session(engine) as session:
         scan = session.get(Scan, res.json()["scan_id"])
         assert scan.tool == "semgrep"
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI: the spec must describe how to authenticate
+# ---------------------------------------------------------------------------
+
+
+def test_openapi_declares_the_api_token_security_scheme(client):
+    """Reading the Authorization header manually works at runtime but is
+    invisible to the schema, so Swagger UI, Postman imports and generated
+    clients all showed these endpoints as unauthenticated with no way to send
+    a token. The published spec is only useful if it says how to authenticate.
+    """
+    spec = client.get("/openapi.json").json()
+    schemes = spec.get("components", {}).get("securitySchemes", {})
+    assert "ApiToken" in schemes
+    assert schemes["ApiToken"]["type"] == "http"
+    assert schemes["ApiToken"]["scheme"] == "bearer"
+
+
+def test_every_public_endpoint_requires_the_token_scheme(client):
+    spec = client.get("/openapi.json").json()
+    public = {p: v for p, v in spec["paths"].items() if p.startswith("/api/public/v1")}
+    assert public, "no public API paths found in the spec"
+    for path, methods in public.items():
+        for method, op in methods.items():
+            assert op.get("security") == [{"ApiToken": []}], f"{method.upper()} {path}"

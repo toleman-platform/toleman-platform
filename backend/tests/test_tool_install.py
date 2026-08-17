@@ -130,7 +130,7 @@ def test_install_rejects_a_tool_that_is_not_installable(client, engine):
 
 def test_install_rejects_an_unknown_tool_without_dispatching(client, engine):
     client, _ = _login(client, engine)
-    with patch("app.api.tools.run_tool_install.delay") as delay:
+    with patch("app.api.tools.install.run_tool_install.delay") as delay:
         res = client.post("/api/tools/not-a-real-tool/install")
     assert res.status_code == 400
     delay.assert_not_called()
@@ -138,7 +138,7 @@ def test_install_rejects_an_unknown_tool_without_dispatching(client, engine):
 
 def test_install_rejects_an_injection_shaped_tool_name(client, engine):
     client, _ = _login(client, engine)
-    with patch("app.api.tools.run_tool_install.delay") as delay:
+    with patch("app.api.tools.install.run_tool_install.delay") as delay:
         res = client.post("/api/tools/semgrep;rm -rf ~/install")
     assert res.status_code in (400, 404)
     delay.assert_not_called()
@@ -151,7 +151,7 @@ def test_install_rejects_an_injection_shaped_tool_name(client, engine):
 
 def test_install_creates_a_run_and_dispatches(client, engine):
     client, uid = _login(client, engine)
-    with patch("app.api.tools.run_tool_install.delay") as delay:
+    with patch("app.api.tools.install.run_tool_install.delay") as delay:
         res = client.post("/api/tools/semgrep/install")
 
     assert res.status_code == 202
@@ -171,14 +171,14 @@ def test_install_records_the_package_resolved_at_dispatch_time(client, engine):
     # Not looked up later: the registry can change under a historical row, and
     # the record should say what was actually installed.
     client, _ = _login(client, engine)
-    with patch("app.api.tools.run_tool_install.delay"):
+    with patch("app.api.tools.install.run_tool_install.delay"):
         body = client.post("/api/tools/medusa/install").json()
     assert body["package"] == "medusa-security"
 
 
 def test_poll_returns_the_run(client, engine):
     client, _ = _login(client, engine)
-    with patch("app.api.tools.run_tool_install.delay"):
+    with patch("app.api.tools.install.run_tool_install.delay"):
         run_id = client.post("/api/tools/semgrep/install").json()["run_id"]
 
     body = client.get(f"/api/tools/installs/{run_id}").json()

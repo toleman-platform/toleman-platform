@@ -362,7 +362,7 @@ def test_registry_reuses_a_cached_health_check_on_the_second_request(client, eng
     client, _ = _login(client, engine, role=UserRole.ADMIN)
     fake_health = {"tool": "semgrep", "installed": True, "version": "1.0.0", "response_ms": 5}
 
-    with patch("app.api.tools._check_one", return_value=fake_health) as mocked:
+    with patch("app.api.tools.registry._check_one", return_value=fake_health) as mocked:
         first = client.get("/api/tools/registry").json()
         second = client.get("/api/tools/registry").json()
 
@@ -401,7 +401,7 @@ def test_a_stale_cache_entry_is_rechecked(client, engine):
         tool_health_cache._memory_cache["semgrep"] = (0, health)
 
     fresh = {"tool": "semgrep", "installed": True, "version": "9.9.9", "response_ms": 5}
-    with patch("app.api.tools._check_one", return_value=fresh):
+    with patch("app.api.tools.registry._check_one", return_value=fresh):
         body = client.get("/api/tools/registry").json()
 
     assert next(e for e in body if e["tool"] == "semgrep")["version"] == "9.9.9"

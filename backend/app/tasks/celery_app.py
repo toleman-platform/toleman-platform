@@ -38,6 +38,17 @@ celery_app.conf.task_routes = {
     # of off-request-thread work as the clone+subprocess tasks above, even
     # though it doesn't clone a repo -- same queue, no new worker needed.
     "app.tasks.api_scan_tasks.*": {"queue": "scans"},
+    # tool_install_tasks (#216): runs `pip install` inside this same worker
+    # container, so the tool actually lands in the environment scans run
+    # from -- not a separate installer process. Routing matters here in a
+    # way it easily doesn't get noticed: without an explicit route, Celery
+    # sends an unrouted task to the default "celery" queue, which
+    # docker-compose's celery-worker service never consumes (`-Q scans`
+    # only). The task would sit unconsumed by any worker -- not fail loudly,
+    # just never start -- until app.core.staleness's stale-job sweep
+    # eventually reported it failed with a timeout that had nothing to do
+    # with the real cause.
+    "app.tasks.tool_install_tasks.*": {"queue": "scans"},
 }
 
 # task_acks_late + reject_on_worker_lost: if a worker dies mid-scan (OOM, pod

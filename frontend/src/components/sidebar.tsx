@@ -124,14 +124,16 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
     return () => tabletQuery.removeEventListener("change", applyTablet);
   }, []);
 
-  // Close the mobile drawer on navigation. Same setState-in-effect shape
-  // already used elsewhere in this codebase for route-driven UI resets (see
-  // global-search.tsx, pr-guardrail-log.tsx) -- the lint rule flags it, but
-  // a ref-during-render alternative is also disallowed here
-  // (react-hooks/refs), so this matches existing project precedent.
-  useEffect(() => {
+  // Close the mobile drawer on navigation. This is React's documented
+  // "adjust state when a prop changes" pattern rather than an effect: React
+  // re-runs the component immediately with the new state and never commits
+  // the intermediate frame, so the drawer does not paint open-then-closed the
+  // way the effect version briefly did.
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (lastPathname !== pathname) {
+    setLastPathname(pathname);
     setMobileOpen(false);
-  }, [pathname]);
+  }
 
   async function onLogout() {
     await api.logout().catch(() => {});

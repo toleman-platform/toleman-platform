@@ -13,6 +13,7 @@ import {
   NotificationPreference,
   Target,
 } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -501,25 +502,31 @@ function NotificationPreferencesSection() {
 }
 
 function WorkspaceSection() {
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [targetId, setTargetId] = useState<number | null>(null);
-  const [form, setForm] = useState<Partial<Target>>({});
+  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  // Both the draft and the "Saved" flag are tagged with the target they
+  // belong to. Switching repos then falls back to that repo's stored values
+  // automatically, where the previous effect-based reset could leave one
+  // repo's unsaved edits -- or a stale "Saved" -- sitting under another
+  // repo's name for a frame.
+  const [draft, setDraft] = useState<{ targetId: number; values: Partial<Target> } | null>(null);
+  const [savedTargetId, setSavedTargetId] = useState<number | null>(null);
 
-  useEffect(() => {
-    api.targets().then((ts) => {
-      setTargets(ts);
-      if (ts.length > 0) setTargetId(ts[0].id);
-    });
-  }, []);
+  const { data: targetsData, refetch: reloadTargets } = useAsyncData<Target[]>(() => api.targets());
+  const targets = targetsData ?? [];
+  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
+  const setTargetId = setChosenTargetId;
 
-  useEffect(() => {
+  const selectedTarget = targets.find((t) => t.id === targetId) ?? null;
+  const form: Partial<Target> =
+    draft && draft.targetId === targetId ? draft.values : (selectedTarget ?? {});
+  const saved = savedTargetId !== null && savedTargetId === targetId;
+
+  function setForm(update: (f: Partial<Target>) => Partial<Target>) {
     if (targetId === null) return;
-    const target = targets.find((t) => t.id === targetId);
-    if (target) setForm(target);
-    setSaved(false);
-  }, [targetId, targets]);
+    setDraft({ targetId, values: update(form) });
+    setSavedTargetId(null);
+  }
 
   async function save() {
     if (targetId === null) return;
@@ -530,8 +537,9 @@ function WorkspaceSection() {
         label: form.label,
         criticality_weight: form.criticality_weight,
       });
-      setTargets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
-      setSaved(true);
+      reloadTargets();
+      setDraft(null);
+      setSavedTargetId(updated.id);
     } finally {
       setSaving(false);
     }

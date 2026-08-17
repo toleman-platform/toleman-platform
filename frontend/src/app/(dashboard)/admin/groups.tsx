@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, EnforcementMode, Group, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
+import { useState } from "react";
+import { api, EnforcementMode, Group, workspaceDisplayName } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -17,35 +19,46 @@ const SWATCHES = ["#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563e
 // group-level policy (#62) and group-level SLA (#70). Mirrors the
 // Policies tab's workspace-picker-then-CRUD-list shape.
 export function Groups() {
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
-  const [groups, setGroups] = useState<Group[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    workspaces,
+    workspaceId,
+    setWorkspaceId,
+    error: workspacesError,
+    reload: reloadWorkspaces,
+  } = useWorkspacePicker();
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const {
+    data: groups,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch,
+  } = useAsyncData<Group[]>(() => api.groups(workspaceId!), {
+    enabled: workspaceId != null,
+    deps: [workspaceId],
+  });
+
+  const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
 
   const [name, setName] = useState("");
   const [color, setColor] = useState(SWATCHES[0]);
   const [saving, setSaving] = useState(false);
   const [wsEnforcementBusy, setWsEnforcementBusy] = useState(false);
 
-  useEffect(() => {
-    api.workspaces().then((list) => {
-      setWorkspaces(list);
-      if (list.length > 0) setWorkspaceId(list[0].id);
-    });
-  }, []);
-
   const activeWorkspace = workspaces?.find((w) => w.id === workspaceId) ?? null;
 
   async function changeWorkspaceEnforcement(mode: EnforcementMode | null) {
     if (!workspaceId) return;
     setWsEnforcementBusy(true);
-    setError(null);
+    setMutationError(null);
     try {
-      const updated = await api.updateWorkspace(workspaceId, { enforcement_mode: mode });
-      setWorkspaces((prev) => (prev ? prev.map((w) => (w.id === updated.id ? updated : w)) : prev));
+      await api.updateWorkspace(workspaceId, { enforcement_mode: mode });
+      // Refetch rather than patching the row in place: the workspace list is
+      // owned by useWorkspacePicker, and a second source of truth for it is
+      // how these panels drifted apart in the first place.
+      reloadWorkspaces();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to update workspace enforcement mode");
+      setMutationError(e instanceof Error ? e.message : "failed to update workspace enforcement mode");
     } finally {
       setWsEnforcementBusy(false);
     }
@@ -53,38 +66,25 @@ export function Groups() {
 
   async function changeGroupEnforcement(groupId: number, mode: EnforcementMode | null) {
     if (!workspaceId) return;
-    setError(null);
+    setMutationError(null);
     try {
-      const updated = await api.updateGroup(groupId, { enforcement_mode: mode });
-      setGroups((prev) => (prev ? prev.map((g) => (g.id === updated.id ? updated : g)) : prev));
+      await api.updateGroup(groupId, { enforcement_mode: mode });
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to update group enforcement mode");
+      setMutationError(e instanceof Error ? e.message : "failed to update group enforcement mode");
     }
   }
-
-  function refresh(wsId: number) {
-    setLoading(true);
-    api
-      .groups(wsId)
-      .then(setGroups)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load groups"))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => {
-    if (workspaceId != null) refresh(workspaceId);
-  }, [workspaceId]);
 
   async function createGroup() {
     if (!workspaceId || !name.trim()) return;
     setSaving(true);
-    setError(null);
+    setMutationError(null);
     try {
       await api.createGroup({ workspace_id: workspaceId, name: name.trim(), color });
       setName("");
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to create group");
+      setMutationError(e instanceof Error ? e.message : "failed to create group");
     } finally {
       setSaving(false);
     }
@@ -94,9 +94,9 @@ export function Groups() {
     if (!workspaceId) return;
     try {
       await api.deleteGroup(id);
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to delete group");
+      setMutationError(e instanceof Error ? e.message : "failed to delete group");
     }
   }
 

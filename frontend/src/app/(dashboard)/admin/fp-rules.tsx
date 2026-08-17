@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, FalsePositiveRule, FpRuleStats, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
+import { useState } from "react";
+import { api, FalsePositiveRule, FpRuleStats, workspaceDisplayName } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
@@ -16,64 +18,39 @@ import { Ban, Building2, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucid
 // permanently revoke a rule, or widen a narrowly-scoped one to "any file"
 // for that rule_id/tool.
 export function FpRules() {
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
-  const [rules, setRules] = useState<FalsePositiveRule[] | null>(null);
-  const [stats, setStats] = useState<FpRuleStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.workspaces().then((list) => {
-      setWorkspaces(list);
-      if (list.length > 0) setWorkspaceId(list[0].id);
-    });
-  }, []);
+  const {
+    data,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch,
+  } = useAsyncData<[FalsePositiveRule[], FpRuleStats]>(
+    () => Promise.all([api.fpRules(workspaceId!), api.fpRuleStats(workspaceId!)]),
+    { enabled: workspaceId != null, deps: [workspaceId] },
+  );
+  const [rules, stats] = data ?? [null, null];
 
-  function refresh(wsId: number) {
-    setLoading(true);
-    Promise.all([api.fpRules(wsId), api.fpRuleStats(wsId)])
-      .then(([r, s]) => {
-        setRules(r);
-        setStats(s);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load false-positive rules"))
-      .finally(() => setLoading(false));
-  }
+  // The workspace list failing is worth surfacing on its own: without it an
+  // empty picker reads as "this deployment has no workspaces".
+  const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
 
-  useEffect(() => {
-    if (workspaceId != null) refresh(workspaceId);
-  }, [workspaceId]);
-
-  async function toggleActive(rule: FalsePositiveRule) {
+  async function mutate(action: () => Promise<unknown>, failureMessage: string) {
     if (!workspaceId) return;
+    setMutationError(null);
     try {
-      await api.setFpRuleActive(rule.id, !rule.active);
-      refresh(workspaceId);
+      await action();
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to update rule");
+      setMutationError(e instanceof Error ? e.message : failureMessage);
     }
   }
 
-  async function widen(rule: FalsePositiveRule) {
-    if (!workspaceId) return;
-    try {
-      await api.widenFpRule(rule.id);
-      refresh(workspaceId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to widen rule");
-    }
-  }
-
-  async function remove(rule: FalsePositiveRule) {
-    if (!workspaceId) return;
-    try {
-      await api.deleteFpRule(rule.id);
-      refresh(workspaceId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to delete rule");
-    }
-  }
+  const toggleActive = (rule: FalsePositiveRule) =>
+    mutate(() => api.setFpRuleActive(rule.id, !rule.active), "failed to update rule");
+  const widen = (rule: FalsePositiveRule) => mutate(() => api.widenFpRule(rule.id), "failed to widen rule");
+  const remove = (rule: FalsePositiveRule) => mutate(() => api.deleteFpRule(rule.id), "failed to delete rule");
 
   return (
     <div className="flex flex-col gap-4">

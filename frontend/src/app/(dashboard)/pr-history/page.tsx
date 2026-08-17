@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError, Target, PullRequest } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,52 +24,40 @@ function isSessionError(e: unknown): boolean {
 }
 
 export default function PrHistoryPage() {
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [targetId, setTargetId] = useState<number | null>(null);
-  const [prs, setPrs] = useState<PullRequest[]>([]);
+  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
+
+  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  const targets = targetsData ?? [];
+  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
+  const setTargetId = setChosenTargetId;
+
+  const isOrgWide = targetId === ALL_TARGETS;
+
+  // GitHub's PR API is inherently single-repo, so "All repositories" has no
+  // PR list to fetch here -- it only drives the aggregated PR Guardrail scan
+  // log below (issue #64).
+  const {
+    data: prsData,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch: loadPrs,
+  } = useAsyncData<PullRequest[]>(() => api.prs(targetId!), {
+    enabled: targetId !== null && !isOrgWide,
+    deps: [targetId, isOrgWide],
+  });
+  const prs = isOrgWide ? [] : (prsData ?? []);
+
+  // A 401 is not a page error -- it means the GitHub session lapsed, and the
+  // page has a dedicated reconnect affordance for it.
+  const sessionExpired = loadError !== null && isSessionError(loadError);
+  const error = sessionExpired ? null : (loadError?.message ?? null);
+
   const prSearchParams = useSearchParams();
   const prPageSize = pageSizeFromParams(prSearchParams.get("page_size") ?? undefined);
   const prPageRaw = Math.max(1, Number(prSearchParams.get("page") ?? "1") || 1);
   const prTotalPages = Math.max(1, Math.ceil(prs.length / prPageSize));
   const prPage = Math.min(prPageRaw, prTotalPages);
   const visiblePrs = prs.slice((prPage - 1) * prPageSize, prPage * prPageSize);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
-
-  const isOrgWide = targetId === ALL_TARGETS;
-
-  useEffect(() => {
-    api.targets().then((ts) => {
-      setTargets(ts);
-      if (ts.length > 0) setTargetId(ts[0].id);
-    });
-  }, []);
-
-  const loadPrs = useCallback(() => {
-    // GitHub's PR API is inherently single-repo, so "All repositories" has
-    // no PR list to fetch here -- it only drives the aggregated PR
-    // Guardrail scan log below (issue #64).
-    if (targetId === null || isOrgWide) {
-      setPrs([]);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setSessionExpired(false);
-    api
-      .prs(targetId)
-      .then(setPrs)
-      .catch((e) => {
-        if (isSessionError(e)) setSessionExpired(true);
-        else setError(e instanceof Error ? e.message : "failed to load PRs");
-      })
-      .finally(() => setLoading(false));
-  }, [targetId, isOrgWide]);
-
-  useEffect(() => {
-    loadPrs();
-  }, [loadPrs]);
 
   return (
     <div className="flex flex-col gap-6">

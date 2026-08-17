@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, Target, Finding } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { pollUntilSettled } from "@/lib/poll";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FindingRow } from "@/components/finding-row";
 import { BrandMark } from "@/components/brand-mark";
 import { SetupQuestionnaire } from "./setup-questionnaire";
-import { CheckCircle2, XCircle, Github, ArrowRight } from "lucide-react";
+import { CheckCircle2, Github, ArrowRight } from "lucide-react";
 
 const STEPS = [
   { n: 1, label: "Connect a repo" },
@@ -29,14 +30,16 @@ export default function OnboardingPage() {
   const router = useRouter();
 
   const [step, setStep] = useState(1);
-  const [loadingInitial, setLoadingInitial] = useState(true);
 
   // Issue #203: the stack questionnaire runs before the connect-repo wizard.
   // `should_prompt` is computed server-side (see app/api/onboarding.py) so
   // the condition that decides whether a fresh deployment interrupts the
   // admin lives in one place rather than being re-derived here.
-  const [showQuestionnaire, setShowQuestionnaire] = useState(false);
-  const [questionnaireChecked, setQuestionnaireChecked] = useState(false);
+  // Whether to prompt is a server answer, so it is read straight off the
+  // fetch rather than mirrored into two state slots. A failed check falls
+  // back to "do not prompt": interrupting an admin with a questionnaire
+  // because a request errored is worse than skipping it.
+  const [questionnaireDismissed, setQuestionnaireDismissed] = useState(false);
 
   const [targets, setTargets] = useState<Target[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
@@ -85,19 +88,21 @@ export default function OnboardingPage() {
     }
     return ts;
   }
-  useEffect(() => {
-    api
-      .onboardingProfile()
-      .then((p) => setShowQuestionnaire(Boolean(p.should_prompt)))
-      .catch(() => setShowQuestionnaire(false))
-      .finally(() => setQuestionnaireChecked(true));
-  }, []);
+  const { data: onboardingProfile, status: profileStatus } = useAsyncData(() =>
+    api.onboardingProfile(),
+  );
+  const questionnaireChecked = profileStatus === "success" || profileStatus === "error";
+  const showQuestionnaire =
+    !questionnaireDismissed && Boolean(onboardingProfile?.should_prompt);
 
 
-  useEffect(() => {
-    loadTargetsAndStatus().finally(() => setLoadingInitial(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // The wizard's step machine is genuinely imperative -- connecting GitHub or
+  // adding a repo advances it -- so the loader stays a function. What moves
+  // here is only the *initial* load, which is a plain fetch: useAsyncData
+  // owns its own loading flag and aborts on unmount, so the effect no longer
+  // has to flip `loadingInitial` itself.
+  const { status: initialStatus } = useAsyncData(() => loadTargetsAndStatus());
+  const loadingInitial = initialStatus === "idle" || initialStatus === "loading";
 
   async function connectGithub() {
     setConnecting(true);
@@ -246,7 +251,7 @@ export default function OnboardingPage() {
       </div>
 
       {questionnaireChecked && showQuestionnaire && (
-        <SetupQuestionnaire onDone={() => setShowQuestionnaire(false)} />
+        <SetupQuestionnaire onDone={() => setQuestionnaireDismissed(true)} />
       )}
 
       {!showQuestionnaire && loadingInitial && (

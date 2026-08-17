@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ShieldAlert, GitBranch, X } from "lucide-react";
 import { api, SearchResults } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -17,9 +19,22 @@ export function GlobalSearch({ collapsed }: { collapsed?: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResults | null>(null);
-  const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Debounce the query, then declare it as the fetch dependency: the request
+  // fires once typing settles, and useAsyncData's abort/request-id handling
+  // covers the case where an earlier search resolves after a later one -- the
+  // hand-rolled version had no such guard, so a slow "sq" could land after a
+  // fast "sqli" and show the wrong results.
+  const debouncedQuery = useDebouncedValue(query.trim(), 200);
+  const { data, isInitialLoading: loading } = useAsyncData<SearchResults>(
+    () => api.search(debouncedQuery),
+    { enabled: debouncedQuery.length > 0, deps: [debouncedQuery] },
+  );
+  // Gated on the live query, not the debounced one: clearing the box must
+  // drop the old results immediately rather than leaving them sitting under
+  // an empty input for the debounce interval.
+  const results = query.trim() ? data : null;
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -34,33 +49,22 @@ export function GlobalSearch({ collapsed }: { collapsed?: boolean }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-  useEffect(() => {
-    if (open) {
-      // Wait a tick for the overlay to mount before focusing.
-      const t = setTimeout(() => inputRef.current?.focus(), 0);
-      return () => clearTimeout(t);
-    }
-    setQuery("");
-    setResults(null);
-  }, [open]);
+  // Clearing the previous search belongs in render, not an effect: the
+  // palette must never paint the last session's query for a frame when it
+  // reopens. Results follow from the query, so clearing it is enough. Focus
+  // stays in an effect -- it touches the DOM, not state.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (!open) setQuery("");
+  }
 
   useEffect(() => {
-    const q = query.trim();
-    if (!q) {
-      setResults(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const handle = setTimeout(() => {
-      api
-        .search(q)
-        .then(setResults)
-        .catch(() => setResults({ findings: [], targets: [] }))
-        .finally(() => setLoading(false));
-    }, 200);
-    return () => clearTimeout(handle);
-  }, [query]);
+    if (!open) return;
+    // Wait a tick for the overlay to mount before focusing.
+    const t = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(t);
+  }, [open]);
 
   function go(href: string) {
     setOpen(false);

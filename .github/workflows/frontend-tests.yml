@@ -38,8 +38,15 @@ jobs:
       - name: Test custom lint rules
         run: npm run test:lint-rules
 
-      - name: Enforce client/server boundary
-        run: npm run lint:boundary
+      # The full lint pass gates the build now that the 23 pre-existing
+      # errors are gone. `lint:boundary` was the narrower gate that existed
+      # only because a blanket one could not pass; it is redundant here, since
+      # this pass runs the boundary rule too.
+      #
+      # --max-warnings=0 is deliberate: the tree is at zero, and warnings that
+      # are allowed to accumulate stop being read.
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
 
       - name: Build (also generates Next.js route types and type-checks)
         run: npm run build

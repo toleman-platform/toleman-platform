@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, PIPELINE_WORKFLOW_TOOLS, PipelineWorkflowStep, PipelineWorkflowTemplate, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
+import { useState } from "react";
+import { api, PIPELINE_WORKFLOW_TOOLS, PipelineWorkflowStep, PipelineWorkflowTemplate, workspaceDisplayName } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -88,36 +90,25 @@ function StepEditor({ steps, onChange }: { steps: PipelineWorkflowStep[]; onChan
 }
 
 export function WorkflowTemplates() {
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
-  const [templates, setTemplates] = useState<PipelineWorkflowTemplate[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const {
+    data: templates,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch,
+  } = useAsyncData<PipelineWorkflowTemplate[]>(() => api.pipelineTemplates(workspaceId!), {
+    enabled: workspaceId != null,
+    deps: [workspaceId],
+  });
+
+  const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
 
   const [name, setName] = useState("");
   const [steps, setSteps] = useState<PipelineWorkflowStep[]>(defaultSteps());
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-
-  useEffect(() => {
-    api.workspaces().then((list) => {
-      setWorkspaces(list);
-      if (list.length > 0) setWorkspaceId(list[0].id);
-    });
-  }, []);
-
-  function refresh(wsId: number) {
-    setLoading(true);
-    api
-      .pipelineTemplates(wsId)
-      .then(setTemplates)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load workflow templates"))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => {
-    if (workspaceId != null) refresh(workspaceId);
-  }, [workspaceId]);
 
   function resetForm() {
     setName("");
@@ -127,15 +118,15 @@ export function WorkflowTemplates() {
 
   async function save() {
     if (!workspaceId || !name.trim()) {
-      setError("Name is required");
+      setMutationError("Name is required");
       return;
     }
     if (!steps.some((s) => s.enabled)) {
-      setError("At least one step must be enabled");
+      setMutationError("At least one step must be enabled");
       return;
     }
     setSaving(true);
-    setError(null);
+    setMutationError(null);
     try {
       if (editingId != null) {
         await api.updatePipelineTemplate(editingId, { name: name.trim(), steps });
@@ -143,9 +134,9 @@ export function WorkflowTemplates() {
         await api.createPipelineTemplate({ workspace_id: workspaceId, name: name.trim(), steps });
       }
       resetForm();
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to save workflow template");
+      setMutationError(e instanceof Error ? e.message : "failed to save workflow template");
     } finally {
       setSaving(false);
     }
@@ -162,9 +153,9 @@ export function WorkflowTemplates() {
     try {
       await api.deletePipelineTemplate(id);
       if (editingId === id) resetForm();
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to delete workflow template");
+      setMutationError(e instanceof Error ? e.message : "failed to delete workflow template");
     }
   }
 

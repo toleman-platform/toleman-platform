@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, PolicyRule, PolicyRuleType, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
+import { useState } from "react";
+import { api, PolicyRule, PolicyRuleType, workspaceDisplayName } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -27,48 +29,38 @@ export function Policies() {
   // other 5 workspace pickers use, so the label format (and the duplicate-
   // "default"-workspace disambiguation via `workspaceDisplayName`) matches
   // everywhere.
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
-  const [rules, setRules] = useState<PolicyRule[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   const [ruleType, setRuleType] = useState<PolicyRuleType>("block_severity");
   const [value, setValue] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    api.workspaces().then((list) => {
-      setWorkspaces(list);
-      if (list.length > 0) setWorkspaceId(list[0].id);
-    });
-  }, []);
+  const {
+    data,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch,
+  } = useAsyncData<PolicyRule[]>(() => api.listPolicies(workspaceId!), {
+    enabled: workspaceId != null,
+    deps: [workspaceId],
+  });
+  const rules = data ?? [];
 
-  function refresh(wsId: number) {
-    setLoading(true);
-    api
-      .listPolicies(wsId)
-      .then(setRules)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load policies"))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => {
-    if (workspaceId != null) refresh(workspaceId);
-  }, [workspaceId]);
+  const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
 
   async function createRule() {
     if (!workspaceId || !value.trim()) return;
     setSaving(true);
-    setError(null);
+    setMutationError(null);
     try {
       await api.createPolicy({ workspace_id: workspaceId, rule_type: ruleType, value: value.trim(), reason: reason.trim() });
       setValue("");
       setReason("");
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to create policy");
+      setMutationError(e instanceof Error ? e.message : "failed to create policy");
     } finally {
       setSaving(false);
     }
@@ -78,9 +70,9 @@ export function Policies() {
     if (!workspaceId) return;
     try {
       await api.deletePolicy(id);
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to delete policy");
+      setMutationError(e instanceof Error ? e.message : "failed to delete policy");
     }
   }
 
@@ -101,7 +93,12 @@ export function Policies() {
             </div>
           </div>
 
-          {workspaces.length === 0 ? (
+          {/* Loading is its own branch: before the migration a still-loading
+              list hit the `length === 0` path and announced "No workspaces
+              yet", which is a claim the page had not yet earned. */}
+          {workspaces === null ? (
+            <SkeletonList count={1} />
+          ) : workspaces.length === 0 ? (
             <EmptyState
               icon={Building2}
               title="No workspaces yet"
@@ -110,6 +107,7 @@ export function Policies() {
             />
           ) : (
             <select
+              aria-label="Workspace"
               className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
               value={workspaceId ?? ""}
               onChange={(e) => setWorkspaceId(Number(e.target.value))}
@@ -121,6 +119,11 @@ export function Policies() {
               ))}
             </select>
           )}
+
+          {/* Outside the workspaceId guard on purpose: if the workspace list
+              itself failed, there is no selected workspace, and an error
+              rendered inside that guard would never appear. */}
+          {error && <p className="text-xs text-destructive">{error}</p>}
 
           {workspaceId != null && (
             <>
@@ -152,8 +155,6 @@ export function Policies() {
                   {saving ? "Adding..." : "Add rule"}
                 </Button>
               </div>
-
-              {error && <p className="text-xs text-destructive">{error}</p>}
 
               <div className="flex flex-col divide-y divide-border rounded-md border border-border">
                 {loading ? (

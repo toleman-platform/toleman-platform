@@ -33,6 +33,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_admin
 from app.api.deps import get_session
 from app.core import tool_health_cache, tool_install
+from app.core.async_jobs import create_running_row
 from app.core.rate_limit import enforce_rate_limit
 from app.core.staleness import mark_stale_if_needed
 from app.core.tool_registry import TOOL_REGISTRY, USAGE_SURFACES, default_usage_for, registry_with_integration_status
@@ -285,17 +286,18 @@ def install_tool(
         window_seconds=TOOL_INSTALL_RATE_WINDOW_SECONDS,
     )
 
-    run = ToolInstallRun(
-        tool=tool,
-        package=package,
-        status="running",
-        # This row is the audit record for an action that mutates the running
-        # environment, so the actor is recorded, not inferred later.
-        requested_by_user_id=user.id,
+    run = create_running_row(
+        session,
+        ToolInstallRun(
+            tool=tool,
+            package=package,
+            status="running",
+            # This row is the audit record for an action that mutates the
+            # running environment, so the actor is recorded, not inferred
+            # later.
+            requested_by_user_id=user.id,
+        ),
     )
-    session.add(run)
-    session.commit()
-    session.refresh(run)
 
     run_tool_install.delay(run_id=run.id)
     return _install_run_out(run)

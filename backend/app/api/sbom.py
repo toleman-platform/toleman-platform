@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
 from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
+from app.core.async_jobs import create_running_row
 from app.core.aibom import AiComponent, aibom_summary, build_aibom
 from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
 from app.core.staleness import mark_stale_if_needed
@@ -168,10 +169,9 @@ def generate_sbom(
     synchronously."""
     target = _get_target(target_id, session)
 
-    run = SbomRun(target_id=target_id, branch=target.default_branch, status="running")
-    session.add(run)
-    session.commit()
-    session.refresh(run)
+    run = create_running_row(
+        session, SbomRun(target_id=target_id, branch=target.default_branch, status="running")
+    )
 
     run_sbom_generation.delay(target_id=target_id, run_id=run.id)
 

@@ -5,6 +5,7 @@ from sqlmodel import Session, func, select
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.core import scan_eta
+from app.core.async_jobs import create_running_row
 from app.core.rate_limit import enforce_rate_limit
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User
@@ -132,10 +133,9 @@ def run_native_scan(
     if tool not in PARSER_MAP:
         return {"error": f"unsupported tool: {tool}"}
 
-    scan = Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
-    session.add(scan)
-    session.commit()
-    session.refresh(scan)
+    scan = create_running_row(
+        session, Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
+    )
 
     run_scan.delay(target_id=target.id, tool=tool, scan_id=scan.id)
 

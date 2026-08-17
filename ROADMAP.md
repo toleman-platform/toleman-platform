@@ -181,6 +181,15 @@ The ETA is deliberately narrow: median duration of that repo's own recent comple
 
 Same constraint as Sprint 19 and #174, applied to time rather than findings: **a run whose state is unknown must never render as progress.** A stale row swept by `mark_stale_if_needed` shows as stale, not as an eternal spinner, because an indefinite spinner is indistinguishable from a hung platform.
 
+## Sprint 21 — Deployability & tool lifecycle (#215, #216)
+
+Logged 2026-08-17, both from a real failure rather than a plan.
+
+- **#215** A clean `docker compose up` broke: setuptools 82 removed `pkg_resources`, which semgrep's pinned opentelemetry imports. `requirements.txt` had not changed — a transitive resolve drifted, and every CI check stayed green because nothing in CI built the shipped images. Fixed with a pin, then covered: image builds post-merge/weekly, and `verify_tools.py` executes every bundled scanner inside the built image, because "the build succeeded" does not mean "the binary runs".
+- **#216** Tool marketplace one-click install, replacing the copy-this-command reference text for pip-installable tools. #75 declined this as an RCE surface; the difference now is that the endpoint accepts a **registry key**, not a package name, so the installable set is fixed in source and no request can name what gets installed.
+
+Both are the same principle this roadmap keeps returning to, applied to the platform itself rather than to findings: **a check that did not really run must never look like a check that passed.** A missing scanner produces zero findings, and zero findings from a broken tool is indistinguishable from a clean repo. Hence verifying tools actually execute, and refusing to call an install successful until the tool answers its own version command.
+
 ## Explicitly not planned
 
 - Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.

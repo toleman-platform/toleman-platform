@@ -4,11 +4,12 @@ import { useMemo, useState } from "react";
 import { api, ToolAssignment, ToolRegistryEntry } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useToolInstall } from "@/hooks/use-tool-install";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { CheckCircle2, ExternalLink, XCircle } from "lucide-react";
+import { CheckCircle2, Download, ExternalLink, Loader2, XCircle } from "lucide-react";
 
 const USAGE_SURFACES = [
   { key: "on_demand_scan" as const, label: "On-demand scan" },
@@ -25,10 +26,14 @@ const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License",
 // every supported category (including the new IaC tools -- Checkov, tfsec,
 // KICS), a real live health check per tool, and a per-workspace usage
 // assignment matrix (on-demand scan / CI pipeline / API scan / PR
-// guardrail). Deliberately no "install" button that executes anything --
-// install_cmd is shown as copyable reference text; see
-// app.core.tool_registry's module docstring for why literal remote package
-// installation from a web request is out of scope here.
+// guardrail).
+//
+// Issue #216 added one-click install. The button appears only for tools the
+// backend can actually install into itself (`installable`, derived from a
+// pip package in the registry); everything needing brew/go/docker keeps the
+// copyable command, because a button that cannot work is worse than no
+// button. The endpoint takes a registry key rather than a package name --
+// see app.core.tool_install for why that is what makes this safe.
 export function ToolMarketplace() {
   const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
   const [savingTool, setSavingTool] = useState<string | null>(null);
@@ -39,6 +44,12 @@ export function ToolMarketplace() {
     error: registryError,
     refetch: refreshRegistry,
   } = useAsyncData<ToolRegistryEntry[]>(() => api.toolsRegistry());
+
+  // Refresh the registry when an install settles so the tool's health check
+  // and version re-run -- otherwise a freshly installed tool keeps showing
+  // as missing until the admin reloads the page.
+  const { installs, install, dismiss } = useToolInstall(() => refreshRegistry());
+
 
   const {
     data: assignments,
@@ -137,6 +148,7 @@ export function ToolMarketplace() {
           <div className="grid gap-3 md:grid-cols-2">
             {tools.map((t) => {
               const assignment = assignments?.[t.tool];
+              const installState = installs[t.tool];
               return (
                 <Card key={t.tool} className="border-border bg-card">
                   <CardContent className="flex flex-col gap-3 px-4 py-3">
@@ -168,17 +180,81 @@ export function ToolMarketplace() {
                       {t.response_ms !== null && <span>{t.response_ms}ms</span>}
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 rounded-md bg-secondary/50 px-2 py-1.5">
-                      <code className="truncate text-xs text-foreground">{t.install_cmd}</code>
-                      <a
-                        href={t.docs_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`${t.display_name} installation docs`}
-                        className="shrink-0 text-muted-foreground hover:text-foreground"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between gap-2 rounded-md bg-secondary/50 px-2 py-1.5">
+                        <code className="truncate text-xs text-foreground">{t.install_cmd}</code>
+                        <a
+                          href={t.docs_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`${t.display_name} installation docs`}
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
+
+                      {t.installable && !t.installed && installState?.status !== "running" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 w-full text-xs"
+                          onClick={() => install(t.tool)}
+                          aria-label={`Install ${t.display_name}`}
+                        >
+                          <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                          Install
+                        </Button>
+                      )}
+
+                      {installState?.status === "running" && (
+                        <div
+                          role="status"
+                          aria-live="polite"
+                          className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground"
+                        >
+                          <Loader2
+                            className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none"
+                            aria-hidden="true"
+                          />
+                          Installing {t.display_name}...
+                        </div>
+                      )}
+
+                      {installState?.status === "completed" && (
+                        <p role="status" aria-live="polite" className="px-1 text-xs text-chart-5">
+                          Installed{installState.version ? ` — ${installState.version}` : ""}
+                        </p>
+                      )}
+
+                      {installState?.status === "failed" && (
+                        <div className="flex flex-col gap-1 px-1">
+                          {/* The real reason, not "Failed": "No matching
+                              distribution" and "installed but does not run"
+                              need different responses from an admin. */}
+                          <p role="status" aria-live="polite" className="text-xs text-destructive">
+                            {installState.error || "Install failed"}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => dismiss(t.tool)}
+                            className="self-start text-[11px] text-muted-foreground underline hover:text-foreground"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Stated rather than left to be discovered: this
+                          installs into the running container, so a redeploy
+                          reverts it. An admin who believes a scanner is
+                          permanently installed when it is not gets silent
+                          zero-finding scans after the next deploy. */}
+                      {t.installable && (installState?.status === "completed" || (!t.installed && !installState)) && (
+                        <p className="px-1 text-[11px] text-muted-foreground">
+                          Installs into the running container — add it to the image to survive a redeploy.
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex flex-col gap-1.5 border-t border-border pt-2">

@@ -183,6 +183,39 @@ TOOL_REGISTRY = [
 USAGE_SURFACES = ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail")
 
 
+# Tools the shipped backend image installs, so a fresh `docker compose up`
+# can scan without an operator installing anything (#75, #186).
+#
+# This is a contract, not documentation: `backend/scripts/verify_tools.py`
+# runs each of these tools' `version_cmd` *inside the built image* in CI and
+# fails if one is missing. Without that, a Dockerfile edit or a dependency
+# resolving differently can quietly ship an image whose scanner is gone --
+# which is not a loud failure at build time, it is a scan that returns zero
+# findings at runtime and reads exactly like a clean repo.
+#
+# Everything else in the registry is genuinely optional and installed on
+# demand (see install.py); absent is its honest state, not a defect.
+BUNDLED_TOOLS = frozenset(
+    {"semgrep", "semgrep-llm", "gitleaks", "trivy", "trivy-license", "gosec", "modelscan"}
+)
+
+# TOOL_COMMANDS keys that are internal invocation modes rather than tools an
+# operator would ever install, enable or trigger.
+#
+# `trivy-sbom` is trivy run with `--format cyclonedx`, dispatched only by the
+# SBOM pipeline (app/tasks/sbom_tasks.py). It is deliberately absent from the
+# marketplace and from SCAN_TOOLS: surfacing it would list a second "tool"
+# that installs exactly like trivy, and `default_usage_for` would default it
+# to on-demand-enabled, offering an operator a scan whose output is parsed as
+# SBOM components rather than findings.
+#
+# This exists so the registry-coverage test can be strict. Without an
+# explicit escape hatch that test would either fail forever or have to be
+# dropped, and dropping it means a genuinely new scanner can be wired up and
+# never appear in the marketplace an operator uses to install it.
+INTERNAL_TOOL_KEYS = frozenset({"trivy-sbom"})
+
+
 def default_usage_for(tool: str) -> dict:
     """Built-in usage-surface defaults for a tool with no saved
     WorkspaceToolConfig row (issue #75). Mirrors WorkspaceToolConfig's own

@@ -81,9 +81,23 @@ RUN curl -sfL https://raw.githubusercontent.com/securego/gosec/master/install.sh
 # reconsider already-installed packages' constraints across separate
 # invocations. One combined invocation lets pip's resolver satisfy both
 # constraints at once (starlette stays at 0.38.6).
+#
+# `setuptools<81` is load-bearing, not hygiene. Nothing here asks for
+# setuptools directly -- semgrep's pinned opentelemetry-instrumentation
+# (0.46b0) declares `setuptools>=16.0`, so pip installs the newest one.
+# setuptools 82.0.0 removed `pkg_resources`, which that same module imports
+# at line 4 of its dependencies.py, so an unconstrained resolve builds an
+# image whose `semgrep --version` dies with ModuleNotFoundError. Verified by
+# bisecting real installs: pkg_resources is present in 81.0.0 and gone in
+# 82.0.0.
+#
+# Pinned below 81 rather than below 82 because 81 still *has*
+# pkg_resources but warns on every import, so a working image would print a
+# deprecation notice on every semgrep invocation. Drop this pin once semgrep
+# ships an opentelemetry that no longer imports pkg_resources.
 COPY requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt semgrep \
+    && pip install -r requirements.txt semgrep "setuptools<81" \
     && semgrep --version
 
 COPY . .

@@ -25,7 +25,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Semgrep
-        run: pip install semgrep
+        # `setuptools<81` for the same reason as backend/Dockerfile: semgrep's
+        # pinned opentelemetry-instrumentation imports `pkg_resources`, which
+        # setuptools removed in 82.0.0 (and deprecated in 81). Latent here rather than currently
+        # broken -- the runner image ships an older setuptools today -- but it
+        # breaks the moment that image updates, and a silently broken security
+        # scan is worse than a loud one.
+        run: pip install semgrep "setuptools<81"
       - name: Run Semgrep
         run: semgrep scan --config=auto --json --output=semgrep.json || true
       - name: Summarize

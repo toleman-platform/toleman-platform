@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
@@ -30,26 +30,51 @@ def scans_summary(
     Workspace-scoped like every other GET/list endpoint over workspace-owned
     resources (accessible_workspace_ids: None = admin/no filter, [] = no
     memberships yet -> nothing to summarize).
+
+    Aggregated in SQL rather than in Python (senior-review pass, #220): the
+    original version selected every Scan row -- target_id, tool,
+    started_at, completed_at -- for every accessible target and grouped it
+    in the app process. That scales with total scan history, not with the
+    number of targets: a target scanned nightly by CI for a year sends
+    hundreds of near-identical rows over the wire on every single page
+    load of the Scans page, just to be collapsed back down to one
+    timestamp and a handful of tool names. The two queries below return
+    at most one row per (target, tool) pair and one row per target,
+    respectively, regardless of how many times each has actually run.
+    Response shape is byte-for-byte identical -- see
+    tests/test_scans_summary.py, written against the old implementation
+    before this rewrite specifically so behavior could be pinned rather
+    than re-derived.
     """
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return {}
 
-    query = select(Scan.target_id, Scan.tool, Scan.started_at, Scan.completed_at)
-    if ws_ids is not None:
-        query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
-    rows = session.exec(query).all()
+    def scoped(query):
+        if ws_ids is not None:
+            return query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
+        return query
 
-    summary: dict[int, dict] = {}
-    for target_id, tool, started_at, completed_at in rows:
-        entry = summary.setdefault(target_id, {"last_scan_at": None, "tools": set()})
-        entry["tools"].add(tool)
-        # A still-"running" scan has no completed_at yet -- fall back to
-        # started_at so "last scanned" reflects the most recent attempt, not
-        # just settled ones.
-        ts = completed_at or started_at
-        if ts is not None and (entry["last_scan_at"] is None or ts > entry["last_scan_at"]):
-            entry["last_scan_at"] = ts
+    # One row per (target, tool) ever run, not one row per scan -- this is
+    # the query that used to return the whole table.
+    tool_rows = session.exec(
+        scoped(select(Scan.target_id, Scan.tool).distinct())
+    ).all()
+
+    # A still-"running" scan has no completed_at yet -- coalesce to
+    # started_at in SQL so "last scanned" reflects the most recent attempt
+    # per target, not just settled ones, without pulling every row to do
+    # that comparison in Python.
+    last_scan_column = func.coalesce(Scan.completed_at, Scan.started_at)
+    last_scan_rows = session.exec(
+        scoped(select(Scan.target_id, func.max(last_scan_column)).group_by(Scan.target_id))
+    ).all()
+
+    tools_by_target: dict[int, set[str]] = {}
+    for target_id, tool in tool_rows:
+        tools_by_target.setdefault(target_id, set()).add(tool)
+
+    last_scan_by_target = dict(last_scan_rows)
 
     return {
         str(target_id): {
@@ -58,10 +83,14 @@ def scans_summary(
             # `new Date(...)` (lib/utils.ts's timeAgo) parses this as UTC
             # instead of local time, which would silently skew "last scanned"
             # by the server's UTC offset.
-            "last_scan_at": v["last_scan_at"].isoformat() + "Z" if v["last_scan_at"] else None,
-            "tools": sorted(v["tools"]),
+            "last_scan_at": (
+                last_scan_by_target[target_id].isoformat() + "Z"
+                if last_scan_by_target.get(target_id) is not None
+                else None
+            ),
+            "tools": sorted(tools),
         }
-        for target_id, v in summary.items()
+        for target_id, tools in tools_by_target.items()
     }
 
 # Each request here dispatches a Celery task that clones the target repo and

@@ -31,6 +31,16 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      # Issue #206: the custom ESLint rule that blocks a Server Component
+      # importing a value out of a "use client" module. Run explicitly --
+      # its fixtures contain the violation on purpose and are ignored by the
+      # normal lint pass.
+      - name: Test custom lint rules
+        run: npm run test:lint-rules
+
+      - name: Enforce client/server boundary
+        run: npm run lint:boundary
+
       - name: Build (also generates Next.js route types and type-checks)
         run: npm run build
         env:

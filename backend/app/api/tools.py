@@ -32,9 +32,9 @@ from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_admin
 from app.api.deps import get_session
+from app.core import tool_health_cache, tool_install
 from app.core.rate_limit import enforce_rate_limit
 from app.core.staleness import mark_stale_if_needed
-from app.core import tool_install
 from app.core.tool_registry import TOOL_REGISTRY, USAGE_SURFACES, default_usage_for, registry_with_integration_status
 from app.models.models import ToolInstallRun, User, WorkspaceRole, WorkspaceToolConfig
 from app.tasks.tool_install_tasks import run_tool_install
@@ -86,6 +86,7 @@ def tools_registry():
     like /health) and an `integrated` flag (whether Rikugan can actually
     dispatch a scan for it today via app.scanners.runner.TOOL_COMMANDS)."""
     entries = registry_with_integration_status()
+
     # Issue #187: the checks run concurrently rather than in sequence. They
     # are independent blocking `--version` subprocesses, so serial cost was
     # their sum rather than their max.
@@ -95,16 +96,39 @@ def tools_registry():
     # `semgrep --version` dominates because it pays full Python interpreter
     # startup, and that is the real cost of this endpoint -- parallelising
     # takes it to roughly max() instead of sum(), about 2.37s -> 2.06s.
-    # A modest win today, and it stops the endpoint degrading linearly as
-    # the registry grows.
     #
-    # Note the five AI/ML entries added in this issue cost essentially
-    # nothing: _check_one short-circuits on shutil.which() before spawning
+    # Issue #221 (senior-review pass): that 2.06s is still paid on *every*
+    # request, for information -- is this tool installed, at what version --
+    # that only changes when an admin installs/removes a tool. Cached
+    # per-tool for tool_health_cache.TTL_SECONDS (app.core.tool_health_cache)
+    # and invalidated explicitly the moment an install through this UI
+    # settles (app.core.tool_install), so the one thing that actually just
+    # changed is never the one left stale. Everything else can be up to
+    # tool_health_cache.TTL_SECONDS old, which is an acceptable trade for
+    # turning "2s on every marketplace page view" into "2s once every 30s,
+    # shared across every admin viewing it".
+    #
+    # Note the five AI/ML entries added in #187 cost essentially nothing even
+    # uncached: _check_one short-circuits on shutil.which() before spawning
     # anything, so an uninstalled tool is a path lookup, not a process.
-    # Thread pool rather than async because subprocess.run blocks.
-    with ThreadPoolExecutor(max_workers=min(16, len(entries) or 1)) as pool:
-        healths = list(pool.map(lambda e: _check_one(e["tool"], e["version_cmd"]), entries))
-    return [{**entry, **health} for entry, health in zip(entries, healths)]
+    cached = {}
+    to_check = []
+    for entry in entries:
+        hit = tool_health_cache.get(entry["tool"])
+        if hit is not None:
+            cached[entry["tool"]] = hit
+        else:
+            to_check.append(entry)
+
+    if to_check:
+        # Thread pool rather than async because subprocess.run blocks.
+        with ThreadPoolExecutor(max_workers=min(16, len(to_check))) as pool:
+            healths = list(pool.map(lambda e: _check_one(e["tool"], e["version_cmd"]), to_check))
+        for entry, health in zip(to_check, healths):
+            tool_health_cache.set(entry["tool"], health)
+            cached[entry["tool"]] = health
+
+    return [{**entry, **cached[entry["tool"]]} for entry in entries]
 
 
 class ToolAssignmentOut(BaseModel):

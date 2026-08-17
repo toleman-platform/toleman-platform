@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run unit tests
+      - name: Run unit and component tests
         run: npm test
 
       # Issue #206: the custom ESLint rule that blocks a Server Component

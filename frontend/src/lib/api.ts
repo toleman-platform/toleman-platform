@@ -470,7 +470,26 @@ export type ScanRun = {
   // (scan/target not found) is used as a discriminator via `"error" in scan`
   // elsewhere, and this field must not collide with that check.
   error_message: string;
+  // (#212) Timing. `elapsed_seconds` is always present; `eta_seconds` is
+  // null whenever it cannot be grounded in this target's own history with
+  // this tool -- render elapsed time in that case rather than substituting a
+  // default, since a wrong estimate costs more trust than no estimate.
+  elapsed_seconds: number;
+  eta_seconds: number | null;
 };
+
+// GET /api/scans/active (#212): every scan currently running, keyed by
+// target id (string) like ScanSummary. This is what lets any surface show
+// in-flight state without having been the one that triggered the scan.
+export type ActiveScan = {
+  scan_id: number;
+  tool: string;
+  branch: string;
+  started_at: string;
+  elapsed_seconds: number;
+  eta_seconds: number | null;
+};
+export type ActiveScans = Record<string, ActiveScan[]>;
 
 // GET /api/scans/summary (#120): per-target scan history so the Scans page
 // can show a real "last scanned Xd ago · tool, tool" line and support a
@@ -973,6 +992,7 @@ export const api = {
     ),
   getScan: (scanId: number) => jsonFetch<ScanRun | { error: string }>(`/api/scans/${scanId}`),
   scanSummary: () => jsonFetch<ScanSummary>("/api/scans/summary"),
+  activeScans: () => jsonFetch<ActiveScans>("/api/scans/active"),
   aibom: (targetId: number) => jsonFetch<AiBomView>(`/api/sbom/${targetId}/aibom`),
   onboardingChoices: () => jsonFetch<OnboardingChoices>("/api/onboarding/choices"),
   onboardingProfile: () => jsonFetch<OnboardingProfile>("/api/onboarding/profile"),

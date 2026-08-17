@@ -15,6 +15,8 @@ import {
   api,
 } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useActiveScans } from "@/hooks/use-active-scans";
+import { ScanProgress } from "@/components/scan-status";
 import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -187,6 +189,11 @@ export function TargetsList({
   const [submitting, setSubmitting] = useState(false);
   const [batch, setBatch] = useState<PipelineIntegrationBatch | null>(null);
   const [batchError, setBatchError] = useState<string | null>(null);
+
+  // Issue #212: a scan running anywhere -- triggered from Scans, the target
+  // page, or by another user -- shows up on this list, which previously had
+  // no notion of in-flight work at all.
+  const { activeScans } = useActiveScans();
 
   // Issue #125: search/criticality applied client-side over the already
   // -fetched target list, same as targets-filter-bar.tsx's URL-param
@@ -639,7 +646,31 @@ export function TargetsList({
                   <span aria-hidden="true">·</span>
                   <span className="font-mono">{t.default_branch}</span>
                   <span aria-hidden="true">·</span>
-                  <ScanFreshness lastScanAt={scanSummary[String(t.id)]?.last_scan_at ?? null} />
+                  {/* A scan in flight replaces the freshness line entirely.
+                      Showing "last scanned 3 days ago" while a scan is
+                      running is the exact complaint behind #212: the row
+                      stated the most stale thing it knew and said nothing
+                      about the work happening right then. */}
+                  {activeScans[String(t.id)]?.length ? (
+                    <ScanProgress
+                      phase="running"
+                      tool={activeScans[String(t.id)]!.map((scan) => scan.tool).join(", ")}
+                      elapsedSeconds={Math.max(
+                        ...activeScans[String(t.id)]!.map((scan) => scan.elapsed_seconds),
+                      )}
+                      // Only when every running tool has an estimate: the
+                      // repo is done when its slowest scan is, and a
+                      // countdown that ignores an unestimated tool would
+                      // hit zero while work continued.
+                      etaSeconds={
+                        activeScans[String(t.id)]!.every((scan) => scan.eta_seconds !== null)
+                          ? Math.max(...activeScans[String(t.id)]!.map((scan) => scan.eta_seconds!))
+                          : null
+                      }
+                    />
+                  ) : (
+                    <ScanFreshness lastScanAt={scanSummary[String(t.id)]?.last_scan_at ?? null} />
+                  )}
                 </div>
               </div>
               <FindingsColumn

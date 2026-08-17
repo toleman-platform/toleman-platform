@@ -11,6 +11,8 @@ import { CriticalityChip } from "@/components/criticality-chip";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
+import { ScanProgress } from "@/components/scan-status";
+import { useActiveScans } from "@/hooks/use-active-scans";
 import { Scan as ScanIcon } from "lucide-react";
 
 // A minimum spacing between dispatched POST /api/scans/run calls so a bulk
@@ -20,7 +22,11 @@ import { Scan as ScanIcon } from "lucide-react";
 // the same batch 429.
 const DISPATCH_SPACING_MS = 700;
 
-type TargetScanState = "idle" | "queued" | "running" | "done" | "error";
+// Dispatch outcome only. Whether the work is actually *running* now comes
+// from GET /api/scans/active (useActiveScans) rather than being inferred
+// here: the old "done" state was set the moment the POST returned, so a row
+// claimed the scan was finished while the worker had not yet started it.
+type DispatchState = "idle" | "dispatching" | "dispatched" | "error";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,7 +54,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
   const router = useRouter();
   const searchParams = useSearchParams();
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [scanState, setScanState] = useState<Record<number, TargetScanState>>({});
+  const [dispatchState, setDispatchState] = useState<Record<number, DispatchState>>({});
+  const { activeScans, isTargetScanning, refresh: refreshActiveScans } = useActiveScans();
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [confirmIds, setConfirmIds] = useState<number[] | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -106,16 +113,15 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
 
   async function runScansFor(ids: number[]) {
     setScanMessage(null);
-    setScanState((prev) => {
+    setDispatchState((prev) => {
       const next = { ...prev };
-      for (const id of ids) next[id] = "queued";
+      for (const id of ids) next[id] = "dispatching";
       return next;
     });
 
     let dispatched = 0;
     let failed = 0;
     for (const id of ids) {
-      setScanState((prev) => ({ ...prev, [id]: "running" }));
       let targetFailed = false;
       for (const t of toolsForTarget(id)) {
         try {
@@ -130,14 +136,17 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
         }
         await sleep(DISPATCH_SPACING_MS);
       }
-      setScanState((prev) => ({ ...prev, [id]: targetFailed ? "error" : "done" }));
+      setDispatchState((prev) => ({ ...prev, [id]: targetFailed ? "error" : "dispatched" }));
       if (targetFailed) failed += 1;
+      // Flip the row to its real running state now rather than waiting out
+      // the poll interval.
+      refreshActiveScans();
     }
 
     setScanMessage(
       failed > 0
         ? `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure) -- check Scan History.`
-        : `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Findings will appear as each scan completes -- refresh to see updated results.`
+        : `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Progress is shown on each row below.`
     );
     setSelected(new Set());
     router.refresh();
@@ -239,8 +248,12 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {visible.map((t) => {
             const entry = summary[String(t.id)];
-            const state = scanState[t.id] ?? "idle";
-            const busy = state === "queued" || state === "running";
+            const state = dispatchState[t.id] ?? "idle";
+            const running = activeScans[String(t.id)] ?? [];
+            const scanning = isTargetScanning(t.id);
+            // Disabled while dispatching or while work is genuinely in
+            // flight, so a second click cannot queue a duplicate scan.
+            const busy = state === "dispatching" || scanning;
             return (
               <Card
                 key={t.id}
@@ -268,6 +281,24 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                       {entry?.last_scan_at ? `last scan ${timeAgo(entry.last_scan_at)}` : "never scanned"}
                       {entry && entry.tools.length > 0 ? ` · ${entry.tools.join(", ")}` : ""}
                     </div>
+                    {scanning && (
+                      <div className="mt-1.5 flex flex-col gap-1">
+                        {running.map((scan) => (
+                          <ScanProgress
+                            key={scan.scan_id}
+                            phase="running"
+                            tool={scan.tool}
+                            elapsedSeconds={scan.elapsed_seconds}
+                            etaSeconds={scan.eta_seconds}
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {!scanning && state === "dispatching" && (
+                      <div className="mt-1.5">
+                        <ScanProgress phase="queued" />
+                      </div>
+                    )}
                   </div>
                   {/* Issue #171: this used to be `destructive` on Prod rows,
                       which painted roughly half the page solid red for what
@@ -284,7 +315,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                     disabled={busy}
                     onClick={() => requestScan([t.id])}
                   >
-                    {state === "queued" || state === "running" ? "Scanning..." : state === "done" ? "Scan again" : "Scan"}
+                    {busy ? "Scanning..." : state === "dispatched" ? "Scan again" : "Scan"}
                   </Button>
                 </CardContent>
               </Card>

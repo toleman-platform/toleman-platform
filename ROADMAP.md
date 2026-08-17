@@ -171,6 +171,16 @@ The gap, concretely: `pickle.load()` on a hostile model file is RCE at load time
 
 Constraint running through all of them: **a failed, skipped or unknown check must never render as "clean."** An unscanned repo is not a safe repo, an unpinned model revision is unknown rather than fine, and a probe that didn't reproduce is not a fixed vulnerability. Same principle as #174's never-scanned repos.
 
+## Sprint 20 — Scan feedback (#212)
+
+Logged 2026-08-17, from live use: triggering a scan told you almost nothing. The button said "Scanning..." for a moment, then silence -- no indication of whether the work had started, how long it might take, or (on failure) why it stopped. A scan dispatched from one page was invisible on every other, so Targets cheerfully showed "last scanned 3 days ago" while a scan was in flight.
+
+- **#212** Scan status, elapsed time and a grounded ETA. `Scan.status`/`started_at`/`completed_at`/`error` already existed and were already returned by the API; almost nothing surfaced them. Adds `GET /api/scans/active` (running scans keyed by target, so any surface can show in-flight work without having triggered it), a shared status component used by SAST, DAST and the Targets list alike, and poll-until-settled progress reusing `lib/poll.ts` rather than a third bespoke loop.
+
+The ETA is deliberately narrow: median duration of that repo's own recent completed runs of that same tool, and **null** when there is not enough history, in which case the UI counts elapsed time instead. A fixed "about 30 seconds" or a cross-repo average was rejected -- scan duration is dominated by repo size, and an estimate that is routinely wrong costs more trust than no estimate. Failed runs are never sampled: their duration measures how long the platform took to give up, not how long the work takes.
+
+Same constraint as Sprint 19 and #174, applied to time rather than findings: **a run whose state is unknown must never render as progress.** A stale row swept by `mark_stale_if_needed` shows as stale, not as an eternal spinner, because an indefinite spinner is indistinguishable from a hung platform.
+
 ## Explicitly not planned
 
 - Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.

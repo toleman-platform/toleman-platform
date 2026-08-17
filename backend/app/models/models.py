@@ -229,6 +229,41 @@ class Scan(SQLModel, table=True):
     error: str = ""
 
 
+class ToolInstallRun(SQLModel, table=True):
+    """One admin-triggered scanner install (#216).
+
+    Same create-row-then-dispatch-via-.delay() shape as Scan/DiscoveryRun, so
+    `mark_stale_if_needed` and the frontend's poll-until-settled helper both
+    work on it unchanged.
+
+    It doubles as the audit record: there is no generic audit table in this
+    project (the audit feed is derived from FindingStateLog/Scan), and
+    "who installed what, when, and did it work" is exactly what an operator
+    needs after the fact for an action that mutates the running environment.
+    `requested_by_user_id` is therefore not optional in spirit -- an install
+    with no attributable actor would defeat the point.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tool: str = Field(index=True)
+    # Recorded as resolved at dispatch time rather than looked up later: the
+    # registry can change under a historical row, and the audit record should
+    # say what was actually installed, not what would be installed today.
+    package: str
+    status: str = "running"  # running, completed, failed
+    requested_by_user_id: Optional[int] = Field(default=None, foreign_key="user.id")
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+    # Version reported by the tool's own version_cmd *after* installing --
+    # proof it actually runs, not just that pip exited zero.
+    installed_version: str = ""
+    error: str = ""
+    # Tail of pip's output. Bounded before write (see tool_install.py): pip
+    # can emit megabytes on a big dependency tree, and this is a display aid,
+    # not a build log.
+    output_tail: str = ""
+
+
 class Finding(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     target_id: int = Field(foreign_key="target.id", index=True)

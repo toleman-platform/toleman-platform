@@ -8,15 +8,30 @@ lives next to that code and stays in sync with it by construction (each
 entry's `integrated` flag is computed from whether its `runner_key` is a
 real TOOL_COMMANDS entry, not hand-maintained).
 
-Deliberately NOT a "one-click install that shells out to apt/brew/pip on
-the request thread" -- running arbitrary package-manager commands triggered
-from a web request is a real command-injection/RCE surface for a security
-tool to carry, so `install_cmd` here is display-only text for an admin to
-copy and run themselves (or bake into their scanner image/Dockerfile), same
-spirit as `runner.clone_repo`'s allowlisted-host validation: never hand
-attacker- or admin-influenced strings straight to a shell. See PR
-description for #75 -- this is the one point flagged for a human
-check-in rather than being auto-implemented as literal remote install.
+On installation: `install_cmd` is display-only text, and deliberately so --
+it is a human-readable string, and handing a human-readable string to a
+shell is how command injection happens.
+
+One-click install (#216) is therefore built on `pip_package` instead, not on
+`install_cmd`. The distinction is the whole security argument:
+
+  * The API accepts a **registry key**, never a package name. `POST
+    /api/tools/{tool}/install` looks `tool` up in this table and refuses
+    anything not found, so a caller cannot name a package to install --
+    only choose from this file. The set of installable things is fixed at
+    deploy time by source code, not by request payloads.
+  * The resulting command is assembled as an argv list from a constant
+    (`[sys.executable, "-m", "pip", "install", ...]`) with the package
+    appended as a single element. No shell, no string interpolation, no
+    `shell=True` -- same rule as `runner.clone_repo`'s allowlisted-host
+    validation and its `--` before positional args.
+  * `pip_package` is absent for tools that need brew/go/docker. Those are
+    not installable from the running container at all, and the UI says so
+    rather than offering a button that cannot work.
+
+This is a narrower stance than #75's original blanket "no install from a web
+request", not an abandonment of it: what was rejected was shelling out
+arbitrary package-manager strings, and that is still rejected.
 """
 from app.scanners.runner import TOOL_COMMANDS
 
@@ -34,6 +49,7 @@ TOOL_REGISTRY = [
         "install_cmd": "pip install semgrep",
         "docs_url": "https://semgrep.dev/docs/getting-started/",
         "version_cmd": ["semgrep", "--version"],
+        "pip_package": "semgrep",
     },
     {
         "tool": "gitleaks",
@@ -84,6 +100,7 @@ TOOL_REGISTRY = [
         "install_cmd": "pip install checkov",
         "docs_url": "https://www.checkov.io/2.Basics/Installing%20Checkov.html",
         "version_cmd": ["checkov", "--version"],
+        "pip_package": "checkov",
     },
     {
         "tool": "tfsec",
@@ -110,6 +127,7 @@ TOOL_REGISTRY = [
         "install_cmd": "pip install 'modelscan[tensorflow,h5py]'",
         "docs_url": "https://github.com/protectai/modelscan#getting-started",
         "version_cmd": ["modelscan", "-v"],
+        "pip_package": "modelscan[tensorflow,h5py]",
     },
     {
         "tool": "semgrep-llm",
@@ -120,6 +138,7 @@ TOOL_REGISTRY = [
         "install_cmd": "pip install semgrep",
         "docs_url": "https://semgrep.dev/docs/writing-rules/rule-syntax/",
         "version_cmd": ["semgrep", "--version"],
+        "pip_package": "semgrep",
     },
     {
         "tool": "garak",
@@ -130,6 +149,7 @@ TOOL_REGISTRY = [
         "install_cmd": "python -m pip install -U garak",
         "docs_url": "https://github.com/NVIDIA/garak#getting-started",
         "version_cmd": ["garak", "--version"],
+        "pip_package": "garak",
     },
     {
         "tool": "medusa",
@@ -140,6 +160,7 @@ TOOL_REGISTRY = [
         "install_cmd": "pip install medusa-security",
         "docs_url": "https://github.com/Pantheon-Security/medusa#readme",
         "version_cmd": ["medusa", "--version"],
+        "pip_package": "medusa-security",
     },
     {
         "tool": "snyk-agent-scan",
@@ -150,6 +171,7 @@ TOOL_REGISTRY = [
         "install_cmd": "pip install snyk-agent-scan",
         "docs_url": "https://github.com/snyk/agent-scan#readme",
         "version_cmd": ["snyk-agent-scan", "--version"],
+        "pip_package": "snyk-agent-scan",
     },
     {
         "tool": "cisco-aibom",
@@ -160,6 +182,7 @@ TOOL_REGISTRY = [
         "install_cmd": "pip install cisco-aibom",
         "docs_url": "https://github.com/cisco-ai-defense/aibom#readme",
         "version_cmd": ["cisco-aibom", "--version"],
+        "pip_package": "cisco-aibom",
     },
     {
         "tool": "kics",
@@ -242,5 +265,14 @@ def registry_with_integration_status() -> list[dict]:
     like kics above."""
     out = []
     for entry in TOOL_REGISTRY:
-        out.append({**entry, "integrated": entry["tool"] in TOOL_COMMANDS})
+        out.append(
+            {
+                **entry,
+                "integrated": entry["tool"] in TOOL_COMMANDS,
+                # (#216) Whether the one-click install button applies. Derived
+                # from pip_package rather than hand-flagged, so a tool cannot
+                # advertise a button the install path would then refuse.
+                "installable": bool(entry.get("pip_package")),
+            }
+        )
     return out

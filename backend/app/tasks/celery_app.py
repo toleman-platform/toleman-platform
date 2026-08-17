@@ -18,6 +18,7 @@ celery_app = Celery(
         "app.tasks.sbom_tasks",
         "app.tasks.pipeline_tasks",
         "app.tasks.api_scan_tasks",
+        "app.tasks.tool_install_tasks",
     ],
 )
 celery_app.conf.task_routes = {

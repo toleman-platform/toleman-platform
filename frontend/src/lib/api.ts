@@ -196,6 +196,24 @@ export type ToolRegistryEntry = {
   installed: boolean;
   version: string | null;
   response_ms: number | null;
+  // (#216) Whether one-click install applies. False for tools needing
+  // brew/go/docker, which the backend image cannot install into itself --
+  // those keep the copyable install_cmd and get no button.
+  installable: boolean;
+};
+
+// POST /api/tools/{tool}/install -> poll GET /api/tools/installs/{id} (#216).
+// Same dispatch-then-poll shape as a scan run.
+export type ToolInstallRun = {
+  run_id: number;
+  tool: string;
+  package: string;
+  status: RunStatus;
+  started_at: string;
+  completed_at: string | null;
+  installed_version: string;
+  error: string;
+  output_tail: string;
 };
 
 // Issue #75: per-workspace usage assignment for one tool. `is_default` is
@@ -1226,6 +1244,9 @@ export const api = {
   // in) and per-workspace usage assignment (which of on-demand/CI
   // pipeline/API scan/PR guardrail a tool is enabled for).
   toolsRegistry: () => jsonFetch<ToolRegistryEntry[]>("/api/tools/registry"),
+  installTool: (tool: string) =>
+    jsonFetch<ToolInstallRun>(`/api/tools/${encodeURIComponent(tool)}/install`, { method: "POST" }),
+  getToolInstall: (runId: number) => jsonFetch<ToolInstallRun>(`/api/tools/installs/${runId}`),
   toolAssignments: (workspaceId: number) =>
     jsonFetch<ToolAssignment[]>(`/api/tools/assignments?workspace_id=${workspaceId}`),
   saveToolAssignment: (a: {

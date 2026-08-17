@@ -14,6 +14,7 @@ import {
   WorkspaceSummary,
   api,
 } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -95,6 +96,10 @@ function repoSlug(repoUrl: string): string {
 // and one scanned last quarter read identically as plain grey text
 // otherwise, which defeats the point of showing the date at all.
 function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
+  // Captured at mount rather than read during render: staleness is measured
+  // in days, so re-reading the clock changes nothing visible, and a render
+  // that depends on the current time is impure.
+  const [now] = useState(() => Date.now());
   if (!lastScanAt) {
     return (
       <span className="text-chart-3" title="This repository has never been scanned">
@@ -102,7 +107,7 @@ function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
       </span>
     );
   }
-  const ageDays = (Date.now() - new Date(lastScanAt).getTime()) / 86_400_000;
+  const ageDays = (now - new Date(lastScanAt).getTime()) / 86_400_000;
   return (
     <span
       className={ageDays > 30 ? "text-chart-3" : undefined}
@@ -303,43 +308,48 @@ export function TargetsList({
   // ---------------------------------------------------------------------
   const [massOpen, setMassOpen] = useState(false);
   const [massScope, setMassScope] = useState<"all" | "workspace" | "group">("workspace");
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
-  const [massWorkspaceId, setMassWorkspaceId] = useState<number | "">("");
-  const [groupsInWorkspace, setGroupsInWorkspace] = useState<Group[] | null>(null);
-  const [massGroupId, setMassGroupId] = useState<number | "">("");
-  const [templatesInWorkspace, setTemplatesInWorkspace] = useState<PipelineWorkflowTemplate[] | null>(null);
-  const [massTemplateId, setMassTemplateId] = useState<number | "">("");
+  const [chosenMassWorkspaceId, setMassWorkspaceId] = useState<number | "">("");
+  const [chosenMassGroupId, setMassGroupId] = useState<number | "">("");
+  const [chosenMassTemplateId, setMassTemplateId] = useState<number | "">("");
   const [massSubmitting, setMassSubmitting] = useState(false);
   const [massError, setMassError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (massOpen && workspaces === null) {
-      api
-        .workspaces()
-        .then((list) => {
-          setWorkspaces(list);
-          if (list.length > 0) setMassWorkspaceId(list[0].id);
-        })
-        .catch((e) => setMassError(e instanceof Error ? e.message : "failed to load workspaces"));
-    }
-  }, [massOpen, workspaces]);
+  // Fetched only once the dialog opens, and everything below it derives from
+  // the selection rather than being cleared by a cascade of effects. The
+  // effect version reset four state slots on every scope/workspace change,
+  // which is where the group and template pickers could end up holding an id
+  // that no longer belonged to the selected workspace.
+  const { data: massWorkspaces, error: massWorkspacesError } = useAsyncData<WorkspaceSummary[]>(
+    () => api.workspaces(),
+    { enabled: massOpen },
+  );
+  const massWorkspaceId = chosenMassWorkspaceId !== "" ? chosenMassWorkspaceId : (massWorkspaces?.[0]?.id ?? "");
+  const workspaces = massWorkspaces;
 
-  useEffect(() => {
-    if (massScope === "all" || massWorkspaceId === "") {
-      setGroupsInWorkspace(null);
-      setTemplatesInWorkspace(null);
-      setMassGroupId("");
-      setMassTemplateId("");
-      return;
-    }
-    Promise.all([api.groups(massWorkspaceId), api.pipelineTemplates(massWorkspaceId)])
-      .then(([g, t]) => {
-        setGroupsInWorkspace(g);
-        setTemplatesInWorkspace(t);
-      })
-      .catch((e) => setMassError(e instanceof Error ? e.message : "failed to load groups/templates"));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [massScope, massWorkspaceId]);
+  const scopeNeedsWorkspace = massScope !== "all" && massWorkspaceId !== "";
+  const { data: scopedLists } = useAsyncData<[Group[], PipelineWorkflowTemplate[]]>(
+    () =>
+      Promise.all([
+        api.groups(massWorkspaceId as number),
+        api.pipelineTemplates(massWorkspaceId as number),
+      ]),
+    { enabled: scopeNeedsWorkspace, deps: [massScope, massWorkspaceId] },
+  );
+  const [groupsInWorkspace, templatesInWorkspace] = scopeNeedsWorkspace
+    ? (scopedLists ?? [null, null])
+    : [null, null];
+
+  // A group/template id is only meaningful inside the workspace it came
+  // from, so it is validated against the current lists instead of being
+  // cleared by an effect that could run a render too late.
+  const massGroupId =
+    chosenMassGroupId !== "" && groupsInWorkspace?.some((g) => g.id === chosenMassGroupId)
+      ? chosenMassGroupId
+      : "";
+  const massTemplateId =
+    chosenMassTemplateId !== "" && templatesInWorkspace?.some((t) => t.id === chosenMassTemplateId)
+      ? chosenMassTemplateId
+      : "";
 
   async function startMassRollout() {
     setMassError(null);
@@ -496,7 +506,9 @@ export function TargetsList({
               {massSubmitting ? "Starting..." : "Start Rollout"}
             </Button>
           </div>
-          {massError && <p className="text-xs text-destructive">{massError}</p>}
+          {(massError ?? massWorkspacesError?.message) && (
+            <p className="text-xs text-destructive">{massError ?? massWorkspacesError?.message}</p>
+          )}
         </div>
       )}
 

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { ExternalLink, ShieldQuestion } from "lucide-react";
 import { api, ApiError, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -156,21 +157,15 @@ function PrGuardrailFindingRow({ finding, onChanged }: { finding: PrGuardrailFin
 }
 
 function ScanFindings({ scanId }: { scanId: number }) {
-  const [findings, setFindings] = useState<PrGuardrailFinding[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: findings,
+    error,
+    refetch: refresh,
+  } = useAsyncData<PrGuardrailFinding[]>(() => api.getPrGuardrailFindings(scanId), {
+    deps: [scanId],
+  });
 
-  const refresh = useCallback(() => {
-    api
-      .getPrGuardrailFindings(scanId)
-      .then(setFindings)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load findings"));
-  }, [scanId]);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  if (error) return <p className="text-xs text-destructive">{error}</p>;
+  if (error) return <p className="text-xs text-destructive">{error.message}</p>;
   if (findings === null) return <p className="text-xs text-muted-foreground">Loading findings...</p>;
   if (findings.length === 0) return <p className="text-xs text-muted-foreground">No persisted findings for this scan.</p>;
 
@@ -214,46 +209,31 @@ function OrgStatsBar({ stats }: { stats: PrGuardrailOrgStats }) {
 
 export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
   const isOrgWide = targetId === ALL_TARGETS;
-  const [log, setLog] = useState<PrGuardrailLogEntry[]>([]);
-  const [stats, setStats] = useState<PrGuardrailOrgStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionExpired, setSessionExpired] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
 
-  const refresh = useCallback(() => {
-    if (targetId === null) return;
-    setLoading(true);
-    setError(null);
-    setSessionExpired(false);
-    const handleError = (e: unknown) => {
-      if (isSessionError(e)) setSessionExpired(true);
-      else setError(e instanceof Error ? e.message : "failed to load PR guardrail log");
-    };
-    if (isOrgWide) {
-      api
-        .getPrGuardrailOrgLog()
-        .then((res) => {
-          setLog(res.scans);
-          setStats(res.stats);
-        })
-        .catch(handleError)
-        .finally(() => setLoading(false));
-    } else {
-      api
-        .getPrGuardrailLog(targetId)
-        .then((entries) => {
-          setLog(entries);
-          setStats(null);
-        })
-        .catch(handleError)
-        .finally(() => setLoading(false));
-    }
-  }, [targetId, isOrgWide]);
+  // The org-wide view carries aggregate stats; the per-repo one has none.
+  // Returning both from a single fetcher keeps them in lockstep -- the two
+  // separate state slots could previously show one repo's log beside another
+  // view's stats if the requests interleaved.
+  const {
+    data,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch: refresh,
+  } = useAsyncData<{ log: PrGuardrailLogEntry[]; stats: PrGuardrailOrgStats | null }>(
+    () =>
+      isOrgWide
+        ? api.getPrGuardrailOrgLog().then((res) => ({ log: res.scans, stats: res.stats }))
+        : api.getPrGuardrailLog(targetId!).then((entries) => ({ log: entries, stats: null })),
+    { enabled: targetId !== null, deps: [targetId, isOrgWide] },
+  );
+  const log = data?.log ?? [];
+  const stats = data?.stats ?? null;
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  // A 401 means the GitHub session lapsed, which has its own reconnect
+  // affordance -- it is not a generic page error.
+  const sessionExpired = loadError !== null && isSessionError(loadError);
+  const error = sessionExpired ? null : (loadError?.message ?? null);
 
   if (targetId === null) return null;
 

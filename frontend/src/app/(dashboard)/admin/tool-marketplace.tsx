@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api, ToolAssignment, ToolRegistryEntry, WorkspaceSummary } from "@/lib/api";
+import { useMemo, useState } from "react";
+import { api, ToolAssignment, ToolRegistryEntry } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,44 +30,40 @@ const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License",
 // app.core.tool_registry's module docstring for why literal remote package
 // installation from a web request is out of scope here.
 export function ToolMarketplace() {
-  const [registry, setRegistry] = useState<ToolRegistryEntry[] | null>(null);
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
-  const [assignments, setAssignments] = useState<Record<string, ToolAssignment> | null>(null);
+  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
   const [savingTool, setSavingTool] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  function refreshRegistry() {
-    api.toolsRegistry().then(setRegistry).catch((e) => setError(e instanceof Error ? e.message : "failed to load tool registry"));
-  }
+  const {
+    data: registry,
+    error: registryError,
+    refetch: refreshRegistry,
+  } = useAsyncData<ToolRegistryEntry[]>(() => api.toolsRegistry());
 
-  useEffect(() => {
-    refreshRegistry();
-    api.workspaces().then((list) => {
-      setWorkspaces(list);
-      if (list.length > 0) setWorkspaceId(list[0].id);
-    });
-  }, []);
+  const {
+    data: assignments,
+    error: assignmentsError,
+    refetch: refreshAssignments,
+  } = useAsyncData<Record<string, ToolAssignment>>(
+    () => api.toolAssignments(workspaceId!).then((list) => Object.fromEntries(list.map((a) => [a.tool, a]))),
+    { enabled: workspaceId != null, deps: [workspaceId] },
+  );
 
-  function refreshAssignments(wsId: number) {
-    api
-      .toolAssignments(wsId)
-      .then((list) => setAssignments(Object.fromEntries(list.map((a) => [a.tool, a]))))
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load usage assignments"));
-  }
-
-  useEffect(() => {
-    if (workspaceId != null) refreshAssignments(workspaceId);
-  }, [workspaceId]);
+  const error =
+    mutationError ??
+    registryError?.message ??
+    assignmentsError?.message ??
+    workspacesError?.message ??
+    null;
 
   async function toggleSurface(tool: string, surface: (typeof USAGE_SURFACES)[number]["key"]) {
     if (!workspaceId || !assignments) return;
     const current = assignments[tool];
     if (!current) return;
     setSavingTool(tool);
-    setError(null);
+    setMutationError(null);
     try {
-      const updated = await api.saveToolAssignment({
+      await api.saveToolAssignment({
         workspace_id: workspaceId,
         tool,
         on_demand_scan: current.on_demand_scan,
@@ -74,9 +72,9 @@ export function ToolMarketplace() {
         pr_guardrail: current.pr_guardrail,
         [surface]: !current[surface],
       });
-      setAssignments((prev) => ({ ...(prev ?? {}), [tool]: updated }));
+      refreshAssignments();
     } catch (e) {
-      setError(e instanceof Error ? e.message : `failed to update ${tool} usage assignment`);
+      setMutationError(e instanceof Error ? e.message : `failed to update ${tool} usage assignment`);
     } finally {
       setSavingTool(null);
     }

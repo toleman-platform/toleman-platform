@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { api, PrGuardrailFinding } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,21 +10,14 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import { SEVERITY_COLOR } from "@/lib/severity";
 
 export function ApprovalQueue() {
-  const [findings, setFindings] = useState<PrGuardrailFinding[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  const refresh = useCallback(() => {
-    setError(null);
-    api
-      .getPendingIgnoreRequests()
-      .then(setFindings)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load pending ignore requests"));
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  const {
+    data: findings,
+    error: loadError,
+    refetch: refresh,
+  } = useAsyncData<PrGuardrailFinding[]>(() => api.getPendingIgnoreRequests());
+  const error = loadError?.message ?? null;
 
   async function approve(id: number) {
     setBusyId(id);

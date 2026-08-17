@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, AuthUser, WorkspaceMembership, WorkspaceRole, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
+import { useState } from "react";
+import { api, AuthUser, WorkspaceMembership, WorkspaceRole, workspaceDisplayName } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,12 +20,23 @@ const WORKSPACE_ROLES: WorkspaceRole[] = ["viewer", "developer", "security_engin
 // (targets, findings, PR guardrail, SBOM, discovery). A global admin can
 // still manage everything everywhere regardless of what's assigned here.
 export function WorkspaceRoles() {
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
-  const [users, setUsers] = useState<AuthUser[] | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
-  const [memberships, setMemberships] = useState<WorkspaceMembership[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const { data: users, error: usersError } = useAsyncData<AuthUser[]>(() => api.users());
+
+  const {
+    data: memberships,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch,
+  } = useAsyncData<WorkspaceMembership[]>(() => api.workspaceMemberships(workspaceId!), {
+    enabled: workspaceId != null,
+    deps: [workspaceId],
+  });
+
+  const error =
+    mutationError ?? loadError?.message ?? workspacesError?.message ?? usersError?.message ?? null;
 
   const [selectedUserId, setSelectedUserId] = useState<number | "">("");
   const [selectedRole, setSelectedRole] = useState<WorkspaceRole>("developer");
@@ -35,37 +48,16 @@ export function WorkspaceRoles() {
   const [pendingRemoval, setPendingRemoval] = useState<WorkspaceMembership | null>(null);
   const [removing, setRemoving] = useState(false);
 
-  useEffect(() => {
-    api.workspaces().then((list) => {
-      setWorkspaces(list);
-      if (list.length > 0) setWorkspaceId(list[0].id);
-    });
-    api.users().then(setUsers);
-  }, []);
-
-  function refresh(wsId: number) {
-    setLoading(true);
-    api
-      .workspaceMemberships(wsId)
-      .then(setMemberships)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load workspace roles"))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => {
-    if (workspaceId != null) refresh(workspaceId);
-  }, [workspaceId]);
-
   async function onAssign() {
     if (workspaceId == null || selectedUserId === "") return;
     setAssigning(true);
-    setError(null);
+    setMutationError(null);
     try {
       await api.assignWorkspaceRole(Number(selectedUserId), workspaceId, selectedRole);
       setSelectedUserId("");
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to assign role");
+      setMutationError(e instanceof Error ? e.message : "failed to assign role");
     } finally {
       setAssigning(false);
     }
@@ -76,9 +68,9 @@ export function WorkspaceRoles() {
     setRemoving(true);
     try {
       await api.removeWorkspaceMembership(pendingRemoval.id);
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to remove role");
+      setMutationError(e instanceof Error ? e.message : "failed to remove role");
     } finally {
       setRemoving(false);
       setPendingRemoval(null);

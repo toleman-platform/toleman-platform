@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, Target, Endpoint, ScanRun } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { api, Target, ScanRun } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,32 +23,30 @@ function formatSince(iso: string): string {
 }
 
 export default function ApiDiscoveryPage() {
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [targetId, setTargetId] = useState<number | null>(null);
-  const [endpoints, setEndpoints] = useState<Endpoint[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  const targets = targetsData ?? [];
+  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
+  const setTargetId = setChosenTargetId;
   // Only meaningful relative to a scan just triggered in this session -- the
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" column at all until a POST has completed here.
-  const [scanSummary, setScanSummary] = useState<{ new_count: number } | null>(null);
+  // Tagged with the target it describes rather than cleared by an effect on
+  // target change: a "new endpoints" count belonging to a different repo is
+  // worse than no count at all.
+  const [lastRun, setLastRun] = useState<{ targetId: number; new_count: number } | null>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
 
   // Issue #72: Active API Scanning against the endpoints listed above.
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [apiScanRunning, setApiScanRunning] = useState(false);
   const [apiScanError, setApiScanError] = useState<string | null>(null);
-  const [lastApiScan, setLastApiScan] = useState<ScanRun | null>(null);
+  const [apiScanResult, setApiScanResult] = useState<{ targetId: number; scan: ScanRun } | null>(null);
   const cancelApiScanPollRef = useRef<(() => void) | null>(null);
   const currentTarget = targets.find((t) => t.id === targetId) ?? null;
-
-  useEffect(() => {
-    api.targets().then((ts) => {
-      setTargets(ts);
-      if (ts.length > 0) setTargetId(ts[0].id);
-    });
-  }, []);
 
   useEffect(() => {
     // Stop polling if the component unmounts (e.g. navigating away) mid-run.
@@ -57,26 +56,27 @@ export default function ApiDiscoveryPage() {
     };
   }, []);
 
-  const loadPersisted = useCallback(async (id: number) => {
-    setLoading(true);
-    setError(null);
-    setScanSummary(null);
-    setSelected(new Set());
-    setApiScanError(null);
-    try {
-      const [res, latest] = await Promise.all([api.getDiscoveredEndpoints(id), api.getLatestApiScan(id)]);
-      setEndpoints(res.endpoints);
-      setLastApiScan(latest.scan);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to load discovered endpoints");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (targetId !== null) loadPersisted(targetId);
-  }, [targetId, loadPersisted]);
+  const {
+    data: persisted,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch: reloadPersisted,
+  } = useAsyncData(
+    () =>
+      Promise.all([api.getDiscoveredEndpoints(targetId!), api.getLatestApiScan(targetId!)]).then(
+        ([res, latest]) => ({ endpoints: res.endpoints, latestScan: latest.scan }),
+      ),
+    { enabled: targetId !== null, deps: [targetId] },
+  );
+  const endpoints = persisted?.endpoints ?? null;
+  const scanSummary = lastRun && lastRun.targetId === targetId ? lastRun : null;
+  // A scan just run in this session wins over the persisted "latest scan";
+  // both are keyed to their target so switching repos never shows another
+  // repo's result.
+  const lastApiScan =
+    apiScanResult && apiScanResult.targetId === targetId
+      ? apiScanResult.scan
+      : (persisted?.latestScan ?? null);
 
   async function run() {
     if (targetId === null) return;
@@ -94,8 +94,11 @@ export default function ApiDiscoveryPage() {
         () => api.getDiscoveryRun(runTargetId, dispatch.run_id),
         (run) => {
           if (run.status === "completed") {
-            setEndpoints(run.endpoints ?? []);
-            setScanSummary({ new_count: run.new_count });
+            // Refetch rather than writing `run.endpoints` in directly: the
+            // persisted list stays the single owner, so the loading state and
+            // what is on screen cannot disagree.
+            reloadPersisted();
+            setLastRun({ targetId: runTargetId, new_count: run.new_count });
             setRunning(false);
           } else if (run.status === "failed") {
             setError(run.error || "discovery failed");
@@ -152,7 +155,7 @@ export default function ApiDiscoveryPage() {
         },
         (result) => {
           if (result.status === "completed" || result.status === "failed") {
-            if (result.scan) setLastApiScan(result.scan);
+            if (result.scan) setApiScanResult({ targetId: scanTargetId, scan: result.scan });
             else if (result.message) setApiScanError(result.message);
             setApiScanRunning(false);
           }
@@ -215,7 +218,7 @@ export default function ApiDiscoveryPage() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      {!error && scanSummary && (
+      {!error && !loadError && scanSummary && (
         <p className="text-sm text-foreground">
           {scanSummary.new_count > 0
             ? `${scanSummary.new_count} new endpoint${scanSummary.new_count === 1 ? "" : "s"} found`

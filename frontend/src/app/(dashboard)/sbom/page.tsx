@@ -1,16 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   Target,
-  SbomComponent,
   SbomExportFormat,
   Finding,
   OrgSbomComponent,
   OrgSbomResult,
 } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -96,76 +96,52 @@ function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
 }
 
 export default function SbomPage() {
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [targetId, setTargetId] = useState<number | null>(null);
-  const [components, setComponents] = useState<SbomComponent[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  const targets = targetsData ?? [];
+  // Derived rather than seeded in an effect, same reasoning as
+  // useWorkspacePicker: the user's choice wins and a reload cannot move them.
+  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
+  const setTargetId = setChosenTargetId;
   // Only meaningful relative to a scan just triggered in this session -- the
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" badge at all until a POST has completed here (same convention as
   // the API Discovery page).
-  const [scanSummary, setScanSummary] = useState<{ new_count: number } | null>(
-    null,
-  );
+  // Tagged with the target it describes rather than cleared by an effect on
+  // target change: a "3 new components" badge belonging to a different repo
+  // is worse than no badge, and deriving the match makes that impossible.
+  const [lastScan, setLastScan] = useState<{ targetId: number; new_count: number } | null>(null);
   const [tab, setTab] = useState<Tab>("components");
   const searchParams = useSearchParams();
-  const sbomPageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
-  const sbomPageRaw = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
-  const sbomTotalPages = Math.max(1, Math.ceil((components?.length ?? 0) / sbomPageSize));
-  const sbomPage = Math.min(sbomPageRaw, sbomTotalPages);
-  const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
   const [exporting, setExporting] = useState(false);
   const [format, setFormat] = useState<SbomExportFormat>("cyclonedx-json");
 
-  const [ossFindings, setOssFindings] = useState<Finding[] | null>(null);
-  const [ossTotal, setOssTotal] = useState(0);
-  const [ossLoading, setOssLoading] = useState(false);
 
-  const [orgSbom, setOrgSbom] = useState<OrgSbomResult | null>(null);
-  const [orgLoading, setOrgLoading] = useState(false);
-  const [orgError, setOrgError] = useState<string | null>(null);
+  const [orgExportError, setOrgExportError] = useState<string | null>(null);
   const [orgExporting, setOrgExporting] = useState(false);
   const [orgSearch, setOrgSearch] = useState("");
   const cancelPollRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    api.targets().then((ts) => {
-      setTargets(ts);
-      if (ts.length > 0) setTargetId(ts[0].id);
-    });
-  }, []);
 
   useEffect(() => {
     // Stop polling if the component unmounts (e.g. navigating away) mid-run.
     return () => cancelPollRef.current?.();
   }, []);
 
-  const loadOrgSbom = useCallback(async () => {
-    setOrgLoading(true);
-    setOrgError(null);
-    try {
-      const res = await api.getOrgSbom();
-      setOrgSbom(res);
-    } catch (e) {
-      setOrgError(
-        e instanceof Error ? e.message : "failed to load organization SBOM",
-      );
-    } finally {
-      setOrgLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (targetId === ALL_TARGETS && orgSbom === null) {
-      loadOrgSbom();
-    }
-  }, [targetId, orgSbom, loadOrgSbom]);
+  const {
+    data: orgSbom,
+    error: orgLoadError,
+    isInitialLoading: orgLoading,
+  } = useAsyncData<OrgSbomResult>(() => api.getOrgSbom(), {
+    enabled: targetId === ALL_TARGETS,
+    deps: [targetId],
+  });
 
   async function exportOrgJson() {
     setOrgExporting(true);
-    setOrgError(null);
+    setOrgExportError(null);
     try {
       const blob = await api.exportOrgSbom();
       const url = URL.createObjectURL(blob);
@@ -177,7 +153,7 @@ export default function SbomPage() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setOrgError(
+      setOrgExportError(
         e instanceof Error ? e.message : "organization SBOM export failed",
       );
     } finally {
@@ -189,48 +165,40 @@ export default function SbomPage() {
     c.name.toLowerCase().includes(orgSearch.trim().toLowerCase()),
   );
 
-  const loadPersisted = useCallback(async (id: number) => {
-    setLoading(true);
-    setError(null);
-    setScanSummary(null);
-    try {
-      const res = await api.getSbom(id);
-      setComponents(res.components);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to load SBOM");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const {
+    data: persisted,
+    error: persistedError,
+    isInitialLoading: loading,
+    refetch: reloadPersisted,
+  } = useAsyncData(() => api.getSbom(targetId!), {
+    enabled: targetId !== null && targetId !== ALL_TARGETS,
+    deps: [targetId],
+  });
+  const components = persisted?.components ?? null;
+  const scanSummary = lastScan && lastScan.targetId === targetId ? lastScan : null;
 
-  const loadOssFindings = useCallback(async (id: number) => {
-    setOssLoading(true);
-    try {
-      // Trivy's existing CVE scan already produces real Finding rows with
-      // tool="trivy" and a populated cve_id -- OSS/dependency vulnerabilities
-      // aren't a new concept, so we just filter the existing findings API
-      // rather than standing up a parallel endpoint.
-      const res = await api.findings({
-        target_id: id,
-        tool: "trivy",
-        page_size: 500,
-      });
-      setOssFindings(res.items.filter((f) => !!f.cve_id));
-      setOssTotal(res.items.filter((f) => !!f.cve_id).length);
-    } catch {
-      setOssFindings([]);
-      setOssTotal(0);
-    } finally {
-      setOssLoading(false);
-    }
-  }, []);
+  // Export failures and load failures are different events with the same
+  // destination on screen; both must be able to surface.
+  const orgDisplayError = orgExportError ?? orgLoadError?.message ?? null;
 
-  useEffect(() => {
-    if (targetId !== null && targetId !== ALL_TARGETS) {
-      loadPersisted(targetId);
-      loadOssFindings(targetId);
-    }
-  }, [targetId, loadPersisted, loadOssFindings]);
+  const sbomPageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
+  const sbomPageRaw = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const sbomTotalPages = Math.max(1, Math.ceil((components?.length ?? 0) / sbomPageSize));
+  const sbomPage = Math.min(sbomPageRaw, sbomTotalPages);
+  const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
+
+  // Trivy's existing CVE scan already produces real Finding rows with
+  // tool="trivy" and a populated cve_id -- OSS/dependency vulnerabilities
+  // aren't a new concept, so we filter the existing findings API rather than
+  // standing up a parallel endpoint.
+  const { data: ossFindings, isInitialLoading: ossLoading } = useAsyncData<Finding[]>(
+    () =>
+      api
+        .findings({ target_id: targetId!, tool: "trivy", page_size: 500 })
+        .then((res) => res.items.filter((f) => !!f.cve_id)),
+    { enabled: targetId !== null && targetId !== ALL_TARGETS, deps: [targetId] },
+  );
+  const ossTotal = ossFindings?.length ?? 0;
 
   async function run() {
     if (targetId === null) return;
@@ -248,8 +216,12 @@ export default function SbomPage() {
         () => api.getSbomRun(runTargetId, dispatch.run_id),
         (run) => {
           if (run.status === "completed") {
-            setComponents(run.components ?? []);
-            setScanSummary({ new_count: run.new_count });
+            // Refetch rather than writing `run.components` straight in: the
+            // persisted SBOM is the single owner of this list, and a second
+            // writer is what made the previous version's loading states
+            // disagree with what was on screen.
+            reloadPersisted();
+            setLastScan({ targetId: runTargetId, new_count: run.new_count });
             setRunning(false);
           } else if (run.status === "failed") {
             setError(run.error || "SBOM generation failed");
@@ -371,7 +343,7 @@ export default function SbomPage() {
             (default branch) — read-only, no new scans are triggered here.
           </p>
 
-          {orgError && <p className="text-sm text-destructive">{orgError}</p>}
+          {orgDisplayError && <p className="text-sm text-destructive">{orgDisplayError}</p>}
 
           {orgLoading && <SkeletonList count={4} />}
 
@@ -439,9 +411,14 @@ export default function SbomPage() {
 
       {targetId !== null && targetId !== ALL_TARGETS && (
         <>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {/* Scan/export failures and the persisted-SBOM load failure share
+              one slot; a load failure must not be swallowed just because no
+              scan has run. */}
+          {(error ?? persistedError?.message) && (
+            <p className="text-sm text-destructive">{error ?? persistedError?.message}</p>
+          )}
 
-          {!error && scanSummary && (
+          {!error && !persistedError && scanSummary && (
             <p className="text-sm text-foreground">
               {scanSummary.new_count > 0
                 ? `${scanSummary.new_count} new component${scanSummary.new_count === 1 ? "" : "s"} found`

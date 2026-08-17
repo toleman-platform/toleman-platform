@@ -59,11 +59,16 @@ const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 // SlaRule applies to this finding (group/severity or workspace default) --
 // render nothing in that case rather than a fabricated countdown.
 function SlaBadge({ finding }: { finding: Finding }) {
+  const [now] = useState(() => Date.now());
   if (finding.sla_days === null || finding.sla_days === undefined) return null;
 
   const firstSeen = new Date(finding.first_seen).getTime();
   const deadline = firstSeen + finding.sla_days * 24 * 60 * 60 * 1000;
-  const msLeft = deadline - Date.now();
+  // Captured once at mount rather than read during every render: the
+  // countdown is day-granular, so re-reading the clock changes nothing a user
+  // can see, and a render that depends on the current time is impure -- two
+  // renders of the same finding could disagree.
+  const msLeft = deadline - now;
   const daysLeft = Math.ceil(Math.abs(msLeft) / (24 * 60 * 60 * 1000));
 
   if (finding.sla_violated) {

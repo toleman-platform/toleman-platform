@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { RadialBar, RadialBarChart, PolarAngleAxis } from "recharts";
 
 // Issue #63: single-number security health gauge. Three-tier color by
@@ -35,8 +35,16 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
   // all real text next to it), so rendering it after mount is a clean fix
   // rather than a workaround; the wrapper reserves the exact final size so
   // nothing shifts when it appears.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // useSyncExternalStore is React's supported way to ask "am I on the
+  // client?": the server snapshot is false, the client snapshot is true, and
+  // it never subscribes to anything. An effect that calls setState would do
+  // the same job but costs an extra commit and is what
+  // react-hooks/set-state-in-effect flags.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   return (
     <div className="flex flex-col items-center">

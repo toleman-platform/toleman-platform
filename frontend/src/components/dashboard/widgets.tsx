@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ShieldAlert,
   GitBranch,
@@ -26,6 +26,7 @@ import { SEVERITY_COLOR } from "@/lib/severity";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
 import { api } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import type {
   WidgetId,
   WidgetDataEntry,
@@ -298,31 +299,31 @@ function TrendIcon({ direction }: { direction: "improving" | "stable" | "worseni
 // own data, not the whole page's).
 function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
   const [scope, setScope] = useState<ScoreScope>({ kind: "org" });
-  const [score, setScore] = useState<SecurityScore>(initialData);
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.targets().then(setTargets).catch(() => {});
-    api.groups().then(setGroups).catch(() => {});
-  }, []);
+  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  const { data: groupsData } = useAsyncData<Group[]>(() => api.groups());
+  const targets = targetsData ?? [];
+  const groups = groupsData ?? [];
 
-  useEffect(() => {
-    if (scope.kind === "org") {
-      setScore(initialData);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    const req = scope.kind === "group" ? api.securityScore({ groupId: scope.id }) : api.securityScore({ targetId: scope.id });
-    req
-      .then(setScore)
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load security score"))
-      .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scoreScopeKey(scope)]);
+  const {
+    data: scopedScore,
+    error: loadError,
+    isInitialLoading: loading,
+  } = useAsyncData<SecurityScore>(
+    () =>
+      scope.kind === "group"
+        ? api.securityScore({ groupId: scope.id })
+        : api.securityScore({ targetId: (scope as { id: number }).id }),
+    { enabled: scope.kind !== "org", deps: [scoreScopeKey(scope)] },
+  );
+
+  // Org scope is already batched into `initialData` by
+  // GET /api/dashboard/widget-data, so it needs no request of its own.
+  // Switching back to it must show that data again rather than whichever
+  // repo was last selected -- deriving here makes that automatic, where the
+  // previous version had to remember to write `initialData` back.
+  const score = scope.kind === "org" ? initialData : (scopedScore ?? initialData);
+  const error = loadError?.message ?? null;
 
   return (
     <div className="flex flex-col gap-3">

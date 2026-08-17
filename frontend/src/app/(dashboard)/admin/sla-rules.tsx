@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api, Group, SlaRule, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
+import { useState } from "react";
+import { api, Group, SlaRule, workspaceDisplayName } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -15,49 +17,36 @@ import { Building2, Clock, Timer, Trash2 } from "lucide-react";
 // applied to targets with no group-specific rule for that severity. Mirrors
 // the Groups tab's workspace-picker-then-CRUD-list shape (#61/#62).
 export function SlaRules() {
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[] | null>(null);
-  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
-  const [groups, setGroups] = useState<Group[] | null>(null);
-  const [rules, setRules] = useState<SlaRule[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const {
+    data,
+    error: loadError,
+    isInitialLoading: loading,
+    refetch,
+  } = useAsyncData<[SlaRule[], Group[]]>(
+    () => Promise.all([api.slaRules(workspaceId!), api.groups(workspaceId!)]),
+    { enabled: workspaceId != null, deps: [workspaceId] },
+  );
+  const [rules, groups] = data ?? [null, null];
+
+  const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
 
   const [groupId, setGroupId] = useState<number | "">("");
   const [severity, setSeverity] = useState<string>(SEVERITY_ORDER[0]);
   const [days, setDays] = useState<string>("7");
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    api.workspaces().then((list) => {
-      setWorkspaces(list);
-      if (list.length > 0) setWorkspaceId(list[0].id);
-    });
-  }, []);
-
-  function refresh(wsId: number) {
-    setLoading(true);
-    Promise.all([api.slaRules(wsId), api.groups(wsId)])
-      .then(([r, g]) => {
-        setRules(r);
-        setGroups(g);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : "failed to load SLA rules"))
-      .finally(() => setLoading(false));
-  }
-
-  useEffect(() => {
-    if (workspaceId != null) refresh(workspaceId);
-  }, [workspaceId]);
-
   async function createRule() {
     if (!workspaceId) return;
     const daysNum = Number(days);
     if (!Number.isFinite(daysNum) || daysNum < 0) {
-      setError("days_to_fix must be a non-negative number");
+      setMutationError("days_to_fix must be a non-negative number");
       return;
     }
     setSaving(true);
-    setError(null);
+    setMutationError(null);
     try {
       await api.createSlaRule({
         workspace_id: workspaceId,
@@ -65,9 +54,9 @@ export function SlaRules() {
         severity,
         days_to_fix: daysNum,
       });
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to create SLA rule (a rule for this group + severity may already exist)");
+      setMutationError(e instanceof Error ? e.message : "failed to create SLA rule (a rule for this group + severity may already exist)");
     } finally {
       setSaving(false);
     }
@@ -77,9 +66,9 @@ export function SlaRules() {
     if (!workspaceId || !Number.isFinite(newDays) || newDays < 0) return;
     try {
       await api.updateSlaRule(rule.id, { days_to_fix: newDays });
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to update SLA rule");
+      setMutationError(e instanceof Error ? e.message : "failed to update SLA rule");
     }
   }
 
@@ -87,9 +76,9 @@ export function SlaRules() {
     if (!workspaceId) return;
     try {
       await api.deleteSlaRule(id);
-      refresh(workspaceId);
+      refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to delete SLA rule");
+      setMutationError(e instanceof Error ? e.message : "failed to delete SLA rule");
     }
   }
 

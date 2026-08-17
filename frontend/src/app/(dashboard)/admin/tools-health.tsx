@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,18 +11,16 @@ import { CheckCircle2, XCircle } from "lucide-react";
 type Health = { tool: string; installed: boolean; version: string | null; response_ms: number | null };
 
 export function ToolsHealth() {
-  const [health, setHealth] = useState<Health[] | null>(null);
-  const [checking, setChecking] = useState(false);
-
-  function refresh() {
-    setChecking(true);
-    api.toolsHealth().then((h) => {
-      setHealth(h);
-      setChecking(false);
-    });
-  }
-
-  useEffect(refresh, []);
+  // Previously this had no rejection path at all: if the health check failed,
+  // `setHealth` never ran and the skeleton stayed on screen forever, which
+  // reads as "still checking" rather than "the check failed".
+  const {
+    data: health,
+    error,
+    status,
+    refetch: refresh,
+  } = useAsyncData<Health[]>(() => api.toolsHealth());
+  const checking = status === "loading";
 
   return (
     <div className="flex flex-col gap-4">
@@ -36,8 +34,10 @@ export function ToolsHealth() {
         </Button>
       </div>
 
+      {error && <p className="text-sm text-destructive">{error.message}</p>}
+
       <div className="grid gap-3 md:grid-cols-2">
-        {health === null &&
+        {health === null && !error &&
           Array.from({ length: 4 }).map((_, i) => (
             <Card key={i} className="border-border bg-card">
               <CardContent className="flex items-center justify-between px-4 py-3">

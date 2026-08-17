@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, require_workspace_role
 from app.api.deps import get_session
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
+from app.core.async_jobs import create_running_row
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User, WorkspaceRole
 from app.tasks.api_scan_tasks import run_api_scan
@@ -61,10 +62,9 @@ def trigger_api_scan(
             detail="no scannable endpoints -- run API Discovery first, or check the endpoint selection",
         )
 
-    scan = Scan(target_id=target_id, tool="api-scan", branch=target.default_branch, status="running")
-    session.add(scan)
-    session.commit()
-    session.refresh(scan)
+    scan = create_running_row(
+        session, Scan(target_id=target_id, tool="api-scan", branch=target.default_branch, status="running")
+    )
 
     run_api_scan.delay(target_id=target_id, scan_id=scan.id, endpoint_ids=payload.endpoint_ids)
 

@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
+from app.core.async_jobs import create_running_row
 from app.core.discovery_ingestion import upsert_endpoints  # noqa: F401 -- re-exported, see docstring below
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import ApiEndpoint, DiscoveryRun, Target, User, WorkspaceRole
@@ -43,10 +44,9 @@ def run_discovery(
     return synchronously."""
     target = _get_target(target_id, session)
 
-    run = DiscoveryRun(target_id=target_id, branch=target.default_branch, status="running")
-    session.add(run)
-    session.commit()
-    session.refresh(run)
+    run = create_running_row(
+        session, DiscoveryRun(target_id=target_id, branch=target.default_branch, status="running")
+    )
 
     run_discovery_task.delay(target_id=target_id, run_id=run.id)
 

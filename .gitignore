@@ -10,6 +10,7 @@ frontend/.next/
 frontend/.env.local
 
 .DS_Store
+KT.md
 .claude/worktrees/
 code-review-report.md
 market-research-report.md

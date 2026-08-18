@@ -47,7 +47,19 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
   );
 
   return (
-    <div className="flex flex-col items-center">
+    // shrink-0: this sits inside a flex row (widgets.tsx's SecurityScoreWidget)
+    // next to the score-breakdown list. The chart box below has a *fixed*
+    // pixel width via inline style (CHART_WIDTH), but flexbox's default
+    // flex-shrink: 1 still shrinks a fixed-width child when the row runs out
+    // of room -- the outer div would shrink while the SVG inside it kept its
+    // hardcoded width={280} attribute, so the arc silently overflowed past
+    // its now-narrower parent and the centered text overlay (which centers
+    // against the *shrunk* parent) drifted out of alignment with it. This is
+    // exactly the "arc on the left, number/badge floating off to the right"
+    // bug reported against this gauge -- shrink-0 keeps the box at its real
+    // size always; the flex row wraps to a new line instead (see the parent's
+    // flex-wrap) rather than distorting the gauge to fit.
+    <div className="flex shrink-0 flex-col items-center">
       {/* The number overlay is positioned against the chart box alone. It
           used to be `absolute bottom-0` of a wrapper that also contained the
           grade badge, which put the "/ 100" line directly on top of the

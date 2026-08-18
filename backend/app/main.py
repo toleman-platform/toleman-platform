@@ -6,7 +6,7 @@ from app.core.config import settings, validate_production_secrets
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api, onboarding
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api
 from app.api.auth import current_user, require_admin
 
 app = FastAPI(title="Rikugan - DevSecOps Vulnerability Management Platform")
@@ -44,7 +44,6 @@ app.include_router(github_app.public_router)  # GitHub calls these directly, no 
 app.include_router(webhooks.router)  # GitHub webhook deliveries, verified via HMAC signature instead of a session
 app.include_router(public_api.router)  # own auth: Bearer API token (see app.api.auth.current_api_token_user), not a login session
 
-app.include_router(onboarding.router, dependencies=login_required)
 app.include_router(workspaces.router, dependencies=login_required)
 app.include_router(targets.router, dependencies=login_required)
 app.include_router(groups.router, dependencies=login_required)

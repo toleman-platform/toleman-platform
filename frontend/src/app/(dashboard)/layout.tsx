@@ -1,7 +1,6 @@
-import { cookies, headers } from "next/headers";
-import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { Sidebar } from "@/components/sidebar";
-import { AuthUser, Target } from "@/lib/api";
+import { AuthUser } from "@/lib/api";
 // Plain module, not theme-toggle.tsx -- see @/lib/theme for why a Server
 // Component must not import these from a "use client" file.
 import { THEME_COOKIE_KEY, type Theme } from "@/lib/theme";
@@ -11,7 +10,6 @@ import { THEME_COOKIE_KEY, type Theme } from "@/lib/theme";
 // docker-compose network, independent of the build-time, browser-facing
 // NEXT_PUBLIC_API_URL.
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const ONBOARDING_EXEMPT_PATHS = ["/onboarding", "/settings", "/admin"];
 
 async function getCurrentUser(): Promise<AuthUser | null> {
   const cookieStore = await cookies();
@@ -25,23 +23,6 @@ async function getCurrentUser(): Promise<AuthUser | null> {
   return res.json();
 }
 
-async function getTargets(): Promise<Target[]> {
-  const cookieStore = await cookies();
-  const session = cookieStore.get("rikugan_session");
-  if (!session) return [];
-  const res = await fetch(`${API_URL}/api/targets`, {
-    headers: { Cookie: `rikugan_session=${session.value}` },
-    cache: "no-store",
-  });
-  if (!res.ok) return [];
-  return res.json();
-}
-
-async function getCurrentPath(): Promise<string> {
-  const headerStore = await headers();
-  return headerStore.get("x-pathname") || "";
-}
-
 async function getInitialTheme(): Promise<Theme> {
   const cookieStore = await cookies();
   return cookieStore.get(THEME_COOKIE_KEY)?.value === "light" ? "light" : "dark";
@@ -50,17 +31,6 @@ async function getInitialTheme(): Promise<Theme> {
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   const initialTheme = await getInitialTheme();
-
-  if (user) {
-    const pathname = await getCurrentPath();
-    const isExempt = ONBOARDING_EXEMPT_PATHS.some((p) => pathname.startsWith(p));
-    if (!isExempt) {
-      const targets = await getTargets();
-      if (targets.length === 0) {
-        redirect("/onboarding");
-      }
-    }
-  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden">

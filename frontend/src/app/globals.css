@@ -14,60 +14,75 @@
 :root {
   color-scheme: dark;
 
-  --background: #0a0e17;
-  --foreground: #e2e8f0;
-  --card: #111827;
-  --card-foreground: #e2e8f0;
-  --popover: #111827;
-  --popover-foreground: #e2e8f0;
+  /* Neutral-charcoal repaint (#224, senior UI review): every dark-theme
+     surface below used to be a shade of the same blue-slate family
+     (background/card/sidebar/border/muted all had a visible blue hue --
+     Tailwind/shadcn's stock slate scale, never actually customized), which
+     is exactly the palette every unstyled AI-scaffolded dashboard ships
+     with by default. Wiz and Snyk (the two competitor products this pass
+     was benchmarked against) both use a true neutral gray canvas and spend
+     color ONLY on the brand accent and semantic severity states -- so
+     nothing here reads as "trying to be colorful," it reads as deliberate.
+     Every value below is a true neutral (equal-ish R/G/B, no channel bias
+     toward blue) except the accent and the four semantic colors, which are
+     the whole point of having a neutral canvas: they're now the only color
+     in the room. Light mode is unchanged -- its surfaces were already
+     near-white/near-black rather than visibly slate-tinted, and the user's
+     complaint was specifically about dark mode. */
+  --background: #16181b;
+  --foreground: #e9eaec;
+  --card: #1d2023;
+  --card-foreground: #e9eaec;
+  --popover: #1d2023;
+  --popover-foreground: #e9eaec;
   /* --primary is the button-fill brand color. It intentionally does NOT
      change in light mode: it's always paired with --primary-foreground
      (fixed dark text) on its own filled surface, so the surface itself
      changing hue doesn't create a contrast problem the way primary used as
      bare text/icon color on the page background would. See --accent-strong
      below for the token that DOES need to deepen for that case. */
-  --primary: #06b6d4;
-  --primary-foreground: #0a0e17;
-  --secondary: #1e293b;
-  --secondary-foreground: #e2e8f0;
-  --muted: #1e293b;
-  --muted-foreground: #94a3b8;
-  --accent: #164e63;
-  --accent-foreground: #e2e8f0;
+  --primary: #22c1d9;
+  --primary-foreground: #0d1b1e;
+  --secondary: #24272b;
+  --secondary-foreground: #e9eaec;
+  --muted: #24272b;
+  --muted-foreground: #9aa0a8;
+  --accent: #23262a;
+  --accent-foreground: #e9eaec;
   /* --accent-strong: brand cyan used as bare text/icon color directly on a
      canvas/card/sidebar background (links, active nav state, icon tiles) --
      as opposed to --primary, which is only ever a button/badge *fill*.
-     Dark mode's bright cyan (#06b6d4) reads fine as text on the app's near-
-     black background, so it's identical to --primary here; light mode gets
-     its own deepened value below since that same bright cyan is unreadable
-     as text on white (see globals-level comment). */
-  --accent-strong: #06b6d4;
-  --destructive: #ef4444;
-  --destructive-foreground: #fecaca;
-  --border: #1e293b;
-  --input: #1e293b;
+     Dark mode's cyan reads fine as text on the app's neutral-charcoal
+     background, so it's identical to --primary here; light mode gets its
+     own deepened value below since that same bright cyan is unreadable as
+     text on white (see globals-level comment). */
+  --accent-strong: #22c1d9;
+  --destructive: #f0555c;
+  --destructive-foreground: #fdeaea;
+  --border: #2b2e33;
+  --input: #2b2e33;
   /* --ring is tied to --primary/button semantics (focus outline around
      interactive controls), not to bare-text contrast, so it stays fixed
      alongside --primary for the same reason. */
-  --ring: #06b6d4;
-  --chart-1: #06b6d4;
-  --chart-2: #22d3ee;
-  --chart-3: #f59e0b;
-  --chart-4: #ef4444;
-  --chart-5: #10b981;
+  --ring: #22c1d9;
+  --chart-1: #22c1d9;
+  --chart-2: #4fc3d9;
+  --chart-3: #f2924a;
+  --chart-4: #f0555c;
+  --chart-5: #34b774;
   --radius: 0.5rem;
-  --sidebar: #0f172a;
-  --sidebar-foreground: #e2e8f0;
-  --sidebar-primary: #06b6d4;
-  --sidebar-primary-foreground: #0a0e17;
-  --sidebar-accent: #164e63;
-  --sidebar-accent-foreground: #e2e8f0;
-  --sidebar-border: #1e293b;
-  --sidebar-ring: #06b6d4;
-  --warning: #f59e0b;
-  --warning-foreground: #0a0e17;
-  --success: #10b981;
-  --success-foreground: #0a0e17;
+  --sidebar: #18191c;
+  --sidebar-foreground: #e9eaec;
+  --sidebar-primary: #22c1d9;
+  --sidebar-primary-foreground: #0d1b1e;
+  --sidebar-accent: #23262a;
+  --sidebar-accent-foreground: #e9eaec;
+  --sidebar-border: #2b2e33;
+  --sidebar-ring: #22c1d9;
+  --warning: #f2924a;
+  --warning-foreground: #1f1200;
+  --success: #34b774;
+  --success-foreground: #04190f;
 
   /* Density mode (#77): "comfortable" (default, exec-friendly) vs "compact"
      (power-user, denser tables/lists). Toggled via `data-density` on <html>

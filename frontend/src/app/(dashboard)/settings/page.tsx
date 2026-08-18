@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Copy, Eye, EyeOff, RotateCw, UserCircle, Bell, Cog, type LucideIcon } from "lucide-react";
+import { Copy, UserCircle, Bell, Cog, type LucideIcon } from "lucide-react";
 import {
   api,
   ApiToken,
@@ -20,112 +20,6 @@ import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-
-const MASKED_KEY = "•".repeat(32);
-
-function WorkspaceKeyCard({ targetId }: { targetId: number }) {
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const [regenerating, setRegenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Remounted with `key={targetId}` by the parent on target switch, so
-  // per-target UI state (revealed/copied/confirming/error) resets for free
-  // without needing setState calls here for anything but the fetched key.
-  useEffect(() => {
-    api.workspaceKey(targetId).then((r) => setApiKey(r.api_key));
-  }, [targetId]);
-
-  async function copyKey() {
-    if (!apiKey) return;
-    await navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  async function regenerate() {
-    setRegenerating(true);
-    setError(null);
-    try {
-      const r = await api.regenerateWorkspaceKey(targetId);
-      setApiKey(r.api_key);
-      setRevealed(true);
-      setConfirming(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to regenerate key");
-    } finally {
-      setRegenerating(false);
-    }
-  }
-
-  if (!apiKey) return null;
-
-  return (
-    <Card className="border-border bg-card">
-      <CardContent className="flex flex-col gap-3 px-4 py-4">
-        <div>
-          <p className="text-xs text-muted-foreground">Workspace API key (for CI push ingestion, X-API-Key header)</p>
-          <p className="text-xs text-muted-foreground">
-            This key authenticates automated pipeline pushes to this workspace. Anyone holding it can push findings
-            on your behalf.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <code className="flex-1 break-all rounded-md bg-secondary px-3 py-2 text-sm text-foreground">
-            {revealed ? apiKey : MASKED_KEY}
-          </code>
-          <Button
-            variant="outline"
-            size="icon"
-            aria-label={revealed ? "Hide API key" : "Reveal API key"}
-            title={revealed ? "Hide API key" : "Reveal API key"}
-            onClick={() => setRevealed((v) => !v)}
-          >
-            {revealed ? <EyeOff /> : <Eye />}
-          </Button>
-          <Button variant="outline" size="icon" aria-label="Copy API key" title="Copy API key" onClick={copyKey}>
-            <Copy />
-          </Button>
-        </div>
-        {copied && <span className="text-xs text-chart-5">Copied to clipboard</span>}
-
-        <div className="flex flex-col gap-2 border-t border-border pt-3">
-          {!confirming ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="self-start text-destructive hover:text-destructive"
-              onClick={() => setConfirming(true)}
-            >
-              <RotateCw />
-              Regenerate key
-            </Button>
-          ) : (
-            <div className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
-              <p className="text-xs text-foreground">
-                Regenerating invalidates the current key <strong>immediately</strong>. Any CI pipeline still using it
-                will start failing to push findings until it&apos;s updated with the new key. This can&apos;t be
-                undone.
-              </p>
-              <div className="flex items-center gap-2">
-                <Button variant="destructive" size="sm" disabled={regenerating} onClick={regenerate}>
-                  {regenerating ? "Regenerating..." : "Yes, regenerate now"}
-                </Button>
-                <Button variant="outline" size="sm" disabled={regenerating} onClick={() => setConfirming(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          )}
-          {error && <p className="text-xs text-destructive">{error}</p>}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function ApiTokensCard() {
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
@@ -600,7 +494,19 @@ function WorkspaceSection() {
         </Card>
       )}
 
-      {targetId !== null && <WorkspaceKeyCard key={targetId} targetId={targetId} />}
+      <Card className="border-border bg-card">
+        <CardContent className="flex items-center justify-between gap-3 px-4 py-4">
+          <div>
+            <p className="text-sm font-medium text-foreground">Workspace API key</p>
+            <p className="text-xs text-muted-foreground">
+              Moved to its own Workspaces page -- manage it there alongside the workspace&apos;s name and roles.
+            </p>
+          </div>
+          <Link href="/workspaces" className="shrink-0 text-xs text-accent-strong underline">
+            Go to Workspaces
+          </Link>
+        </CardContent>
+      </Card>
 
       <ApiTokensCard />
     </div>
@@ -631,14 +537,9 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-          <p className="text-sm text-muted-foreground">Profile, notifications, target configuration, and workspace credentials</p>
-        </div>
-        <Link href="/onboarding" className="text-xs text-accent-strong underline">
-          Replay guided onboarding
-        </Link>
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+        <p className="text-sm text-muted-foreground">Profile, notifications, target configuration, and workspace credentials</p>
       </div>
 
       {/* Section-nav strip, same pattern as Admin's group-level nav (#118):

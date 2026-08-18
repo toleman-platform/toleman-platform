@@ -5,7 +5,7 @@ from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
-from app.api.auth import require_admin, require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, require_admin, require_workspace_role
 from app.core.enforcement import VALID_ENFORCEMENT_MODES
 from app.models.models import Organization, User, Workspace, WorkspaceRole
 
@@ -17,6 +17,9 @@ class UpdateWorkspaceRequest(BaseModel):
     # fallback below any group/target override. Explicit null clears it,
     # falling back to the hardcoded "block" default (see app.core.enforcement).
     enforcement_mode: str | None = None
+    # Display name (issue #224: the new Workspaces page lets a workspace be
+    # renamed -- previously set once at bootstrap and never editable).
+    name: str | None = None
 
     @field_validator("enforcement_mode")
     @classmethod
@@ -25,13 +28,40 @@ class UpdateWorkspaceRequest(BaseModel):
             raise ValueError(f"enforcement_mode must be one of {sorted(VALID_ENFORCEMENT_MODES)} or null")
         return v
 
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            raise ValueError("name must not be blank")
+        return v.strip() if v is not None else v
+
 
 @router.get("")
-def list_workspaces(session: Session = Depends(get_session)):
-    """All workspaces (issue #32: the admin workspace-role UI needs the full
-    list, not just the ones a target happens to already exist under, since
-    this app is no longer assumed single-workspace)."""
-    return session.exec(select(Workspace)).all()
+def list_workspaces(session: Session = Depends(get_session), user: User = Depends(current_user)):
+    """Workspaces the caller can see (issue #32: the admin workspace-role UI
+    needs the full list of *its own* workspaces, not just the ones a target
+    happens to already exist under). Was unscoped -- returned every
+    workspace platform-wide to any authenticated user, including other
+    tenants' workspace names and ids -- until #224 added a dedicated
+    Workspaces management page that surfaces this list directly instead of
+    it only feeding an admin dropdown; accessible_workspace_ids() is the
+    same tenant-isolation helper every other workspace-owned list route
+    uses."""
+    ws_ids = accessible_workspace_ids(session, user)
+    # Explicit order (issue #224): without it, Postgres is free to return
+    # rows in a different order after any UPDATE touches one of them (e.g.
+    # renaming a workspace) -- the new Workspaces page's "selected" row is
+    # keyed by id, not position, but the useWorkspacePicker hook's default
+    # selection falls back to whichever workspace lands first when no
+    # explicit choice has been made yet, so an unstable order could make
+    # the picker silently jump to a different workspace right after a
+    # rename.
+    query = select(Workspace).order_by(Workspace.id)
+    if ws_ids is not None:
+        if not ws_ids:
+            return []
+        query = query.where(Workspace.id.in_(ws_ids))
+    return session.exec(query).all()
 
 
 @router.patch("/{workspace_id}")
@@ -53,6 +83,42 @@ def update_workspace(
     session.commit()
     session.refresh(workspace)
     return workspace
+
+
+@router.get("/{workspace_id}/key")
+def get_workspace_key(
+    workspace_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)
+):
+    """Workspace-id-keyed equivalent of GET /api/targets/{id}/workspace-key
+    (issue #224): the new Workspaces management page looks up a workspace's
+    CI-ingestion API key directly by workspace id, rather than proxying
+    through whichever target happens to be selected in a picker."""
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    workspace = session.get(Workspace, workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
+
+
+@router.post("/{workspace_id}/key/regenerate")
+def regenerate_workspace_key_by_id(
+    workspace_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Workspace-id-keyed equivalent of POST
+    /api/targets/{id}/workspace-key/regenerate -- same DEVELOPER bar, same
+    in-place overwrite with no grace period (see that route's docstring)."""
+    workspace = session.get(Workspace, workspace_id)
+    if not workspace:
+        raise HTTPException(status_code=404, detail="workspace not found")
+    workspace.api_key = secrets.token_urlsafe(24)
+    session.add(workspace)
+    session.commit()
+    session.refresh(workspace)
+    return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
 
 
 @router.post("/bootstrap")

@@ -19,9 +19,12 @@ from app.core.security import create_session_token, hash_password
 from app.core.widgets import (
     WIDGET_CATALOG,
     build_default_layout,
+    resolve_ai_ml_risk,
     resolve_cve_timeline,
     resolve_findings_trend,
+    resolve_guardrail_activity,
     resolve_kpi_cards,
+    resolve_live_scan_activity,
     resolve_recent_findings,
     resolve_security_score,
     resolve_sla_compliance,
@@ -33,7 +36,12 @@ from app.models.models import (
     Finding,
     FindingState,
     Group,
+    IgnoreStatus,
     Organization,
+    PRGuardrailFinding,
+    PRGuardrailScan,
+    PRGuardrailStatus,
+    Scan,
     Severity,
     SlaRule,
     Target,
@@ -205,10 +213,100 @@ def test_recent_findings_ordered_and_limited(engine):
     assert data["items"][0]["title"] == "Leaked key"  # most recent first_seen
 
 
-def test_widget_catalog_has_eight_concrete_widgets():
+def test_live_scan_activity_lists_running_scans_most_recent_first(engine):
+    t1, t2, _ws_id = _seed(engine)
+    now = datetime.utcnow()
+    with Session(engine) as session:
+        session.add(Scan(target_id=t1, tool="semgrep", branch="main", status="running", started_at=now - timedelta(seconds=30)))
+        session.add(Scan(target_id=t2, tool="trivy", branch="main", status="running", started_at=now - timedelta(seconds=5)))
+        session.add(Scan(target_id=t1, tool="gosec", branch="main", status="completed", started_at=now - timedelta(minutes=10)))
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_live_scan_activity(session, None, {})
+    assert data["count"] == 2
+    assert [i["tool"] for i in data["items"]] == ["trivy", "semgrep"]  # most recently started first
+    assert data["items"][0]["target_name"] == "repo-b"
+
+
+def test_live_scan_activity_respects_limit(engine):
+    t1, _t2, _ws_id = _seed(engine)
+    now = datetime.utcnow()
+    with Session(engine) as session:
+        for i in range(5):
+            session.add(Scan(target_id=t1, tool=f"tool-{i}", branch="main", status="running", started_at=now - timedelta(seconds=i)))
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_live_scan_activity(session, None, {"limit": 2})
+    assert data["count"] == 5  # total count is unaffected by the display limit
+    assert len(data["items"]) == 2
+
+
+def test_ai_ml_risk_counts_flagged_repos_and_open_ai_tool_findings(engine):
+    t1, t2, _ws_id = _seed(engine)
+    with Session(engine) as session:
+        target = session.get(Target, t1)
+        target.is_ai_repo = True
+        session.add(target)
+        session.add(Finding(
+            target_id=t1, dedup_hash="ms1", tool="modelscan", rule_id="unsafe-pickle", title="Unsafe pickle load",
+            file_path="model.pkl", severity=Severity.CRITICAL, priority_score=200, state=FindingState.OPEN,
+        ))
+        session.add(Finding(
+            target_id=t1, dedup_hash="sl1", tool="semgrep-llm", rule_id="llm-eval-sink", title="LLM output reaches eval()",
+            file_path="app.py", severity=Severity.HIGH, priority_score=150, state=FindingState.OPEN,
+        ))
+        # Mitigated -- must not count toward the "open" figure.
+        session.add(Finding(
+            target_id=t1, dedup_hash="ms2", tool="modelscan", rule_id="unsafe-pickle", title="Fixed",
+            file_path="old.pkl", severity=Severity.CRITICAL, priority_score=200, state=FindingState.MITIGATED,
+        ))
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_ai_ml_risk(session, None, {})
+    assert data["ai_repo_count"] == 1
+    assert data["modelscan_open"] == 1
+    assert data["semgrep_llm_open"] == 1
+
+
+def test_guardrail_activity_lists_recent_scans_and_pending_approvals(engine):
+    t1, _t2, _ws_id = _seed(engine)
+    now = datetime.utcnow()
+    with Session(engine) as session:
+        blocked = PRGuardrailScan(
+            target_id=t1, pr_number=42, pr_title="Add feature", branch="feature-x",
+            status=PRGuardrailStatus.BLOCKED, new_findings_count=2, highest_new_severity="Critical",
+            created_at=now - timedelta(hours=1),
+        )
+        passed = PRGuardrailScan(
+            target_id=t1, pr_number=41, pr_title="Fix typo", branch="fix-typo",
+            status=PRGuardrailStatus.PASSED, new_findings_count=0, created_at=now - timedelta(hours=2),
+        )
+        session.add(blocked)
+        session.add(passed)
+        session.commit()
+        session.refresh(blocked)
+        session.add(PRGuardrailFinding(
+            pr_scan_id=blocked.id, tool="semgrep", rule_id="r1", title="New critical", file_path="app.py",
+            severity="Critical", ignore_status=IgnoreStatus.REQUESTED, ignore_requested_by="dev@acme.com",
+        ))
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_guardrail_activity(session, None, {})
+    assert data["pending_approvals"] == 1
+    assert len(data["items"]) == 2
+    assert data["items"][0]["pr_number"] == 42  # most recent first
+    assert data["items"][0]["status"] == "blocked"
+
+
+def test_widget_catalog_has_eleven_concrete_widgets():
     # Issue #63 added "security_score" to the original 6 (#69); issue #76
-    # added "fp_auto_suppressions" (opt-in, not part of the default layout
-    # -- see DEFAULT_WIDGET_ORDER, still 7 entries).
+    # added "fp_auto_suppressions"; issue #224 added "live_scan_activity",
+    # "ai_ml_risk" and "guardrail_activity" -- all opt-in, not part of the
+    # default layout (see DEFAULT_WIDGET_ORDER, still 7 entries).
     assert set(WIDGET_CATALOG.keys()) == {
         "kpi_cards",
         "findings_trend",
@@ -218,6 +316,9 @@ def test_widget_catalog_has_eight_concrete_widgets():
         "recent_findings",
         "security_score",
         "fp_auto_suppressions",
+        "live_scan_activity",
+        "ai_ml_risk",
+        "guardrail_activity",
     }
 
 
@@ -290,7 +391,7 @@ def test_get_widgets_catalog_endpoint(client, engine):
     res = client.get("/api/dashboard/widgets")
     assert res.status_code == 200
     body = res.json()
-    assert len(body) == 8
+    assert len(body) == len(WIDGET_CATALOG)
     assert {w["widget_id"] for w in body} == set(WIDGET_CATALOG.keys())
 
 

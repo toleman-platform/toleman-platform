@@ -22,6 +22,10 @@ import {
   Github,
   Menu,
   X,
+  ShieldCheck,
+  ClipboardCheck,
+  Building2,
+  Bot,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -54,6 +58,10 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/scans", label: "On-Demand Scan", icon: Scan },
       { href: "/sbom", label: "SBOM & OSS Vulns", icon: Package },
+      // IA review (#224): AI-repo detection (#185), ModelScan (#186) and
+      // the LLM ruleset (#189) had no dedicated nav entry at all -- findable
+      // only by already knowing to filter Findings by tool name.
+      { href: "/ai-security", label: "AI Security", icon: Bot },
     ],
   },
   {
@@ -64,13 +72,25 @@ const NAV_GROUPS: NavGroup[] = [
       // "Open Vulnerabilities"; all three now agree on one term.
       { href: "/findings", label: "Findings", icon: ShieldAlert },
       { href: "/pr-history", label: "PR History", icon: GitPullRequest },
+      // IA review (#224): daily security-review work, not admin config --
+      // moved out from under /admin. Deliberately NOT adminOnly: the page
+      // itself already gates on admin/security_engineer, this just gives
+      // security_engineer users (who could always reach it by typing the
+      // old /admin URL, but had no link) an actual nav entry.
+      { href: "/approval-queue", label: "Approval Queue", icon: ClipboardCheck },
+    ],
+  },
+  {
+    label: "Guardrails",
+    items: [
+      { href: "/guardrails", label: "Guardrails", icon: ShieldCheck, adminOnly: true },
     ],
   },
   {
     label: "Report",
     items: [
       { href: "/reports", label: "Compliance Reports", icon: FileText },
-      { href: "/ai-analysis", label: "AI Analysis", icon: BrainCircuit },
+      { href: "/ai-analysis", label: "Explain with AI", icon: BrainCircuit },
     ],
   },
   {
@@ -79,7 +99,11 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/audit-log", label: "Audit Log", icon: ScrollText },
       { href: "/github-org-logs", label: "GitHub Org Logs", icon: Github },
       { href: "/settings", label: "Settings", icon: Settings },
-      { href: "/admin", label: "Admin", icon: UserCog, adminOnly: true },
+      // IA review (#224): workspace rename, API key and role assignment used
+      // to be split between a target-picker-driven card in Settings and a
+      // flat tab in Admin. Both moved into this one page.
+      { href: "/workspaces", label: "Workspaces", icon: Building2, adminOnly: true },
+      { href: "/admin", label: "Control Plane", icon: UserCog, adminOnly: true },
     ],
   },
 ];

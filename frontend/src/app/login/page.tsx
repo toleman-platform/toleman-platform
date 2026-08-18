@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { BrandMark } from "@/components/brand-mark";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 
 function LoginForm() {
   const router = useRouter();
@@ -27,8 +27,18 @@ function LoginForm() {
       await api.login(email, password);
       router.push(searchParams.get("next") || "/");
       router.refresh();
-    } catch {
-      setError("Invalid email or password.");
+    } catch (e) {
+      // A wrong password (401) is the only case that should say "Invalid
+      // email or password" -- collapsing every failure into that message
+      // (the previous bare `catch { setError(...) }`) made a 429 rate limit,
+      // a network error, or a 500 all read as a typo, which is actively
+      // misleading when the real cause is something the user can't fix by
+      // retyping their password.
+      if (e instanceof ApiError && e.status !== 401) {
+        setError(e.message);
+      } else {
+        setError("Invalid email or password.");
+      }
     } finally {
       setLoading(false);
     }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   Group,
   PipelineIntegrationBatch,
@@ -18,7 +18,6 @@ import { useAsyncData } from "@/hooks/use-async-data";
 import { useActiveScans } from "@/hooks/use-active-scans";
 import { ScanProgress } from "@/components/scan-status";
 import { timeAgo } from "@/lib/utils";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GroupBadge } from "@/components/group-badge";
@@ -28,6 +27,16 @@ import { pollUntilSettled } from "@/lib/poll";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
 import type { TargetSort } from "./targets-filter-bar";
 import { Rocket, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+type QuickFilter = "all" | "attention" | "unscanned" | "stale";
+
+const QUICK_FILTERS: { value: QuickFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "attention", label: "Needs attention" },
+  { value: "unscanned", label: "Never scanned" },
+  { value: "stale", label: "Stale (30d+)" },
+];
 
 const ITEM_STATUS_LABEL: Record<string, string> = {
   pending: "Queued",
@@ -184,7 +193,13 @@ export function TargetsList({
   targetSummary?: TargetSummary;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
+  // Captured once at mount, same reasoning as ScanFreshness below: staleness
+  // is measured in days, so a render that reads the live clock is impure for
+  // no visible benefit, and React's purity rule (react-hooks/purity) flags a
+  // bare Date.now() call during render.
+  const [now] = useState(() => Date.now());
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [batch, setBatch] = useState<PipelineIntegrationBatch | null>(null);
@@ -204,6 +219,47 @@ export function TargetsList({
   const sort = (searchParams.get("sort") ?? "findings") as TargetSort;
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
   const pageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
+  // Issue #224: quick-glance status tabs -- Wiz/Snyk-style presets over
+  // "which of my repos need looking at" rather than making the reader
+  // reconstruct that from the criticality/sort dropdowns every visit.
+  // Client-side like search/criticality above (targetSummary/scanSummary are
+  // already fully fetched), and stored in the URL like every other filter
+  // here so it survives a reload/share.
+  const quick = (searchParams.get("quick") ?? "all") as QuickFilter;
+
+  function setQuick(next: QuickFilter) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next === "all") params.delete("quick");
+    else params.set("quick", next);
+    params.delete("page");
+    router.push(`${pathname}?${params.toString()}`);
+  }
+
+  // Counted against the full (search/criticality-filtered but not
+  // quick-filtered) set so a tab's own count doesn't change when it's the
+  // active one -- "Needs attention (6)" should mean the same 6 regardless of
+  // which tab is currently selected.
+  const quickCounts = useMemo(() => {
+    const base = targets.filter((t) => {
+      if (search) {
+        const haystack = `${t.name} ${t.repo_url}`.toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      if (criticality && t.label !== criticality) return false;
+      return true;
+    });
+    let attention = 0;
+    let unscanned = 0;
+    let stale = 0;
+    for (const t of base) {
+      const entry = targetSummary[String(t.id)];
+      if (entry && (entry.critical > 0 || entry.high > 0)) attention++;
+      const at = scanSummary[String(t.id)]?.last_scan_at;
+      if (!at) unscanned++;
+      else if ((now - new Date(at).getTime()) / 86_400_000 > 30) stale++;
+    }
+    return { all: base.length, attention, unscanned, stale };
+  }, [targets, search, criticality, targetSummary, scanSummary, now]);
 
   const filtered = useMemo(() => {
     const matched = targets.filter((t) => {
@@ -212,6 +268,15 @@ export function TargetsList({
         if (!haystack.includes(search)) return false;
       }
       if (criticality && t.label !== criticality) return false;
+      if (quick === "attention") {
+        const entry = targetSummary[String(t.id)];
+        if (!entry || (entry.critical === 0 && entry.high === 0)) return false;
+      }
+      if (quick === "unscanned" && scanSummary[String(t.id)]?.last_scan_at) return false;
+      if (quick === "stale") {
+        const at = scanSummary[String(t.id)]?.last_scan_at;
+        if (!at || (now - new Date(at).getTime()) / 86_400_000 <= 30) return false;
+      }
       return true;
     });
 
@@ -246,7 +311,7 @@ export function TargetsList({
           return openOf(b) - openOf(a) || criticalOf(b) - criticalOf(a) || byName(a, b);
       }
     });
-  }, [targets, search, criticality, sort, targetSummary, scanSummary]);
+  }, [targets, search, criticality, quick, sort, targetSummary, scanSummary, now]);
 
   useEffect(() => {
     if (!batch || batch.status !== "running") return;
@@ -410,6 +475,28 @@ export function TargetsList({
 
   return (
     <div className="flex flex-col gap-2">
+      {/* Issue #224: quick-glance status tabs above the list, same idea as
+          Snyk's target-list status filters -- "which of my repos need
+          looking at" answered in one click instead of reconstructing it
+          from the criticality/sort dropdowns. */}
+      <div className="flex flex-wrap gap-1 border-b border-border pb-2">
+        {QUICK_FILTERS.map((f) => (
+          <button
+            key={f.value}
+            onClick={() => setQuick(f.value)}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              quick === f.value
+                ? "bg-accent text-accent-strong"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {f.label}
+            <span className="ml-1.5 text-muted-foreground">({quickCounts[f.value]})</span>
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center justify-between gap-2">
         {filtered.length > 0 ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -598,13 +685,18 @@ export function TargetsList({
           the user picked a size larger than the result set, stranding them. */}
       <ActivityPagination total={filtered.length} page={clampedPage} pageSize={pageSize} position="top" />
 
+      {/* Issue #224: one bordered container with thin dividers between rows,
+          replacing a bordered `Card` per row -- 35+ nested boxes each with
+          their own border/radius/shadow was the single biggest visual-noise
+          contributor on this page next to Findings; a single outer border
+          plus a hairline between rows (Snyk/Wiz's own target-list pattern)
+          reads as one inventory instead of a stack of separate cards, with
+          zero loss of information -- every column, badge and link below is
+          unchanged. */}
+      {visible.length > 0 && (
+      <div className="divide-y divide-border rounded-lg border border-border bg-card">
       {visible.map((t) => (
-        <Card key={t.id} className="border-border bg-card py-0 transition-colors hover:border-primary/40">
-          {/* `py-0` above + the density token here, for the same reason as
-              finding-row.tsx: the base Card's `py-6` was 48px of padding no
-              density setting could reach (#172). */}
-          <CardContent
-            className="flex items-center gap-3 px-4"
+          <div key={t.id} className="flex items-center gap-3 px-4 transition-colors hover:bg-secondary/40"
             style={{ paddingTop: "var(--density-row-py)", paddingBottom: "var(--density-row-py)" }}
           >
             <input
@@ -685,9 +777,10 @@ export function TargetsList({
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">risk</div>
               </div>
             </Link>
-          </CardContent>
-        </Card>
+          </div>
       ))}
+      </div>
+      )}
 
       {filtered.length > pageSize && (
         <ActivityPagination total={filtered.length} page={clampedPage} pageSize={pageSize} />

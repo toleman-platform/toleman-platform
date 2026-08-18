@@ -272,6 +272,132 @@ def resolve_fp_auto_suppressions(session: Session, ws_ids, config: dict) -> dict
     return {"count": count, "since": month_start.date().isoformat()}
 
 
+def resolve_live_scan_activity(session: Session, ws_ids, config: dict) -> dict:
+    """Every scan currently running, most-recently-started first (issue
+    #224). Same query GET /api/scans/active uses (Scan.status == "running",
+    workspace-scoped, stale rows swept via mark_stale_if_needed) --
+    duplicated here rather than imported, since that endpoint returns a
+    by-target dict shaped for the target detail page's scan-buttons UI,
+    not the flat most-recent-first list this widget wants.
+    """
+    from app.core import scan_eta
+    from app.core.staleness import mark_stale_if_needed
+    from app.models.models import Scan
+
+    limit = max(1, min(int(config.get("limit", 8)), 50))
+    query = select(Scan).where(Scan.status == "running")
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
+    running = list(session.exec(query).all())
+
+    items = []
+    for scan in running:
+        # Re-check after the sweep, same as GET /api/scans/active: a row
+        # that just timed out is no longer active and must not be reported
+        # as such.
+        if mark_stale_if_needed(session, scan):
+            continue
+        items.append(scan)
+    items.sort(key=lambda s: s.started_at, reverse=True)
+
+    names = _target_names(session, {s.target_id for s in items})
+    return {
+        "count": len(items),
+        "items": [
+            {
+                "scan_id": s.id,
+                "tool": s.tool,
+                "target_id": s.target_id,
+                "target_name": names.get(s.target_id, f"target #{s.target_id}"),
+                "branch": s.branch,
+                "started_at": s.started_at.isoformat() + "Z",
+                **scan_eta.progress_for(session, s),
+            }
+            for s in items[:limit]
+        ],
+    }
+
+
+def resolve_ai_ml_risk(session: Session, ws_ids, config: dict) -> dict:
+    """AI/ML-repo count plus open findings from the two AI-specific scanners
+    (issue #224): AI-repo detection (#185), ModelScan (#186) and the LLM
+    ruleset (#189) shipped with no dashboard-level visibility at all -- an
+    org with several AI/ML repos had no way to tell from the dashboard
+    whether those scanners had found anything without already knowing to
+    filter Findings by tool name.
+    """
+    from app.core.ai_repo_status import effective_is_ai_repo
+
+    targets = _scoped_targets(session, ws_ids)
+    ai_target_ids = {t.id for t in targets if effective_is_ai_repo(t)}
+
+    findings = list(session.exec(_scoped_findings_query(ws_ids)).all())
+    open_findings = [f for f in findings if f.state in OPEN_STATES]
+    modelscan_open = sum(1 for f in open_findings if f.tool == "modelscan")
+    semgrep_llm_open = sum(1 for f in open_findings if f.tool == "semgrep-llm")
+
+    return {
+        "ai_repo_count": len(ai_target_ids),
+        "modelscan_open": modelscan_open,
+        "semgrep_llm_open": semgrep_llm_open,
+    }
+
+
+def resolve_guardrail_activity(session: Session, ws_ids, config: dict) -> dict:
+    """Recent PR Guardrail scan decisions plus the pending-approval count
+    (issue #224) -- the Approval Queue (moved to its own nav item this same
+    IA pass) is daily work with no at-a-glance visibility on the dashboard
+    itself; this surfaces both "is PR Guardrail actually catching things"
+    and "is anything waiting on security review" without a click.
+    """
+    from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan
+
+    limit = max(1, min(int(config.get("limit", 5)), 25))
+    targets = _scoped_targets(session, ws_ids)
+    target_by_id = {t.id: t for t in targets}
+    if not target_by_id:
+        return {"pending_approvals": 0, "items": []}
+
+    scans = list(
+        session.exec(
+            select(PRGuardrailScan)
+            .where(PRGuardrailScan.target_id.in_(target_by_id.keys()))
+            .order_by(PRGuardrailScan.created_at.desc())
+            .limit(limit)
+        ).all()
+    )
+    pending_approvals = len(
+        list(
+            session.exec(
+                select(PRGuardrailFinding)
+                .join(PRGuardrailScan, PRGuardrailScan.id == PRGuardrailFinding.pr_scan_id)
+                .where(
+                    PRGuardrailScan.target_id.in_(target_by_id.keys()),
+                    PRGuardrailFinding.ignore_status == IgnoreStatus.REQUESTED,
+                )
+            ).all()
+        )
+    )
+
+    return {
+        "pending_approvals": pending_approvals,
+        "items": [
+            {
+                "pr_scan_id": s.id,
+                "target_id": s.target_id,
+                "target_name": target_by_id[s.target_id].name,
+                "pr_number": s.pr_number,
+                "pr_title": s.pr_title,
+                "status": s.status,
+                "new_findings_count": s.new_findings_count,
+                "highest_new_severity": s.highest_new_severity,
+                "created_at": s.created_at.isoformat() + "Z",
+            }
+            for s in scans
+        ],
+    }
+
+
 WIDGET_CATALOG: dict[str, dict[str, Any]] = {
     "kpi_cards": {
         "name": "KPI Cards",
@@ -320,6 +446,24 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "description": "Findings auto-suppressed this month by learned false-positive rules (issue #76).",
         "resolver": resolve_fp_auto_suppressions,
         "default_config": {},
+    },
+    "live_scan_activity": {
+        "name": "Live Scan Activity",
+        "description": "Scans currently running, most-recently-started first.",
+        "resolver": resolve_live_scan_activity,
+        "default_config": {"limit": 8},
+    },
+    "ai_ml_risk": {
+        "name": "AI/ML Risk",
+        "description": "AI/ML-detected repos plus open ModelScan and LLM-ruleset findings.",
+        "resolver": resolve_ai_ml_risk,
+        "default_config": {},
+    },
+    "guardrail_activity": {
+        "name": "Guardrail Activity",
+        "description": "Recent PR Guardrail scan decisions plus findings pending security review.",
+        "resolver": resolve_guardrail_activity,
+        "default_config": {"limit": 5},
     },
 }
 

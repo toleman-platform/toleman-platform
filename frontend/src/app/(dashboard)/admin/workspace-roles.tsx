@@ -1,26 +1,30 @@
 "use client";
 
 import { useState } from "react";
-import { api, AuthUser, WorkspaceMembership, WorkspaceRole, workspaceDisplayName } from "@/lib/api";
+import { api, AuthUser, WorkspaceMembership, WorkspaceRole } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Building2, Trash2, UserCog } from "lucide-react";
+import { Trash2, UserCog } from "lucide-react";
 
 const WORKSPACE_ROLES: WorkspaceRole[] = ["viewer", "developer", "security_engineer"];
 
 // Issue #32: per-workspace role assignment layered on top of the global
-// admin/user/viewer role in user-management.tsx above -- this tab is what
-// determines a non-admin's permissions *within* a specific workspace
-// (targets, findings, PR guardrail, SBOM, discovery). A global admin can
-// still manage everything everywhere regardless of what's assigned here.
-export function WorkspaceRoles() {
-  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+// admin/user/viewer role -- this is what determines a non-admin's
+// permissions *within* a specific workspace (targets, findings, PR
+// guardrail, SBOM, discovery). A global admin can still manage everything
+// everywhere regardless of what's assigned here.
+//
+// Issue #224: used to own its own workspace <select> (via
+// useWorkspacePicker) as a standalone admin tab. The new Workspaces page
+// picks the workspace once at the page level and passes it down here, so
+// this only renders the role-assignment panel for whichever workspace the
+// page already has selected -- no second, redundant picker.
+export function WorkspaceRoles({ workspaceId }: { workspaceId: number | null }) {
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data: users, error: usersError } = useAsyncData<AuthUser[]>(() => api.users());
@@ -35,8 +39,7 @@ export function WorkspaceRoles() {
     deps: [workspaceId],
   });
 
-  const error =
-    mutationError ?? loadError?.message ?? workspacesError?.message ?? usersError?.message ?? null;
+  const error = mutationError ?? loadError?.message ?? usersError?.message ?? null;
 
   const [selectedUserId, setSelectedUserId] = useState<number | "">("");
   const [selectedRole, setSelectedRole] = useState<WorkspaceRole>("developer");
@@ -89,29 +92,6 @@ export function WorkspaceRoles() {
               manage every workspace.
             </div>
           </div>
-
-          {workspaces === null ? (
-            <SkeletonList count={1} />
-          ) : workspaces.length === 0 ? (
-            <EmptyState
-              icon={Building2}
-              title="No workspaces yet"
-              description="Connect a target first to create a workspace."
-              bare
-            />
-          ) : (
-            <select
-              className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
-              value={workspaceId ?? ""}
-              onChange={(e) => setWorkspaceId(Number(e.target.value))}
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {workspaceDisplayName(w, workspaces)}
-                </option>
-              ))}
-            </select>
-          )}
 
           {workspaceId != null && (
             <div className="flex flex-wrap items-end gap-2">

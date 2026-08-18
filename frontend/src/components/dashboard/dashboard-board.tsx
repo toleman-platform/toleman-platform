@@ -142,7 +142,22 @@ export function DashboardBoard({
         />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      {/* `grid-cols-1` below `lg:` is load-bearing, not decorative (#224): an
+          implicit single-column grid (no `grid-template-columns` at all,
+          which is what this was before `lg:` kicks in) sizes that column to
+          the widest child's max-content instead of clamping it to the
+          container's actual width. A grid item that can genuinely shrink at
+          layout time (a flex row that would happily wrap) still contributes
+          its un-shrunk max-content to that track-sizing pass -- so one
+          widget with a wide-but-shrinkable row (Security Score's gauge +
+          score list) silently pushed the ENTIRE dashboard grid, and with it
+          `<main>`, to ~1490px wide, horizontally overflowing every phone-
+          width viewport, while every other widget rendered as if nothing
+          were wrong. Tailwind's `grid-cols-1` compiles to
+          `repeat(1, minmax(0, 1fr))` -- the `minmax(0, ...)` is what forces
+          the track to the container's real width and lets children shrink
+          and wrap inside it normally, instead of `auto` sizing to content. */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {widgets.map((w, i) => {
           const meta = WIDGET_META[w.widget_id];
           if (!meta) return null;

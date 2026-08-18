@@ -7,6 +7,7 @@ import { SCAN_TOOLS } from "@/lib/scan-tools";
 import { Button } from "@/components/ui/button";
 import { ScanProgress } from "@/components/scan-status";
 import { useScanRun } from "@/hooks/use-scan-run";
+import { useActiveScans } from "@/hooks/use-active-scans";
 
 const TOOLS = SCAN_TOOLS;
 
@@ -24,10 +25,12 @@ export function ScanButtons({ targetId }: { targetId: number }) {
   // `toolRef` rather than the `tool` state: these callbacks are invoked from
   // the poll timer, which closed over whichever render created it.
   const toolRef = useRef<string | null>(null);
+  const { activeScans, refresh: refreshActiveScans } = useActiveScans();
   const scan = useScanRun({
     onCompleted: (findingsCount) => {
       setResult(`${toolRef.current}: ${findingsCount} findings ingested`);
       setTool(null);
+      refreshActiveScans();
       // New findings only appear on a server render, so the page is
       // refreshed when the scan actually lands -- not when it was dispatched,
       // which is what the old version effectively did.
@@ -36,8 +39,24 @@ export function ScanButtons({ targetId }: { targetId: number }) {
     onFailed: (message) => {
       setResult(`${toolRef.current}: ${message}`);
       setTool(null);
+      refreshActiveScans();
     },
   });
+
+  // A refresh used to lose all of this: useScanRun only ever knows about a
+  // scan this component instance dispatched itself, so reloading the page --
+  // or the scan having been started from the Scans page's bulk trigger, or
+  // another browser tab -- left a scan running server-side with nothing on
+  // screen saying so. useActiveScans polls GET /api/scans/active, the server
+  // truth, so anything already running shows up here too and survives a
+  // refresh because it is re-derived from the server on every mount, not
+  // carried in component state.
+  const running = activeScans[String(targetId)] ?? [];
+  // Excludes whichever scan this component itself just dispatched -- that
+  // one is already shown below via `scan` (full queued/running lifecycle,
+  // completion callback, failure reason). Showing it twice would be showing
+  // the same running scan under two different progress bars.
+  const externallyRunning = running.filter((r) => r.tool !== tool);
 
   async function run(nextTool: string) {
     setTool(nextTool);
@@ -60,6 +79,12 @@ export function ScanButtons({ targetId }: { targetId: number }) {
   }
 
   const busy = tool !== null;
+  // Concurrent scans of different tools against the same target are safe --
+  // each gets its own scan-scoped clone directory (runner.clone_repo is
+  // explicit about this: "so a concurrent scan" can't corrupt it) -- so only
+  // the specific tool that is actually running gets disabled, not every
+  // button the moment any one scan starts.
+  const runningTools = new Set([...(busy ? [tool] : []), ...running.map((r) => r.tool)]);
 
   return (
     <div className="space-y-2 text-right">
@@ -67,8 +92,8 @@ export function ScanButtons({ targetId }: { targetId: number }) {
           non-wrapping row squeezed the target header beside it (#197). */}
       <div className="flex flex-wrap justify-end gap-2">
         {TOOLS.map((t) => (
-          <Button key={t} size="sm" variant="outline" disabled={busy} onClick={() => run(t)}>
-            {tool === t ? "Running..." : `Run ${t}`}
+          <Button key={t} size="sm" variant="outline" disabled={runningTools.has(t)} onClick={() => run(t)}>
+            {runningTools.has(t) ? "Running..." : `Run ${t}`}
           </Button>
         ))}
       </div>
@@ -84,6 +109,12 @@ export function ScanButtons({ targetId }: { targetId: number }) {
           />
         </div>
       )}
+
+      {externallyRunning.map((r) => (
+        <div key={r.scan_id} className="flex justify-end">
+          <ScanProgress phase="running" tool={r.tool} elapsedSeconds={r.elapsed_seconds} etaSeconds={r.eta_seconds} />
+        </div>
+      ))}
 
       {result && <p className="text-xs text-muted-foreground">{result}</p>}
     </div>

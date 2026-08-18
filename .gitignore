@@ -1,5 +1,6 @@
 backend/venv/
 backend/.env
+.env
 backend/__pycache__/
 backend/**/__pycache__/
 backend/*.egg-info/
@@ -10,3 +11,5 @@ frontend/.env.local
 
 .DS_Store
 .claude/worktrees/
+code-review-report.md
+market-research-report.md

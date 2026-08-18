@@ -558,33 +558,6 @@ export type AiBomView = {
   components: AiBomComponent[];
 };
 
-// First-run onboarding questionnaire (issue #203).
-export type OnboardingChoice = { value: string; label: string };
-export type OnboardingChoices = {
-  languages: OnboardingChoice[];
-  cloud_providers: OnboardingChoice[];
-  pr_enforcement: OnboardingChoice[];
-};
-export type OnboardingProfile = {
-  exists: boolean;
-  completed: boolean;
-  skipped: boolean;
-  should_prompt?: boolean;
-  languages: string[];
-  cloud_providers: string[];
-  uses_iac: boolean | null;
-  builds_ai_features: boolean | null;
-  ships_containers: boolean | null;
-  pr_enforcement_preference: string | null;
-  uses_slack: boolean | null;
-  uses_jira: boolean | null;
-  applied?: { tool: string; reason: string }[];
-};
-export type OnboardingRecommendations = {
-  recommendations: { tool: string; enabled: boolean; reason: string }[];
-  summary: { enabled: number; disabled: number; disabled_tools: { tool: string; reason: string }[] };
-};
-
 export type DiscoveryRunResult = {
   run_id: number;
   target_id: number;
@@ -771,7 +744,10 @@ export type WidgetId =
   | "top_risky_repos"
   | "recent_findings"
   | "security_score"
-  | "fp_auto_suppressions";
+  | "fp_auto_suppressions"
+  | "live_scan_activity"
+  | "ai_ml_risk"
+  | "guardrail_activity";
 
 export type WidgetCatalogEntry = { widget_id: WidgetId; name: string; description: string };
 
@@ -822,6 +798,38 @@ export type RecentFindingsData = { items: RecentFindingItem[] };
 // Issue #76: "X findings auto-suppressed this month" widget data.
 export type FpAutoSuppressionsData = { count: number; since: string };
 
+// Issue #224: three new widgets -- live scan activity (surfaces
+// GET /api/scans/active-equivalent data on the dashboard itself), AI/ML
+// risk (AI-repo detection + ModelScan/LLM-ruleset findings, previously
+// invisible outside the dedicated AI Security page) and guardrail activity
+// (recent PR Guardrail decisions + the Approval Queue's pending count).
+export type LiveScanActivityItem = {
+  scan_id: number;
+  tool: string;
+  target_id: number;
+  target_name: string;
+  branch: string;
+  started_at: string;
+  elapsed_seconds: number;
+  eta_seconds: number | null;
+};
+export type LiveScanActivityData = { count: number; items: LiveScanActivityItem[] };
+
+export type AiMlRiskData = { ai_repo_count: number; modelscan_open: number; semgrep_llm_open: number };
+
+export type GuardrailActivityItem = {
+  pr_scan_id: number;
+  target_id: number;
+  target_name: string;
+  pr_number: number;
+  pr_title: string;
+  status: string;
+  new_findings_count: number;
+  highest_new_severity: string | null;
+  created_at: string;
+};
+export type GuardrailActivityData = { pending_approvals: number; items: GuardrailActivityItem[] };
+
 export type WidgetDataMap = {
   kpi_cards: KpiCardsData;
   findings_trend: FindingsTrendData;
@@ -831,6 +839,9 @@ export type WidgetDataMap = {
   recent_findings: RecentFindingsData;
   security_score: SecurityScore;
   fp_auto_suppressions: FpAutoSuppressionsData;
+  live_scan_activity: LiveScanActivityData;
+  ai_ml_risk: AiMlRiskData;
+  guardrail_activity: GuardrailActivityData;
 };
 
 export type WidgetDataEntry =
@@ -1012,26 +1023,9 @@ export const api = {
   scanSummary: () => jsonFetch<ScanSummary>("/api/scans/summary"),
   activeScans: () => jsonFetch<ActiveScans>("/api/scans/active"),
   aibom: (targetId: number) => jsonFetch<AiBomView>(`/api/sbom/${targetId}/aibom`),
-  onboardingChoices: () => jsonFetch<OnboardingChoices>("/api/onboarding/choices"),
-  onboardingProfile: () => jsonFetch<OnboardingProfile>("/api/onboarding/profile"),
-  saveOnboardingProfile: (payload: Record<string, unknown>) =>
-    jsonFetch<OnboardingProfile>("/api/onboarding/profile", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
   targetsSummary: () => jsonFetch<TargetSummary>("/api/targets/summary"),
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
-  workspaceKey: (targetId: number) =>
-    jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(`/api/targets/${targetId}/workspace-key`),
-  // Issue #129: rotate the workspace's CI-push-ingestion API key. The old
-  // key stops authenticating against /api/ingest immediately (no grace
-  // period) once this resolves.
-  regenerateWorkspaceKey: (targetId: number) =>
-    jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(
-      `/api/targets/${targetId}/workspace-key/regenerate`,
-      { method: "POST" }
-    ),
   // Issue #109: personal access tokens for the public API
   // (/api/public/v1/*, Bearer-token auth) -- distinct from the workspace
   // API key above, which is CI-ingest-only and shared workspace-wide.
@@ -1188,9 +1182,24 @@ export const api = {
     jsonFetch<AuthUser>(`/api/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
   workspaces: () => jsonFetch<WorkspaceSummary[]>("/api/workspaces"),
-  // Issue #62: workspace-level enforcement-mode fallback setting.
-  updateWorkspace: (id: number, patch: { enforcement_mode?: EnforcementMode | null }) =>
+  // Issue #62: workspace-level enforcement-mode fallback setting. Issue
+  // #224: also accepts `name` for renaming a workspace from the new
+  // Workspaces management page.
+  updateWorkspace: (id: number, patch: { enforcement_mode?: EnforcementMode | null; name?: string }) =>
     jsonFetch<WorkspaceSummary>(`/api/workspaces/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  // Issue #224: workspace-id-keyed API key lookup/rotation, for the new
+  // Workspaces page -- direct by id rather than proxying through
+  // api.workspaceKey(targetId), which forced picking an arbitrary target
+  // from that workspace just to get at its shared key.
+  workspaceApiKey: (workspaceId: number) =>
+    jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(
+      `/api/workspaces/${workspaceId}/key`
+    ),
+  regenerateWorkspaceApiKey: (workspaceId: number) =>
+    jsonFetch<{ workspace_id: number; workspace_name: string; api_key: string }>(
+      `/api/workspaces/${workspaceId}/key/regenerate`,
+      { method: "POST" }
+    ),
   workspaceMemberships: (workspaceId?: number) =>
     jsonFetch<WorkspaceMembership[]>(`/api/admin/workspace-roles${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
   assignWorkspaceRole: (userId: number, workspaceId: number, role: WorkspaceRole) =>

@@ -19,7 +19,7 @@ function isSessionError(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;
 }
 
-const LOG_STATUS_COLOR: Record<string, string> = {
+export const LOG_STATUS_COLOR: Record<string, string> = {
   running: "border-chart-1/20 bg-chart-1/10 text-chart-1",
   passed: "border-chart-5/20 bg-chart-5/10 text-chart-5",
   blocked: "border-destructive/20 bg-destructive/10 text-destructive",

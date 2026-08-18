@@ -18,11 +18,15 @@ import {
   ShieldCheck,
   Inbox,
   AlertOctagon,
+  Loader2,
+  Bot,
+  GitPullRequest,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { SEVERITY_COLOR } from "@/lib/severity";
+import { LOG_STATUS_COLOR } from "@/components/pr-guardrail-log";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
 import { api } from "@/lib/api";
@@ -38,6 +42,9 @@ import type {
   RecentFindingsData,
   SecurityScore,
   FpAutoSuppressionsData,
+  LiveScanActivityData,
+  AiMlRiskData,
+  GuardrailActivityData,
   Group,
   Target,
 } from "@/lib/api";
@@ -56,6 +63,9 @@ export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementT
   cve_timeline: { label: "CVE Timeline", icon: Bug, colSpanClass: "lg:col-span-2" },
   recent_findings: { label: "Recent Findings", icon: ListChecks },
   fp_auto_suppressions: { label: "Auto-Suppressed Findings", icon: ShieldCheck },
+  live_scan_activity: { label: "Live Scan Activity", icon: Loader2 },
+  ai_ml_risk: { label: "AI/ML Risk", icon: Bot },
+  guardrail_activity: { label: "Guardrail Activity", icon: GitPullRequest, colSpanClass: "lg:col-span-2" },
 };
 
 // Locale-independent date formatting (YYYY-MM-DD from the ISO timestamp
@@ -174,6 +184,126 @@ function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
 
 function FindingsTrendWidget({ data }: { data: FindingsTrendData }) {
   return <FindingsTrendLine data={data} />;
+}
+
+// Issue #224: surfaces GET /api/scans/active's data (previously only
+// visible on the Scans page and each target's own detail page) directly on
+// the dashboard -- "is anything running right now" is a question people
+// otherwise had to go looking for.
+function LiveScanActivityWidget({ data }: { data: LiveScanActivityData }) {
+  if (data.items.length === 0) return <EmptyState icon={Loader2}>No scans running right now.</EmptyState>;
+  return (
+    <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
+      {data.items.map((s) => (
+        <Link
+          key={s.scan_id}
+          href={`/targets/${s.target_id}`}
+          className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2 hover:bg-accent/40"
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent-strong" aria-hidden="true" />
+              <span className="truncate text-sm text-foreground">{s.target_name}</span>
+              <Badge variant="outline" className="shrink-0 text-[10px]">
+                {s.tool}
+              </Badge>
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              {s.elapsed_seconds}s elapsed{s.eta_seconds ? ` · ~${s.eta_seconds}s total` : ""}
+            </p>
+          </div>
+        </Link>
+      ))}
+      {data.count > data.items.length && (
+        <p className="px-1 text-xs text-muted-foreground">+{data.count - data.items.length} more running</p>
+      )}
+    </div>
+  );
+}
+
+// Issue #224: AI-repo detection, ModelScan and the LLM ruleset had no
+// dashboard-level presence -- an org running them had to already know to
+// look at the dedicated AI Security page (or filter Findings by tool name)
+// to tell whether either scanner had found anything.
+function AiMlRiskWidget({ data }: { data: AiMlRiskData }) {
+  if (data.ai_repo_count === 0) {
+    return (
+      <EmptyState icon={Bot}>
+        No AI/ML repos detected yet. A target is flagged automatically from its dependency manifests, or set
+        manually on its Settings tab.
+      </EmptyState>
+    );
+  }
+  const totalOpen = data.modelscan_open + data.semgrep_llm_open;
+  return (
+    <Link href="/ai-security" className="flex items-center gap-6 rounded-md px-1 py-1 hover:bg-accent/40">
+      <div>
+        <p className="text-2xl font-bold text-foreground">{data.ai_repo_count}</p>
+        <p className="text-xs text-muted-foreground">AI/ML repos</p>
+      </div>
+      <div>
+        <p className={`text-2xl font-bold ${data.modelscan_open > 0 ? "text-chart-3" : "text-foreground"}`}>
+          {data.modelscan_open}
+        </p>
+        <p className="text-xs text-muted-foreground">ModelScan open</p>
+      </div>
+      <div>
+        <p className={`text-2xl font-bold ${data.semgrep_llm_open > 0 ? "text-chart-3" : "text-foreground"}`}>
+          {data.semgrep_llm_open}
+        </p>
+        <p className="text-xs text-muted-foreground">LLM ruleset open</p>
+      </div>
+      {totalOpen === 0 && <p className="text-xs text-muted-foreground">No findings from either scanner.</p>}
+    </Link>
+  );
+}
+
+// Issue #224: recent PR Guardrail decisions plus the Approval Queue's
+// pending count, reusing the exact same status colors as the full PR
+// Guardrail log (pr-guardrail-log.tsx) so a "blocked" pill reads the same
+// wherever it appears.
+function GuardrailActivityWidget({ data }: { data: GuardrailActivityData }) {
+  return (
+    <div className="flex flex-col gap-3">
+      {data.pending_approvals > 0 && (
+        <Link
+          href="/approval-queue"
+          className="flex items-center justify-between rounded-md border border-chart-3/20 bg-chart-3/10 px-3 py-2 text-sm text-chart-3 hover:bg-chart-3/20"
+        >
+          <span>
+            {data.pending_approvals} finding{data.pending_approvals === 1 ? "" : "s"} pending security review
+          </span>
+          <span className="text-xs underline">Review</span>
+        </Link>
+      )}
+      {data.items.length === 0 ? (
+        <EmptyState icon={GitPullRequest}>No PR Guardrail scans yet.</EmptyState>
+      ) : (
+        <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
+          {data.items.map((s) => (
+            <Link
+              key={s.pr_scan_id}
+              href={`/targets/${s.target_id}?tab=vulnerabilities`}
+              className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2 hover:bg-accent/40"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm text-foreground">
+                  #{s.pr_number} {s.pr_title || "(untitled PR)"}
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {s.target_name}
+                  {s.new_findings_count > 0 && ` · ${s.new_findings_count} new finding${s.new_findings_count === 1 ? "" : "s"}`}
+                </p>
+              </div>
+              <Badge variant="outline" className={`shrink-0 ${LOG_STATUS_COLOR[s.status] ?? "text-muted-foreground"}`}>
+                {s.status}
+              </Badge>
+            </Link>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function TopRiskyReposWidget({ data }: { data: TopRiskyReposData }) {
@@ -367,15 +497,49 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
       ) : score.target_count === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">No targets in scope.</p>
       ) : (
-        <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-center sm:justify-center sm:gap-10">
-          {/* Issue #173: this row used to be `justify-around`, which stranded
-              a 220px gauge and a max-w-sm list inside a ~1100px full-width
-              card with dead space around both. It's now a centred row with an
-              explicit gap so the two halves read as one unit, and the
-              breakdown list is allowed to grow (its parenthetical detail text
-              was cramped at max-w-sm) without stretching to the full card. */}
+        <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-center gap-6 sm:gap-8">
+          {/* max-w-4xl (896px), not max-w-2xl (672px): the gauge (280px) +
+              gap (32px) + score list (up to 480px) need ~792px to sit on one
+              line, and 672px was just short of that -- forcing an unwanted
+              wrap on every desktop viewport instead of only the ones that
+              actually need it.
+
+              Issue #173/#224: this row used to be `justify-around`, then a
+              `justify-center` pair with a `w-full max-w-md` list -- but
+              `width: 100%` on a flex child ignores the parent's centering and
+              just claims the available row width for itself, so on a wide
+              dashboard card the gauge stayed pinned to the left, the list
+              claimed a large but not-full-width slab on the right, and the
+              gap between them read as a layout bug rather than intentional
+              spacing. It was then switched to a fixed-width list gated by a
+              `sm:` breakpoint, which broke differently: `sm:flex-row` doesn't
+              know how wide THIS card actually is (that depends on the
+              sidebar + the dashboard grid, not the viewport), so on any
+              layout narrower than the gauge+list's combined ~790px but still
+              past the 640px `sm:` breakpoint, the row forced both fixed-width
+              children into a space too small for them -- flexbox's default
+              shrink then compressed the gauge's box (see shrink-0 on
+              SecurityScoreGauge's own root for why that broke the arc/number
+              alignment) instead of just wrapping. `flex-wrap` here reacts to
+              the row's REAL available width instead of a viewport guess: the
+              list drops to its own line below the gauge exactly when there
+              isn't room beside it.
+
+              The list itself must stay shrinkable (`w-full max-w-[480px]`,
+              no `shrink-0`) even though that looks backwards -- this whole
+              dashboard's widget grid (dashboard-board.tsx) has no explicit
+              `grid-cols-1` below `lg:`, so its single implicit column sizes
+              itself to content rather than clamping to the viewport. Giving
+              the list a `shrink-0` + fixed pixel width once (480px) made its
+              *used* width a hard 480px regardless of how little room was
+              actually available, which the grid dutifully accommodated by
+              growing the entire page 1000+px wider than the viewport on
+              mobile instead of wrapping. Letting it shrink is what lets the
+              grid track -- and the whole page -- stay pinned to the real
+              viewport width; flex-wrap plus a max-width cap is enough to
+              keep it from looking cramped once there IS room. */}
           <SecurityScoreGauge score={score.score} grade={score.grade} />
-          <div className="grid w-full max-w-md grid-cols-1 gap-1.5 text-xs">
+          <div className="grid w-full max-w-[480px] grid-cols-1 gap-1.5 text-xs">
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;
@@ -427,6 +591,12 @@ export function WidgetBody({ entry }: { entry: WidgetDataEntry | undefined }) {
       return <SecurityScoreWidget initialData={entry.data as SecurityScore} />;
     case "fp_auto_suppressions":
       return <FpAutoSuppressionsWidget data={entry.data as FpAutoSuppressionsData} />;
+    case "live_scan_activity":
+      return <LiveScanActivityWidget data={entry.data as LiveScanActivityData} />;
+    case "ai_ml_risk":
+      return <AiMlRiskWidget data={entry.data as AiMlRiskData} />;
+    case "guardrail_activity":
+      return <GuardrailActivityWidget data={entry.data as GuardrailActivityData} />;
     default:
       return <ErrorState message={`unknown widget type: ${entry.widget_id}`} />;
   }

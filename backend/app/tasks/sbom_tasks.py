@@ -9,6 +9,7 @@ from app.core.db import engine
 from app.core.notifications import dispatch_notification
 from app.core.aibom import extract_ai_components, upsert_aibom_components
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
+from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
@@ -130,6 +131,16 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 upsert_aibom_components(session, target_id, target.default_branch, ai_components)
             except Exception:
                 logger.exception("AIBOM extraction failed for target %s", target_id)
+
+            # Issue #181: run the OSV malicious-package check over the freshly
+            # persisted inventory. Free (no clone, no subprocess -- just OSV
+            # HTTP calls against rows we already have) and best-effort: a
+            # malware-check failure must not fail an otherwise-successful SBOM
+            # run, and its own "failed" status is never reported as clean.
+            try:
+                check_and_ingest_malware(session, target)
+            except Exception:
+                logger.exception("Malware check failed for target %s", target_id)
 
             all_count = len(
                 session.exec(

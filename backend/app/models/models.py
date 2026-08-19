@@ -920,13 +920,15 @@ class NotificationEventType(str, Enum):
     app.core.notifications for where each of these actually fires:
     critical_finding/kev_cve at ingestion time (app.core.ingestion, same
     hook point as #74's Jira auto-create), sla_breach at the query-time
-    point #70 already computes SLA violation (app.api.findings), and
+    point #70 already computes SLA violation (app.api.findings),
     scan_failure when a Scan/DiscoveryRun/SbomRun transitions to status
-    "failed" (app.tasks.*)."""
+    "failed" (app.tasks.*), and malicious_package when a net-new finding is
+    a malicious dependency (tool="osv-malware", #179)."""
     CRITICAL_FINDING = "critical_finding"
     KEV_CVE = "kev_cve"
     SLA_BREACH = "sla_breach"
     SCAN_FAILURE = "scan_failure"
+    MALICIOUS_PACKAGE = "malicious_package"
 
 
 class NotificationPreference(SQLModel, table=True):

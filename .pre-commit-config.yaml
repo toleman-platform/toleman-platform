@@ -1,0 +1,19 @@
+# Pre-commit hooks. Install once per checkout with:
+#
+#   pip install pre-commit && pre-commit install
+#
+# The gitleaks hook scans the staged changes for hardcoded secrets before
+# every commit, using the same release (v8.21.2) as the CI self-scan job in
+# .github/workflows/self-scan.yml -- so a secret caught locally is caught by
+# CI too, and vice versa. A failed scan blocks the commit; run `git commit`
+# with `SKIP=gitleaks` only when you have a deliberate reason.
+#
+# `id: gitleaks` builds gitleaks from source via pre-commit's Go environment
+# (cached after the first run, no manual gitleaks/Go install needed). If you
+# already have gitleaks on your PATH, swap it for `id: gitleaks-system` to
+# avoid the Go build; if you prefer Docker, use `id: gitleaks-docker`.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks

@@ -431,7 +431,7 @@ export type AuthUser = { id: number; email: string; name: string; role: string }
 // no delivery yet (no SMTP infra in this codebase) -- see the backend's
 // NotificationChannel docstring.
 export type NotificationChannel = "email" | "slack";
-export type NotificationEventType = "critical_finding" | "kev_cve" | "sla_breach" | "scan_failure";
+export type NotificationEventType = "critical_finding" | "kev_cve" | "sla_breach" | "scan_failure" | "malicious_package";
 export type NotificationPreference = { channel: NotificationChannel; event_type: NotificationEventType; enabled: boolean };
 
 // Issue #109: public API personal access tokens.
@@ -547,6 +547,17 @@ export type ScanHistoryEntry = {
 };
 
 export type SbomExportFormat = "cyclonedx-json" | "spdx-json" | "csv" | "pdf";
+
+// Issue #181: result of POST /api/sbom/{id}/malware-check. `status` is
+// "clean" (checked, nothing malicious), "found" (N malicious packages), or
+// "failed" (OSV unreachable -- deliberately distinct from "clean" so an
+// outage never reads as a healthy repo).
+export type MalwareCheckResult = {
+  target_id: number;
+  status: "clean" | "found" | "failed";
+  malicious_count: number;
+  findings_created: number;
+};
 
 // Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows
 // (#59) -- every POST that used to clone+scan synchronously now returns one
@@ -1335,6 +1346,11 @@ export const api = {
       method: "POST",
     }),
   getSbomRun: (targetId: number, runId: number) => jsonFetch<SbomRunResult>(`/api/sbom/${targetId}/runs/${runId}`),
+  // Issue #181: re-check a target's existing SBOM inventory for malicious
+  // packages (via OSV.dev) without regenerating the SBOM. Runs synchronously
+  // -- a handful of OSV HTTP calls, no clone/subprocess.
+  malwareCheck: (targetId: number) =>
+    jsonFetch<MalwareCheckResult>(`/api/sbom/${targetId}/malware-check`, { method: "POST" }),
   exportSbom: async (targetId: number, format: SbomExportFormat = "cyclonedx-json"): Promise<Blob> => {
     const res = await fetch(`${apiBaseUrl()}/api/sbom/${targetId}/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);

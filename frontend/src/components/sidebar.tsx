@@ -26,6 +26,7 @@ import {
   ClipboardCheck,
   Building2,
   Bot,
+  Bug,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/scans", label: "On-Demand Scan", icon: Scan },
       { href: "/sbom", label: "SBOM & OSS Vulns", icon: Package },
+      { href: "/malicious-packages", label: "Malicious Packages", icon: Bug },
       // IA review (#224): AI-repo detection (#185), ModelScan (#186) and
       // the LLM ruleset (#189) had no dedicated nav entry at all -- findable
       // only by already knowing to filter Findings by tool name.

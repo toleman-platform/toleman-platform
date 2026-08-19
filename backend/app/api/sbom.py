@@ -13,6 +13,7 @@ from app.api.deps import get_session
 from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
 from app.core.async_jobs import create_running_row
 from app.core.aibom import AiComponent, aibom_summary, build_aibom
+from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import AiBomComponent, SbomComponent, SbomRun, Target, User, WorkspaceRole
@@ -184,6 +185,24 @@ def generate_sbom(
         status_code=202,
         content={"run_id": run.id, "target_id": target_id, "status": run.status},
     )
+
+
+@router.post("/{target_id}/malware-check")
+def malware_check(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Issue #181: re-check a target's existing SBOM inventory for malicious
+    packages (via OSV.dev) without regenerating the SBOM, since OSV adds
+    MAL- records continuously -- a package clean at scan time can be flagged
+    a week later. Runs synchronously (a handful of OSV HTTP calls, no clone/
+    subprocess) and persists hits as Critical `Finding` rows (tool=
+    "osv-malware"). Returns a distinct "failed" status when OSV is
+    unreachable, so a network outage is never reported as clean."""
+    target = _get_target(target_id, session)
+    result = check_and_ingest_malware(session, target)
+    return {**result, "target_id": target_id}
 
 
 @router.get("/{target_id}/runs/{run_id}")

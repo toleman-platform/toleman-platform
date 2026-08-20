@@ -32,9 +32,17 @@ ENV NODE_ENV=production \
 # Standalone output already traces the minimal node_modules subset needed at
 # runtime -- .next/static and public/ are copied in separately since the
 # standalone server doesn't serve them from within .next/standalone itself.
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+# --- Non-root runtime user -------------------------------------------------
+# Previously ran as root (semgrep dockerfile.security.missing-user). The
+# node:22-slim base already ships an unprivileged `node` user (uid 1000), so
+# there is no useradd here -- COPY --chown just hands the traced standalone
+# output to it directly, which also avoids a second full-size layer that a
+# separate `RUN chown -R` would create.
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/.next/standalone ./
+COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+
+USER node
 
 EXPOSE 3000
 

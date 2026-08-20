@@ -135,6 +135,34 @@ ARG BUILD_COMMIT=""
 ENV BUILD_VERSION=${BUILD_VERSION} \
     BUILD_COMMIT=${BUILD_COMMIT}
 
+# --- Non-root runtime user -------------------------------------------------
+# The image previously ran everything as root (flagged by semgrep's
+# dockerfile.security.missing-user rule). Dropping privileges is not just a
+# lint fix here: this container shells out to four scanner CLIs against
+# arbitrary cloned third-party repositories, so a scanner parsing hostile
+# input is the exact place you do not want root.
+#
+# HOME must be a real, writable directory rather than left at "/" -- the
+# scanners keep caches under it and silently fail or re-download on every
+# invocation otherwise. Concretely: trivy stores its vulnerability DB in
+# $HOME/.cache/trivy (a multi-hundred-MB download it refuses to run without),
+# and semgrep writes $HOME/.semgrep. XDG_CACHE_HOME is set explicitly because
+# trivy honours it in preference to $HOME/.cache.
+#
+# The scan workdir (app/core/config.py's scan_workdir) is created and chowned
+# here rather than relying on /tmp being world-writable, so the directory's
+# ownership is explicit and does not depend on the umask of whoever created
+# it first. A deployment that overrides SCAN_WORKDIR to somewhere outside
+# /tmp must chown that path itself.
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin rikugan \
+    && mkdir -p /tmp/rikugan-scans /home/rikugan/.cache \
+    && chown -R rikugan:rikugan /app /tmp/rikugan-scans /home/rikugan
+
+ENV HOME=/home/rikugan \
+    XDG_CACHE_HOME=/home/rikugan/.cache
+
+USER rikugan
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

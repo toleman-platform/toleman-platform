@@ -113,7 +113,11 @@ export default function SbomPage() {
   // Tagged with the target it describes rather than cleared by an effect on
   // target change: a "3 new components" badge belonging to a different repo
   // is worse than no badge, and deriving the match makes that impossible.
-  const [lastScan, setLastScan] = useState<{ targetId: number; new_count: number } | null>(null);
+  const [lastScan, setLastScan] = useState<{
+    targetId: number;
+    new_count: number;
+    malware?: { status: "clean" | "found" | "failed"; malicious_count: number; findings_created: number };
+  } | null>(null);
   const [tab, setTab] = useState<Tab>("components");
   const searchParams = useSearchParams();
   const [exporting, setExporting] = useState(false);
@@ -272,7 +276,7 @@ export default function SbomPage() {
     try {
       const res = await api.importGithubSbom(targetId);
       reloadPersisted();
-      setLastScan({ targetId, new_count: res.new_count });
+      setLastScan({ targetId, new_count: res.new_count, malware: res.malware });
     } catch (e) {
       setError(e instanceof Error ? e.message : "GitHub SBOM import failed");
     } finally {
@@ -289,7 +293,7 @@ export default function SbomPage() {
     try {
       const res = await api.uploadSbom(targetId, file);
       reloadPersisted();
-      setLastScan({ targetId, new_count: res.new_count });
+      setLastScan({ targetId, new_count: res.new_count, malware: res.malware });
     } catch (err) {
       setError(err instanceof Error ? err.message : "SBOM upload failed");
     } finally {
@@ -484,6 +488,13 @@ export default function SbomPage() {
               {scanSummary.new_count > 0
                 ? `${scanSummary.new_count} new component${scanSummary.new_count === 1 ? "" : "s"} found`
                 : "No new components"}
+            </p>
+          )}
+
+          {!error && !persistedError && scanSummary?.malware?.status === "found" && (
+            <p className="text-sm text-destructive">
+              {scanSummary.malware.malicious_count} malicious package
+              {scanSummary.malware.malicious_count === 1 ? "" : "s"} detected via OSV
             </p>
           )}
 

@@ -568,10 +568,13 @@ export type MalwareCheckResult = {
 // Issue #227: result of POST /api/sbom/{id}/github-sync and
 // /api/sbom/{id}/upload -- both merge components into the persisted SBOM and
 // report how many were net-new (same shape generateSbom's polling returns).
+// Both also run the OSV malicious-package check (#181) over the freshly
+// persisted inventory and report its outcome under `malware`.
 export type SbomImportResult = {
   target_id: number;
   count: number;
   new_count: number;
+  malware?: Omit<MalwareCheckResult, "target_id">;
 };
 
 // Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows

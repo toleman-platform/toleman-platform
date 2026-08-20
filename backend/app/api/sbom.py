@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -26,6 +27,8 @@ from app.tasks.sbom_tasks import run_sbom_generation
 
 router = APIRouter(prefix="/api/sbom", tags=["sbom"])
 
+logger = logging.getLogger(__name__)
+
 # Generous for a real CycloneDX/SPDX document (issue #227 review) -- the
 # first cap on any request body in this codebase, set here because this is
 # also the first multipart-upload endpoint.
@@ -44,6 +47,17 @@ def _get_target(target_id: int, session: Session) -> Target:
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     return target
+
+
+def _run_malware_check_best_effort(session: Session, target: Target) -> dict:
+    """Issue #181: flag any newly-persisted packages that OSV marks malicious.
+    Best-effort -- a malware-check crash must never fail an otherwise-successful
+    import/upload, and its own "failed" status is never reported as clean."""
+    try:
+        return check_and_ingest_malware(session, target)
+    except Exception:
+        logger.exception("Malware check failed for target %s", target.id)
+        return {"status": "failed", "malicious_count": 0, "findings_created": 0}
 
 
 def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]:
@@ -243,7 +257,13 @@ def import_github_sbom(
             detail=f"GitHub dependency graph is unavailable for this target: {exc}",
         )
     new_components = upsert_components(session, target_id, target.default_branch, components, source="github")
-    return {"target_id": target_id, "count": len(components), "new_count": len(new_components)}
+    malware = _run_malware_check_best_effort(session, target)
+    return {
+        "target_id": target_id,
+        "count": len(components),
+        "new_count": len(new_components),
+        "malware": malware,
+    }
 
 
 @router.post("/{target_id}/upload")
@@ -286,7 +306,13 @@ async def upload_sbom(
             "(expected CycloneDX JSON or SPDX JSON)",
         )
     new_components = upsert_components(session, target_id, target.default_branch, discovered, source="upload")
-    return {"target_id": target_id, "count": len(discovered), "new_count": len(new_components)}
+    malware = _run_malware_check_best_effort(session, target)
+    return {
+        "target_id": target_id,
+        "count": len(discovered),
+        "new_count": len(new_components),
+        "malware": malware,
+    }
 
 
 @router.get("/{target_id}/runs/{run_id}")

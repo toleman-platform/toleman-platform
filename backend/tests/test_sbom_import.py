@@ -59,6 +59,18 @@ def client(engine):
     deps_module.engine = original_engine
 
 
+@pytest.fixture(autouse=True)
+def _stub_malware_check(monkeypatch):
+    # Upload/import now run the OSV malware check best-effort; stub it so
+    # these tests never hit api.osv.dev. Tests that assert the malware result
+    # override this stub with their own monkeypatch.
+    monkeypatch.setattr(
+        sbom_module,
+        "check_and_ingest_malware",
+        lambda session, target: {"status": "clean", "malicious_count": 0, "findings_created": 0},
+    )
+
+
 def _dev_client_with_target(client, engine) -> tuple[TestClient, int]:
     with Session(engine) as session:
         org = Organization(name="org-sbom-import")
@@ -231,3 +243,68 @@ def test_upload_unknown_target_is_404(client, engine):
         files={"file": ("sbom.json", json.dumps({"components": []}).encode(), "application/json")},
     )
     assert res.status_code == 404
+
+
+# --- malware check on import/upload -----------------------------------------
+
+
+def _cyclonedx_doc() -> dict:
+    return {
+        "bomFormat": "CycloneDX",
+        "components": [
+            {"type": "library", "name": "evil-pkg", "version": "1.0.0", "purl": "pkg:pypi/evil-pkg@1.0.0"},
+        ],
+    }
+
+
+def test_upload_runs_malware_check_and_reports_findings(client, engine, monkeypatch):
+    client, target_id = _dev_client_with_target(client, engine)
+    monkeypatch.setattr(
+        sbom_module,
+        "check_and_ingest_malware",
+        lambda session, target: {"status": "found", "malicious_count": 1, "findings_created": 1},
+    )
+
+    res = client.post(
+        f"/api/sbom/{target_id}/upload",
+        files={"file": ("sbom.json", json.dumps(_cyclonedx_doc()).encode(), "application/json")},
+    )
+    assert res.status_code == 200
+    assert res.json()["malware"] == {"status": "found", "malicious_count": 1, "findings_created": 1}
+
+
+def test_github_sync_runs_malware_check_and_reports_findings(client, engine, monkeypatch):
+    client, target_id = _dev_client_with_target(client, engine)
+    monkeypatch.setattr(sbom_module, "resolve_github_token", lambda session, workspace_id, slug: "tok")
+    monkeypatch.setattr(
+        sbom_module,
+        "fetch_dependency_graph",
+        lambda repo_url, token: [
+            {"name": "evil-pkg", "version": "1.0.0", "package_type": "pip", "purl": "pkg:pypi/evil-pkg@1.0.0"},
+        ],
+    )
+    monkeypatch.setattr(
+        sbom_module,
+        "check_and_ingest_malware",
+        lambda session, target: {"status": "found", "malicious_count": 1, "findings_created": 1},
+    )
+
+    res = client.post(f"/api/sbom/{target_id}/github-sync")
+    assert res.status_code == 200
+    assert res.json()["malware"] == {"status": "found", "malicious_count": 1, "findings_created": 1}
+
+
+def test_upload_malware_check_crash_does_not_fail_upload(client, engine, monkeypatch):
+    client, target_id = _dev_client_with_target(client, engine)
+
+    def _boom(session, target):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sbom_module, "check_and_ingest_malware", _boom)
+
+    res = client.post(
+        f"/api/sbom/{target_id}/upload",
+        files={"file": ("sbom.json", json.dumps(_cyclonedx_doc()).encode(), "application/json")},
+    )
+    assert res.status_code == 200
+    assert res.json()["malware"] == {"status": "failed", "malicious_count": 0, "findings_created": 0}

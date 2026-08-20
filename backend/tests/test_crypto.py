@@ -1,4 +1,23 @@
-from app.core.crypto import decrypt_secret, encrypt_secret
+import pytest
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
+
+from app.core.crypto import (
+    SecretDecryptionError,
+    check_encryption_key_health,
+    decrypt_secret,
+    encrypt_secret,
+    reseed_encryption_key_canary,
+)
+from app.models.models import EncryptionKeyCanary  # noqa: F401 -- registers the table on SQLModel.metadata
+
+
+@pytest.fixture()
+def session():
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(eng)
+    with Session(eng) as s:
+        yield s
 
 
 def test_encrypt_decrypt_roundtrip():
@@ -43,8 +62,70 @@ def test_decrypt_with_wrong_key_raises():
         try:
             decrypt_secret(ciphertext)
             assert False, "expected decrypt_secret to raise ValueError"
-        except ValueError:
-            pass
+        except ValueError as exc:
+            # SecretDecryptionError is a ValueError subclass -- every existing
+            # `except ValueError` call site keeps working unchanged, but
+            # callers that want to react specifically to a key mismatch can
+            # now catch SecretDecryptionError by name.
+            assert isinstance(exc, SecretDecryptionError)
     finally:
         crypto_module._get_fernet = original_fernet
         crypto_module._get_fernet.cache_clear()
+
+
+def _swap_fernet_key(crypto_module):
+    from cryptography.fernet import Fernet
+
+    crypto_module._get_fernet.cache_clear()
+    other_key = Fernet.generate_key()
+    crypto_module._get_fernet = lambda: Fernet(other_key)
+
+
+def test_check_encryption_key_health_seeds_canary_on_fresh_db(session):
+    # No canary row yet: nothing has diverged from, so this must report
+    # healthy and leave a canary behind for future checks.
+    assert check_encryption_key_health(session) is True
+    assert session.exec(select_canary()).first() is not None
+
+
+def test_check_encryption_key_health_true_when_key_unchanged(session):
+    assert check_encryption_key_health(session) is True  # seeds
+    assert check_encryption_key_health(session) is True  # re-verifies
+
+
+def test_check_encryption_key_health_false_after_key_swap(session):
+    import app.core.crypto as crypto_module
+
+    assert check_encryption_key_health(session) is True  # seeds under key A
+
+    original_fernet = crypto_module._get_fernet
+    _swap_fernet_key(crypto_module)
+    try:
+        assert check_encryption_key_health(session) is False
+    finally:
+        crypto_module._get_fernet = original_fernet
+        crypto_module._get_fernet.cache_clear()
+
+
+def test_reseed_encryption_key_canary_restores_health(session):
+    import app.core.crypto as crypto_module
+
+    assert check_encryption_key_health(session) is True  # seeds under key A
+
+    original_fernet = crypto_module._get_fernet
+    _swap_fernet_key(crypto_module)
+    try:
+        assert check_encryption_key_health(session) is False
+        # Admin has reconnected every affected integration under the new
+        # (current) key -- reseed marks it as the new source of truth.
+        reseed_encryption_key_canary(session)
+        assert check_encryption_key_health(session) is True
+    finally:
+        crypto_module._get_fernet = original_fernet
+        crypto_module._get_fernet.cache_clear()
+
+
+def select_canary():
+    from sqlmodel import select
+
+    return select(EncryptionKeyCanary)

@@ -6,8 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { BrainCircuit, CheckCircle2, MessageSquare, Send, Ticket } from "lucide-react";
+import { AlertTriangle, BrainCircuit, CheckCircle2, MessageSquare, Send, Ticket } from "lucide-react";
 import { ConnectGithubCard } from "@/components/connect-github-card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
 
 const PROVIDERS: { value: AiProvider; label: string }[] = [
@@ -54,6 +55,21 @@ export function GlobalIntegrations() {
   const [siemSaved, setSiemSaved] = useState(false);
   const [siemError, setSiemError] = useState<string | null>(null);
   const [siemTestResult, setSiemTestResult] = useState<string | null>(null);
+
+  // Encryption key health banner
+  const [reseedOpen, setReseedOpen] = useState(false);
+  const [reseeding, setReseeding] = useState(false);
+
+  async function reseedEncryptionKey() {
+    setReseeding(true);
+    try {
+      await api.reseedEncryptionKey();
+      setReseedOpen(false);
+      refresh();
+    } finally {
+      setReseeding(false);
+    }
+  }
 
   function refresh() {
     api.getConfig().then((c) => {
@@ -206,6 +222,36 @@ export function GlobalIntegrations() {
 
   return (
     <div className="flex flex-col gap-4">
+      {config?.encryption_key_healthy === false && (
+        <Card className="border-destructive/50 bg-destructive/5">
+          <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <div>
+                <div className="font-medium text-foreground">PLATFORM_ENCRYPTION_KEY mismatch detected</div>
+                <div className="text-xs text-muted-foreground">
+                  The configured encryption key can&apos;t decrypt secrets written by a previous key. GitHub App
+                  credentials, Slack/Jira/SIEM webhooks, and the AI provider key below may all be undecryptable.
+                  Reconnect each affected integration, then confirm below once everything works again.
+                </div>
+              </div>
+            </div>
+            <Button variant="destructive" className="shrink-0" onClick={() => setReseedOpen(true)}>
+              I&apos;ve reconnected everything
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+      <ConfirmDialog
+        open={reseedOpen}
+        title="Confirm encryption key reset"
+        description="Only confirm once every affected integration above has actually been reconnected. This clears the warning but does not itself fix any secret still encrypted under the old key."
+        confirmLabel="Confirm"
+        tone="default"
+        loading={reseeding}
+        onConfirm={reseedEncryptionKey}
+        onCancel={() => setReseedOpen(false)}
+      />
       <ConnectGithubCard />
 
       <Card className="border-border bg-card">

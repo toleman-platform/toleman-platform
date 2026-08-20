@@ -4,6 +4,7 @@ from datetime import datetime
 
 from sqlmodel import Session, select
 
+from app.core.crypto import SecretDecryptionError
 from app.core.db import engine
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.models.models import PipelineIntegrationBatch, PipelineIntegrationBatchItem, PipelineWorkflowTemplate, Target
@@ -108,6 +109,26 @@ def run_pipeline_integration_batch(self, batch_id: int):
                 item = session.get(PipelineIntegrationBatchItem, item.id)
                 item.status = "failed"
                 item.error = str(exc)
+                item.completed_at = datetime.utcnow()
+                session.add(item)
+                batch.failed += 1
+                session.add(batch)
+                session.commit()
+            except SecretDecryptionError:
+                # Distinguished from the generic except below so the batch
+                # reports an actionable cause (PLATFORM_ENCRYPTION_KEY
+                # mismatch, fixable from Admin > Global Integrations) instead
+                # of a raw "unexpected error: ..." traceback string -- this is
+                # exactly the failure app.core.crypto.check_encryption_key_health
+                # is meant to catch proactively at startup instead of here.
+                session.rollback()
+                item = session.get(PipelineIntegrationBatchItem, item.id)
+                item.status = "failed"
+                item.error = (
+                    "PLATFORM_ENCRYPTION_KEY mismatch - the GitHub App credentials "
+                    "for this target cannot be decrypted with the currently configured "
+                    "key. Reconnect the GitHub App in Admin > Global Integrations."
+                )
                 item.completed_at = datetime.utcnow()
                 session.add(item)
                 batch.failed += 1

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import {
   api,
   Target,
@@ -123,6 +123,9 @@ export default function SbomPage() {
   const [orgExportError, setOrgExportError] = useState<string | null>(null);
   const [orgExporting, setOrgExporting] = useState(false);
   const [orgSearch, setOrgSearch] = useState("");
+  const [importingGithub, setImportingGithub] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -262,6 +265,38 @@ export default function SbomPage() {
     }
   }
 
+  async function importFromGithub() {
+    if (targetId === null) return;
+    setImportingGithub(true);
+    setError(null);
+    try {
+      const res = await api.importGithubSbom(targetId);
+      reloadPersisted();
+      setLastScan({ targetId, new_count: res.new_count });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "GitHub SBOM import failed");
+    } finally {
+      setImportingGithub(false);
+    }
+  }
+
+  async function onUploadFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || targetId === null) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const res = await api.uploadSbom(targetId, file);
+      reloadPersisted();
+      setLastScan({ targetId, new_count: res.new_count });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "SBOM upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const showBusy = loading || running;
   const currentTarget = targets.find((t) => t.id === targetId);
 
@@ -315,14 +350,40 @@ export default function SbomPage() {
         generateDisabled={targetId === null}
         extra={
           targetId !== ALL_TARGETS ? (
-            <Button
-              variant="outline"
-              className="w-full justify-center"
-              onClick={exportJson}
-              disabled={exporting || targetId === null || !components || components.length === 0}
-            >
-              {exporting ? "Exporting..." : `Export SBOM (${SBOM_FORMATS.find((f) => f.value === format)?.label})`}
-            </Button>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                onClick={exportJson}
+                disabled={exporting || targetId === null || !components || components.length === 0}
+              >
+                {exporting ? "Exporting..." : `Export SBOM (${SBOM_FORMATS.find((f) => f.value === format)?.label})`}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                onClick={importFromGithub}
+                disabled={importingGithub || targetId === null}
+              >
+                {importingGithub ? "Importing..." : "Import from GitHub"}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || targetId === null}
+              >
+                {uploading ? "Uploading..." : "Upload SBOM"}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={onUploadFile}
+                aria-label="Upload SBOM document"
+              />
+            </div>
           ) : (
             <Button
               variant="outline"

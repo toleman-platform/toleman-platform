@@ -559,6 +559,15 @@ export type MalwareCheckResult = {
   findings_created: number;
 };
 
+// Issue #227: result of POST /api/sbom/{id}/github-sync and
+// /api/sbom/{id}/upload -- both merge components into the persisted SBOM and
+// report how many were net-new (same shape generateSbom's polling returns).
+export type SbomImportResult = {
+  target_id: number;
+  count: number;
+  new_count: number;
+};
+
 // Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows
 // (#59) -- every POST that used to clone+scan synchronously now returns one
 // of these immediately, and the frontend polls the matching GET until
@@ -1351,6 +1360,33 @@ export const api = {
   // -- a handful of OSV HTTP calls, no clone/subprocess.
   malwareCheck: (targetId: number) =>
     jsonFetch<MalwareCheckResult>(`/api/sbom/${targetId}/malware-check`, { method: "POST" }),
+  // Issue #227: standalone import of a target's dependency inventory from
+  // GitHub's Dependency Graph SBOM API, independent of a full trivy scan.
+  importGithubSbom: (targetId: number) =>
+    jsonFetch<SbomImportResult>(`/api/sbom/${targetId}/github-sync`, { method: "POST" }),
+  // Issue #227: import an uploaded CycloneDX/SPDX SBOM document (multipart
+  // file upload). fetch + FormData rather than jsonFetch, which force-sets a
+  // JSON Content-Type that would break multipart parsing.
+  uploadSbom: async (targetId: number, file: File): Promise<SbomImportResult> => {
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch(`${API_URL}/api/sbom/${targetId}/upload`, {
+      method: "POST",
+      credentials: "include",
+      body,
+    });
+    if (!res.ok) {
+      let detail: string | undefined;
+      try {
+        const data = await res.json();
+        if (data && typeof data.detail === "string") detail = data.detail;
+      } catch {
+        // body wasn't JSON -- fall through to the generic message
+      }
+      throw new Error(detail || `SBOM upload failed: ${res.status}`);
+    }
+    return res.json();
+  },
   exportSbom: async (targetId: number, format: SbomExportFormat = "cyclonedx-json"): Promise<Blob> => {
     const res = await fetch(`${apiBaseUrl()}/api/sbom/${targetId}/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);

@@ -4,9 +4,10 @@ from datetime import datetime
 
 from sqlmodel import Session, select
 
-from app.core.config import settings
 from app.core.db import engine
 from app.core.discovery_ingestion import upsert_endpoints
+from app.core.github import repo_slug_from_url
+from app.core.github_token import resolve_github_token
 from app.core.notifications import dispatch_notification
 from app.models.models import ApiEndpoint, DiscoveryRun, NotificationEventType, Target
 from app.scanners import runner
@@ -72,7 +73,9 @@ def run_discovery(self, target_id: int, run_id: int):
 
         try:
             repo_path = runner.clone_repo(
-                target.repo_url, target.default_branch, settings.github_token, scan_id=f"discovery-{run.id}"
+                target.repo_url, target.default_branch,
+                resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
+                scan_id=f"discovery-{run.id}",
             )
             discovered = discover_endpoints(repo_path)
             new_endpoints = upsert_endpoints(session, target_id, target.default_branch, discovered)

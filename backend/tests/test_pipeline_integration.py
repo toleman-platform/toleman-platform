@@ -109,7 +109,7 @@ def test_no_gosec_job_without_go_evidence(engine, monkeypatch):
     # happens to be, rather than depending on live GitHub state.
     import app.core.pipeline_workflow as pipeline_workflow_module
 
-    monkeypatch.setattr(pipeline_workflow_module, "detect_languages", lambda target: [])
+    monkeypatch.setattr(pipeline_workflow_module, "detect_languages", lambda session, target: [])
 
     with Session(engine) as session:
         target = _make_target(session)

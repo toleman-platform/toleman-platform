@@ -13,7 +13,7 @@ from app.core.security import hash_password
 from app.models.models import User
 
 logger = logging.getLogger(__name__)
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api
+from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api, github_token
 from app.api.auth import current_user, require_admin
 
 
@@ -106,6 +106,7 @@ app.include_router(api_tokens.router, dependencies=login_required)
 app.include_router(admin.router, dependencies=admin_required)
 app.include_router(admin_workspace_roles.router, dependencies=admin_required)
 app.include_router(config_api.router, dependencies=admin_required)
+app.include_router(github_token.router, dependencies=admin_required)
 # Policy rules can silently suppress real findings / widen PR Guardrail's
 # blocking threshold platform-wide -- there's no per-workspace membership
 # model in this app (single org/admin pattern, same as admin.router and

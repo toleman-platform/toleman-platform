@@ -28,7 +28,8 @@ import logging
 import httpx
 from sqlmodel import Session, select
 
-from app.core.github import get_github_token, repo_slug_from_url
+from app.core.github import repo_slug_from_url
+from app.core.github_token import resolve_github_token
 from app.core.tool_usage import tools_for_surface
 from app.models.models import Finding, Target
 
@@ -48,14 +49,14 @@ WORKFLOW_FILENAME = "rikugan-scan.yml"
 SUPPORTED_TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"]
 
 
-def detect_languages(target: Target) -> list[str]:
+def detect_languages(session: Session, target: Target) -> list[str]:
     """Real per-target language detection via GitHub's repo languages API
     (bytes-of-code-per-language) -- used as a fallback signal for whether to
     include the Go-only gosec job when the target has no scan history yet.
     Best-effort: returns [] on any failure rather than raising, since this
     only affects which optional job gets included."""
     slug = repo_slug_from_url(target.repo_url)
-    token = get_github_token()
+    token = resolve_github_token(session, target.workspace_id, slug)
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -79,7 +80,7 @@ def detect_tool_set(session: Session, target: Target) -> dict:
     if scanned_tools:
         return {"include_gosec": "gosec" in scanned_tools, "source": "scan_history", "languages": []}
 
-    languages = detect_languages(target)
+    languages = detect_languages(session, target)
     if languages:
         return {"include_gosec": "Go" in languages, "source": "github_languages", "languages": languages}
 

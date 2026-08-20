@@ -482,6 +482,31 @@ class GitHubInstallation(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class GitHubToken(SQLModel, table=True):
+    """Per-workspace GitHub credential (issue #227): a user-supplied personal
+    access token, encrypted at rest via app.core.crypto.encrypt_secret and
+    never echoed back to the client (the API reports only ``token_set`` /
+    ``expires_at`` / ``created_at``). One active token per workspace (unique
+    ``workspace_id``) -- saving replaces the existing row.
+
+    ``expires_at`` (nullable = never expires) is the TTL the operator chose at
+    save time. Purge is lazy (see app.core.github_token.resolve_github_token):
+    an expired token is hard-deleted on first read after expiry, consistent
+    with the project's no-Celery-beat design (app/core/staleness.py, #153).
+
+    Reversible encryption (not a one-way hash) is required here, unlike
+    ApiToken: a GitHub PAT must be *replayed* to GitHub on the user's behalf,
+    so it can't be stored hashed -- the same reason GitHubAppConfig's
+    client_secret/private_key_pem are encrypted rather than hashed.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", unique=True, index=True)
+    token_ciphertext: str
+    created_by: Optional[int] = Field(default=None, foreign_key="user.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: Optional[datetime] = None
+
+
 class FindingStateLog(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     finding_id: int = Field(foreign_key="finding.id")

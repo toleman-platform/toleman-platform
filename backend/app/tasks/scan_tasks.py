@@ -4,9 +4,10 @@ from datetime import datetime
 
 from sqlmodel import Session
 
-from app.core.config import settings
 from app.core.db import engine
 from app.core.ai_repo_status import effective_is_ai_repo, refresh_ai_repo_status
+from app.core.github import repo_slug_from_url
+from app.core.github_token import resolve_github_token
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
 from app.models.models import NotificationEventType, Scan, Target
@@ -103,7 +104,9 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
 
         try:
             repo_path = runner.clone_repo(
-                target.repo_url, target.default_branch, settings.github_token, scan_id=scan.id
+                target.repo_url, target.default_branch,
+                resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
+                scan_id=scan.id,
             )
             # Issue #185: recompute AI-repo detection from the fresh
             # checkout while we have one. Best-effort -- a detection failure

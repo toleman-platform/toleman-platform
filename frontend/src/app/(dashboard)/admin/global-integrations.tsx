@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, AiProvider, PlatformConfigView } from "@/lib/api";
+import { api, AiProvider, GithubTokenView, PlatformConfigView, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { AlertTriangle, BrainCircuit, CheckCircle2, MessageSquare, Send, Ticket } from "lucide-react";
+import { AlertTriangle, BrainCircuit, CheckCircle2, Key, MessageSquare, Send, Ticket } from "lucide-react";
 import { ConnectGithubCard } from "@/components/connect-github-card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
@@ -14,6 +14,17 @@ import { SEVERITY_ORDER } from "@/lib/severity";
 const PROVIDERS: { value: AiProvider; label: string }[] = [
   { value: "anthropic", label: "Anthropic (Claude)" },
   { value: "openai_compatible", label: "Custom OpenAI-compatible endpoint" },
+];
+
+// Issue #227: TTL presets for the per-workspace GitHub token. value is the
+// TTL in hours; "" means never expire.
+const GITHUB_TTL_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Never" },
+  { value: "24", label: "24 hours" },
+  { value: "168", label: "7 days" },
+  { value: "720", label: "30 days" },
+  { value: "2160", label: "90 days" },
+  { value: "8760", label: "1 year" },
 ];
 
 export function GlobalIntegrations() {
@@ -71,6 +82,19 @@ export function GlobalIntegrations() {
     }
   }
 
+  // GitHub token (issue #227)
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
+  const [githubWorkspaceId, setGithubWorkspaceId] = useState<number | null>(null);
+  const [githubTokenView, setGithubTokenView] = useState<GithubTokenView | null>(null);
+  const [githubToken, setGithubToken] = useState("");
+  const [githubTtl, setGithubTtl] = useState("");
+  const [githubSaving, setGithubSaving] = useState(false);
+  const [githubTesting, setGithubTesting] = useState(false);
+  const [githubDeleting, setGithubDeleting] = useState(false);
+  const [githubSaved, setGithubSaved] = useState(false);
+  const [githubError, setGithubError] = useState<string | null>(null);
+  const [githubTestResult, setGithubTestResult] = useState<string | null>(null);
+
   function refresh() {
     api.getConfig().then((c) => {
       setConfig(c);
@@ -86,6 +110,72 @@ export function GlobalIntegrations() {
   }
 
   useEffect(refresh, []);
+
+  function loadGithubToken(workspaceId: number) {
+    setGithubWorkspaceId(workspaceId);
+    setGithubTokenView(null);
+    setGithubError(null);
+    setGithubTestResult(null);
+    api.getGithubToken(workspaceId).then(setGithubTokenView).catch(() => {});
+  }
+
+  useEffect(() => {
+    api.workspaces().then((ws) => {
+      setWorkspaces(ws);
+      if (ws.length > 0) loadGithubToken(ws[0].id);
+    });
+  }, []);
+
+  async function saveGithubToken() {
+    if (!githubToken.trim()) return;
+    setGithubSaving(true);
+    setGithubError(null);
+    setGithubSaved(false);
+    setGithubTestResult(null);
+    try {
+      const view = await api.saveGithubToken(
+        githubToken.trim(),
+        githubTtl === "" ? null : Number(githubTtl),
+        githubWorkspaceId ?? undefined
+      );
+      setGithubToken("");
+      setGithubSaved(true);
+      setGithubTokenView(view);
+    } catch (e) {
+      setGithubError(e instanceof Error ? e.message : "failed to save");
+    } finally {
+      setGithubSaving(false);
+    }
+  }
+
+  async function testGithubToken() {
+    setGithubTesting(true);
+    setGithubError(null);
+    setGithubTestResult(null);
+    try {
+      const result = await api.testGithubToken(githubToken.trim() || undefined, githubWorkspaceId ?? undefined);
+      setGithubTestResult(result.message || "Token is valid.");
+    } catch (e) {
+      setGithubError(e instanceof Error ? e.message : "test connection failed");
+    } finally {
+      setGithubTesting(false);
+    }
+  }
+
+  async function removeGithubToken() {
+    setGithubDeleting(true);
+    setGithubError(null);
+    setGithubTestResult(null);
+    try {
+      await api.deleteGithubToken(githubWorkspaceId ?? undefined);
+      setGithubTokenView({ token_set: false, created_at: null, expires_at: null });
+      setGithubSaved(false);
+    } catch (e) {
+      setGithubError(e instanceof Error ? e.message : "failed to remove");
+    } finally {
+      setGithubDeleting(false);
+    }
+  }
 
   async function saveSlack() {
     setSlackSaving(true);
@@ -253,6 +343,121 @@ export function GlobalIntegrations() {
         onCancel={() => setReseedOpen(false)}
       />
       <ConnectGithubCard />
+
+      <Card className="border-border bg-card">
+        <CardContent className="flex flex-col gap-4 px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
+              <Key className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-medium text-foreground">GitHub Token</div>
+              <div className="text-xs text-muted-foreground">Clone private repos & enrich SBOM (per workspace)</div>
+            </div>
+          </div>
+
+          {githubTokenView?.token_set && (
+            <div className="flex items-center gap-2 text-sm text-chart-5">
+              <CheckCircle2 className="h-4 w-4" />
+              Configured
+              {githubTokenView.expires_at
+                ? ` · auto-purges ${new Date(githubTokenView.expires_at).toLocaleString()}`
+                : " · never expires"}
+            </div>
+          )}
+
+          {workspaces.length > 1 && (
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="github-token-workspace" className="text-xs text-muted-foreground">
+                Workspace
+              </Label>
+              <select
+                id="github-token-workspace"
+                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                value={githubWorkspaceId ?? ""}
+                onChange={(e) => loadGithubToken(Number(e.target.value))}
+              >
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {workspaceDisplayName(w, workspaces)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="github-token" className="text-xs text-muted-foreground">
+              Personal access token
+            </Label>
+            <Input
+              id="github-token"
+              type="password"
+              className="bg-secondary"
+              placeholder={githubTokenView?.token_set ? "Replace token..." : "ghp_... / github_pat_..."}
+              value={githubToken}
+              onChange={(e) => {
+                setGithubToken(e.target.value);
+                setGithubSaved(false);
+                setGithubTestResult(null);
+              }}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="github-token-ttl" className="text-xs text-muted-foreground">
+              Auto-purge after
+            </Label>
+            <select
+              id="github-token-ttl"
+              className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+              value={githubTtl}
+              onChange={(e) => {
+                setGithubTtl(e.target.value);
+                setGithubSaved(false);
+              }}
+            >
+              {GITHUB_TTL_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={saveGithubToken} disabled={githubSaving || !githubToken.trim()} className="self-start">
+              {githubSaving ? "Saving..." : "Save"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={testGithubToken}
+              disabled={githubTesting || (!githubToken.trim() && !githubTokenView?.token_set)}
+              className="self-start"
+            >
+              {githubTesting ? "Testing..." : "Test Connection"}
+            </Button>
+            {githubTokenView?.token_set && (
+              <Button
+                variant="outline"
+                onClick={removeGithubToken}
+                disabled={githubDeleting}
+                className="self-start text-destructive"
+              >
+                {githubDeleting ? "Removing..." : "Remove"}
+              </Button>
+            )}
+          </div>
+
+          {githubSaved && !githubError && <p className="text-xs text-chart-5">Saved.</p>}
+          {githubTestResult && !githubError && <p className="text-xs text-chart-5">{githubTestResult}</p>}
+          {githubError && <p className="text-xs text-destructive">{githubError}</p>}
+          <p className="text-xs text-muted-foreground">
+            Use a fine-grained, repo-scoped, read-only PAT. Stored encrypted per workspace (Admin-only), never echoed
+            back, and auto-purged once it expires. Test Connection makes a real authenticated call to GitHub.
+          </p>
+        </CardContent>
+      </Card>
 
       <Card className="border-border bg-card">
         <CardContent className="flex flex-col gap-4 px-4 py-4">

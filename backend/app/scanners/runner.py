@@ -185,16 +185,10 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
       http.extraHeader=...` as an argv entry), it would leak into any log
       line or API response that ever surfaces str(exc) for a failed clone.
     - The header uses HTTP Basic (base64 "x-access-token:<token>"), not
-      Bearer. get_github_token() (app/core/github.py) can return either a
-      GITHUB_TOKEN PAT (ghp_/github_pat_) or, as a fallback, whatever `gh
-      auth token` has cached -- which for a `gh auth login` session is an
-      OAuth App user-to-server token (gho_). Verified live: gho_ tokens are
-      accepted by GitHub's REST API and by git-over-http with Basic auth
-      (in the x-access-token:<token> form), but git's http backend rejects
-      them under `Authorization: Bearer <token>` with "could not read
-      Username for 'https://github.com/'" (exit 128) -- Bearer only works
-      for ghp_/github_pat_ there. Basic works for all three token shapes,
-      so it's used unconditionally rather than branching on token prefix.
+      Bearer. app.core.github_token.resolve_github_token returns either a
+      workspace-stored PAT (ghp_/github_pat_) or a GitHub App installation
+      token. Basic works for all three token shapes, so it's used
+      unconditionally rather than branching on token prefix.
     """
     _validate_repo_url(repo_url)
     _validate_branch(branch)

@@ -166,7 +166,7 @@ def _make_bare_target(session, name="gotest", repo_url="https://github.com/geeks
 def test_generate_workflow_yaml_none_steps_matches_default_behavior(engine, monkeypatch):
     import app.core.pipeline_workflow as pw
 
-    monkeypatch.setattr(pw, "detect_languages", lambda target: [])
+    monkeypatch.setattr(pw, "detect_languages", lambda session, target: [])
     with Session(engine) as session:
         target = _make_bare_target(session)
         result = generate_workflow_yaml(session, target)

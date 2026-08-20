@@ -375,6 +375,12 @@ export type TestConnectionResult = {
   message: string;
 };
 
+export type GithubTokenView = {
+  token_set: boolean;
+  created_at: string | null;
+  expires_at: string | null;
+};
+
 export function githubBlobUrl(repoUrl: string, branch: string, filePath: string, lineStart?: number | null): string {
   const repoPath = new URL(repoUrl).pathname.replace(/\.git$/, "").replace(/^\//, "");
   const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
@@ -1508,6 +1514,24 @@ export const api = {
     jsonFetch<TestConnectionResult>("/api/config/test-siem", {
       method: "POST",
       body: JSON.stringify({ webhook_url: webhookUrl || undefined }),
+    }),
+  // Issue #227: per-workspace GitHub token (encrypted, TTL'd, never echoed).
+  getGithubToken: (workspaceId?: number) =>
+    jsonFetch<GithubTokenView>(`/api/github-token${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  saveGithubToken: (token: string, expiresInHours: number | null, workspaceId?: number) =>
+    jsonFetch<GithubTokenView>("/api/github-token", {
+      method: "PUT",
+      body: JSON.stringify({ token, expires_in_hours: expiresInHours, workspace_id: workspaceId }),
+    }),
+  deleteGithubToken: (workspaceId?: number) =>
+    jsonFetch<{ token_set: boolean; deleted: boolean }>(
+      `/api/github-token${workspaceId ? `?workspace_id=${workspaceId}` : ""}`,
+      { method: "DELETE" }
+    ),
+  testGithubToken: (token?: string, workspaceId?: number) =>
+    jsonFetch<TestConnectionResult>("/api/github-token/test", {
+      method: "POST",
+      body: JSON.stringify({ token: token || undefined, workspace_id: workspaceId }),
     }),
   toolsHealth: () =>
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(

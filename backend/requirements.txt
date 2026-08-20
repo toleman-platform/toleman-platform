@@ -17,7 +17,7 @@ PyJWT[crypto]==2.13.0
 # schema. Lives here rather than a separate dev file because this project
 # already keeps pytest and pytest-mock in the same list.
 jsonschema==4.26.0
-pytest==8.3.3
+pytest==9.1.1
 pytest-mock==3.14.0
 reportlab==4.2.5
 pypdf==6.15.0

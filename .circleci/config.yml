@@ -1,31 +1,261 @@
-# Use the latest 2.1 version of CircleCI pipeline process engine.
-# See: https://circleci.com/docs/reference/configuration-reference/
 version: 2.1
 
-# Define a job to be invoked later in a workflow.
-# See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#jobs-overview & https://circleci.com/docs/reference/configuration-reference/#jobs
-jobs:
-  say-hello:
-    # Specify the execution environment. You can specify an image from Docker Hub or use one of our convenience images from CircleCI's Developer Hub.
-    # See: https://circleci.com/docs/guides/execution-managed/executor-intro/ & https://circleci.com/docs/reference/configuration-reference/#executor-job
-    docker:
-      # Specify the version you desire here
-      # See: https://circleci.com/developer/images/image/cimg/base
-      - image: cimg/base:current
+# Why this file exists: this repo's GitHub Actions minutes ran out. The unit
+# test jobs and the dogfooding security scan moved here, onto CircleCI's free
+# tier, so GitHub's remaining budget is reserved for the two jobs that cannot
+# move -- `Docker Images Build` (needs a real Docker daemon) and
+# `Publish Docker Images` (needs GITHUB_TOKEN to push to GHCR).
+#
+# Measured before the move, over the last 100 runs: backend tests 42 min,
+# frontend tests 28 min, self-scan 76 min, mcp-server tests 2 min. That is
+# ~148 of ~270 billed minutes now off GitHub's meter.
+#
+# Deliberately NOT using the path-filtering orb, even though the GitHub
+# workflows this replaces had `paths:` filters. That orb needs a setup
+# pipeline that diffs against a base revision, and on a push to main the base
+# revision *is* main -- the diff comes back empty and every job silently
+# skips. A CI that quietly runs nothing on the default branch is a worse
+# failure than a few wasted container-minutes, and CircleCI's free tier is
+# roughly an order of magnitude larger than the workload being moved here.
+# Everything runs on every pipeline; caching keeps that cheap.
 
-    # Add steps to the job
-    # See: https://circleci.com/docs/guides/orchestrate/jobs-steps/#steps-overview & https://circleci.com/docs/reference/configuration-reference/#steps
+jobs:
+  backend-tests:
+    docker:
+      # Same images as the GitHub `services:` block used, so a failure here
+      # means the same thing it meant there. On CircleCI the secondary
+      # containers share the primary's network interface, which is why the
+      # DATABASE_URL/REDIS_URL below still point at localhost.
+      - image: cimg/python:3.12
+      - image: postgres:16
+        environment:
+          POSTGRES_USER: rikugan
+          POSTGRES_PASSWORD: rikugan
+          POSTGRES_DB: rikugan
+      - image: redis:7
+    working_directory: ~/project/backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://rikugan:rikugan@localhost:5432/rikugan
+      REDIS_URL: redis://localhost:6379/0
     steps:
-      # Checkout the code as the first step.
+      - checkout:
+          path: ~/project
+
+      # CircleCI has no equivalent of the `--health-cmd` options the GitHub
+      # services used, and the primary container is ready well before Postgres
+      # finishes initdb. Without this the first test to open a connection
+      # loses a race that looks like a flaky test rather than a startup order
+      # problem. Bash's /dev/tcp is used so this needs nothing installed.
+      - run:
+          name: Wait for Postgres and Redis
+          command: |
+            for _ in $(seq 1 45); do
+              if (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null && (exec 3<>/dev/tcp/localhost/6379) 2>/dev/null; then
+                echo "services up"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "Postgres/Redis did not accept connections within 90s" >&2
+            exit 1
+
+      - restore_cache:
+          keys:
+            - pip-backend-v1-{{ checksum "requirements.txt" }}
+            - pip-backend-v1-
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+      - save_cache:
+          key: pip-backend-v1-{{ checksum "requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+
+      - run:
+          name: Run pytest
+          # --junitxml is new here; GitHub had no equivalent. It only writes a
+          # report, it does not change what passes, and it is what makes a
+          # failure readable in CircleCI's UI without opening raw log output.
+          command: python -m pytest -v --junitxml=test-results/pytest.xml
+      - store_test_results:
+          path: test-results
+
+  frontend-tests:
+    docker:
+      - image: cimg/node:22.23
+    working_directory: ~/project/frontend
+    steps:
+      - checkout:
+          path: ~/project
+      - restore_cache:
+          keys:
+            - npm-frontend-v1-{{ checksum "package-lock.json" }}
+            - npm-frontend-v1-
+      - run:
+          name: Install dependencies
+          command: npm ci
+      - save_cache:
+          key: npm-frontend-v1-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/.npm
+
+      - run:
+          name: Run unit and component tests
+          command: npm test
+
+      # Issue #206: the custom ESLint rule that blocks a Server Component
+      # importing a value out of a "use client" module. Run explicitly --
+      # its fixtures contain the violation on purpose and are ignored by the
+      # normal lint pass.
+      - run:
+          name: Test custom lint rules
+          command: npm run test:lint-rules
+
+      # --max-warnings=0 is deliberate: the tree is at zero, and warnings that
+      # are allowed to accumulate stop being read.
+      - run:
+          name: Lint
+          command: npm run lint -- --max-warnings=0
+
+      - run:
+          name: Build (also generates Next.js route types and type-checks)
+          command: npm run build
+          environment:
+            NEXT_PUBLIC_API_URL: http://localhost:8000
+
+  mcp-server-tests:
+    docker:
+      - image: cimg/python:3.12
+    working_directory: ~/project/mcp-server
+    environment:
+      RIKUGAN_API_TOKEN: rikugan_pat_test
+      RIKUGAN_API_URL: http://localhost:8000
+    steps:
+      - checkout:
+          path: ~/project
+      - restore_cache:
+          keys:
+            - pip-mcp-v1-{{ checksum "requirements-dev.txt" }}
+            - pip-mcp-v1-
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install -r requirements-dev.txt
+      - save_cache:
+          key: pip-mcp-v1-{{ checksum "requirements-dev.txt" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Run pytest
+          command: python -m pytest -v --junitxml=test-results/pytest.xml
+      - store_test_results:
+          path: test-results
+
+  # The three scan jobs below are the dogfooding pass: Rikugan wraps these same
+  # open-source tools, so the platform runs them against its own source. As on
+  # GitHub, results go to artifacts and the job log rather than GitHub code
+  # scanning -- SARIF upload to the Security tab needs GitHub Advanced
+  # Security, which this private repo's plan does not include. gosec stays
+  # excluded: it is Go-specific and this repo has no Go source.
+  #
+  # Each `|| true` is intentional. These jobs report what the scanners found;
+  # they are not a merge gate. A findings count that grows is a signal to read,
+  # not a red check that blocks an unrelated PR.
+  semgrep:
+    docker:
+      - image: cimg/python:3.12
+    working_directory: ~/project
+    steps:
       - checkout
       - run:
-          name: "Say hello"
-          command: "echo Hello, World!"
+          name: Install Semgrep
+          # `setuptools<81` for the same reason as backend/Dockerfile: semgrep's
+          # pinned opentelemetry-instrumentation imports `pkg_resources`, which
+          # setuptools removed in 82.0.0 and deprecated in 81. A silently broken
+          # security scan is worse than a loud one.
+          command: pip install semgrep "setuptools<81"
+      - run:
+          name: Run Semgrep
+          command: semgrep scan --config=auto --json --output=semgrep.json || true
+      - run:
+          name: Summarize
+          command: |
+            python3 -c "
+            import json
+            d = json.load(open('semgrep.json'))
+            results = d.get('results', [])
+            print(f'## Semgrep: {len(results)} findings')
+            for r in results[:20]:
+                print(f\"- {r['extra']['severity']} {r['check_id']}: {r['path']}:{r['start']['line']}\")
+            "
+      - store_artifacts:
+          path: semgrep.json
+          destination: semgrep-results/semgrep.json
 
-# Orchestrate jobs using workflows
-# See: https://circleci.com/docs/guides/orchestrate/workflows/ & https://circleci.com/docs/reference/configuration-reference/#workflows
+  gitleaks:
+    docker:
+      - image: cimg/base:current
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Install Gitleaks
+          command: curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+      - run:
+          name: Run Gitleaks
+          # --no-git scans the working tree rather than history, so unlike the
+          # GitHub job this needs no full-depth clone.
+          command: |
+            ./gitleaks detect --report-format json --report-path gitleaks.json --no-git --exit-code 0
+            python3 -c "
+            import json
+            d = json.load(open('gitleaks.json'))
+            print(f'## Gitleaks: {len(d)} findings')
+            for r in d[:20]:
+                print(f\"- {r['RuleID']}: {r['File']}:{r['StartLine']}\")
+            "
+      - store_artifacts:
+          path: gitleaks.json
+          destination: gitleaks-results/gitleaks.json
+
+  trivy:
+    docker:
+      - image: cimg/base:current
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Install Trivy
+          # Unpinned, matching the `aquasecurity/trivy-action@master` this
+          # replaces: a vulnerability scanner pinned to an old release stops
+          # knowing about new vulnerabilities, which is the one thing it exists
+          # to do.
+          command: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+      - run:
+          name: Run Trivy (filesystem scan)
+          command: trivy fs --format json --output trivy.json . || true
+      - run:
+          name: Summarize
+          command: |
+            python3 -c "
+            import json
+            d = json.load(open('trivy.json'))
+            count = sum(len(r.get('Vulnerabilities') or []) + len(r.get('Misconfigurations') or []) for r in d.get('Results', []))
+            print(f'## Trivy: {count} findings across {len(d.get(\"Results\", []))} targets')
+            "
+      - store_artifacts:
+          path: trivy.json
+          destination: trivy-results/trivy.json
+
 workflows:
-  say-hello-workflow: # This is the name of the workflow, feel free to change it to better match your workflow.
-    # Inside the workflow, you define the jobs you want to run.
+  test-and-scan:
     jobs:
-      - say-hello
+      - backend-tests
+      - frontend-tests
+      - mcp-server-tests
+      - semgrep
+      - gitleaks
+      - trivy

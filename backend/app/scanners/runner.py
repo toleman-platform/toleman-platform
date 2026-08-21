@@ -8,6 +8,7 @@ that feature ships.
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -40,7 +41,13 @@ TOOL_COMMANDS = {
     "semgrep-llm": lambda path: [
         "semgrep", "scan", f"--config={LLM_RULES_DIR}", "--json", "--quiet", path
     ],
-    "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", "/dev/stdout", "--no-git", "--exit-code", "0"],
+    # `--report-path` was /dev/stdout until #253. That is not portable: where
+    # /dev/stdout isn't writable by the process, gitleaks aborts with
+    # "Report path is not writable" *before scanning anything*, exits 1 and
+    # writes nothing -- which used to read as "no secrets found". The exit
+    # code is now checked, and the report goes to a real temp file so the
+    # failure doesn't happen in the first place. Same treatment as modelscan.
+    "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", GITLEAKS_REPORT_PLACEHOLDER, "--no-git", "--exit-code", "0"],
     "trivy": lambda path: ["trivy", "fs", "--format", "json", "--quiet", path],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],
     "trivy-sbom": lambda path: ["trivy", "fs", "--format", "cyclonedx", "--quiet", path],
@@ -69,6 +76,9 @@ TOOL_COMMANDS = {
 # So run_tool substitutes a real temp file for this placeholder and reads the
 # report back from disk.
 MODELSCAN_REPORT_PLACEHOLDER = "__RIKUGAN_MODELSCAN_REPORT__"
+
+# (#253) Same substitution for gitleaks -- see its TOOL_COMMANDS entry.
+GITLEAKS_REPORT_PLACEHOLDER = "__RIKUGAN_GITLEAKS_REPORT__"
 
 
 class ToolExecutionError(Exception):
@@ -404,6 +414,37 @@ def run_nuclei(urls: list[str]) -> list[dict]:
     return results
 
 
+def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
+    """Run gitleaks with its report going to a real file (#253).
+
+    Substitutes GITLEAKS_REPORT_PLACEHOLDER for a temp path, then reads the
+    report back. `--exit-code 0` means findings do not affect the exit
+    status, so any nonzero exit here is a genuine execution failure and
+    becomes a ToolExecutionError rather than an empty, clean-looking result.
+    """
+    report_path = Path(tempfile.mkdtemp(prefix="rikugan-gitleaks-")) / "report.json"
+    resolved = [str(report_path) if c == GITLEAKS_REPORT_PLACEHOLDER else c for c in cmd]
+    try:
+        proc = subprocess.run(resolved, capture_output=True, text=True, cwd=cwd)
+        if proc.returncode != 0:
+            detail = _strip_ansi(proc.stderr or "").strip().splitlines()
+            tail = detail[-1] if detail else "no stderr"
+            raise ToolExecutionError(f"gitleaks exited {proc.returncode}: {tail[:300]}")
+        if not report_path.exists():
+            # Exited 0 but wrote nothing. Do not assume "clean" -- gitleaks
+            # writes a report (even `[]`) on every successful run.
+            raise ToolExecutionError("gitleaks exited 0 but produced no report file")
+        text = report_path.read_text().strip()
+        if not text:
+            return []
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ToolExecutionError(f"gitleaks produced unreadable JSON: {exc}") from exc
+    finally:
+        shutil.rmtree(report_path.parent, ignore_errors=True)
+
+
 def _run_modelscan(cmd: list[str]) -> dict:
     """Run modelscan with its report directed at a temp file and read it back
     (issue #186). See MODELSCAN_REPORT_PLACEHOLDER for why stdout is unusable.
@@ -628,13 +669,67 @@ def _run_tool_scoped(tool: str, repo_path: Path, paths: list[str]) -> dict | lis
     return _execute(tool, cmd, repo_path)
 
 
+# Scanner CLIs colourise their own error output. That markup is meaningless
+# once the text lands in a scan record or a PR comment, and it makes the
+# message hard to read wherever it surfaces.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+# (#253) Exit codes that mean "I ran". Anything else means the tool broke,
+# and a broken tool must never be reported as a clean result.
+#
+# Most entries are {0} on purpose. The flags already in TOOL_COMMANDS --
+# gitleaks' `--exit-code 0`, checkov's and tfsec's `--soft-fail` -- exist
+# precisely so *findings* don't produce a nonzero exit. That makes nonzero
+# mean "I broke" and nothing else, which is the signal this table preserves.
+#
+# semgrep is the exception: it documents 1 as "findings were reported", and
+# we do not pass a flag to suppress that.
+TOOL_SUCCESS_EXIT_CODES = {
+    "semgrep": {0, 1},
+    "semgrep-llm": {0, 1},
+    "gitleaks": {0},        # --exit-code 0
+    "trivy": {0},
+    "trivy-license": {0},
+    "trivy-sbom": {0},
+    "gosec": {0},
+    "checkov": {0},         # --soft-fail
+    "tfsec": {0},           # --soft-fail
+}
+
+
 def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
     cwd = str(repo_path) if tool == "gosec" else None
 
     if tool == "modelscan":
         return _run_modelscan(cmd)
 
+    if tool == "gitleaks":
+        return _run_gitleaks(cmd, cwd)
+
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+
+    # (#253) Check this BEFORE falling through to the empty-stdout defaults
+    # below. A tool that dies writes nothing to stdout, and "nothing on
+    # stdout" was previously indistinguishable from "scanned everything,
+    # found nothing" -- so a crashed scanner reported a clean pass. Observed
+    # for real: gitleaks exiting 1 with
+    #   FTL Report path is not writable: /dev/stdout
+    # on a file containing a live-format AWS key, surfacing as [].
+    #
+    # ToolExecutionError already routes to tools_failed, which already
+    # renders as "not fully scanned" -- the signal just never reached it.
+    allowed = TOOL_SUCCESS_EXIT_CODES.get(tool)
+    if allowed is not None and proc.returncode not in allowed:
+        # stderr's tail, not the whole stream: enough to diagnose, bounded so
+        # a tool that dumps megabytes can't fill the scan record.
+        detail = _strip_ansi(proc.stderr or "").strip().splitlines()
+        tail = detail[-1] if detail else "no stderr"
+        raise ToolExecutionError(f"{tool} exited {proc.returncode}: {tail[:300]}")
 
     # checkov's JSON shape depends on how many IaC frameworks it found files
     # for in the target repo: a dict for a single framework, a list of

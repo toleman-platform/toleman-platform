@@ -7,6 +7,7 @@ import { ScanButtons } from "./scan-buttons";
 import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
 import { TargetEnforcement } from "./target-enforcement";
+import { TargetDiffScope } from "./target-diff-scope";
 import { ApiScanConfig } from "./api-scan-config";
 import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
@@ -119,6 +120,12 @@ export default async function TargetDetailPage({
               initialEffectiveMode={target.effective_enforcement_mode ?? "block"}
               initialSource={target.enforcement_mode_source ?? "default"}
             />
+            <div className="mt-3">
+              <TargetDiffScope
+                targetId={targetId}
+                initialEnabled={target.diff_scoped_pr_scans ?? false}
+              />
+            </div>
           </div>
 
           <div>

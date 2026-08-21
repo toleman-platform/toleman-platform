@@ -83,6 +83,23 @@ class UpdateTargetRequest(BaseModel):
     # enforcement_mode above, so omitting the field leaves it untouched.
     is_ai_repo_override: bool | None = None
 
+    # Issue #243: scan only the PR's changed files rather than the whole
+    # checkout. Not nullable-to-inherit like enforcement_mode -- this is a
+    # plain per-target on/off, because it trades coverage for speed and an
+    # inherited default would make it easy to narrow many targets' PR gate
+    # without anyone deciding to.
+    diff_scoped_pr_scans: bool | None = None
+
+    @field_validator("diff_scoped_pr_scans")
+    @classmethod
+    def _check_diff_scoped(cls, v: bool | None) -> bool | None:
+        # Unlike enforcement_mode, null has no "inherit" meaning here and the
+        # column is NOT NULL -- an explicit null would be a 500 rather than a
+        # 422. Omit the field to leave it alone.
+        if v is None:
+            raise ValueError("diff_scoped_pr_scans must be true or false; omit the field to leave it unchanged")
+        return v
+
     @field_validator("enforcement_mode")
     @classmethod
     def _check_enforcement_mode(cls, v: str | None) -> str | None:

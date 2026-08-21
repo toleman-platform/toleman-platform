@@ -70,7 +70,10 @@ def _wire_boundaries(monkeypatch, tool_outputs, failing_tools=()):
 
     ran = []
 
-    def fake_run_tool(tool, repo_path):
+    def fake_run_tool(tool, repo_path, paths=None):
+        # `paths` mirrors the real runner.run_tool signature (#243). These
+        # tests all exercise the unscoped path, so it should arrive as None.
+        assert paths is None
         ran.append(tool)
         if tool in failing_tools:
             raise RuntimeError(f"{tool} exploded")

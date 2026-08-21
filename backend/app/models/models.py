@@ -131,6 +131,12 @@ class Target(SQLModel, table=True):
     # None means "inherit" (from this target's group(s), then its workspace,
     # then the hardcoded "block" default) -- see app.core.enforcement.
     enforcement_mode: Optional[str] = None
+    # (#243) Scan only the PR's changed files instead of the whole checkout.
+    # Defaults False: this trades coverage for speed -- a change in file A
+    # can make pre-existing code in file B vulnerable, and a diff-scoped scan
+    # will not see it -- so it must be switched on deliberately per target
+    # rather than silently narrowing what everyone's PR gate checks.
+    diff_scoped_pr_scans: bool = False
     # Issue #72 (Active API Scanning): the live base URL of this target's
     # deployed API, e.g. "https://api-staging.example.com". Deliberately a
     # user-set, per-target field rather than anything derived from repo_url
@@ -630,6 +636,18 @@ class PRGuardrailScan(SQLModel, table=True):
     # render as a clean pass.
     tools_run: str = ""
     tools_failed: str = ""
+    # (#243) Tools that had nothing to examine once the scan was scoped to
+    # the PR's changed files -- trivy when no dependency manifest changed,
+    # tfsec when no Terraform did. A third column rather than a note folded
+    # into tools_run, because "skipped" and "ran clean" are different claims
+    # and only one of them is evidence of safety.
+    tools_skipped: str = ""
+    # (#243) How much of the repo this scan actually looked at: "full" (the
+    # whole checkout) or "diff" (only the PR's changed files). Persisted, not
+    # derived, so the PR comment and the audit trail can state the scope of
+    # the assurance being offered rather than implying whole-repo coverage.
+    scan_scope: str = "full"
+    files_scanned: int = 0  # meaningful only when scan_scope == "diff"
     # (GH-04) Why the commit status did not reach GitHub, or "" if it did.
     # Posting is deliberately fail-open -- a GitHub outage must not abort a
     # scan that already produced real findings -- but it used to be fail-open

@@ -270,16 +270,32 @@ jobs:
           destination: trivy-results/trivy.json
 
 workflows:
-  # NOTE: cancelling superseded runs is NOT expressible here. #233 added
-  # `concurrency: cancel-in-progress` to every GitHub workflow so a
-  # force-push during review stopped paying for a run whose result could no
-  # longer matter. Four of those workflows moved into this file, and CircleCI
-  # has no config-level equivalent -- the setting lives in the CircleCI UI, at
-  # Project Settings > Advanced > "Auto-cancel redundant workflows".
+  # Three things this migration needs that config.yml cannot express. They
+  # live in the CircleCI UI, so they are invisible to anyone reading the repo
+  # -- recorded here, with their state as of 2026-08-21.
   #
-  # It must be switched on there, or this migration silently gives back the
-  # saving #233 made. Recorded here because a project setting is invisible to
-  # anyone reading the repo.
+  # 1. Auto-cancel redundant workflows -- ON.
+  #    Project Settings > Advanced. #233 added `concurrency: cancel-in-progress`
+  #    to every GitHub workflow so a force-push during review stopped paying
+  #    for a run whose result could no longer matter. Four of those workflows
+  #    moved here, and CircleCI has no config-level equivalent. Left off, this
+  #    migration silently gives back the saving #233 made.
+  #
+  # 2. Weekly self-scan -- schedule trigger "weekly-self-scan", Mon 06:00 UTC
+  #    on main. Project Settings > Project Setup > Trigger on.
+  #    The old .github/workflows/self-scan.yml ran on push, on PRs, AND on
+  #    `cron: "0 6 * * 1"`. The workflow below reproduces push and PR; cron is
+  #    a scheduled *pipeline*, not config. #236 moved the file without it, so
+  #    for a while the dogfooding scan only ran when someone happened to push
+  #    -- a new CVE in a dependency would have sat unseen until the next
+  #    commit. Deleting that trigger reintroduces exactly that gap.
+  #
+  # 3. Pass secrets to builds from forked pull requests -- OFF, deliberately.
+  #    Project Settings > Advanced. It was on by default. This repo takes PRs
+  #    from outside collaborators, and it is a security product; a forked PR
+  #    must never receive project env vars or the shared build cache. Turning
+  #    on "Build forked pull requests" is fine on its own -- just leave this
+  #    one off.
   test-and-scan:
     jobs:
       - backend-tests

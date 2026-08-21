@@ -206,6 +206,8 @@ def list_findings(
     severity: Severity | None = None,
     tool: str | None = None,
     fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
+    environment: str | None = None,
+    owner: str | None = None,
     search: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
@@ -241,6 +243,18 @@ def list_findings(
         query = query.where(Finding.severity == severity)
     if tool is not None:
         query = query.where(Finding.tool == tool)
+    if environment is not None or owner is not None:
+        # (#251) Filter findings by the owning target's metadata. Needs the
+        # Target join, which only happens above when ws_ids is not None (an
+        # admin caller skips it), so join here if it hasn't happened yet --
+        # joining twice raises rather than silently duplicating rows.
+        if not target_joined:
+            query = query.join(Target, Target.id == Finding.target_id)
+            target_joined = True
+        if environment is not None:
+            query = query.where(Target.environment == environment)
+        if owner is not None:
+            query = query.where(Target.owner == owner)
     if fixability is not None:
         # (#246) Expressed as a subquery over CveEnrichment rather than a
         # join, so it composes with the joins above without duplicating rows
@@ -305,6 +319,38 @@ def list_tool_facets(session: Session = Depends(get_session), user: User = Depen
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     rows = session.exec(query).all()
     return sorted(rows)
+
+
+@router.get("/facets/environments")
+def list_environment_facets(
+    session: Session = Depends(get_session), user: User = Depends(current_user)
+) -> list[str]:
+    """(#251) Distinct environments among targets the caller can see.
+
+    Nulls are dropped rather than surfaced as an "unrecorded" option: the
+    facet exists to narrow a list, and offering a bucket for every target
+    nobody has labelled yet would be the largest and least useful entry in
+    it on day one.
+    """
+    return _target_facet(session, user, Target.environment)
+
+
+@router.get("/facets/owners")
+def list_owner_facets(
+    session: Session = Depends(get_session), user: User = Depends(current_user)
+) -> list[str]:
+    """(#251) Distinct owners among targets the caller can see."""
+    return _target_facet(session, user, Target.owner)
+
+
+def _target_facet(session: Session, user: User, column) -> list[str]:
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return []
+    query = select(column).distinct().where(column.is_not(None), column != "")
+    if ws_ids is not None:
+        query = query.where(Target.workspace_id.in_(ws_ids))
+    return sorted(r for r in session.exec(query).all() if r)
 
 
 @router.get("/{finding_id}")

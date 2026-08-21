@@ -83,6 +83,14 @@ class UpdateTargetRequest(BaseModel):
     # enforcement_mode above, so omitting the field leaves it untouched.
     is_ai_repo_override: bool | None = None
 
+    # (#251) Ownership metadata. Free text: every org names its environments
+    # differently, and an enum here would force a vocabulary on people. Null
+    # clears the field, which is meaningful -- "not recorded" is a real state,
+    # distinct from any value someone might set.
+    owner: str | None = None
+    environment: str | None = None
+    lifecycle: str | None = None
+
     # Issue #243: scan only the PR's changed files rather than the whole
     # checkout. Not nullable-to-inherit like enforcement_mode -- this is a
     # plain per-target on/off, because it trades coverage for speed and an

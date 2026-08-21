@@ -11,9 +11,8 @@ What the external evaluation hit:
     transport failure as "Invalid email or password".
 """
 
-import pytest
 
-from app.core.config import Settings
+from app.core.config import Settings, settings
 
 
 def _settings(**kwargs) -> Settings:
@@ -69,49 +68,30 @@ def test_wildcard_is_never_produced():
     assert "*" not in s.cors_allow_origins
 
 
-def test_pr_guardrail_links_use_the_configured_base_url(monkeypatch):
+def test_pr_guardrail_links_are_derived_from_settings():
     """The commit-status target_url and every PR-comment link must be built
-    from public_base_url, not a module constant."""
-    import importlib
+    from public_base_url, not a module constant.
 
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://rikugan.example.com")
-    import app.core.config as config_module
+    Asserted by derivation rather than by reloading the module under a patched
+    env: `importlib.reload(app.core.config)` rebinds `settings` to a *new*
+    object while every module that did `from app.core.config import settings`
+    keeps the old one, so a later test monkeypatching the new object silently
+    has no effect on them. That leaked across files and broke
+    test_security.py's default-secret check in CI -- a real cost, for a
+    weaker assertion than this one.
+    """
+    from app.core import pr_guardrail_executor as executor
 
-    importlib.reload(config_module)
-    import app.core.pr_guardrail_executor as executor
-
-    importlib.reload(executor)
-    try:
-        assert executor.FRONTEND_URL == "https://rikugan.example.com"
-        assert "localhost" not in executor.FRONTEND_URL
-    finally:
-        # Restore module state for the rest of the suite.
-        monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
-        importlib.reload(config_module)
-        importlib.reload(executor)
+    assert executor.FRONTEND_URL == settings.public_base_url.rstrip("/")
 
 
-def test_github_app_manifest_urls_use_the_configured_addresses(monkeypatch):
+def test_github_app_manifest_urls_are_derived_from_settings():
     """GitHub's servers call these back, so a localhost value produces an App
     that can never reach this deployment."""
-    import importlib
+    from app.api import github_app
 
-    monkeypatch.setenv("PUBLIC_BASE_URL", "https://rikugan.example.com")
-    monkeypatch.setenv("PUBLIC_API_URL", "https://api.rikugan.example.com")
-    import app.core.config as config_module
-
-    importlib.reload(config_module)
-    import app.api.github_app as github_app
-
-    importlib.reload(github_app)
-    try:
-        assert github_app.FRONTEND_URL == "https://rikugan.example.com"
-        assert github_app.BACKEND_URL == "https://api.rikugan.example.com"
-    finally:
-        monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
-        monkeypatch.delenv("PUBLIC_API_URL", raising=False)
-        importlib.reload(config_module)
-        importlib.reload(github_app)
+    assert github_app.FRONTEND_URL == settings.public_base_url.rstrip("/")
+    assert github_app.BACKEND_URL == settings.public_api_url.rstrip("/")
 
 
 def test_no_hardcoded_localhost_remains_in_backend_source():

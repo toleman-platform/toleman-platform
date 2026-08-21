@@ -17,9 +17,11 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 # Same retry rationale as app/tasks/scan_tasks.py's RETRYABLE_EXCEPTIONS:
-# only a `git clone` failure (transient network/remote issue) is worth
-# retrying. RepoCloneError (bad repo_url/branch) and anything else are
-# deterministic and will fail identically on retry.
+# only a `git clone` failure whose cause looks transient (network/remote
+# issue) is worth retrying. RepoCloneError -- bad repo_url/branch, or a
+# permanent remote failure classified by runner._classify_clone_stderr
+# (missing credentials, deleted repo, nonexistent branch, access denied) --
+# and anything else are deterministic and will fail identically on retry.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
 
 

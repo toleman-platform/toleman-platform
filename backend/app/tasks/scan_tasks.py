@@ -32,9 +32,14 @@ logger = logging.getLogger(__name__)
 #     installation problem, will fail identically every time.
 #   - ValueError (unsupported tool) / KeyError (bad PARSER_MAP entry) -- programmer
 #     error / bad input, deterministic.
-#   - runner.RepoCloneError (invalid repo_url/branch, rejected by clone_repo's
-#     validation before subprocess ever runs) -- deterministic bad input, same
-#     as the ValueError/KeyError cases above.
+#   - runner.RepoCloneError -- deterministic bad input, same as the
+#     ValueError/KeyError cases above. Two sources: clone_repo's own
+#     validation (invalid repo_url/branch, rejected before subprocess runs),
+#     and a git failure whose stderr names a permanent cause -- missing
+#     credentials, deleted repo, nonexistent branch, access denied. That
+#     second source is why _classify_clone_stderr exists: those all exit 128
+#     like a network blip does, and retrying them four times with backoff
+#     bought nothing but fifty identical tracebacks.
 #   - json parsing issues are already swallowed inside runner.run_tool.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
 

@@ -46,6 +46,12 @@ ARG GITLEAKS_VERSION=8.21.2
 ARG TRIVY_VERSION=0.73.0
 ARG GOSEC_VERSION=2.28.0
 
+# (BLD-04) Checksums of the *installer scripts* fetched below, at the tags
+# pinned above -- independently re-derived, not copied. Pinning the tool
+# version never covered these: the scripts came from a mutable branch tip.
+ARG TRIVY_INSTALLER_SHA256=e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+ARG GOSEC_INSTALLER_SHA256=2aafc038c170fb6141727d247ad5a17ded5bf195ad0fb8ed1b8e0aed326ac78f
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
@@ -69,12 +75,39 @@ RUN set -eux; \
         | tar xz -C /usr/local/bin gitleaks; \
     gitleaks version
 
-RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-        | sh -s -- -b /usr/local/bin "v${TRIVY_VERSION}" \
+# (BLD-04, second half) These two fetched their installer from the tip of a
+# mutable default branch and piped it straight into `sh`. backend/Dockerfile
+# was fixed in #234; this file was missed, so the *hardened* image was the
+# less safe of the two on exactly the axis this product sells. A security
+# tool whose own build trusts a moving URL is the first thing a reviewer
+# points at.
+#
+# Same treatment as the standard image: fetch the script from the same tag as
+# the version being installed, and verify its checksum before running it. The
+# tag pin removes the moving target; the checksum makes a force-pushed or
+# retagged script fail the build loudly instead of executing silently.
+#
+# To bump: change the ARG, re-fetch, and record the new sum with
+#   curl -sSL <url> | sha256sum
+RUN curl -sSL -o /tmp/trivy-install.sh \
+        "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh" \
+    && echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c - \
+    && sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}" \
+    && rm -f /tmp/trivy-install.sh \
     && trivy --version
 
-RUN curl -sfL https://raw.githubusercontent.com/securego/gosec/master/install.sh \
-        | sh -s -- -b /usr/local/bin "v${GOSEC_VERSION}" \
+# gosec's installer resolves the release through GitHub's API, which is rate
+# limited for unauthenticated callers. When that limit is hit it reports
+# "unable to find 'vX.Y.Z'" -- indistinguishable from a genuinely missing
+# tag, and the reason this build failed confusingly during the CI migration
+# while v2.28.0 was in fact the latest release. Nothing here can raise the
+# limit, but pinning the script at least removes one moving part from the
+# diagnosis.
+RUN curl -sSL -o /tmp/gosec-install.sh \
+        "https://raw.githubusercontent.com/securego/gosec/v${GOSEC_VERSION}/install.sh" \
+    && echo "${GOSEC_INSTALLER_SHA256}  /tmp/gosec-install.sh" | sha256sum -c - \
+    && sh /tmp/gosec-install.sh -b /usr/local/bin "v${GOSEC_VERSION}" \
+    && rm -f /tmp/gosec-install.sh \
     && gosec --version
 
 #

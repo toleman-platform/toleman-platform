@@ -269,6 +269,81 @@ jobs:
           path: trivy.json
           destination: trivy-results/trivy.json
 
+  # --- Image builds (moved off GitHub Actions, 2026-08-21) ----------------
+  # These were the last heavy jobs left on Actions, kept there because they
+  # need a real Docker daemon. CircleCI's machine executor provides one, so
+  # the only real blocker was never checked. Actions minutes ran out a second
+  # time; this is what was consuming them.
+  #
+  # Why the builds exist at all: every other job runs Python and Node
+  # directly against whatever the runner already has. None of them build the
+  # images docker-compose.yml actually ships, so a broken image could -- and
+  # did -- reach main with every check green. The break: nothing asks for
+  # setuptools directly, but semgrep's pinned opentelemetry-instrumentation
+  # declares setuptools>=16.0, pip resolved 82.0.0, which removed
+  # pkg_resources, which that same module imports. requirements.txt had not
+  # changed; a transitive resolve drifted underneath it.
+  build-image:
+    parameters:
+      # NOT named `context`: CircleCI reserves that key on a workflow job for
+      # Contexts (secret bundles), so a parameter by that name is swallowed
+      # rather than passed through.
+      context_name:
+        type: string
+      dockerfile:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Build << parameters.context_name >> image
+          # Never pushed: this proves the image builds, it does not publish.
+          #
+          # Deliberately --no-cache. A cached layer is exactly what would
+          # hide a dependency resolving differently, which is the whole
+          # failure mode this job exists to catch.
+          command: |
+            docker build \
+              --no-cache \
+              --build-arg NEXT_PUBLIC_API_URL=http://localhost:8000 \
+              -f << parameters.dockerfile >> \
+              -t rikugan-ci-image:latest \
+              << parameters.context_name >>
+      - run:
+          name: Verify bundled scanners actually run
+          # "docker build succeeded" only proves the install commands exited
+          # zero. It does not prove the binaries still run -- and a scanner
+          # that is missing or broken fails silently at runtime, producing
+          # zero findings that look exactly like a clean repo.
+          #
+          # Skipped for the distroless hardened image, which has no shell and
+          # no Python entrypoint to drive this with; its scanners come from
+          # the same install steps as the standard image, verified here.
+          command: |
+            case "<< parameters.dockerfile >>" in
+              backend/Dockerfile)
+                docker run --rm rikugan-ci-image:latest python scripts/verify_tools.py
+                ;;
+              *)
+                echo "skipped for << parameters.dockerfile >> (distroless has no shell; frontend ships no scanners)"
+                ;;
+            esac
+
+  compose-config:
+    # Cheap and fast, so it runs regardless of the image builds: catches a
+    # compose file referencing a service, image or build context that does
+    # not exist.
+    machine:
+      image: ubuntu-2204:current
+    working_directory: ~/project
+    steps:
+      - checkout
+      - run:
+          name: Validate docker-compose.yml
+          command: docker compose -f docker-compose.yml config --quiet
+
 workflows:
   # Three things this migration needs that config.yml cannot express. They
   # live in the CircleCI UI, so they are invisible to anyone reading the repo
@@ -304,3 +379,19 @@ workflows:
       - semgrep
       - gitleaks
       - trivy
+      - compose-config
+      # fail-fast is off by construction here: independent jobs, so a broken
+      # frontend build does not cancel the backend one. When both are broken,
+      # one run reports both.
+      - build-image:
+          name: build-backend
+          context_name: backend
+          dockerfile: backend/Dockerfile
+      - build-image:
+          name: build-backend-hardened
+          context_name: backend
+          dockerfile: backend/Dockerfile.hardened
+      - build-image:
+          name: build-frontend
+          context_name: frontend
+          dockerfile: frontend/Dockerfile

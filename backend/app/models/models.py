@@ -118,6 +118,22 @@ class Target(SQLModel, table=True):
     default_branch: str = "main"
     label: str = "Dev"  # Prod, Dev, Internal, Public, or custom
     criticality_weight: int = 1  # 1-5
+    # (#251) Who owns this and where it runs.
+    #
+    # criticality_weight already multiplies every finding's priority_score
+    # (app/core/scoring.py), but nothing recorded *why* a target is critical,
+    # so the number was an assertion nobody could audit or argue with. These
+    # three make it explainable, and give findings the facets people actually
+    # filter by -- "show me production only", "route this to its owner"
+    # instead of to everyone.
+    #
+    # Deliberately free-text/nullable rather than enums-with-a-migration:
+    # every org names its environments differently (prod/production/live), and
+    # guessing that vocabulary would force a rename on anyone who disagreed.
+    # None means "not recorded", which stays distinct from any real value.
+    owner: Optional[str] = None          # team or person accountable
+    environment: Optional[str] = None    # production / staging / dev / ...
+    lifecycle: Optional[str] = None      # active / maintenance / deprecated / ...
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # Pipeline integration (issue #66): whether a real PR opening
     # .github/workflows/rikugan-scan.yml against this target's default GitHub

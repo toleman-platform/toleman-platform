@@ -14,6 +14,7 @@ from app.core.cve_enrichment import get_cve_enrichment
 from app.core.fp_learning import learn_suppression_rule
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
+from app.core.remediation import group_remediations
 from app.core.fixability import (
     UNKNOWN,
     VALID_FIXABILITY,
@@ -319,6 +320,29 @@ def list_tool_facets(session: Session = Depends(get_session), user: User = Depen
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     rows = session.exec(query).all()
     return sorted(rows)
+
+
+@router.get("/remediations")
+def list_remediations(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> list[dict]:
+    """(#247) Open findings for a target, grouped into the upgrades that
+    would close them: "upgrade starlette to 0.40.0, fixes 3 issues".
+
+    Workspace-scoped like every other read here (#57) -- a target id from
+    another tenant returns 404, not that tenant's remediation plan.
+    """
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        # 404 rather than 403: the existence of another tenant's target is
+        # itself information.
+        raise HTTPException(status_code=404, detail="target not found")
+    return group_remediations(session, target_id)
 
 
 @router.get("/facets/environments")

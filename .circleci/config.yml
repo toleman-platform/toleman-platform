@@ -229,11 +229,30 @@ jobs:
       - checkout
       - run:
           name: Install Trivy
-          # Unpinned, matching the `aquasecurity/trivy-action@master` this
-          # replaces: a vulnerability scanner pinned to an old release stops
-          # knowing about new vulnerabilities, which is the one thing it exists
-          # to do.
-          command: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+          # Pinned installer + checksum, matching what backend/Dockerfile does
+          # (finding BLD-04, merged in #234). This started out unpinned on the
+          # reasoning that "a scanner pinned to an old release stops knowing
+          # about new vulnerabilities" -- which does not hold: trivy downloads
+          # its vulnerability database separately at scan time (that DB, and
+          # its cache, is what issue #229 was about). Pinning the *binary*
+          # freezes the scanner engine, not its vulnerability knowledge.
+          #
+          # What was actually unpinned was the install *script*, fetched from
+          # a branch tip -- a mutable URL piped into `sudo sh`. That is the
+          # supply-chain hole BLD-04 named, and a security product's own CI is
+          # the last place to leave one open.
+          #
+          # To bump: change TRIVY_VERSION, re-fetch, and record the new sum
+          # with `curl -sSL <url> | sha256sum`.
+          command: |
+            TRIVY_VERSION=0.73.0
+            TRIVY_INSTALLER_SHA256=e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+            curl -sSL -o /tmp/trivy-install.sh \
+              "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh"
+            echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c -
+            sudo sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}"
+            rm -f /tmp/trivy-install.sh
+            trivy --version
       - run:
           name: Run Trivy (filesystem scan)
           command: trivy fs --format json --output trivy.json . || true
@@ -251,6 +270,16 @@ jobs:
           destination: trivy-results/trivy.json
 
 workflows:
+  # NOTE: cancelling superseded runs is NOT expressible here. #233 added
+  # `concurrency: cancel-in-progress` to every GitHub workflow so a
+  # force-push during review stopped paying for a run whose result could no
+  # longer matter. Four of those workflows moved into this file, and CircleCI
+  # has no config-level equivalent -- the setting lives in the CircleCI UI, at
+  # Project Settings > Advanced > "Auto-cancel redundant workflows".
+  #
+  # It must be switched on there, or this migration silently gives back the
+  # saving #233 made. Recorded here because a project setting is invisible to
+  # anyone reading the repo.
   test-and-scan:
     jobs:
       - backend-tests

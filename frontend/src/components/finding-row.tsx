@@ -65,6 +65,39 @@ const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 // Issue #70: SLA countdown/violation badge. sla_days is null when no
 // SlaRule applies to this finding (group/severity or workspace default) --
 // render nothing in that case rather than a fabricated countdown.
+// (#246) Whether this can be closed today, next to how bad it is.
+//
+// "unknown" renders nothing at all rather than a grey "unknown" chip. Most
+// findings are unknown -- every SAST and secrets finding carries no CVE to
+// look up -- so a chip on each one would be pure noise, and worse, it would
+// read as a finding *about* the finding rather than an absence of data. The
+// filter still exposes the state for anyone who wants to hunt for it.
+function FixabilityBadge({ finding }: { finding: Finding }) {
+  if (finding.fixability === "fixable") {
+    return (
+      <Badge
+        variant="outline"
+        title="An upgrade that resolves this is available"
+        className="shrink-0 border-emerald-600/30 bg-emerald-600/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+      >
+        Fix available
+      </Badge>
+    );
+  }
+  if (finding.fixability === "no_known_fix") {
+    return (
+      <Badge
+        variant="outline"
+        title="The advisory lists no fixed version yet"
+        className="shrink-0 border-border bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"
+      >
+        No known fix
+      </Badge>
+    );
+  }
+  return null;
+}
+
 function SlaBadge({ finding }: { finding: Finding }) {
   const [now] = useState(() => Date.now());
   if (finding.sla_days === null || finding.sla_days === undefined) return null;
@@ -363,6 +396,7 @@ export function FindingRow({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-3">
+            <FixabilityBadge finding={finding} />
             <SlaBadge finding={finding} />
             {/* Compact moves the Triage trigger up here, so the row doesn't
                 need the full-width block below it at all (#172). */}

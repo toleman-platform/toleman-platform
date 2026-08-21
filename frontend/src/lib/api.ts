@@ -212,6 +212,11 @@ export type Finding = {
   // finding is still open past that window.
   sla_days: number | null;
   sla_violated: boolean;
+  // (#246) Can this be closed today? "fixable" (an upgrade exists),
+  // "no_known_fix" (the advisory lists none), or "unknown" (we have not
+  // established either way -- NOT a softer way of saying no_known_fix; most
+  // SAST and secrets findings carry no CVE to look up).
+  fixability?: "fixable" | "no_known_fix" | "unknown";
 };
 
 // Issue #75: one entry from GET /api/tools/registry -- every OSS scanner
@@ -410,6 +415,9 @@ export type FindingsQuery = {
   state?: string;
   severity?: string;
   tool?: string;
+  // (#246) "fixable" | "no_known_fix" | "unknown". Filters to what can
+  // actually be closed today.
+  fixability?: string;
   search?: string;
   page?: number;
   page_size?: number;
@@ -887,6 +895,11 @@ export type RecentFindingItem = {
   first_seen: string;
   sla_days: number | null;
   sla_violated: boolean;
+  // (#246) Can this be closed today? "fixable" (an upgrade exists),
+  // "no_known_fix" (the advisory lists none), or "unknown" (we have not
+  // established either way -- NOT a softer way of saying no_known_fix; most
+  // SAST and secrets findings carry no CVE to look up).
+  fixability?: "fixable" | "no_known_fix" | "unknown";
 };
 export type RecentFindingsData = { items: RecentFindingItem[] };
 // Issue #76: "X findings auto-suppressed this month" widget data.
@@ -1061,6 +1074,7 @@ export const api = {
     if (query.state) params.set("state", query.state);
     if (query.severity) params.set("severity", query.severity);
     if (query.tool) params.set("tool", query.tool);
+    if (query.fixability) params.set("fixability", query.fixability);
     if (query.search) params.set("search", query.search);
     if (query.page) params.set("page", String(query.page));
     if (query.page_size) params.set("page_size", String(query.page_size));

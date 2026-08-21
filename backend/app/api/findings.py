@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Literal
 from datetime import datetime
 from uuid import uuid4
 
@@ -13,7 +14,14 @@ from app.core.cve_enrichment import get_cve_enrichment
 from app.core.fp_learning import learn_suppression_rule
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
+from app.core.fixability import (
+    UNKNOWN,
+    VALID_FIXABILITY,
+    fixability_for_enrichment,
+    fixability_for_finding,
+)
 from app.models.models import (
+    CveEnrichment,
     Finding,
     FindingState,
     FindingStateLog,
@@ -42,12 +50,38 @@ class FindingOut(Finding):
     endpoint already returns Finding rows almost as-is elsewhere."""
     sla_days: int | None = None
     sla_violated: bool = False
+    # (#246) "can I close this today?" -- derived from CveEnrichment, not a
+    # stored column, so it cannot drift from the enrichment it summarises.
+    # "unknown" means we have not established either way; it is NOT a softer
+    # way of saying no_known_fix. See app.core.fixability.
+    fixability: str = UNKNOWN
 
 
-def _to_finding_out(session: Session, finding: Finding) -> FindingOut:
+def _to_finding_out(session: Session, finding: Finding, fixability: str | None = None) -> FindingOut:
     sla_days, sla_violated = compute_sla_status(session, finding)
     _maybe_notify_sla_breach(session, finding, sla_violated)
-    return FindingOut(**finding.model_dump(), sla_days=sla_days, sla_violated=sla_violated)
+    if fixability is None:
+        # Single-finding callers. List endpoints pass a pre-resolved value
+        # from _fixability_map so a page of 50 findings is one query, not 50.
+        fixability = fixability_for_finding(session, finding)
+    return FindingOut(
+        **finding.model_dump(),
+        sla_days=sla_days,
+        sla_violated=sla_violated,
+        fixability=fixability,
+    )
+
+
+def _fixability_map(session: Session, findings: list[Finding]) -> dict[int, str]:
+    """Resolve fixability for a whole page in one query (#246)."""
+    cve_ids = {f.cve_id for f in findings if f.cve_id}
+    rows = (
+        session.exec(select(CveEnrichment).where(CveEnrichment.cve_id.in_(cve_ids))).all()
+        if cve_ids
+        else []
+    )
+    by_cve = {r.cve_id: r for r in rows}
+    return {f.id: fixability_for_enrichment(by_cve.get(f.cve_id)) if f.cve_id else UNKNOWN for f in findings}
 
 
 def _maybe_notify_sla_breach(session: Session, finding: Finding, sla_violated: bool) -> None:
@@ -171,6 +205,7 @@ def list_findings(
     state: FindingState | None = None,
     severity: Severity | None = None,
     tool: str | None = None,
+    fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
     search: str | None = None,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
@@ -206,6 +241,26 @@ def list_findings(
         query = query.where(Finding.severity == severity)
     if tool is not None:
         query = query.where(Finding.tool == tool)
+    if fixability is not None:
+        # (#246) Expressed as a subquery over CveEnrichment rather than a
+        # join, so it composes with the joins above without duplicating rows
+        # when a finding's CVE has several enrichment matches.
+        fixable_cves = select(CveEnrichment.cve_id).where(
+            CveEnrichment.osv_found == True,  # noqa: E712
+            CveEnrichment.fixed_versions.is_not(None),
+            CveEnrichment.fixed_versions != "[]",
+        )
+        known_cves = select(CveEnrichment.cve_id).where(CveEnrichment.osv_found == True)  # noqa: E712
+        if fixability == "fixable":
+            query = query.where(Finding.cve_id.in_(fixable_cves))
+        elif fixability == "no_known_fix":
+            query = query.where(
+                Finding.cve_id.in_(known_cves), Finding.cve_id.not_in(fixable_cves)
+            )
+        else:  # unknown -- no CVE at all, or no resolved advisory
+            query = query.where(
+                or_(Finding.cve_id.is_(None), Finding.cve_id.not_in(known_cves))
+            )
     if search:
         # Issue #122: AI Analysis' finding-search typeahead reuses this
         # query param rather than new backend search logic, and searches by
@@ -231,7 +286,11 @@ def list_findings(
     page_size = max(min(page_size, 500), 1)
     query = query.order_by(Finding.priority_score.desc()).offset((page - 1) * page_size).limit(page_size)
     items = session.exec(query).all()
-    return FindingListResponse(items=[_to_finding_out(session, f) for f in items], total=total)
+    fixmap = _fixability_map(session, items)
+    return FindingListResponse(
+        items=[_to_finding_out(session, f, fixability=fixmap.get(f.id)) for f in items],
+        total=total,
+    )
 
 
 @router.get("/facets/tools")

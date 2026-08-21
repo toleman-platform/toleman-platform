@@ -149,6 +149,12 @@ services:
       # (Server Components, route handlers) can reach the backend over the
       # compose network. See the comment on API_URL in src/lib/api.ts.
       API_INTERNAL_URL: http://backend:8000
+      # (BLD-02) The address the *browser* uses, read at runtime and injected
+      # per request by app/layout.tsx. This is the one to change when the
+      # backend moves to a different port or host -- a restart is enough, no
+      # frontend rebuild. The NEXT_PUBLIC_API_URL build arg above is now only
+      # a fallback for images built before this change.
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
 

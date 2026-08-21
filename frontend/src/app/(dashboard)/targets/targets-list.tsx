@@ -518,7 +518,18 @@ export function TargetsList({
         {/* Issue #35: fleet-wide alternative to the checkbox-driven bulk bar
             below -- rolls out to an entire workspace/group/every accessible
             repo without paging through a manual selection. */}
-        <Button variant="outline" size="sm" onClick={() => setMassOpen((v) => !v)} className="h-7 text-xs">
+        {/* The name implies something irreversible across many repositories,
+            and an external review found nothing on hover or nearby saying
+            what it rolls out. It opens a scope picker -- it does not fire on
+            click -- and what it ultimately does is open a PR per repo, which
+            someone still has to merge. Both worth stating. */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setMassOpen((v) => !v)}
+          title="Open a PR adding the Rikugan scan workflow to every repo in a workspace or group. Opens a scope picker first; nothing is changed until you confirm, and each PR still needs merging."
+          className="h-7 text-xs"
+        >
           <Rocket className="mr-1 h-3.5 w-3.5" />
           Mass Rollout
         </Button>

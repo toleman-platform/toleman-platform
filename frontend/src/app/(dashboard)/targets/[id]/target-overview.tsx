@@ -73,10 +73,14 @@ export function TargetOverview({
           icon={target.is_ai_repo_effective ? Boxes : ShieldCheck}
           label={target.is_ai_repo_effective ? "AI/ML repo" : "Repo type"}
           value={target.is_ai_repo_effective ? "Yes" : "Standard"}
+          // Reads as a scan verdict, but it is a routing decision: it
+          // decides whether the AI/ML scanners run at all. An external review
+          // flagged that the old hint ("no model files or AI dependencies")
+          // described the evidence without ever saying what it changes.
           hint={
             target.is_ai_repo_effective
-              ? target.is_ai_repo_signals || "manually marked"
-              : "no model files or AI dependencies detected"
+              ? `${target.is_ai_repo_signals || "manually marked"} - AI/ML scanners run on this repo`
+              : "no model files or AI dependencies detected - AI/ML scanners are skipped"
           }
         />
       </StatGrid>

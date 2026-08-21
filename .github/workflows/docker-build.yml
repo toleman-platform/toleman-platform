@@ -38,6 +38,20 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
+# Cancel a superseded run when a branch is pushed again. Without this, every
+# amend or force-push during review pays for a full duplicate run of every job
+# below -- the previous run keeps going to completion even though its result
+# can no longer matter.
+#
+# `github.ref` is the group key, so pushes to the *same* branch cancel each
+# other while different PRs stay independent. main is excluded from
+# cancellation via `github.run_id` in the fallback: a push to main should
+# always finish, since its result is what the branch protection and the
+# post-merge image build rely on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   build:
     runs-on: ubuntu-latest

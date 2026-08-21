@@ -1,14 +1,45 @@
-// NEXT_PUBLIC_API_URL is inlined at build time into both the browser bundle
-// and server-rendered code, so it must point wherever the *browser* can
-// reach the backend (e.g. a published host port). Server Components/route
-// handlers instead run inside the frontend container itself, where that
-// address usually isn't reachable (e.g. "localhost" resolves to the
-// frontend container, not the backend one) -- API_INTERNAL_URL is a plain
-// (non-NEXT_PUBLIC_) runtime env var read fresh on the server for exactly
-// that case, e.g. set to "http://backend:8000" on the docker-compose
-// internal network. It's never bundled for the browser, so this has no
-// effect on local `npm run dev` unless explicitly set.
-export const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Where the browser and the server each reach the backend.
+//
+// (Finding BLD-02) This used to be a single `const` reading
+// NEXT_PUBLIC_API_URL, which Next.js inlines into the bundle at `next build`
+// time. That made the backend address part of the *image*: an external
+// evaluator who had to remap ports to 8001/3001 paid a full 12-minute
+// frontend rebuild for a one-line change, and any deployment not on the
+// default ports pays it too.
+//
+// Resolved per call instead, from three sources in order:
+//
+//   server-side   API_INTERNAL_URL   -- how this container reaches the
+//                                       backend on the compose network
+//                                       (e.g. http://backend:8000); a plain
+//                                       runtime var, never bundled.
+//   browser       window.__RIKUGAN_API_URL__
+//                                    -- injected per request by the root
+//                                       layout from PUBLIC_API_URL, so it is
+//                                       a *runtime* value: change the env and
+//                                       restart, no rebuild.
+//   either        NEXT_PUBLIC_API_URL
+//                                    -- the build-time inline, kept as a
+//                                       fallback so an image built before
+//                                       this change, and plain `next dev`,
+//                                       both keep working unchanged.
+export const DEFAULT_API_URL = "http://localhost:8000";
+
+declare global {
+  interface Window {
+    __RIKUGAN_API_URL__?: string;
+  }
+}
+
+export function apiBaseUrl(): string {
+  if (typeof window === "undefined") {
+    // Server Components and route handlers run inside the frontend
+    // container, where the browser-facing address usually is not reachable
+    // ("localhost" resolves to this container, not the backend one).
+    return process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
+  }
+  return window.__RIKUGAN_API_URL__ || process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
+}
 
 // A group/tag badge embedded on a Target (issue #61) -- e.g. "production",
 // "PCI-scope". Also the shape returned standalone by the /api/groups CRUD
@@ -949,7 +980,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
   let res: Response;
   try {
-    res = await fetch(`${API_URL}${path}`, {
+    res = await fetch(`${apiBaseUrl()}${path}`, {
       ...init,
       cache: "no-store",
       credentials: "include",
@@ -963,7 +994,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     // form rendered as "Invalid email or password" (finding BLD-03), sending
     // people to hunt for a seeding bug instead of a middleware allowlist.
     throw new NetworkError(
-      `Could not reach the API at ${API_URL}. The request never arrived — check that the backend is running and that this origin is allowed by PUBLIC_BASE_URL/EXTRA_CORS_ORIGINS.`,
+      `Could not reach the API at ${apiBaseUrl()}. The request never arrived — check that the backend is running and that this origin is allowed by PUBLIC_BASE_URL/EXTRA_CORS_ORIGINS.`,
       e,
     );
   }
@@ -1215,13 +1246,13 @@ export const api = {
     }),
   getSbomRun: (targetId: number, runId: number) => jsonFetch<SbomRunResult>(`/api/sbom/${targetId}/runs/${runId}`),
   exportSbom: async (targetId: number, format: SbomExportFormat = "cyclonedx-json"): Promise<Blob> => {
-    const res = await fetch(`${API_URL}/api/sbom/${targetId}/export?format=${format}`, { credentials: "include" });
+    const res = await fetch(`${apiBaseUrl()}/api/sbom/${targetId}/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
     return res.blob();
   },
   getOrgSbom: () => jsonFetch<OrgSbomResult>("/api/sbom/org"),
   exportOrgSbom: async (): Promise<Blob> => {
-    const res = await fetch(`${API_URL}/api/sbom/org/export`, { credentials: "include" });
+    const res = await fetch(`${apiBaseUrl()}/api/sbom/org/export`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
     return res.blob();
   },
@@ -1237,7 +1268,7 @@ export const api = {
     if (targetId !== null && targetId !== 0) {
       params.set("target_id", String(targetId));
     }
-    const res = await fetch(`${API_URL}/api/reports/posture?${params.toString()}`, {
+    const res = await fetch(`${apiBaseUrl()}/api/reports/posture?${params.toString()}`, {
       credentials: "include",
     });
     if (!res.ok) throw new Error(`report export failed: ${res.status}`);

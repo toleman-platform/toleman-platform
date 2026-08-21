@@ -474,6 +474,13 @@ function WorkspaceSection() {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">Criticality weight (1-5)</label>
+                {/* Shown as a bare number with no stated meaning, which an
+                    external review flagged: nothing said how it enters the
+                    risk score. Kept in sync with backend/app/core/scoring.py. */}
+                <p className="text-[11px] text-muted-foreground">
+                  Multiplies this repo&apos;s risk scores: severity x weight x 40, capped at 1000. Raise it for
+                  production or internet-facing repos so their findings outrank identical ones elsewhere.
+                </p>
                 <Input
                   type="number"
                   min={1}
@@ -500,6 +507,12 @@ function WorkspaceSection() {
             <p className="text-sm font-medium text-foreground">Workspace API key</p>
             <p className="text-xs text-muted-foreground">
               Moved to its own Workspaces page -- manage it there alongside the workspace&apos;s name and roles.
+            </p>
+            {/* Two credential types for two different jobs, and an external
+                review found nothing said which one a given integration wants. */}
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Use this one for CI pushing scan results in (<code>POST /api/ingest</code>). For the public API
+              and the MCP server, create a personal API token below instead.
             </p>
           </div>
           <Link href="/workspaces" className="shrink-0 text-xs text-accent-strong underline">

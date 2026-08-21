@@ -12,6 +12,7 @@ from datetime import datetime
 import httpx
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.core.dedup import compute_dedup_hash
 from app.core.enforcement import resolve_enforcement_mode
 from app.core.github import get_github_token, github_get, repo_slug_from_url
@@ -29,17 +30,74 @@ from app.models.models import (
     PRGuardrailStatus,
     Target,
 )
+from app.core.tool_usage import tools_for_surface
 from app.scanners import parsers, runner
 from app.scanners.discovery import discover_endpoints
 
 logger = logging.getLogger(__name__)
 
-FRONTEND_URL = "http://localhost:3000"
+# GH-02: every link this module posts to GitHub (PR comment "review in
+# Rikugan", "request ignore", and the commit status target_url below) used
+# to be a hardcoded localhost:3000, unfollowable by anyone but the author.
+FRONTEND_URL = settings.public_base_url.rstrip("/")
 
-GUARDRAIL_TOOL = "semgrep"
-GUARDRAIL_PARSER = parsers.parse_semgrep
+# Fallback when a workspace has no usable pr_guardrail assignment resolved
+# (see _resolve_guardrail_tools). Kept because semgrep is bundled in the
+# backend image and was the historical hardcoded behavior -- but it is now a
+# floor, not the whole story: whatever else the workspace assigns runs too.
+GUARDRAIL_FALLBACK_TOOL = "semgrep"
 MAX_NEW_FINDINGS_IN_RESPONSE = 20
 MAX_NEW_ENDPOINTS_IN_RESPONSE = 10
+
+
+def _resolve_guardrail_tools(session: Session, target: Target) -> list[str]:
+    """Tools to run for this target's PR guardrail scan.
+
+    Reads the workspace's real pr_guardrail usage assignments (GH-01 --
+    before this, those checkboxes were decorative and only semgrep ever
+    ran). Falls back to semgrep alone if the workspace has somehow resolved
+    to nothing runnable, so a guardrail scan never silently degrades into
+    scanning with no tools at all and reporting a clean pass.
+    """
+    tools = tools_for_surface(session, target.workspace_id, "pr_guardrail")
+    if not tools:
+        logger.warning(
+            "target %s workspace %s has no runnable pr_guardrail tools assigned; "
+            "falling back to %s",
+            target.id, target.workspace_id, GUARDRAIL_FALLBACK_TOOL,
+        )
+        return [GUARDRAIL_FALLBACK_TOOL]
+    return tools
+
+
+def _run_guardrail_tools(tools: list[str], repo_path) -> tuple[list[dict], list[str]]:
+    """Run every assigned tool over the PR checkout.
+
+    Returns ``(findings, failed_tools)``. Each finding carries its own
+    ``tool`` key so downstream dedup, persistence and rendering can attribute
+    it correctly.
+
+    A tool that raises is recorded in ``failed_tools`` rather than aborting
+    the whole scan: one broken scanner shouldn't discard the real findings
+    the others produced. But the caller must not treat a run with a non-empty
+    ``failed_tools`` as a clean pass -- that is exactly the
+    "a check that did not really run must never look like a check that
+    passed" rule this codebase already applies in osv_malware.py.
+    """
+    findings: list[dict] = []
+    failed: list[str] = []
+    for tool in tools:
+        try:
+            raw = runner.run_tool(tool, repo_path)
+            parsed = parsers.PARSER_MAP[tool](raw)
+        except Exception:
+            logger.exception("pr guardrail tool %s failed", tool)
+            failed.append(tool)
+            continue
+        for item in parsed:
+            item["tool"] = tool
+        findings.extend(parsed)
+    return findings, failed
 
 
 def _severity_str(severity) -> str:
@@ -53,7 +111,10 @@ def _severity_str(severity) -> str:
 
 def finding_summary(f: dict) -> dict:
     return {
-        "tool": GUARDRAIL_TOOL,
+        # Per-finding now that the guardrail is multi-tool (GH-01). Was a
+        # module constant, which mislabelled every finding as semgrep's the
+        # moment a second tool could contribute one.
+        "tool": f.get("tool") or GUARDRAIL_FALLBACK_TOOL,
         "rule_id": f.get("rule_id"),
         "title": f.get("title"),
         "file_path": f.get("file_path"),
@@ -67,7 +128,7 @@ def _persist_findings(session: Session, pr_scan_id: int, net_new: list[dict]) ->
     for f in net_new[:MAX_NEW_FINDINGS_IN_RESPONSE]:
         row = PRGuardrailFinding(
             pr_scan_id=pr_scan_id,
-            tool=GUARDRAIL_TOOL,
+            tool=f.get("tool") or GUARDRAIL_FALLBACK_TOOL,
             rule_id=f.get("rule_id", ""),
             title=f.get("title", "") or f.get("rule_id", ""),
             file_path=f.get("file_path", ""),
@@ -171,11 +232,36 @@ def render_comment(
     status: PRGuardrailStatus,
     target_id: int,
     pr_scan_id: int,
+    tools_run: list[str] | None = None,
+    tools_failed: list[str] | None = None,
 ) -> str:
+    """`tools_run`/`tools_failed` default to None for callers (and tests)
+    predating the multi-tool guardrail (GH-01); None means "don't render a
+    coverage line", which reproduces the old output exactly."""
     lines = [COMMENT_MARKER, "**Rikugan PR Guardrail**", "", _severity_badge(status), ""]
 
+    if tools_failed:
+        # Rendered before anything else, and never alongside a clean-pass
+        # tick: a PR scanned with a broken scanner is inconclusive, not
+        # clean. Naming the tool is what makes it actionable -- "scan
+        # failed" alone sends people to the container logs.
+        lines.append(
+            f"⚠️ **{', '.join(tools_failed)} failed to run — this PR was not fully scanned.** "
+            "Findings below (if any) are from the tools that did run, and may be incomplete."
+        )
+        lines.append("")
+
     if not findings and not new_endpoints:
-        lines.append("No net-new findings or API changes vs the default branch. ✅")
+        if tools_failed:
+            lines.append(
+                "No net-new findings from the tools that completed. "
+                "This is **not** an all-clear — see the warning above."
+            )
+        else:
+            lines.append("No net-new findings or API changes vs the default branch. ✅")
+        if tools_run:
+            lines.append("")
+            lines.append(f"<sub>Scanned with: {', '.join(tools_run)}</sub>")
         return "\n".join(lines)
 
     if findings:
@@ -221,6 +307,10 @@ def render_comment(
     if status == PRGuardrailStatus.BLOCKED:
         lines.append("This PR is **blocked** pending fix or AppSec override — [review in Rikugan]"
                       f"({FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}).")
+
+    if tools_run:
+        lines.append("")
+        lines.append(f"<sub>Scanned with: {', '.join(tools_run)}</sub>")
 
     return "\n".join(lines)
 
@@ -325,7 +415,7 @@ def set_commit_status(session: Session, target: Target, sha: str, state: str, de
                 "state": state,
                 "context": "rikugan/pr-guardrail",
                 "description": description[:140],
-                "target_url": "http://localhost:3000/pr-history",
+                "target_url": f"{FRONTEND_URL}/pr-history",
             },
             timeout=15,
         )
@@ -390,8 +480,8 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         repo_path = runner.clone_repo(
             target.repo_url, head_branch, get_github_token(), scan_id=f"pr-{pr_scan.id}"
         )
-        raw = runner.run_tool(GUARDRAIL_TOOL, repo_path)
-        parsed = GUARDRAIL_PARSER(raw)
+        guardrail_tools = _resolve_guardrail_tools(session, target)
+        parsed, failed_tools = _run_guardrail_tools(guardrail_tools, repo_path)
 
         for item in parsed:
             # Must match the same normalization ingest_findings applies, or
@@ -402,7 +492,11 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             item["dedup_hash"] = compute_dedup_hash(
                 rule_id=item["rule_id"],
                 file_path=item["file_path"],
-                tool=GUARDRAIL_TOOL,
+                # Per-finding: hashing every tool's findings under a single
+                # constant would collide unrelated rules across tools and
+                # make a gitleaks finding "match" a semgrep one on the same
+                # line, silently suppressing it as not-net-new.
+                tool=item["tool"],
                 snippet=item.get("snippet", ""),
                 line_start=item.get("line_start"),
             )
@@ -439,6 +533,8 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         pr_scan.new_findings_count = len(net_new)
         pr_scan.highest_new_severity = highest_severity(net_new)
         pr_scan.new_endpoints_count = len(new_endpoints)
+        pr_scan.tools_run = ",".join(t for t in guardrail_tools if t not in failed_tools)
+        pr_scan.tools_failed = ",".join(failed_tools)
         pr_scan.completed_at = datetime.utcnow()
         session.add(pr_scan)
         session.commit()
@@ -446,11 +542,28 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
         persisted_findings = _persist_findings(session, pr_scan.id, net_new)
 
-        comment_body = render_comment(persisted_findings, new_endpoints, status, target.id, pr_scan.id)
+        comment_body = render_comment(
+            persisted_findings,
+            new_endpoints,
+            status,
+            target.id,
+            pr_scan.id,
+            tools_run=[t for t in guardrail_tools if t not in failed_tools],
+            tools_failed=failed_tools,
+        )
         post_pr_comment(session, target, pr_number, comment_body)
 
         summary_desc = f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)"
-        if status == PRGuardrailStatus.PASSED:
+        if failed_tools:
+            # An assigned tool did not run. Whatever the other tools found,
+            # this PR was NOT fully checked -- reporting "success" here would
+            # be the exact false all-clear this project treats as a bug
+            # (see issue #229, and osv_malware.py's None-vs-{} handling).
+            # GitHub's "error" state is visually distinct from both success
+            # and failure, which is precisely the signal wanted: inconclusive.
+            commit_state = "error"
+            commit_desc = f"{', '.join(failed_tools)} failed to run - PR not fully scanned. {summary_desc}"
+        elif status == PRGuardrailStatus.PASSED:
             commit_state, commit_desc = "success", summary_desc
         elif enforcement_mode == "alert":
             # Alert mode: real blocking findings exist, but this

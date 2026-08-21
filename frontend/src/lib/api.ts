@@ -708,6 +708,11 @@ export type PrGuardrailLogEntry = {
   new_findings_count: number;
   highest_new_severity: string | null;
   new_endpoints_count: number;
+  // GH-01: which tools this scan actually ran, and which were assigned but
+  // failed. A non-empty tools_failed means new_findings_count is
+  // inconclusive, not clean -- render it as a warning, never as a pass.
+  tools_run: string[];
+  tools_failed: string[];
   override_reason: string;
   created_at: string;
   completed_at: string | null;
@@ -867,6 +872,19 @@ export class ApiError extends Error {
   }
 }
 
+/** The request never reached the server (connection refused, DNS, or a CORS
+ * preflight rejection). Deliberately NOT an ApiError: there is no status and
+ * no server response, so any handler that maps a status to a message must not
+ * treat this as one. See jsonFetch's catch and finding BLD-03. */
+export class NetworkError extends Error {
+  cause?: unknown;
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "NetworkError";
+    this.cause = cause;
+  }
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) };
 
@@ -887,12 +905,26 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
 
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    cache: "no-store",
-    credentials: "include",
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      cache: "no-store",
+      credentials: "include",
+      headers,
+    });
+  } catch (e) {
+    // The request never reached the server: DNS/connection failure, or the
+    // browser rejected it on a CORS preflight. fetch() reports both as a
+    // bare TypeError with no status, which callers previously could not
+    // distinguish from a real HTTP error -- so a CORS rejection on the login
+    // form rendered as "Invalid email or password" (finding BLD-03), sending
+    // people to hunt for a seeding bug instead of a middleware allowlist.
+    throw new NetworkError(
+      `Could not reach the API at ${API_URL}. The request never arrived — check that the backend is running and that this origin is allowed by PUBLIC_BASE_URL/EXTRA_CORS_ORIGINS.`,
+      e,
+    );
+  }
   if (!res.ok) {
     // Surface FastAPI's real {"detail": "..."} error body when present (e.g.
     // the real Slack/Jira error text from test-connection) rather than just

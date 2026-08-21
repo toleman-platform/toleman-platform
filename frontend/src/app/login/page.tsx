@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { BrandMark } from "@/components/brand-mark";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, NetworkError } from "@/lib/api";
 
 function LoginForm() {
   const router = useRouter();
@@ -34,7 +34,12 @@ function LoginForm() {
       // a network error, or a 500 all read as a typo, which is actively
       // misleading when the real cause is something the user can't fix by
       // retyping their password.
-      if (e instanceof ApiError && e.status !== 401) {
+      if (e instanceof NetworkError) {
+        // The request never arrived, so the server never judged these
+        // credentials -- saying they're wrong would be a guess, and the
+        // wrong one (BLD-03).
+        setError(e.message);
+      } else if (e instanceof ApiError && e.status !== 401) {
         setError(e.message);
       } else {
         setError("Invalid email or password.");

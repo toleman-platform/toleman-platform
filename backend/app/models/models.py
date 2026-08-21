@@ -620,6 +620,16 @@ class PRGuardrailScan(SQLModel, table=True):
     highest_new_severity: str | None = None  # "Critical"/"High"/etc, or None
     new_endpoints_count: int = 0  # API Discovery: endpoints newly appearing in the PR diff
     override_reason: str = ""
+    # Which tools this scan actually ran, and which were assigned but failed
+    # (comma-separated, registry order). Before GH-01 the guardrail hardcoded
+    # semgrep, so "what got checked" was an invisible constant; now that the
+    # set is operator-configurable per workspace, a scan that reports "no new
+    # findings" has to be able to say *what it looked with*. tools_failed
+    # being non-empty is why a scan can be ERROR while still carrying real
+    # findings from the tools that did run -- a partial check must never
+    # render as a clean pass.
+    tools_run: str = ""
+    tools_failed: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
 

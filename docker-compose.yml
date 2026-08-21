@@ -60,11 +60,14 @@ services:
       SCAN_WORKDIR: /tmp/osp-scans
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.io}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       PLATFORM_ENCRYPTION_KEY: ${PLATFORM_ENCRYPTION_KEY:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      EXTRA_CORS_ORIGINS: ${EXTRA_CORS_ORIGINS:-}
     ports:
       - "8000:8000"
     healthcheck:
@@ -99,11 +102,14 @@ services:
       SCAN_WORKDIR: /tmp/osp-scans
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.io}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       PLATFORM_ENCRYPTION_KEY: ${PLATFORM_ENCRYPTION_KEY:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+      EXTRA_CORS_ORIGINS: ${EXTRA_CORS_ORIGINS:-}
 
   frontend:
     build:

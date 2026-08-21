@@ -172,6 +172,15 @@ export function ToolMarketplace() {
                             registry only
                           </Badge>
                         )}
+                        {/* CTX-03: this tool lives on the Celery worker, not
+                            next to the web process. Scans run on the worker,
+                            so it genuinely works -- but say which, rather
+                            than implying the web process can see it. */}
+                        {t.installed && t.checked_in === "worker" && (
+                          <Badge variant="outline" className="border-muted-foreground/20 text-muted-foreground">
+                            on scan worker
+                          </Badge>
+                        )}
                       </div>
                     </div>
 
@@ -182,7 +191,12 @@ export function ToolMarketplace() {
 
                     <div className="flex flex-col gap-1.5">
                       <div className="flex items-center justify-between gap-2 rounded-md bg-secondary/50 px-2 py-1.5">
-                        <code className="truncate text-xs text-foreground">{t.install_cmd}</code>
+                        {/* A bundled tool ships in the image, so showing it a
+                            host install command (often `brew ...`, inside a
+                            Debian container) is misleading twice over. */}
+                        <code className="truncate text-xs text-foreground">
+                          {t.bundled ? "Bundled in the backend image \u2014 no install needed" : t.install_cmd}
+                        </code>
                         <a
                           href={t.docs_url}
                           target="_blank"

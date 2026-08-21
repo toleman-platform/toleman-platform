@@ -1,4 +1,5 @@
 import secrets
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -61,7 +62,24 @@ def manifest_data(org: str | None = None):
     # build_manifest's docstring for why this is safe and durable.
     manifest = build_manifest(FRONTEND_URL, BACKEND_URL, suffix, setup_token=state)
     base = f"https://github.com/organizations/{org}/settings/apps/new" if org else "https://github.com/settings/apps/new"
-    return {"manifest": manifest, "post_url": f"{base}?state={state}"}
+
+    # (GH-03) The App now subscribes to pull_request, so PR Guardrail runs
+    # automatically -- but only if GitHub can reach this backend. A localhost
+    # PUBLIC_API_URL creates an App whose webhook deliveries silently never
+    # arrive, which looks identical to "the scanner isn't finding anything".
+    #
+    # Surfaced rather than blocked: creating the App is still worth doing
+    # while a tunnel or domain is being set up, since on-demand scanning
+    # works regardless. The UI shows this next to the Connect button.
+    parsed = urlparse(BACKEND_URL)
+    webhook_reachable = (parsed.hostname or "") not in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+    return {
+        "manifest": manifest,
+        "post_url": f"{base}?state={state}",
+        "webhook_url": manifest["hook_attributes"]["url"],
+        "webhook_reachable": webhook_reachable,
+    }
 
 
 @router.get("/status")

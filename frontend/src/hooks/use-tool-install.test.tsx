@@ -4,7 +4,12 @@ import { useToolInstall } from "./use-tool-install";
 
 const installTool = vi.hoisted(() => vi.fn());
 const getToolInstall = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/api", () => ({ api: { installTool, getToolInstall } }));
+// (CTX-03) The hook now adopts installs that were already running before it
+// mounted, so it calls this on mount. Defaults to "nothing running", which is
+// the pre-existing behaviour every test below was written against; the
+// adoption path has its own test.
+const activeToolInstalls = vi.hoisted(() => vi.fn(() => Promise.resolve({})));
+vi.mock("@/lib/api", () => ({ api: { installTool, getToolInstall, activeToolInstalls } }));
 
 function run(overrides: Record<string, unknown> = {}) {
   return {
@@ -26,6 +31,8 @@ afterEach(() => {
   vi.useRealTimers();
   installTool.mockReset();
   getToolInstall.mockReset();
+  activeToolInstalls.mockReset();
+  activeToolInstalls.mockResolvedValue({});
 });
 
 /** pollUntilSettled waits one interval before its first request. */
@@ -182,6 +189,39 @@ describe("useToolInstall", () => {
       await vi.advanceTimersByTimeAsync(30000);
     });
     expect(getToolInstall.mock.calls.length).toBe(calls);
+  });
+
+  it("adopts an install already running before it mounted (CTX-03)", async () => {
+    // The reported bug: navigating away during an install and coming back
+    // offered a fresh "Install" button for a job still running on the worker.
+    activeToolInstalls.mockResolvedValue({ checkov: run({ run_id: 7, tool: "checkov" }) });
+    getToolInstall.mockResolvedValue(
+      run({ run_id: 7, tool: "checkov", status: "completed", installed_version: "3.3.13" }),
+    );
+
+    const { result } = renderHook(() => useToolInstall());
+
+    // The adopt is async; let it land before asserting.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.installs.checkov?.status).toBe("running");
+
+    // And it must be genuinely watched, not just rendered as running once.
+    await advanceOnePoll();
+    expect(getToolInstall).toHaveBeenCalledWith(7);
+    expect(result.current.installs.checkov?.status).toBe("completed");
+    expect(result.current.installs.checkov?.version).toBe("3.3.13");
+  });
+
+  it("survives a failed adopt without disturbing the page", async () => {
+    activeToolInstalls.mockRejectedValue(new Error("network"));
+    const { result } = renderHook(() => useToolInstall());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.installs).toEqual({});
   });
 
   it("clears state on dismiss", async () => {

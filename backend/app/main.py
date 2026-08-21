@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -107,4 +108,36 @@ app.include_router(policies.router, dependencies=admin_required)
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    """Liveness, plus build identity (BLD-01).
+
+    The identity fields are what let anyone -- an evaluator, a deploy script,
+    a support conversation -- confirm *which* instance is answering on this
+    address before drawing conclusions from what it shows. Cheap insurance
+    against reviewing a stack you are not actually running.
+    """
+    return {
+        "status": "ok",
+        "version": settings.build_version,
+        "commit": settings.build_commit,
+        # Which database this instance is talking to, host/name only -- never
+        # the URL, which carries credentials.
+        "database": _database_identity(),
+    }
+
+
+def _database_identity() -> str:
+    """host:port/dbname from DATABASE_URL, with credentials stripped.
+
+    Deliberately reconstructed field by field rather than regex-scrubbing the
+    URL: a scrub that misses leaves a password in an unauthenticated
+    endpoint's response body, and this endpoint is reachable without a
+    session by design (container healthchecks call it).
+    """
+    try:
+        parsed = urlparse(settings.database_url)
+        host = parsed.hostname or "?"
+        port = f":{parsed.port}" if parsed.port else ""
+        name = (parsed.path or "").lstrip("/") or "?"
+        return f"{host}{port}/{name}"
+    except Exception:
+        return "unknown"

@@ -22,7 +22,7 @@ from sqlmodel import Session
 from app.core.config import settings
 
 
-def mark_stale_if_needed(session: Session, row, message: str | None = None) -> bool:
+def mark_stale_if_needed(session: Session, row, message: str | None = None, failed_status: str = "failed") -> bool:
     """If `row.status == "running"` and it's been running longer than
     `settings.stale_job_timeout_seconds`, marks it failed and returns True.
     Otherwise returns False and leaves `row` untouched.
@@ -35,11 +35,18 @@ def mark_stale_if_needed(session: Session, row, message: str | None = None) -> b
     if row.status != "running":
         return False
 
-    age = datetime.utcnow() - row.started_at
+    # PRGuardrailScan (CTX-02's caller) records `created_at` rather than
+    # `started_at`, and its terminal-failure state is "error", not "failed" --
+    # its status vocabulary is PRGuardrailStatus, shared with the GitHub
+    # commit status it maps onto. Both are read via getattr for the same
+    # reason `completed_at`/`error` already are: this helper is deliberately
+    # schema-tolerant so one sweep covers every long-running row type.
+    started_at = getattr(row, "started_at", None) or row.created_at
+    age = datetime.utcnow() - started_at
     if age < timedelta(seconds=settings.stale_job_timeout_seconds):
         return False
 
-    row.status = "failed"
+    row.status = failed_status
     if hasattr(row, "completed_at"):
         row.completed_at = datetime.utcnow()
     if hasattr(row, "error"):

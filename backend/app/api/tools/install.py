@@ -8,7 +8,7 @@ and app.core.tool_install for the full argument about why this is not the
 build.
 """
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.auth import require_admin
 from app.api.deps import get_session
@@ -40,6 +40,39 @@ def _install_run_out(run: ToolInstallRun) -> dict:
         "error": run.error,
         "output_tail": run.output_tail,
     }
+
+
+@router.get("/installs/active")
+def active_installs(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_admin),
+):
+    """Every tool install currently running, keyed by registry key.
+
+    Finding CTX-03's second half: useToolInstall held the spinner in local
+    React state, so navigating away during an install and coming back offered
+    a fresh "Install" button while the job was still running on the worker.
+    Same class of bug as CTX-02 on PR History, and the same fix -- the server
+    knows what is in flight, so the card can render it without having been
+    the thing that started it.
+
+    Declared before /installs/{run_id} because FastAPI matches routes in
+    declaration order, and "active" would otherwise be captured as a run_id
+    and 422 on int coercion.
+    """
+    running = session.exec(
+        select(ToolInstallRun).where(ToolInstallRun.status == "running")
+    ).all()
+
+    out = {}
+    for run in running:
+        # A worker that died mid-install leaves this "running" forever, which
+        # renders as a permanently spinning card -- indistinguishable from a
+        # very slow install of a big dependency tree.
+        if mark_stale_if_needed(session, run):
+            continue
+        out[run.tool] = _install_run_out(run)
+    return out
 
 
 @router.post("/{tool}/install", status_code=202)

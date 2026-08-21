@@ -1,8 +1,8 @@
 # Rikugan — Open-Source DevSecOps Vulnerability Management Platform
 
-MVP slice of the [architecture](../ARCHITECTURE.md): FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec, dedup engine, two-tier priority scoring, triage state machine.
+See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, dedup engine, two-tier priority scoring, triage state machine.
 
-Deferred (see architecture doc §2/§8): Custom Workflow Builder, Mass CI/CD Rollout Engine, full GitHub App OAuth (this MVP uses a PAT/`gh`-credentialed git clone for native scans and a Workspace API Key for CI push ingestion instead).
+**Documentation:** [geekshiv.github.io/rikugan-docs](https://geekshiv.github.io/rikugan-docs) (source: [geekshiv/rikugan-docs](https://github.com/geekshiv/rikugan-docs)).
 
 ## Quickstart (Docker Compose)
 
@@ -33,7 +33,13 @@ Once it's up:
 
 - Frontend: http://localhost:3000 — sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in `.env`, defaults to `admin@rikugan.local` / `changeme123`)
 - Backend: http://localhost:8000 (`/docs` for the OpenAPI UI, `/health` for a liveness check)
-- Scanner install sanity check: `curl http://localhost:8000/api/tools/health` reports real installed versions for all four tools, running inside the `backend` container
+- Scanner install sanity check: **Control Plane → Tooling → Tool Marketplace** reports real installed versions for every scanner, checked live inside the containers that run scans.
+
+  `/api/tools/health` backs that page but requires a login session, so a bare `curl` returns `{"detail":"not authenticated"}`. To check it from a shell, run the scanners directly instead:
+
+  ```bash
+  docker compose exec backend sh -c 'semgrep --version && trivy --version && gitleaks version && gosec --version'
+  ```
 
 Bootstrap a workspace and register a target the same way as the manual setup below, just against `http://localhost:8000`.
 

@@ -31,7 +31,14 @@ const RISK_SCORE_MAX = 1000;
 const RISK_SCORE_EXPLANATION =
   "Severity × target criticality × 40, capped at 1000. " +
   "Raised to a floor of 900 for CISA KEV-listed (known exploited) vulnerabilities, " +
-  "or boosted when EPSS predicts >50% real-world exploit probability in the next 30 days.";
+  "or boosted when EPSS predicts >50% real-world exploit probability in the next 30 days. " +
+  // (UI-04) An external review found every High finding rendering an
+  // identical 320/1000 and concluded the column was decorative. It wasn't --
+  // the repo scanned was a single target at one criticality weight, so the
+  // formula genuinely collapses to a constant. Saying so is the difference
+  // between "this feature is broken" and "this needs more than one repo".
+  "Findings of the same severity on repos of the same criticality score the same by design \u2014 " +
+  "set differing criticality weights per target for the score to separate them.";
 
 function RiskScore({ score }: { score: number }) {
   return (

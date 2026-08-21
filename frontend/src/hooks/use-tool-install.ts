@@ -74,6 +74,57 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
     [set],
   );
 
+  const watch = useCallback(
+    (tool: string, runId: number) => {
+      cancellersRef.current[tool]?.();
+      cancellersRef.current[tool] = pollUntilSettled(
+        async () => {
+          const run = await api.getToolInstall(runId);
+          return { status: run.status, run };
+        },
+        (result) => apply(tool, result.run),
+        {
+          intervalMs: POLL_INTERVAL_MS,
+          timeoutMs: POLL_TIMEOUT_MS,
+          onError: (e) =>
+            set(tool, {
+              status: "failed",
+              version: "",
+              error: e instanceof Error ? e.message : "lost contact with the install",
+              output: "",
+            }),
+        },
+      );
+    },
+    [apply, set],
+  );
+
+  // (CTX-03) Adopt installs that were already running before this component
+  // mounted. Without this, navigating away during an install and coming back
+  // showed a fresh "Install" button for a job still running on the worker --
+  // the same lost-in-flight-state bug as CTX-02 on PR History, and the same
+  // fix: ask the server what is running rather than trusting local state to
+  // have survived.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .activeToolInstalls()
+      .then((running) => {
+        if (cancelled) return;
+        for (const [tool, run] of Object.entries(running)) {
+          set(tool, { status: "running", version: "", error: "", output: "" });
+          watch(tool, run.run_id);
+        }
+      })
+      .catch(() => {
+        // A failed adopt is not worth an error banner -- the page still
+        // works, it just cannot show a pre-existing install until reload.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [set, watch]);
+
   const install = useCallback(
     async (tool: string) => {
       cancellersRef.current[tool]?.();
@@ -95,26 +146,9 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
         return;
       }
 
-      cancellersRef.current[tool] = pollUntilSettled(
-        async () => {
-          const run = await api.getToolInstall(runId);
-          return { status: run.status, run };
-        },
-        (result) => apply(tool, result.run),
-        {
-          intervalMs: POLL_INTERVAL_MS,
-          timeoutMs: POLL_TIMEOUT_MS,
-          onError: (e) =>
-            set(tool, {
-              status: "failed",
-              version: "",
-              error: e instanceof Error ? e.message : "lost contact with the install",
-              output: "",
-            }),
-        },
-      );
+      watch(tool, runId);
     },
-    [apply, set],
+    [set, watch],
   );
 
   const dismiss = useCallback((tool: string) => {

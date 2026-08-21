@@ -41,6 +41,20 @@ from app.core.config import settings
 TTL_SECONDS = 30
 _KEY_PREFIX = "toolhealth:"
 
+# Worker-reported health is a separate keyspace with a much longer life
+# (CTX-03). It answers a different question from the short-TTL cache above:
+# not "what did the web process see just now" but "what did the process that
+# actually runs scans see when it last installed this tool".
+#
+# The web process cannot re-derive this -- that is the entire bug -- so it
+# must not expire on the 30s probe cadence, or a successfully installed tool
+# would flip back to "not installed" half a minute later. It is refreshed on
+# every install and, being Redis-backed, is lost on a Redis restart, which is
+# the correct failure direction: the claim degrades to absent rather than to
+# a stale "installed" for a tool a redeploy has since removed.
+_WORKER_KEY_PREFIX = "toolhealth:worker:"
+WORKER_TTL_SECONDS = 24 * 60 * 60
+
 _redis_client: "redis.Redis | None | bool" = None
 
 
@@ -99,6 +113,52 @@ def set(tool: str, health: dict) -> None:
 
     with _memory_lock:
         _memory_cache[tool] = (time.monotonic() + TTL_SECONDS, health)
+
+
+def set_worker_health(tool: str, health: dict) -> None:
+    """Record what the Celery worker saw for `tool` (CTX-03).
+
+    Called from app.core.tool_install once an install completes there, so the
+    marketplace can report the environment that actually runs scans instead
+    of probing the web process and reporting a tool it will never see.
+
+    In-memory fallback is deliberately still written even though it cannot
+    cross a process boundary: a single-process dev run (`celery` and
+    `uvicorn` in one process, or the eager-task test setup) has no Redis and
+    no boundary to cross, and silently doing nothing there would make this
+    path untestable without a live Redis.
+    """
+    client = _get_redis()
+    if client is not None:
+        try:
+            client.setex(f"{_WORKER_KEY_PREFIX}{tool}", WORKER_TTL_SECONDS, json.dumps(health))
+            return
+        except Exception:
+            pass
+
+    with _memory_lock:
+        _memory_cache[f"{_WORKER_KEY_PREFIX}{tool}"] = (time.monotonic() + WORKER_TTL_SECONDS, health)
+
+
+def get_worker_health(tool: str) -> Optional[dict]:
+    """What the worker last reported for `tool`, or None if it never has."""
+    client = _get_redis()
+    if client is not None:
+        try:
+            raw = client.get(f"{_WORKER_KEY_PREFIX}{tool}")
+            return json.loads(raw) if raw else None
+        except Exception:
+            pass
+
+    with _memory_lock:
+        entry = _memory_cache.get(f"{_WORKER_KEY_PREFIX}{tool}")
+        if entry is None:
+            return None
+        expires_at, health = entry
+        if time.monotonic() >= expires_at:
+            del _memory_cache[f"{_WORKER_KEY_PREFIX}{tool}"]
+            return None
+        return health
 
 
 def invalidate(tool: str) -> None:

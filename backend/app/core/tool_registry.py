@@ -108,7 +108,7 @@ TOOL_REGISTRY = [
         "category": "IaC",
         "languages": ["terraform"],
         "description": "Terraform-focused static analysis for cloud misconfigurations.",
-        "install_cmd": "brew install tfsec",
+        "install_cmd": "brew install tfsec  # macOS host; in a container: curl -sSL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | bash",
         "docs_url": "https://aquasecurity.github.io/tfsec/latest/guides/installation/",
         "version_cmd": ["tfsec", "--version"],
     },
@@ -269,6 +269,14 @@ def registry_with_integration_status() -> list[dict]:
             {
                 **entry,
                 "integrated": entry["tool"] in TOOL_COMMANDS,
+                # (docs-drift item 6) Whether the shipped image already
+                # carries this tool. An external review pointed out the
+                # marketplace showed `brew install gitleaks` to an admin
+                # operating a Debian container -- where brew does not exist,
+                # and where gitleaks was already installed anyway. For a
+                # bundled tool the install command is not just wrong for the
+                # platform, it is answering a question that does not apply.
+                "bundled": entry["tool"] in BUNDLED_TOOLS,
                 # (#216) Whether the one-click install button applies. Derived
                 # from pip_package rather than hand-flagged, so a tool cannot
                 # advertise a button the install path would then refuse.

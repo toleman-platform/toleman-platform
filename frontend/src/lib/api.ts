@@ -196,10 +196,22 @@ export type ToolRegistryEntry = {
   installed: boolean;
   version: string | null;
   response_ms: number | null;
+  // (CTX-03) Which process saw this tool: "api" (the web process probed it
+  // directly just now) or "worker" (the Celery worker reported it when it
+  // installed it). Installs run on the worker, and so do scans, so a
+  // worker-only tool is genuinely usable -- the card must say "installed",
+  // not "not installed", but should be honest about where.
+  checked_in: "api" | "worker";
   // (#216) Whether one-click install applies. False for tools needing
   // brew/go/docker, which the backend image cannot install into itself --
   // those keep the copyable install_cmd and get no button.
   installable: boolean;
+  // Whether the shipped image already carries this tool. An external review
+  // found the marketplace showing `brew install gitleaks` to an admin
+  // operating a Debian container -- where brew does not exist and gitleaks
+  // was already installed. For a bundled tool the install command is not
+  // just wrong for the platform, it answers a question that does not apply.
+  bundled: boolean;
 };
 
 // POST /api/tools/{tool}/install -> poll GET /api/tools/installs/{id} (#216).
@@ -512,6 +524,32 @@ export type ActiveScan = {
 };
 export type ActiveScans = Record<string, ActiveScan[]>;
 
+// GET /api/pr-guardrail/active (finding CTX-02) -- PR Guardrail scans running
+// right now, keyed "targetId:prNumber". Same server-is-the-source-of-truth
+// shape as ActiveScans above: PrScanAction previously held in-flight state in
+// a local useState, so navigating away and back showed a clickable
+// "Scan This PR" for a scan that was still running.
+export type ActivePrScan = {
+  pr_scan_id: number;
+  target_id: number;
+  pr_number: number;
+  branch: string;
+  started_at: string;
+};
+export type ActivePrScans = Record<string, ActivePrScan>;
+
+// GET /health (finding BLD-01). An evaluator reviewed a stale host-native
+// instance for an hour while believing they were on a freshly built stack --
+// the old process held the same port, and nothing in the product said which
+// instance was answering. `database` is host:port/dbname with credentials
+// stripped server-side.
+export type BuildInfo = {
+  status: string;
+  version: string;
+  commit: string;
+  database: string;
+};
+
 // GET /api/scans/summary (#120): per-target scan history so the Scans page
 // can show a real "last scanned Xd ago · tool, tool" line and support a
 // last-scanned filter, instead of the old flat grid which had no scan
@@ -713,6 +751,10 @@ export type PrGuardrailLogEntry = {
   // inconclusive, not clean -- render it as a warning, never as a pass.
   tools_run: string[];
   tools_failed: string[];
+  // (GH-04) Non-empty when the commit status never reached GitHub. The scan
+  // itself is still valid -- this says the *decision* was not delivered, so
+  // the PR is unmarked on GitHub even though Rikugan reached a verdict.
+  status_delivery_error: string;
   override_reason: string;
   created_at: string;
   completed_at: string | null;
@@ -1057,6 +1099,13 @@ export const api = {
   getScan: (scanId: number) => jsonFetch<ScanRun | { error: string }>(`/api/scans/${scanId}`),
   scanSummary: () => jsonFetch<ScanSummary>("/api/scans/summary"),
   activeScans: () => jsonFetch<ActiveScans>("/api/scans/active"),
+  activePrScans: () => jsonFetch<ActivePrScans>("/api/pr-guardrail/active"),
+  // (BLD-01) Which instance is actually answering on this address. No
+  // session required -- container healthchecks call it too.
+  buildInfo: () => jsonFetch<BuildInfo>("/health"),
+  // (CTX-03) Tool installs already running, keyed by registry key, so the
+  // marketplace can adopt one that started before this page mounted.
+  activeToolInstalls: () => jsonFetch<Record<string, ToolInstallRun>>("/api/tools/installs/active"),
   aibom: (targetId: number) => jsonFetch<AiBomView>(`/api/sbom/${targetId}/aibom`),
   targetsSummary: () => jsonFetch<TargetSummary>("/api/targets/summary"),
   updateTarget: (id: number, patch: Partial<Target>) =>
@@ -1254,7 +1303,13 @@ export const api = {
       webhook_secret_set: boolean;
     }>("/api/github-app/status"),
   githubAppManifestData: (org?: string) =>
-    jsonFetch<{ manifest: object; post_url: string }>(`/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`),
+    // (GH-03) webhook_reachable is false when PUBLIC_API_URL is a localhost
+    // address: the App will be created subscribed to pull_request, but
+    // GitHub's deliveries can never arrive, so automatic PR scanning will
+    // silently never fire. Worth saying before the App is created.
+    jsonFetch<{ manifest: object; post_url: string; webhook_url: string; webhook_reachable: boolean }>(
+      `/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`,
+    ),
   githubAppSync: () => jsonFetch<{ created: number }>("/api/github-app/sync", { method: "POST" }),
   updateWebhookSecret: (webhook_secret: string, config_id?: number) =>
     jsonFetch<{ webhook_secret_set: boolean }>("/api/github-app/webhook-secret", {

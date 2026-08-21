@@ -55,6 +55,13 @@ jobs:
           push: true
           tags: ${{ steps.backend-meta.outputs.tags }}
           labels: ${{ steps.backend-meta.outputs.labels }}
+          # (BLD-01) Stamp the real build identity into the image so a
+          # running instance can say which one it is -- GET /health and the
+          # sidebar both surface it. A published image with version "dev"
+          # would defeat the point.
+          build-args: |
+            BUILD_VERSION=${{ github.ref_name }}
+            BUILD_COMMIT=${{ github.sha }}
 
       - name: Frontend tags
         id: frontend-meta

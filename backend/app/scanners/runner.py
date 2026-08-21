@@ -47,6 +47,10 @@ TOOL_COMMANDS = {
     # writes nothing -- which used to read as "no secrets found". The exit
     # code is now checked, and the report goes to a real temp file so the
     # failure doesn't happen in the first place. Same treatment as modelscan.
+    # noseyparker (#255). Two-step by design: `scan` writes into a datastore,
+    # `report` renders it. run_tool substitutes a real temp datastore for the
+    # placeholder, same pattern as modelscan's report file.
+    "noseyparker": lambda path: ["noseyparker", "scan", "--datastore", NOSEYPARKER_DATASTORE_PLACEHOLDER, path],
     "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", GITLEAKS_REPORT_PLACEHOLDER, "--no-git", "--exit-code", "0"],
     "trivy": lambda path: ["trivy", "fs", "--format", "json", "--quiet", path],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],
@@ -79,6 +83,9 @@ MODELSCAN_REPORT_PLACEHOLDER = "__RIKUGAN_MODELSCAN_REPORT__"
 
 # (#253) Same substitution for gitleaks -- see its TOOL_COMMANDS entry.
 GITLEAKS_REPORT_PLACEHOLDER = "__RIKUGAN_GITLEAKS_REPORT__"
+
+# (#255) noseyparker scans into a datastore, then reports out of it.
+NOSEYPARKER_DATASTORE_PLACEHOLDER = "__RIKUGAN_NOSEYPARKER_DATASTORE__"
 
 
 class ToolExecutionError(Exception):
@@ -414,6 +421,44 @@ def run_nuclei(urls: list[str]) -> list[dict]:
     return results
 
 
+def _run_noseyparker(cmd: list[str], cwd: str | None) -> list:
+    """Scan into a temp datastore, then report out of it (#255).
+
+    Unlike every other tool here, noseyparker's scan step writes no findings
+    to stdout -- the datastore is the output, and `report` renders it. Both
+    steps' exit codes are checked: a scan that died leaves an empty datastore,
+    and an empty datastore renders as `[]`, which is the false all-clear #253
+    was about arriving through a new door.
+    """
+    datastore = Path(tempfile.mkdtemp(prefix="rikugan-np-")) / "datastore"
+    scan_cmd = [str(datastore) if c == NOSEYPARKER_DATASTORE_PLACEHOLDER else c for c in cmd]
+    try:
+        proc = subprocess.run(scan_cmd, capture_output=True, text=True, cwd=cwd)
+        if proc.returncode != 0:
+            detail = _strip_ansi(proc.stderr or "").strip().splitlines()
+            raise ToolExecutionError(
+                f"noseyparker scan exited {proc.returncode}: {(detail[-1] if detail else 'no stderr')[:300]}"
+            )
+        report = subprocess.run(
+            ["noseyparker", "report", "--datastore", str(datastore), "--format", "json"],
+            capture_output=True, text=True, cwd=cwd,
+        )
+        if report.returncode != 0:
+            detail = _strip_ansi(report.stderr or "").strip().splitlines()
+            raise ToolExecutionError(
+                f"noseyparker report exited {report.returncode}: {(detail[-1] if detail else 'no stderr')[:300]}"
+            )
+        text = (report.stdout or "").strip()
+        if not text:
+            return []
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ToolExecutionError(f"noseyparker produced unreadable JSON: {exc}") from exc
+    finally:
+        shutil.rmtree(datastore.parent, ignore_errors=True)
+
+
 def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
     """Run gitleaks with its report going to a real file (#253).
 
@@ -506,6 +551,7 @@ TOOL_SCOPING = {
     "semgrep-llm": MULTI_PATH,
     "checkov": MULTI_PATH,
     "gitleaks": PER_FILE,
+    "noseyparker": MULTI_PATH,
     "tfsec": PER_FILE,
     "modelscan": PER_FILE,
     "gosec": PACKAGE,
@@ -693,6 +739,7 @@ TOOL_SUCCESS_EXIT_CODES = {
     "semgrep": {0, 1},
     "semgrep-llm": {0, 1},
     "gitleaks": {0},        # --exit-code 0
+    "noseyparker": {0},
     "trivy": {0},
     "trivy-license": {0},
     "trivy-sbom": {0},
@@ -710,6 +757,9 @@ def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
 
     if tool == "gitleaks":
         return _run_gitleaks(cmd, cwd)
+
+    if tool == "noseyparker":
+        return _run_noseyparker(cmd, cwd)
 
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
 

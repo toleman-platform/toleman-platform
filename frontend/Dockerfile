@@ -10,12 +10,12 @@
 # port. Server-side requests inside this container instead use the
 # API_INTERNAL_URL runtime env var (see src/lib/api.ts) so they can reach the
 # backend by its compose service name.
-FROM node:22-slim AS deps
+FROM node:26.7.0-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM node:22-slim AS builder
+FROM node:26.7.0-slim AS builder
 WORKDIR /app
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
@@ -23,7 +23,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build
 
-FROM node:22-slim AS runner
+FROM node:26.7.0-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000 \

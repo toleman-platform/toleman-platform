@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
-from app.core.crypto import decrypt_secret, encrypt_secret
+from app.core.crypto import check_encryption_key_health, decrypt_secret, encrypt_secret, reseed_encryption_key_canary
 from app.core.jira_integration import test_jira_connection
 from app.core.siem_export import test_siem_webhook
 from app.core.slack_integration import test_slack_webhook
@@ -59,8 +59,12 @@ def get_platform_config(session: Session) -> PlatformConfig | None:
     return session.exec(select(PlatformConfig)).first()
 
 
-def _serialize(config: PlatformConfig | None) -> dict:
+def _serialize(config: PlatformConfig | None, session: Session | None = None) -> dict:
     return {
+        # True/False = real canary check just ran (session passed - GET /api/config
+        # path). None = not checked here (POST /api/config's own response) - the
+        # frontend banner reads this only from the GET response, not from a save.
+        "encryption_key_healthy": check_encryption_key_health(session) if session is not None else None,
         # Never echo back the raw keys - report only whether one is set, same
         # pattern used for GitHub App secrets.
         "anthropic_api_key_set": bool(config and config.anthropic_api_key),
@@ -90,7 +94,7 @@ def _serialize(config: PlatformConfig | None) -> dict:
 @router.get("")
 def get_config(session: Session = Depends(get_session)):
     config = get_platform_config(session)
-    return _serialize(config)
+    return _serialize(config, session)
 
 
 @router.post("")
@@ -209,3 +213,14 @@ def test_siem(payload: TestSiemRequest, session: Session = Depends(get_session))
     if not ok:
         raise HTTPException(status_code=502, detail=message)
     return {"success": True, "message": message}
+
+
+@router.post("/encryption-key/reseed")
+def reseed_encryption_key(session: Session = Depends(get_session)):
+    """Explicit 'I've reconnected everything' reset for the PLATFORM_ENCRYPTION_KEY
+    mismatch banner. Marks the *current* key as the new source of truth -- only
+    call this after every affected integration (GitHub App, Slack, Jira, SIEM,
+    AI key) has actually been reconnected under the current key, since this
+    clears the warning but does not itself fix any still-undecryptable secret."""
+    reseed_encryption_key_canary(session)
+    return {"encryption_key_healthy": True}

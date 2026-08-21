@@ -296,6 +296,9 @@ export type PlatformConfigView = {
   jira_auto_create_severity: string | null;
   siem_webhook_url_set: boolean;
   siem_export_severity: string | null;
+  // null on the POST /api/config save response (canary not re-checked there);
+  // real true/false only on GET /api/config.
+  encryption_key_healthy: boolean | null;
 };
 
 export type UpdateConfigPayload = {
@@ -1229,6 +1232,8 @@ export const api = {
   getConfig: () => jsonFetch<PlatformConfigView>("/api/config"),
   updateConfig: (payload: UpdateConfigPayload) =>
     jsonFetch<PlatformConfigView>("/api/config", { method: "POST", body: JSON.stringify(payload) }),
+  reseedEncryptionKey: () =>
+    jsonFetch<{ encryption_key_healthy: boolean }>("/api/config/encryption-key/reseed", { method: "POST" }),
   testSlack: (webhookUrl?: string) =>
     jsonFetch<TestConnectionResult>("/api/config/test-slack", {
       method: "POST",

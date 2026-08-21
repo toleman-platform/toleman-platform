@@ -1,11 +1,16 @@
+import logging
+
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
 from app.core.config import settings, validate_production_secrets
+from app.core.crypto import check_encryption_key_health
 from app.core.db import engine, init_db
 from app.core.security import hash_password
 from app.models.models import User
+
+logger = logging.getLogger(__name__)
 from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api
 from app.api.auth import current_user, require_admin
 
@@ -33,6 +38,22 @@ def on_startup():
                 password_hash=hash_password(settings.admin_password),
             ))
             session.commit()
+        # Detect a PLATFORM_ENCRYPTION_KEY mismatch here, at boot, rather than
+        # letting it surface later as a random feature's decrypt failure --
+        # see check_encryption_key_health's docstring for why this exists.
+        # Deliberately logged, not raised: a hard startup failure here would
+        # lock an admin out of the very UI (Admin > Global Integrations) they
+        # need to reconnect integrations and clear this warning.
+        if not check_encryption_key_health(session):
+            logger.critical(
+                "PLATFORM_ENCRYPTION_KEY MISMATCH: the configured encryption key "
+                "cannot decrypt secrets written by a previous key. Every encrypted "
+                "secret in this database (GitHub App credentials, Slack/Jira/SIEM "
+                "webhooks, the AI provider key) is currently undecryptable. "
+                "Reconnect each affected integration in Admin > Global Integrations, "
+                "then use the 'I've reconnected everything' action there to clear "
+                "this warning."
+            )
 
 
 login_required = [Depends(current_user)]

@@ -306,6 +306,40 @@ def test_batch_processes_all_targets_and_reports_mixed_outcomes(client, engine, 
         assert fail_target.pipeline_integrated is False
 
 
+def test_batch_reports_actionable_message_on_encryption_key_mismatch(client, engine, monkeypatch, eager_celery):
+    """If the GitHub App credentials can't be decrypted (PLATFORM_ENCRYPTION_KEY
+    mismatch - see app.core.crypto), the item should get a clear, actionable
+    error instead of a raw 'unexpected error: ...' traceback string."""
+    from app.core.crypto import SecretDecryptionError
+
+    ws = _make_workspace(engine)
+    target_id = _make_target(engine, ws, name="mismatched")
+
+    client, uid = _login(client, engine, role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws, WorkspaceRole.DEVELOPER)
+
+    monkeypatch.setattr(pipeline_tasks, "engine", engine)
+    monkeypatch.setattr(pipeline_tasks, "INTER_ITEM_DELAY_SECONDS", 0)
+
+    def fake_open_pipeline_pr(session, target):
+        raise SecretDecryptionError("Failed to decrypt secret - PLATFORM_ENCRYPTION_KEY is missing, wrong, or was rotated since this value was encrypted.")
+
+    monkeypatch.setattr(pipeline_tasks, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post("/api/targets/bulk-pipeline-integrate", json={"target_ids": [target_id]})
+    assert res.status_code == 202
+    batch_id = res.json()["batch_id"]
+
+    poll = client.get(f"/api/targets/bulk-pipeline-integrate/{batch_id}")
+    body = poll.json()
+    assert body["failed"] == 1
+    item = body["items"][0]
+    assert item["status"] == "failed"
+    assert "PLATFORM_ENCRYPTION_KEY mismatch" in item["error"]
+    assert "Admin > Global Integrations" in item["error"]
+    assert "unexpected error" not in item["error"]
+
+
 def test_batch_missing_target_row_does_not_crash_batch(client, engine, monkeypatch):
     """Defensive case: a target row deleted between item-creation and task
     execution shouldn't leave the batch stuck at "running"."""

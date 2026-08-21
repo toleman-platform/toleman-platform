@@ -336,6 +336,33 @@ class CveEnrichment(SQLModel, table=True):
     fetched_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class EncryptionKeyCanary(SQLModel, table=True):
+    """Single-row marker used to detect a PLATFORM_ENCRYPTION_KEY mismatch
+    proactively at startup, instead of discovering it as a cryptic decrypt
+    failure buried inside whichever feature (Mass Rollout, Slack, Jira, SIEM,
+    AI key) happens to touch an encrypted secret first.
+
+    Holds one known plaintext, encrypted under whatever key is currently
+    configured. On every boot, app.core.crypto.check_encryption_key_health
+    tries to decrypt this row with the *current* key: success proves the
+    running key is the same one that encrypted every other secret in this
+    database (GitHubAppConfig.private_key_pem, PlatformConfig's webhook
+    URLs/API keys, ...); failure proves it changed since, which means every
+    one of those secrets is now permanently undecryptable (Fernet is
+    deliberately one-way -- there is no way to recover a value encrypted
+    under a lost key).
+
+    Never overwritten automatically on a mismatch -- see
+    app.core.crypto.reseed_encryption_key_canary, only called from the
+    explicit admin-triggered "I've reconnected everything" action in
+    Admin > Global Integrations, once every affected integration has
+    actually been reconnected under the new key."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ciphertext: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PlatformConfig(SQLModel, table=True):
     """Single-row runtime configuration, editable via Admin > Global Integrations."""
     id: Optional[int] = Field(default=None, primary_key=True)

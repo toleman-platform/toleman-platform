@@ -32,7 +32,7 @@ export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[
     updateParam("search", search);
   }
 
-  const hasFilters = ["severity", "tool", "state", "target_id", "group_id", "search"].some((k) => searchParams.get(k));
+  const hasFilters = ["severity", "tool", "state", "target_id", "group_id", "search", "fixability"].some((k) => searchParams.get(k));
 
   function clearAll() {
     setSearch("");
@@ -66,6 +66,23 @@ export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[
             {s}
           </option>
         ))}
+      </select>
+
+      {/* (#246) "Which of these can I close today?" -- the question severity
+          cannot answer. "Unknown" is offered as its own choice rather than
+          folded into "No known fix": for most SAST and secrets findings we
+          have no advisory to look up, and claiming there is no fix for a
+          hardcoded secret would be plainly wrong. */}
+      <select
+        aria-label="Filter by fixability"
+        className={SELECT_CLASS}
+        value={searchParams.get("fixability") ?? ""}
+        onChange={(e) => updateParam("fixability", e.target.value)}
+      >
+        <option value="">Any fixability</option>
+        <option value="fixable">Fix available</option>
+        <option value="no_known_fix">No known fix</option>
+        <option value="unknown">Fixability unknown</option>
       </select>
 
       <select

@@ -23,6 +23,7 @@ export default async function FindingsPage({
   const sp = await searchParams;
   const severity = firstValue(sp.severity);
   const tool = firstValue(sp.tool);
+  const fixability = firstValue(sp.fixability);
   const state = firstValue(sp.state);
   const search = firstValue(sp.search);
   const targetIdRaw = firstValue(sp.target_id);
@@ -34,7 +35,7 @@ export default async function FindingsPage({
   const pageSize = pageSizeFromParams(sp.page_size);
 
   const [findingsResult, targets, tools, groups] = await Promise.all([
-    settleOrNull(api.findings({ severity, tool, state, search, target_id, group_id, page, page_size: pageSize })),
+    settleOrNull(api.findings({ severity, tool, state, search, target_id, group_id, fixability, page, page_size: pageSize })),
     api.targets().catch(() => []),
     api.findingTools().catch(() => []),
     api.groups().catch(() => []),

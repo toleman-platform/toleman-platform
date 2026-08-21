@@ -62,6 +62,26 @@ TOOL_REGISTRY = [
         "version_cmd": ["gitleaks", "version"],
     },
     {
+        # (#255) Second secrets scanner, benchmarked against gitleaks,
+        # trufflehog and detect-secrets on a 14-secret ground-truth corpus.
+        # gitleaks stays the default on precision (100% precision, zero noise
+        # on this repo); noseyparker is the recall option -- 12/12 vs 11/12,
+        # and the only one of the four with a rule for credentials embedded
+        # in a Postgres connection URI, which is a real gap in what we ship.
+        #
+        # The cost is real and is why this is opt-in rather than default: on
+        # a clean checkout of this repo noseyparker reports 26 findings to
+        # gitleaks' 0, almost all test fixtures and migration passwords.
+        "tool": "noseyparker",
+        "display_name": "Nosey Parker",
+        "category": "Secrets",
+        "languages": ["language-agnostic"],
+        "description": "High-recall secrets detection, including credentials embedded in connection URIs. Higher noise than Gitleaks -- pair with FP rules.",
+        "install_cmd": "brew install noseyparker",
+        "docs_url": "https://github.com/praetorian-inc/noseyparker#usage",
+        "version_cmd": ["noseyparker", "--version"],
+    },
+    {
         "tool": "trivy",
         "display_name": "Trivy",
         "category": "SCA",

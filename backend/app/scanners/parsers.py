@@ -54,6 +54,51 @@ def parse_gitleaks(raw: list) -> list[dict]:
     return out
 
 
+def parse_noseyparker(raw: list) -> list[dict]:
+    """noseyparker report JSON (#255).
+
+    Two shape differences from every other parser here:
+
+    * The report is finding-oriented, not match-oriented: one entry per
+      (rule, secret) with a `matches` list of every place it occurs. We emit
+      one finding per match, so two files leaking the same key are two
+      findings to triage rather than one that is half-fixed after the first
+      edit.
+    * Paths arrive absolute, under `matches[].provenance[].path`. Callers
+      normalize against the repo root (runner.normalize_file_path), same as
+      every other tool.
+
+    Severity is HIGH across the board, matching parse_gitleaks: a committed
+    credential is not a gradient. noseyparker carries a `score` field, but it
+    was null on every match in the benchmark corpus, so deriving severity
+    from it would be inventing a signal that is not there.
+    """
+    out = []
+    for finding in raw or []:
+        rule = finding.get("rule_name") or "secret"
+        for match in finding.get("matches") or []:
+            provenance = (match.get("provenance") or [{}])[0]
+            path = provenance.get("path") or ""
+            span = (match.get("location") or {}).get("source_span") or {}
+            snippet = (match.get("snippet") or {}).get("matching") or ""
+            out.append({
+                "rule_id": rule,
+                "title": f"Secret detected: {rule}",
+                "description": "",
+                "file_path": path,
+                "line_start": (span.get("start") or {}).get("line"),
+                "line_end": (span.get("end") or {}).get("line"),
+                "severity": Severity.HIGH,
+                # Truncated: this is the matched secret itself. It is already
+                # stored for triage context, but an unbounded blob (a whole
+                # PEM key) in a finding row, a PR comment and a SIEM export is
+                # both noisy and needlessly wide exposure.
+                "snippet": snippet[:200],
+                "cve_id": None,
+            })
+    return out
+
+
 def parse_trivy(raw: dict) -> list[dict]:
     out = []
     for result in raw.get("Results", []):
@@ -348,6 +393,7 @@ PARSER_MAP = {
     # Rikugan's curated LLM ruleset -- so it reuses the parser verbatim.
     "semgrep-llm": parse_semgrep,
     "gitleaks": parse_gitleaks,
+    "noseyparker": parse_noseyparker,
     "trivy": parse_trivy,
     "trivy-license": parse_trivy_license,
     "trivy-sbom": parse_trivy_sbom,

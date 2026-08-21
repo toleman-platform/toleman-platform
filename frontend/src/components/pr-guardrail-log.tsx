@@ -317,6 +317,21 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                         {entry.tools_failed.join(", ")} failed to run — PR not fully scanned
                       </div>
                     )}
+                    {/* (#243) A diff-scoped scan looked at a fraction of the
+                        repo. Shown beside the counts for the same reason
+                        tools_failed is: "0 new findings" means something
+                        much narrower here, and the row must not imply
+                        whole-repo assurance it never had. */}
+                    {entry.scan_scope === "diff" && (
+                      <div className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                        Diff-scoped — {entry.files_scanned ?? 0} changed file(s) only, not the full repo
+                      </div>
+                    )}
+                    {(entry.tools_skipped?.length ?? 0) > 0 && (
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        Not run: {entry.tools_skipped!.join(", ")}
+                      </div>
+                    )}
                     {entry.tools_run?.length > 0 && (
                       <div className="mt-1 truncate text-xs text-muted-foreground">
                         Scanned with: {entry.tools_run.join(", ")}

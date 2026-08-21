@@ -312,13 +312,14 @@ def _wire_common_scan_mocks(monkeypatch, findings):
         })(),
     )
     monkeypatch.setattr(pr_guardrail_executor.runner, "clone_repo", lambda *a, **k: "/tmp/fake-repo")
-    monkeypatch.setattr(pr_guardrail_executor.runner, "run_tool", lambda tool, repo_path: {})
+    monkeypatch.setattr(pr_guardrail_executor.runner, "run_tool", lambda tool, repo_path, paths=None: {})
     # GH-01: the guardrail is multi-tool now, so the scanner boundary is
-    # _run_guardrail_tools (returns (findings, failed_tools)) rather than a
-    # single GUARDRAIL_PARSER constant. Each finding carries its own `tool`,
-    # which the real path sets and dedup_hash depends on.
-    def _fake_run_tools(tools, repo_path):
-        return [{**f, "tool": f.get("tool", "semgrep")} for f in findings], []
+    # _run_guardrail_tools rather than a single GUARDRAIL_PARSER constant.
+    # Each finding carries its own `tool`, which the real path sets and
+    # dedup_hash depends on. It returns (findings, failed, skipped) since
+    # #243 -- "skipped" being a third state distinct from both.
+    def _fake_run_tools(tools, repo_path, paths=None):
+        return [{**f, "tool": f.get("tool", "semgrep")} for f in findings], [], {}
 
     monkeypatch.setattr(pr_guardrail_executor, "_run_guardrail_tools", _fake_run_tools)
     monkeypatch.setattr(pr_guardrail_executor.runner, "normalize_file_path", lambda fp, repo_path: fp)

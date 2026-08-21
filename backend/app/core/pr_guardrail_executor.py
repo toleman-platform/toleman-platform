@@ -70,26 +70,43 @@ def _resolve_guardrail_tools(session: Session, target: Target) -> list[str]:
     return tools
 
 
-def _run_guardrail_tools(tools: list[str], repo_path) -> tuple[list[dict], list[str]]:
+def _run_guardrail_tools(
+    tools: list[str], repo_path, paths: list[str] | None = None
+) -> tuple[list[dict], list[str], dict[str, str]]:
     """Run every assigned tool over the PR checkout.
 
-    Returns ``(findings, failed_tools)``. Each finding carries its own
-    ``tool`` key so downstream dedup, persistence and rendering can attribute
-    it correctly.
+    ``paths`` (repo-relative changed files, #243) scopes each tool per
+    ``runner.TOOL_SCOPING``. ``None`` scans the whole checkout.
 
-    A tool that raises is recorded in ``failed_tools`` rather than aborting
-    the whole scan: one broken scanner shouldn't discard the real findings
-    the others produced. But the caller must not treat a run with a non-empty
-    ``failed_tools`` as a clean pass -- that is exactly the
-    "a check that did not really run must never look like a check that
-    passed" rule this codebase already applies in osv_malware.py.
+    Returns ``(findings, failed_tools, skipped_tools)``. Each finding carries
+    its own ``tool`` key so downstream dedup, persistence and rendering can
+    attribute it correctly.
+
+    Three outcomes, kept separate on purpose:
+
+    * **ran** -- findings (possibly none), a real result
+    * **failed** -- the tool raised; recorded rather than aborting the scan,
+      since one broken scanner shouldn't discard what the others found
+    * **skipped** -- diff scoping left it nothing to examine (``trivy`` with
+      no manifest change, ``tfsec`` with no Terraform). Mapped to its reason.
+
+    The caller must not treat a run with non-empty ``failed`` or ``skipped``
+    as a clean pass. That is the "a check that did not really run must never
+    look like a check that passed" rule this codebase already applies in
+    osv_malware.py.
     """
     findings: list[dict] = []
     failed: list[str] = []
+    skipped: dict[str, str] = {}
     for tool in tools:
         try:
-            raw = runner.run_tool(tool, repo_path)
+            raw = runner.run_tool(tool, repo_path, paths=paths)
             parsed = parsers.PARSER_MAP[tool](raw)
+        except runner.ToolNotApplicable as exc:
+            # Not a failure and not a pass. Nothing was examined, so say so.
+            logger.info("pr guardrail tool %s skipped: %s", tool, exc)
+            skipped[tool] = str(exc)
+            continue
         except Exception:
             logger.exception("pr guardrail tool %s failed", tool)
             failed.append(tool)
@@ -97,7 +114,54 @@ def _run_guardrail_tools(tools: list[str], repo_path) -> tuple[list[dict], list[
         for item in parsed:
             item["tool"] = tool
         findings.extend(parsed)
-    return findings, failed
+    return findings, failed, skipped
+
+
+# Above this many changed files a PR is not meaningfully a "diff" any more:
+# the per-file process cost of the PER_FILE tools stops paying for itself,
+# and the odds that the change is a rename/vendor/lockfile sweep (where
+# whole-repo context matters) go up sharply. Falls back to a full scan.
+MAX_DIFF_SCOPED_FILES = 300
+
+
+def _changed_files(slug: str, pr_number: int) -> list[str] | None:
+    """Repo-relative paths the PR adds or modifies.
+
+    Returns None when the list can't be established, which the caller must
+    treat as "fall back to a full scan" -- never as "nothing changed".
+
+    Deleted files are excluded: there is no file left to scan, and their
+    findings disappear from the head branch anyway. Renames report only the
+    new path, which is what exists in the checkout.
+    """
+    paths: list[str] = []
+    page = 1
+    while True:
+        try:
+            res = github_get(f"/repos/{slug}/pulls/{pr_number}/files?per_page=100&page={page}")
+            res.raise_for_status()
+            batch = res.json()
+        except Exception:
+            logger.warning(
+                "pr guardrail: could not list changed files for %s#%s; falling back to a full scan",
+                slug, pr_number, exc_info=True,
+            )
+            return None
+        if not batch:
+            break
+        for entry in batch:
+            if entry.get("status") == "removed":
+                continue
+            filename = entry.get("filename")
+            if filename:
+                paths.append(filename)
+        if len(batch) < 100:
+            break
+        page += 1
+        if page > 30:  # 3000 files; far past MAX_DIFF_SCOPED_FILES anyway
+            logger.warning("pr guardrail: %s#%s has more files than we will page", slug, pr_number)
+            return None
+    return paths
 
 
 def _severity_str(severity) -> str:
@@ -257,11 +321,37 @@ def render_comment(
     pr_scan_id: int,
     tools_run: list[str] | None = None,
     tools_failed: list[str] | None = None,
+    tools_skipped: dict[str, str] | None = None,
+    scan_scope: str = "full",
+    files_scanned: int = 0,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
     predating the multi-tool guardrail (GH-01); None means "don't render a
-    coverage line", which reproduces the old output exactly."""
+    coverage line", which reproduces the old output exactly.
+
+    `scan_scope`/`files_scanned`/`tools_skipped` (#243) default to the
+    whole-repo case for the same reason, so a caller that doesn't know about
+    diff scoping renders exactly what it used to."""
     lines = [COMMENT_MARKER, "**Rikugan PR Guardrail**", "", _severity_badge(status), ""]
+
+    if scan_scope == "diff":
+        # Stated up front, above the result. A reader who takes "no findings"
+        # as whole-repo assurance when only 7 files were examined has been
+        # misled by us, not by the scanner -- so the limit is part of the
+        # headline, not a footnote.
+        lines.append(
+            f"🔍 **Diff-scoped scan** — only the {files_scanned} file(s) changed in this PR were "
+            "examined, not the whole repository. Pre-existing issues elsewhere in the codebase "
+            "would not appear here."
+        )
+        lines.append("")
+
+    if tools_skipped:
+        lines.append(
+            "ℹ️ **Not run for this PR:** "
+            + "; ".join(f"`{tool}` ({reason})" for tool, reason in sorted(tools_skipped.items()))
+        )
+        lines.append("")
 
     if tools_failed:
         # Rendered before anything else, and never alongside a clean-pass
@@ -279,6 +369,13 @@ def render_comment(
             lines.append(
                 "No net-new findings from the tools that completed. "
                 "This is **not** an all-clear — see the warning above."
+            )
+        elif scan_scope == "diff":
+            # No tick here. A green check next to a partial scan is the exact
+            # thing that turns a narrowed check into a false all-clear.
+            lines.append(
+                "No net-new findings or API changes in the changed files. "
+                "This covers the diff only — see the scope note above."
             )
         else:
             lines.append("No net-new findings or API changes vs the default branch. ✅")
@@ -525,7 +622,33 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             target.repo_url, head_branch, get_github_token(), scan_id=f"pr-{pr_scan.id}"
         )
         guardrail_tools = _resolve_guardrail_tools(session, target)
-        parsed, failed_tools = _run_guardrail_tools(guardrail_tools, repo_path)
+
+        # (#243) Scope the scan to the PR's changed files when the target
+        # opts in. Every path back to a full scan is explicit, and the scope
+        # actually used is persisted -- a diff scan and a full scan report
+        # very different amounts of assurance and must never be confused for
+        # each other in the PR comment or the audit trail.
+        scan_paths: list[str] | None = None
+        if target.diff_scoped_pr_scans:
+            changed = _changed_files(slug, pr_number)
+            if changed is None:
+                logger.info("pr guardrail: full scan for %s#%s (changed files unavailable)", slug, pr_number)
+            elif len(changed) > MAX_DIFF_SCOPED_FILES:
+                logger.info(
+                    "pr guardrail: full scan for %s#%s (%s changed files exceeds %s)",
+                    slug, pr_number, len(changed), MAX_DIFF_SCOPED_FILES,
+                )
+            elif not changed:
+                logger.info("pr guardrail: full scan for %s#%s (no scannable changed files)", slug, pr_number)
+            else:
+                scan_paths = changed
+
+        parsed, failed_tools, skipped_tools = _run_guardrail_tools(
+            guardrail_tools, repo_path, paths=scan_paths
+        )
+        pr_scan.scan_scope = "diff" if scan_paths is not None else "full"
+        pr_scan.files_scanned = len(scan_paths) if scan_paths is not None else 0
+        pr_scan.tools_skipped = ",".join(sorted(skipped_tools))
 
         for item in parsed:
             # Must match the same normalization ingest_findings applies, or
@@ -577,7 +700,12 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         pr_scan.new_findings_count = len(net_new)
         pr_scan.highest_new_severity = highest_severity(net_new)
         pr_scan.new_endpoints_count = len(new_endpoints)
-        pr_scan.tools_run = ",".join(t for t in guardrail_tools if t not in failed_tools)
+        # Skipped tools are excluded as firmly as failed ones. tools_run is
+        # the record of what actually examined this PR; a tool that never ran
+        # must not appear in it (#243).
+        pr_scan.tools_run = ",".join(
+            t for t in guardrail_tools if t not in failed_tools and t not in skipped_tools
+        )
         pr_scan.tools_failed = ",".join(failed_tools)
         pr_scan.completed_at = datetime.utcnow()
         session.add(pr_scan)
@@ -592,8 +720,11 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             status,
             target.id,
             pr_scan.id,
-            tools_run=[t for t in guardrail_tools if t not in failed_tools],
+            tools_run=[t for t in guardrail_tools if t not in failed_tools and t not in skipped_tools],
             tools_failed=failed_tools,
+            tools_skipped=skipped_tools,
+            scan_scope=pr_scan.scan_scope,
+            files_scanned=pr_scan.files_scanned,
         )
         post_pr_comment(session, target, pr_number, comment_body)
 

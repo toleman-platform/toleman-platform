@@ -93,6 +93,11 @@ export type Target = {
   // Issue #72: live base URL of this target's deployed API. Active API
   // scanning refuses to run until this is set -- see api.runApiScan.
   api_base_url: string | null;
+  // Issue #243: scan only the PR's changed files instead of the whole
+  // checkout. Plain per-target boolean, not nullable-to-inherit like
+  // enforcement_mode -- it trades coverage for speed, so it is switched on
+  // one target at a time rather than defaulted from above.
+  diff_scoped_pr_scans: boolean;
 };
 
 // GET /api/targets/{id}/pipeline-workflow (issue #66) -- generated,
@@ -782,6 +787,14 @@ export type PrGuardrailLogEntry = {
   // inconclusive, not clean -- render it as a warning, never as a pass.
   tools_run: string[];
   tools_failed: string[];
+  // (#243) Assigned tools that had nothing to examine once the scan was
+  // scoped to the PR's changed files. Like tools_failed, these are NOT
+  // evidence of safety -- render them as "not run", never fold them into
+  // the scanned-with line. scan_scope is "full" or "diff"; files_scanned is
+  // meaningful only when "diff".
+  tools_skipped?: string[];
+  scan_scope?: "full" | "diff";
+  files_scanned?: number;
   // (GH-04) Non-empty when the commit status never reached GitHub. The scan
   // itself is still valid -- this says the *decision* was not delivered, so
   // the PR is unmarked on GitHub even though Rikugan reached a verdict.

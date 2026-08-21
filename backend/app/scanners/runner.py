@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 from app.core.config import settings
@@ -86,6 +86,25 @@ class RepoCloneError(Exception):
     subclass, and deliberately not retried by Celery (see
     app/tasks/scan_tasks.py RETRYABLE_EXCEPTIONS) -- bad input won't become
     good input on retry.
+    """
+
+
+class ToolNotApplicable(Exception):
+    """Diff-scoped scanning (#243) left this tool with nothing to examine --
+    e.g. trivy when the PR changed no dependency manifest, or tfsec when it
+    changed no Terraform.
+
+    Deliberately an exception and deliberately NOT a ToolExecutionError.
+    Three states have to stay distinguishable, because collapsing any two of
+    them produces a false all-clear:
+
+        ran, found nothing   -> a real clean result
+        did not run          -> this exception; nothing was checked
+        broke                -> ToolExecutionError; the check is unreliable
+
+    Returning an empty finding list here would merge the first two, which is
+    the exact bug osv_malware.py's None-vs-{} distinction exists to prevent
+    (issue #229). The caller records these as *skipped*, with the reason.
     """
 
 
@@ -420,11 +439,196 @@ def _run_modelscan(cmd: list[str]) -> dict:
             raise ToolExecutionError(f"modelscan produced unreadable JSON: {exc}") from exc
 
 
-def run_tool(tool: str, repo_path: Path) -> dict | list:
+# --- Diff-scoped scanning (#243) -------------------------------------------
+# Scanning only a PR's changed files needs per-tool knowledge, because the
+# CLIs genuinely disagree about what "scan these files" means. Keeping that
+# knowledge here, next to TOOL_COMMANDS, stops it leaking into the PR
+# guardrail executor as a pile of `if tool == ...`.
+#
+#   MULTI_PATH   the command takes N paths; append them all
+#   PER_FILE     the command takes exactly one path; invoke once per file and
+#                merge the reports
+#   MANIFEST     not file-oriented at all. Trivy resolves dependency
+#                manifests, so "only these files changed" is meaningless to
+#                it -- the honest scoping question is *whether a manifest
+#                changed*, answered by manifest_changed() below, not by
+#                handing it a file list.
+#   PACKAGE      gosec walks Go packages from cwd, so changed .go files map
+#                to their containing package directories.
+MULTI_PATH = "multi_path"
+PER_FILE = "per_file"
+MANIFEST = "manifest"
+PACKAGE = "package"
+
+TOOL_SCOPING = {
+    "semgrep": MULTI_PATH,
+    "semgrep-llm": MULTI_PATH,
+    "checkov": MULTI_PATH,
+    "gitleaks": PER_FILE,
+    "tfsec": PER_FILE,
+    "modelscan": PER_FILE,
+    "gosec": PACKAGE,
+    "trivy": MANIFEST,
+    "trivy-license": MANIFEST,
+    "trivy-sbom": MANIFEST,
+}
+
+# Files whose change means the resolved dependency set may have moved, so a
+# MANIFEST tool has something new to say. Lockfiles included deliberately:
+# a lockfile bump with an untouched manifest is exactly the transitive
+# upgrade case, which is the one #239 is about.
+MANIFEST_FILENAMES = frozenset({
+    "requirements.txt", "requirements-dev.txt", "pyproject.toml", "poetry.lock",
+    "Pipfile", "Pipfile.lock", "setup.py", "setup.cfg", "uv.lock", "pdm.lock",
+    "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "go.mod", "go.sum",
+    "Gemfile", "Gemfile.lock",
+    "pom.xml", "build.gradle", "build.gradle.kts", "gradle.lockfile",
+    "Cargo.toml", "Cargo.lock",
+    "composer.json", "composer.lock",
+    "packages.config", "paket.lock",
+    "mix.exs", "mix.lock",
+    "conan.lock", "vcpkg.json",
+    "Dockerfile",
+})
+
+# The IaC and model scanners only have anything to say about their own file
+# types. Handing gitleaks a .tf file is harmless; handing tfsec a .py file is
+# a wasted process per file, which matters when PER_FILE means one process
+# each. None = no extension filter (gitleaks scans anything).
+TOOL_EXTENSIONS = {
+    "tfsec": (".tf", ".tfvars", ".hcl"),
+    "checkov": (".tf", ".tfvars", ".hcl", ".yaml", ".yml", ".json", ".template"),
+    "modelscan": (".pkl", ".pickle", ".pt", ".pth", ".bin", ".h5", ".keras", ".pb", ".onnx", ".safetensors", ".joblib", ".dill", ".npy", ".npz"),
+}
+
+
+def manifest_changed(paths: list[str]) -> bool:
+    """Does this change touch anything that could move the resolved
+    dependency set? Governs whether a MANIFEST tool runs at all."""
+    for p in paths:
+        name = PurePosixPath(p).name
+        if name in MANIFEST_FILENAMES or name.startswith("Dockerfile"):
+            return True
+    return False
+
+
+def paths_for_tool(tool: str, paths: list[str]) -> list[str]:
+    """Narrow a changed-file list to the files this tool can say something
+    about. An empty result means "nothing here for this tool" -- the caller
+    must record that as *skipped*, never as a clean run."""
+    exts = TOOL_EXTENSIONS.get(tool)
+    if exts is None:
+        return list(paths)
+    return [p for p in paths if p.lower().endswith(exts)]
+
+
+def go_packages_for(paths: list[str]) -> list[str]:
+    """Changed .go files -> the package directories gosec should walk.
+
+    A file at the repo root maps to "." (that package only), never "./..."
+    -- the recursive form would walk the entire module while the scan still
+    reported itself as diff-scoped, which is the one outcome this feature
+    must never produce.
+    """
+    dirs = {str(PurePosixPath(p).parent) for p in paths if p.endswith(".go")}
+    return sorted("." if d == "." else "./" + d for d in dirs)
+
+
+def _merge_reports(reports: list[dict | list]) -> dict | list:
+    """Combine several single-path runs into one report of the same shape the
+    tool would have produced for a single invocation, so parsers don't need
+    to know whether scoping happened."""
+    if not reports:
+        return []
+    if isinstance(reports[0], list):
+        merged: list = []
+        for r in reports:
+            if isinstance(r, list):
+                merged.extend(r)
+        return merged
+    merged_dict: dict = {}
+    for r in reports:
+        if not isinstance(r, dict):
+            continue
+        for key, value in r.items():
+            if isinstance(value, list):
+                merged_dict.setdefault(key, []).extend(value)
+            else:
+                merged_dict.setdefault(key, value)
+    return merged_dict
+
+
+def run_tool(tool: str, repo_path: Path, paths: list[str] | None = None) -> dict | list:
+    """Run ``tool`` over ``repo_path``.
+
+    ``paths`` (repo-relative, from a PR's changed-file list) restricts the
+    scan per TOOL_SCOPING above. ``None`` means scan everything, which stays
+    the default for scheduled and default-branch scans.
+
+    Raises ToolNotApplicable when scoping leaves this tool with nothing to
+    look at. That is deliberately an exception rather than an empty result:
+    an empty finding list from a tool that never examined a single file is
+    indistinguishable from a clean pass, and this codebase does not allow
+    that ambiguity (see osv_malware.py, issue #229).
+    """
     if tool not in TOOL_COMMANDS:
         raise ValueError(f"unsupported tool: {tool}")
 
+    if paths is not None:
+        return _run_tool_scoped(tool, repo_path, paths)
+
     cmd = TOOL_COMMANDS[tool](str(repo_path))
+    return _execute(tool, cmd, repo_path)
+
+
+def _run_tool_scoped(tool: str, repo_path: Path, paths: list[str]) -> dict | list:
+    strategy = TOOL_SCOPING.get(tool, MULTI_PATH)
+
+    if strategy == MANIFEST:
+        if not manifest_changed(paths):
+            raise ToolNotApplicable(
+                f"{tool} scans dependency manifests; no manifest or lockfile changed in this diff"
+            )
+        # A manifest did change, so resolution may have moved anywhere in the
+        # tree -- scan the whole checkout. Scoping trivy to the manifest file
+        # alone would report only direct pins, which is precisely the blind
+        # spot #239 is about.
+        return _execute(tool, TOOL_COMMANDS[tool](str(repo_path)), repo_path)
+
+    relevant = paths_for_tool(tool, paths)
+    if not relevant:
+        raise ToolNotApplicable(f"no files in this diff are scannable by {tool}")
+
+    if strategy == PACKAGE:
+        packages = go_packages_for(relevant)
+        if not packages:
+            raise ToolNotApplicable("no Go files changed in this diff")
+        cmd = ["gosec", "-fmt=json", "-quiet", *packages]
+        return _execute(tool, cmd, repo_path)
+
+    absolute = [str(repo_path / p) for p in relevant]
+
+    if strategy == PER_FILE:
+        reports = []
+        for abs_path in absolute:
+            reports.append(_execute(tool, TOOL_COMMANDS[tool](abs_path), repo_path))
+        return _merge_reports(reports)
+
+    # MULTI_PATH: the command builder produces one trailing path; replace it
+    # with the full list rather than rebuilding each tool's flags here.
+    base = TOOL_COMMANDS[tool](str(repo_path))
+    if tool == "checkov":
+        # checkov's -d takes a directory; -f takes files and repeats.
+        cmd = [c for c in base if c not in ("-d", str(repo_path))]
+        for abs_path in absolute:
+            cmd.extend(["-f", abs_path])
+    else:
+        cmd = base[:-1] + absolute
+    return _execute(tool, cmd, repo_path)
+
+
+def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
     cwd = str(repo_path) if tool == "gosec" else None
 
     if tool == "modelscan":

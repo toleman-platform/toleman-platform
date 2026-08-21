@@ -172,6 +172,12 @@ def _scan_out(
         # "0 findings" is inconclusive, not clean.
         "tools_run": [t for t in s.tools_run.split(",") if t],
         "tools_failed": [t for t in s.tools_failed.split(",") if t],
+        # (#243) Assigned but had nothing to examine once the scan was scoped
+        # to the diff. Separate from tools_run for the same reason
+        # tools_failed is: it did not check anything, so it is not evidence.
+        "tools_skipped": [t for t in s.tools_skipped.split(",") if t],
+        "scan_scope": s.scan_scope,
+        "files_scanned": s.files_scanned,
         # (GH-04) "" when the commit status reached GitHub.
         "status_delivery_error": s.status_delivery_error,
         "override_reason": s.override_reason,
@@ -389,6 +395,9 @@ def override_pr_guardrail_scan(
         "new_endpoints_count": pr_scan.new_endpoints_count,
         "tools_run": [t for t in pr_scan.tools_run.split(",") if t],
         "tools_failed": [t for t in pr_scan.tools_failed.split(",") if t],
+        "tools_skipped": [t for t in pr_scan.tools_skipped.split(",") if t],
+        "scan_scope": pr_scan.scan_scope,
+        "files_scanned": pr_scan.files_scanned,
         "status_delivery_error": pr_scan.status_delivery_error,
         "override_reason": pr_scan.override_reason,
         "created_at": pr_scan.created_at,

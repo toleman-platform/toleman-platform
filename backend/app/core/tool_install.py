@@ -182,3 +182,32 @@ def _finish(session: Session, run, *, status: str, error: str = "", version: str
     # itself once this row settles), instead of on whichever refresh happens
     # to land after the TTL expires.
     tool_health_cache.invalidate(run.tool)
+
+    # (CTX-03) ...but invalidating alone was actively wrong here, and it is
+    # worth being precise about why.
+    #
+    # This code runs on the Celery worker. The registry endpoint runs in the
+    # backend web process. In the default Compose topology those are separate
+    # containers from the same image, so a pip install into the worker's
+    # site-packages is invisible to the backend's `shutil.which()`. Dropping
+    # the cache just made the backend re-probe *itself*, find nothing, and
+    # publish "not installed" -- for a tool that had installed successfully
+    # and whose version we had just read, one line above. An external
+    # evaluation hit exactly this: Checkov installed (3.3.13), card said "not
+    # installed", still said it after "Recheck all".
+    #
+    # The version this worker read is the operationally meaningful one --
+    # every scan runs on a worker, not in the web process -- so publish it
+    # rather than throwing it away. `checked_in` keeps the answer honest
+    # about which environment it describes.
+    if status == "completed" and version:
+        tool_health_cache.set_worker_health(
+            run.tool,
+            {
+                "tool": run.tool,
+                "installed": True,
+                "version": version,
+                "response_ms": None,
+                "checked_in": "worker",
+            },
+        )

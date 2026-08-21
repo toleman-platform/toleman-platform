@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     # second port). See cors_allow_origins below.
     extra_cors_origins: str = ""
 
+    # (BLD-01) Build identity, surfaced by GET /health and in the sidebar.
+    #
+    # An external evaluator built a fresh stack while a previously-running
+    # host-native instance still held :3000/:8000. The browser resolved
+    # localhost to the old process, so the "fresh" install showed 1,434
+    # findings and 35 targets while the new container database held zero.
+    # Nothing in the product flagged the mismatch -- it was only caught by
+    # querying Postgres directly. An hour of review can go into an instance
+    # that is not the one being reviewed.
+    #
+    # Set at image build time (see backend/Dockerfile's ARG/ENV pair, fed by
+    # CI from the real commit). "dev" is the honest answer for a working tree
+    # rather than a fabricated version number.
+    build_version: str = "dev"
+    build_commit: str = ""
+
     class Config:
         env_file = ".env"
 

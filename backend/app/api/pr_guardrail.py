@@ -19,6 +19,7 @@ from app.api.auth import accessible_workspace_ids, current_user, require_securit
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, recompute_pr_scan_status, set_commit_status
+from app.core.staleness import mark_stale_if_needed
 from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User, WorkspaceRole
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,58 @@ def _finding_out(f: PRGuardrailFinding) -> dict:
         "ignore_reviewed_by": f.ignore_reviewed_by,
         "ignore_reviewed_at": f.ignore_reviewed_at,
     }
+
+
+@router.get("/active")
+def active_pr_scans(
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Every PR Guardrail scan currently running, keyed "targetId:prNumber".
+
+    Finding CTX-02: PrScanAction tracked in-flight state in a local
+    `useState`, so navigating away unmounted the component and the button
+    came back as a fresh, clickable "Scan This PR" while the scan was still
+    running -- and the audit-log card lower on the *same page* correctly
+    showed `running`. Two components on one screen disagreeing about one job,
+    with the obvious user action being to click again and start a duplicate
+    clone-and-scan.
+
+    This is deliberately the same shape as GET /api/scans/active (#212),
+    which On-Demand Scan already uses correctly: server is the source of
+    truth for what is running, so any surface can render it without having
+    been the one that started it.
+
+    Stale rows are swept here for the same reason that endpoint does it --
+    this is often the first read to touch a row a dead worker left "running",
+    and without the sweep it would render as permanently in flight, which is
+    indistinguishable from a hung platform.
+    """
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return {}
+
+    query = select(PRGuardrailScan).where(PRGuardrailScan.status == PRGuardrailStatus.RUNNING)
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == PRGuardrailScan.target_id).where(
+            Target.workspace_id.in_(ws_ids)
+        )
+    running = session.exec(query).all()
+
+    out = {}
+    for scan in running:
+        # PRGuardrailStatus.ERROR, not "failed": this row's status vocabulary
+        # is the one the GitHub commit status is derived from.
+        if mark_stale_if_needed(session, scan, failed_status=PRGuardrailStatus.ERROR):
+            continue
+        out[f"{scan.target_id}:{scan.pr_number}"] = {
+            "pr_scan_id": scan.id,
+            "target_id": scan.target_id,
+            "pr_number": scan.pr_number,
+            "branch": scan.branch,
+            "started_at": scan.created_at.isoformat() + "Z",
+        }
+    return out
 
 
 @router.post("/scan")
@@ -119,6 +172,8 @@ def _scan_out(
         # "0 findings" is inconclusive, not clean.
         "tools_run": [t for t in s.tools_run.split(",") if t],
         "tools_failed": [t for t in s.tools_failed.split(",") if t],
+        # (GH-04) "" when the commit status reached GitHub.
+        "status_delivery_error": s.status_delivery_error,
         "override_reason": s.override_reason,
         "created_at": s.created_at,
         "completed_at": s.completed_at,
@@ -334,6 +389,7 @@ def override_pr_guardrail_scan(
         "new_endpoints_count": pr_scan.new_endpoints_count,
         "tools_run": [t for t in pr_scan.tools_run.split(",") if t],
         "tools_failed": [t for t in pr_scan.tools_failed.split(",") if t],
+        "status_delivery_error": pr_scan.status_delivery_error,
         "override_reason": pr_scan.override_reason,
         "created_at": pr_scan.created_at,
         "completed_at": pr_scan.completed_at,

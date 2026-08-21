@@ -630,6 +630,14 @@ class PRGuardrailScan(SQLModel, table=True):
     # render as a clean pass.
     tools_run: str = ""
     tools_failed: str = ""
+    # (GH-04) Why the commit status did not reach GitHub, or "" if it did.
+    # Posting is deliberately fail-open -- a GitHub outage must not abort a
+    # scan that already produced real findings -- but it used to be fail-open
+    # *and silent*, into a container log. If an installation token breaks,
+    # PRs quietly stop being marked and nobody is told. Persisted so PR
+    # History can show "the decision never reached GitHub" next to the
+    # decision itself.
+    status_delivery_error: str = ""
     created_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
 

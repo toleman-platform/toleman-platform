@@ -161,6 +161,29 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
             select(ApiEndpoint).where(ApiEndpoint.target_id == target.id, ApiEndpoint.branch == target.default_branch)
         ).all()
     }
+
+    if not existing:
+        # (GH-06) No baseline has ever been discovered for the default
+        # branch, so there is nothing to diff against -- and diffing against
+        # an empty set makes the *entire repository* look new.
+        #
+        # An external evaluation hit exactly this: a PR touching one file got
+        # a comment announcing four new endpoints across bad/vulpy.py,
+        # good/vulpy.py and their SSL variants. First-run noise, in the most
+        # visible artefact this tool produces, at the moment a team is
+        # deciding whether to trust it.
+        #
+        # "No baseline" is not "everything is new" -- same distinction this
+        # codebase draws between a check that found nothing and a check that
+        # never ran. Report nothing rather than something false.
+        logger.info(
+            "PR guardrail: no persisted endpoint baseline for target %s branch %s -- "
+            "skipping the new-endpoint diff for this scan rather than reporting the "
+            "whole repo as new",
+            target.id, target.default_branch,
+        )
+        return []
+
     return [d for d in discovered if (d["method"], d["route"], d["file"]) not in existing]
 
 
@@ -400,14 +423,27 @@ def post_pr_comment(session: Session, target: Target, pr_number: int, body: str)
         logger.warning("PR guardrail: exception posting PR comment", exc_info=True)
 
 
-def set_commit_status(session: Session, target: Target, sha: str, state: str, description: str) -> None:
-    """Best-effort: never raises."""
+def set_commit_status(session: Session, target: Target, sha: str, state: str, description: str) -> str:
+    """Post the commit status. Never raises; returns "" on success or a short
+    human-readable reason on failure.
+
+    (GH-04) Still fail-open at the transport layer -- a GitHub outage must not
+    abort a scan that already produced real findings -- but no longer *silent*.
+    Enforcement resolution is carefully fail-closed (conflicting groups resolve
+    to the most restrictive), while the channel carrying that decision to
+    GitHub failed open into a container log nobody reads. If an installation
+    token breaks, PRs quietly stop being marked and no one is told.
+
+    The returned reason is persisted on the scan row and rendered in PR
+    History, so "the decision never reached GitHub" is visible in the same
+    place as the decision itself.
+    """
     slug = repo_slug_from_url(target.repo_url)
     try:
         token = _get_installation_token_or_none(session, target)
         if not token:
             logger.warning("PR guardrail: no GitHub App installed, skipping commit status")
-            return
+            return "No GitHub App installed for this repository, so no commit status was posted."
         res = httpx.post(
             f"https://api.github.com/repos/{slug}/statuses/{sha}",
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
@@ -421,8 +457,16 @@ def set_commit_status(session: Session, target: Target, sha: str, state: str, de
         )
         if res.status_code >= 300:
             logger.warning("PR guardrail: failed to set commit status: %s %s", res.status_code, res.text[:300])
-    except Exception:
+            return f"GitHub rejected the commit status ({res.status_code}). The PR was scanned but is not marked on GitHub."
+    except Exception as exc:
         logger.warning("PR guardrail: exception setting commit status", exc_info=True)
+        # Type name only, never str(exc): an httpx error can carry the
+        # request URL, and that URL is built with an installation token.
+        return (
+            f"Could not reach GitHub to post the commit status ({type(exc).__name__}). "
+            "The PR was scanned but is not marked on GitHub."
+        )
+    return ""
 
 
 def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) -> dict:
@@ -576,7 +620,12 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         else:
             commit_state, commit_desc = "failure", summary_desc
 
-        set_commit_status(session, target, head_sha, commit_state, commit_desc)
+        status_delivery_error = set_commit_status(session, target, head_sha, commit_state, commit_desc)
+        if status_delivery_error:
+            pr_scan.status_delivery_error = status_delivery_error
+            session.add(pr_scan)
+            session.commit()
+            session.refresh(pr_scan)
 
         return {
             "pr_scan_id": pr_scan.id,

@@ -35,6 +35,27 @@ export function ConnectGithubCard() {
 
   useEffect(refresh, []);
 
+  // (GH-03) Whether GitHub could actually reach this backend's webhook
+  // endpoint. The App now subscribes to pull_request, so automatic scanning
+  // works -- unless PUBLIC_API_URL is a localhost address, in which case
+  // deliveries never arrive and it looks exactly like a scanner finding
+  // nothing. Better said before the App is created than discovered after.
+  const [webhookReachable, setWebhookReachable] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .githubAppManifestData()
+      .then((d) => {
+        if (!cancelled) setWebhookReachable(d.webhook_reachable);
+      })
+      .catch(() => {
+        // Advisory only -- never block the connect flow on it.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function connect() {
     setConnecting(true);
     setError(null);
@@ -158,6 +179,13 @@ export function ConnectGithubCard() {
                       </>
                     )}
                   </div>
+                  {webhookReachable === false && (
+                    <p className="text-xs text-muted-foreground">
+                      PUBLIC_API_URL is a localhost address, so GitHub cannot deliver webhooks here and PRs will
+                      only scan on demand. Set it to a publicly reachable URL (a domain or tunnel) for automatic
+                      PR scanning. Note that a required status check nothing triggers will block every PR.
+                    </p>
+                  )}
                   <div className="flex gap-2">
                     <Input
                       type="password"

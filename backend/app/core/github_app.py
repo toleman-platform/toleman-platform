@@ -38,7 +38,16 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
     installation belongs to without needing to guess or brute-force it.
     """
     return {
-        "name": f"OSP DevSecOps {name_suffix}",
+        # (GH-05) "Rikugan", not the pre-rename "OSP DevSecOps". This string
+        # is the product's signature on every pull request in an adopting
+        # org: GitHub derives the bot login from it, so the old name shipped
+        # as `osp-devsecops-*[bot]` on every PR comment. Cosmetic internally,
+        # not cosmetic externally.
+        #
+        # Only affects Apps created from here on -- an App's name is fixed at
+        # creation, so an existing installation keeps its old bot login until
+        # its owner renames it in GitHub's own App settings.
+        "name": f"Rikugan DevSecOps {name_suffix}",
         "url": app_url,
         "redirect_url": f"{backend_url}/api/github-app/callback",
         "setup_url": f"{backend_url}/api/github-app/setup-callback?cfg={setup_token}",
@@ -51,7 +60,31 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
             "statuses": "write",
             "metadata": "read",
         },
-        "default_events": [],
+        # (GH-03) Subscribe to pull_request so blocking mode is actually
+        # automatic. This was `[]` with no hook_attributes, so the App
+        # subscribed to nothing: a human had to open PR History and press
+        # "Scan This PR" for anything to happen. An external review put it
+        # exactly right -- "blocking mode" that depends on someone
+        # remembering to press a button is advisory in practice, and a
+        # required check nobody triggers blocks every PR forever.
+        #
+        # Nothing else had to be built for this. app/api/webhooks.py already
+        # verifies the HMAC signature, filters to pull_request, resolves the
+        # target and dispatches the Celery scan; and the manifest-conversion
+        # handler already persists the webhook secret GitHub generates for a
+        # manifest that declares hook_attributes. The only missing piece was
+        # the subscription itself.
+        #
+        # backend_url must be reachable *from GitHub* -- see
+        # settings.public_api_url. A localhost value produces an App whose
+        # deliveries can never arrive; build_manifest's caller warns about
+        # that rather than failing, since creating the App is still useful
+        # for on-demand scanning while a tunnel/domain is set up.
+        "default_events": ["pull_request"],
+        "hook_attributes": {
+            "url": f"{backend_url}/api/webhooks/github",
+            "active": True,
+        },
     }
 
 

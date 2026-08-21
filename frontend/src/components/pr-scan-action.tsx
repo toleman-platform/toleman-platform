@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api, PrGuardrailScanResult } from "@/lib/api";
+import { useActivePrScans } from "@/hooks/use-active-pr-scans";
 import { SEVERITY_COLOR } from "@/lib/severity";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,10 +18,19 @@ export function PrScanAction({ targetId, prNumber }: { targetId: number; prNumbe
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PrGuardrailScanResult | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // CTX-02: `loading` alone is local component state, so navigating away and
+  // back reset the button to a clickable "Scan This PR" while the scan was
+  // still running server-side -- inviting a duplicate clone-and-scan, and
+  // contradicting the audit-log card lower on the same page. The server is
+  // the source of truth for what is in flight.
+  const { isPrScanning, refresh: refreshActivePrScans } = useActivePrScans();
+  const scanning = loading || isPrScanning(targetId, prNumber);
 
   async function runScan() {
     setLoading(true);
     setError(null);
+    // Flip to running immediately rather than waiting out the poll interval.
+    refreshActivePrScans();
     try {
       const res = await api.runPrGuardrailScan(targetId, prNumber);
       setResult(res);
@@ -28,14 +38,17 @@ export function PrScanAction({ targetId, prNumber }: { targetId: number; prNumbe
       setError(e instanceof Error ? e.message : "scan failed");
     } finally {
       setLoading(false);
+      // The row has just left "running"; pick that up now so the button does
+      // not stay disabled for up to a full interval after it finished.
+      refreshActivePrScans();
     }
   }
 
   if (!result) {
     return (
       <div className="flex flex-col items-end gap-1">
-        <Button size="sm" variant="outline" disabled={loading} onClick={runScan} className="h-7 text-xs">
-          {loading ? "Scanning..." : "Scan This PR"}
+        <Button size="sm" variant="outline" disabled={scanning} onClick={runScan} className="h-7 text-xs">
+          {scanning ? "Scanning..." : "Scan This PR"}
         </Button>
         {error && <span className="text-xs text-destructive">{error}</span>}
       </div>

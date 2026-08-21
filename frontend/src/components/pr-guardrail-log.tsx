@@ -309,6 +309,9 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                     {/* GH-01: a scan where an assigned tool failed is
                         inconclusive, not clean -- say so next to the counts
                         rather than letting "0 new findings" read as a pass. */}
+                    {entry.status_delivery_error && (
+                      <div className="mt-1 text-xs text-destructive">{entry.status_delivery_error}</div>
+                    )}
                     {entry.tools_failed?.length > 0 && (
                       <div className="mt-1 text-xs text-destructive">
                         {entry.tools_failed.join(", ")} failed to run — PR not fully scanned

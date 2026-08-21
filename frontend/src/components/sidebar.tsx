@@ -29,7 +29,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, AuthUser } from "@/lib/api";
+import { api, AuthUser, BuildInfo } from "@/lib/api";
 import { GlobalSearch } from "@/components/global-search";
 import { DensityToggle } from "@/components/density-toggle";
 import { ThemeToggle, Theme } from "@/components/theme-toggle";
@@ -111,6 +111,26 @@ const NAV_GROUPS: NavGroup[] = [
 export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initialTheme?: Theme }) {
   const pathname = usePathname();
   const router = useRouter();
+  // (BLD-01) Which backend is actually answering. A stale instance holding
+  // the same port is otherwise indistinguishable from a fresh one -- an
+  // evaluator lost an hour to exactly that.
+  const [build, setBuild] = useState<BuildInfo | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .buildInfo()
+      .then((b) => {
+        if (!cancelled) setBuild(b);
+      })
+      .catch(() => {
+        // Not worth surfacing -- the stamp is a diagnostic aid, and failing
+        // to show it must never disturb the nav.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -307,6 +327,16 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
 
               The icon rail keeps them stacked: at ~64px wide it cannot fit
               three controls across. */}
+          {!iconRail && build && (
+            <div
+              title={`${build.version}${build.commit ? ` (${build.commit})` : ""} \u2014 database ${build.database}`}
+              className="mt-1 truncate px-1 text-center text-[10px] text-muted-foreground"
+            >
+              {build.version}
+              {build.commit ? ` \u00b7 ${build.commit.slice(0, 7)}` : ""}
+            </div>
+          )}
+
           <div className={cn("mt-1 flex gap-1", iconRail ? "flex-col" : "items-center justify-center")}>
             <DensityToggle collapsed={iconRail} compact={!iconRail} />
             <ThemeToggle collapsed={iconRail} compact={!iconRail} initialTheme={initialTheme} />

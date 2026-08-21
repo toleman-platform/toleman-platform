@@ -66,4 +66,29 @@ def tools_registry():
             tool_health_cache.set(entry["tool"], health)
             cached[entry["tool"]] = health
 
-    return [{**entry, **cached[entry["tool"]]} for entry in entries]
+    return [{**entry, **_merge_worker_health(entry["tool"], cached[entry["tool"]])} for entry in entries]
+
+
+def _merge_worker_health(tool: str, local: dict) -> dict:
+    """Fold in what the Celery worker reported, when this process can't see
+    the tool itself (CTX-03).
+
+    The probe above runs `shutil.which()` in *this* process. One-click
+    installs run on the worker, which in the default Compose topology is a
+    separate container -- so a successful install was invisible here and the
+    card read "not installed" forever, even after "Recheck all". Scans run on
+    the worker, so the worker's answer is the operationally correct one.
+
+    Only ever upgrades absent -> present, never the reverse. If this process
+    can see the binary, its own live probe is fresher and wins; a worker
+    record is a memory of an install, not a live check, and must not override
+    direct evidence.
+    """
+    if local.get("installed"):
+        return local
+
+    worker = tool_health_cache.get_worker_health(tool)
+    if not worker or not worker.get("installed"):
+        return local
+
+    return {**local, **worker, "checked_in": "worker"}

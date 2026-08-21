@@ -25,10 +25,22 @@ VERSION_COMMANDS = {
 }
 
 
-def _check_one(tool: str, cmd: list[str]) -> dict:
+def _check_one(tool: str, cmd: list[str], checked_in: str = "api") -> dict:
+    """`checked_in` records which process ran the probe -- "api" (this web
+    process) or "worker" (the Celery worker).
+
+    This is not bookkeeping. Finding CTX-03: one-click install runs on the
+    Celery worker, the health probe ran `shutil.which()` inside the *backend*
+    process, and those are separate containers in the default Compose
+    topology. A successful Checkov install (version 3.3.13, `which checkov`
+    resolving fine in the worker) showed permanently as "not installed" on
+    the marketplace card, even after "Recheck all". The card was answering a
+    question nobody asked -- "is it installed next to the web server" --
+    while every scan runs on the worker.
+    """
     binary_path = shutil.which(cmd[0])
     if not binary_path:
-        return {"tool": tool, "installed": False, "version": None, "response_ms": None}
+        return {"tool": tool, "installed": False, "version": None, "response_ms": None, "checked_in": checked_in}
 
     start = time.monotonic()
     try:
@@ -36,9 +48,15 @@ def _check_one(tool: str, cmd: list[str]) -> dict:
         elapsed_ms = round((time.monotonic() - start) * 1000)
         output = (proc.stdout or proc.stderr).strip().splitlines()
         version = output[0] if output else "unknown"
-        return {"tool": tool, "installed": True, "version": version, "response_ms": elapsed_ms}
+        return {
+            "tool": tool,
+            "installed": True,
+            "version": version,
+            "response_ms": elapsed_ms,
+            "checked_in": checked_in,
+        }
     except (subprocess.TimeoutExpired, OSError):
-        return {"tool": tool, "installed": True, "version": None, "response_ms": None}
+        return {"tool": tool, "installed": True, "version": None, "response_ms": None, "checked_in": checked_in}
 
 
 @router.get("/health")

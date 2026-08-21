@@ -308,17 +308,38 @@ function GuardrailActivityWidget({ data }: { data: GuardrailActivityData }) {
 
 function TopRiskyReposWidget({ data }: { data: TopRiskyReposData }) {
   if (data.items.length === 0) return <EmptyState>No open findings yet.</EmptyState>;
+  // (#250) The counts are the actionable part of this row, so they link
+  // where the count came from -- that target's open findings at that
+  // severity -- rather than dumping the reader on the target overview to
+  // re-apply the filter by hand. The row is a div, not a Link, because a
+  // link inside a link is invalid and the browser resolves it unpredictably.
   return (
     <div className="flex flex-col gap-2">
       {data.items.map((r) => (
-        <Link key={r.target_id} href={`/targets/${r.target_id}`} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-accent/40">
-          <span className="text-sm text-foreground">{r.target_name}</span>
-          <div className="flex gap-2">
-            {r.critical > 0 && <Badge variant="outline" className={SEVERITY_COLOR["Critical"]}>Critical: {r.critical}</Badge>}
-            {r.high > 0 && <Badge variant="outline" className={SEVERITY_COLOR["High"]}>High: {r.high}</Badge>}
+        <div key={r.target_id} className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-accent/40">
+          <Link href={`/targets/${r.target_id}`} className="truncate text-sm text-foreground hover:underline">
+            {r.target_name}
+          </Link>
+          <div className="flex shrink-0 gap-2">
+            {r.critical > 0 && (
+              <Link
+                href={`/findings?target_id=${r.target_id}&severity=Critical&state=Open`}
+                aria-label={`View ${r.critical} open Critical findings in ${r.target_name}`}
+              >
+                <Badge variant="outline" className={`${SEVERITY_COLOR["Critical"]} hover:brightness-110`}>Critical: {r.critical}</Badge>
+              </Link>
+            )}
+            {r.high > 0 && (
+              <Link
+                href={`/findings?target_id=${r.target_id}&severity=High&state=Open`}
+                aria-label={`View ${r.high} open High findings in ${r.target_name}`}
+              >
+                <Badge variant="outline" className={`${SEVERITY_COLOR["High"]} hover:brightness-110`}>High: {r.high}</Badge>
+              </Link>
+            )}
             {r.critical === 0 && r.high === 0 && <span className="text-xs text-muted-foreground">No critical/high open</span>}
           </div>
-        </Link>
+        </div>
       ))}
     </div>
   );
@@ -329,7 +350,11 @@ function CveTimelineWidget({ data }: { data: CveTimelineData }) {
   return (
     <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
       {data.items.map((item) => (
-        <div key={item.finding_id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
+        <Link
+          key={item.finding_id}
+          href={`/findings?search=${encodeURIComponent(item.cve_id)}&target_id=${item.target_id}`}
+          className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2 hover:bg-accent/40"
+        >
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="font-mono text-xs text-accent-strong">{item.cve_id}</span>
@@ -339,7 +364,7 @@ function CveTimelineWidget({ data }: { data: CveTimelineData }) {
             <p className="text-xs text-muted-foreground">{item.target_name ?? `target #${item.target_id}`} &middot; {formatDate(item.first_seen)}</p>
           </div>
           <Badge variant="outline" className={SEVERITY_COLOR[item.severity]}>{item.severity}</Badge>
-        </div>
+        </Link>
       ))}
     </div>
   );

@@ -306,6 +306,19 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                     {entry.status === "overridden" && entry.override_reason && (
                       <div className="mt-1 text-xs text-muted-foreground">Override reason: {entry.override_reason}</div>
                     )}
+                    {/* GH-01: a scan where an assigned tool failed is
+                        inconclusive, not clean -- say so next to the counts
+                        rather than letting "0 new findings" read as a pass. */}
+                    {entry.tools_failed?.length > 0 && (
+                      <div className="mt-1 text-xs text-destructive">
+                        {entry.tools_failed.join(", ")} failed to run — PR not fully scanned
+                      </div>
+                    )}
+                    {entry.tools_run?.length > 0 && (
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        Scanned with: {entry.tools_run.join(", ")}
+                      </div>
+                    )}
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <Badge variant="outline" className={LOG_STATUS_COLOR[entry.status] || "text-muted-foreground"}>

@@ -261,6 +261,22 @@ export function ToolMarketplace() {
                       <span className="text-xs font-medium text-foreground">
                         Usage assignment{assignment?.is_default ? " (default)" : ""}
                       </span>
+                      {/* Says what ticking a box does. Previously four
+                          unexplained checkboxes -- an external review flagged
+                          that nothing stated whether they took effect, or (per
+                          GH-01) whether they were honoured at all. */}
+                      <p className="text-[11px] text-muted-foreground">
+                        Which scans run {t.display_name}. Applies to the next scan; no re-scan is triggered.
+                      </p>
+                      {/* A registry-only tool has no runnable command, so an
+                          enabled box here could never make it execute.
+                          Ticking one anyway is the exact GH-01 failure:
+                          a checked box for a tool that never runs. */}
+                      {!t.integrated && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Catalogued for visibility only — Rikugan cannot execute this tool yet, so these have no effect.
+                        </p>
+                      )}
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1">
                         {USAGE_SURFACES.map((s) => (
                           <label key={s.key} className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -268,8 +284,8 @@ export function ToolMarketplace() {
                               type="checkbox"
                               aria-label={`${t.display_name} enabled for ${s.label}`}
                               className="h-3.5 w-3.5 accent-primary"
-                              checked={assignment ? assignment[s.key] : false}
-                              disabled={!assignment || savingTool === t.tool}
+                              checked={assignment ? assignment[s.key] && t.integrated : false}
+                              disabled={!assignment || savingTool === t.tool || !t.integrated}
                               onChange={() => toggleSurface(t.tool, s.key)}
                             />
                             {s.label}

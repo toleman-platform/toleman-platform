@@ -18,7 +18,11 @@ app = FastAPI(title="Rikugan - DevSecOps Vulnerability Management Platform")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    # GH-02: was a single hardcoded localhost:3000 literal, so any
+    # deployment not on that exact origin failed CORS preflight -- and the
+    # login form reported that transport failure as "Invalid email or
+    # password". Driven by PUBLIC_BASE_URL (+ EXTRA_CORS_ORIGINS) now.
+    allow_origins=settings.cors_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,

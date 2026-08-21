@@ -58,8 +58,50 @@ class Settings(BaseSettings):
     # not ones that are just slow.
     stale_job_timeout_seconds: int = 900
 
+    # Where *other people and other machines* reach this deployment.
+    #
+    # Finding GH-02: these were five hardcoded "http://localhost:3000" /
+    # ":8000" literals spread across main.py, api/github_app.py and
+    # core/pr_guardrail_executor.py. Every link Rikugan posted to GitHub --
+    # the PR comment's "review in Rikugan", the commit status target_url,
+    # the "request ignore" link -- pointed at the developer's own laptop, so
+    # no teammate on a shared repository could follow any of them. The same
+    # constant pinned CORS to a single origin, which made running on any
+    # other port surface as "Invalid email or password" at the login form.
+    #
+    # public_base_url  -> the frontend, as a browser reaches it.
+    # public_api_url   -> this backend, as GitHub's servers reach it
+    #                     (the GitHub App manifest's callback/webhook host).
+    #
+    # Defaults preserve the existing localhost dev experience exactly, so
+    # nothing has to be configured to keep working locally.
+    public_base_url: str = "http://localhost:3000"
+    public_api_url: str = "http://localhost:8000"
+    # Extra browser origins allowed to call this API, comma-separated.
+    # public_base_url is always allowed; this is for the cases where it
+    # isn't the only one (e.g. a staging alias, or a dev server on a
+    # second port). See cors_allow_origins below.
+    extra_cors_origins: str = ""
+
     class Config:
         env_file = ".env"
+
+    @property
+    def cors_allow_origins(self) -> list[str]:
+        """Every browser origin permitted to call this API.
+
+        Always includes public_base_url so the deployment's own frontend
+        works with no extra configuration. Deliberately never "*": these
+        endpoints are session-cookie authenticated, and FastAPI's
+        allow_credentials=True with a wildcard origin is both rejected by
+        browsers and a real CSRF surface if it weren't.
+        """
+        origins = [self.public_base_url.rstrip("/")]
+        for extra in self.extra_cors_origins.split(","):
+            extra = extra.strip().rstrip("/")
+            if extra and extra not in origins:
+                origins.append(extra)
+        return origins
 
 
 settings = Settings()

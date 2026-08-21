@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import current_user
 from app.api.deps import get_session
+from app.core.config import settings
 from app.core.crypto import encrypt_secret
 from app.core.github_app import (
     build_manifest,
@@ -18,8 +19,12 @@ from app.core.github_app import (
 )
 from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, Workspace
 
-FRONTEND_URL = "http://localhost:3000"
-BACKEND_URL = "http://localhost:8000"
+# GH-02: were hardcoded localhost literals. The manifest's callback/webhook
+# URLs are handed to GitHub, so on any real deployment they must be an
+# address GitHub's servers can actually resolve -- a localhost value there
+# silently produces an App that can never call back.
+FRONTEND_URL = settings.public_base_url.rstrip("/")
+BACKEND_URL = settings.public_api_url.rstrip("/")
 
 # CSRF-binding for the manifest flow: state issued in /manifest-data must come
 # back on /callback before we trust the code exchange. In-memory is fine for

@@ -113,6 +113,12 @@ def _scan_out(
         "new_findings_count": s.new_findings_count,
         "highest_new_severity": s.highest_new_severity,
         "new_endpoints_count": s.new_endpoints_count,
+        # GH-01: which tools actually ran, and which were assigned but
+        # failed. Lists (not the stored comma-joined string) so the UI never
+        # has to re-split; a non-empty tools_failed means this scan's
+        # "0 findings" is inconclusive, not clean.
+        "tools_run": [t for t in s.tools_run.split(",") if t],
+        "tools_failed": [t for t in s.tools_failed.split(",") if t],
         "override_reason": s.override_reason,
         "created_at": s.created_at,
         "completed_at": s.completed_at,
@@ -326,6 +332,8 @@ def override_pr_guardrail_scan(
         "new_findings_count": pr_scan.new_findings_count,
         "highest_new_severity": pr_scan.highest_new_severity,
         "new_endpoints_count": pr_scan.new_endpoints_count,
+        "tools_run": [t for t in pr_scan.tools_run.split(",") if t],
+        "tools_failed": [t for t in pr_scan.tools_failed.split(",") if t],
         "override_reason": pr_scan.override_reason,
         "created_at": pr_scan.created_at,
         "completed_at": pr_scan.completed_at,

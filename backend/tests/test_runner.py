@@ -164,7 +164,15 @@ def test_no_token_env_vars_set_when_no_token_given(recorded_calls):
 def test_called_process_error_never_carries_token(tmp_path, monkeypatch):
     """A failed clone's CalledProcessError -- str(), .cmd, and .stderr -- must
     never contain the token, since callers have historically surfaced these
-    directly in API responses (app/api/scans.py, pr_guardrail_executor.py)."""
+    directly in API responses (app/api/scans.py, pr_guardrail_executor.py).
+
+    Uses a transient failure (unresolvable host) deliberately. A *permanent*
+    cause now raises RepoCloneError instead of CalledProcessError so Celery
+    stops retrying it -- that path's scrubbing is covered by
+    test_clone_failure_diagnosis.py::test_token_is_scrubbed_before_classification.
+    Git really does echo the credential-bearing URL in this message, which is
+    why the scrub has to run before anything else touches stderr.
+    """
     token = "ghp_supersecrettoken1234567890"  # noqa: S105
 
     def _failing_run(cmd, check=False, capture_output=False, text=False, env=None):
@@ -172,7 +180,10 @@ def test_called_process_error_never_carries_token(tmp_path, monkeypatch):
             returncode=128,
             cmd=cmd,
             output="",
-            stderr=f"fatal: could not read Username for '{token}': terminal prompts disabled",
+            stderr=(
+                f"fatal: unable to access 'https://{token}@github.com/acme/widgets.git/': "
+                "Could not resolve host: github.com"
+            ),
         )
 
     monkeypatch.setattr(runner.settings, "scan_workdir", str(tmp_path))

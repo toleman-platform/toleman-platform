@@ -190,8 +190,68 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
         if github_token:
             exc.stderr = (exc.stderr or "").replace(github_token, "***REDACTED***")
             exc.stdout = (exc.stdout or "").replace(github_token, "***REDACTED***")
+
+        # Turn a permanent failure into RepoCloneError so Celery stops
+        # retrying it. A missing repo, a missing branch and absent
+        # credentials are all facts about the world that three more attempts
+        # will not change -- see _classify_clone_stderr for why this matters
+        # beyond tidiness.
+        permanent = _classify_clone_stderr(exc.stderr or "")
+        if permanent:
+            raise RepoCloneError(permanent) from exc
         raise
     return dest
+
+
+# Substrings git prints for causes that are permanent -- retrying cannot fix
+# them -- paired with the message an operator can actually act on.
+#
+# Why this exists: clone_error_message used to reduce every failure to
+# "git clone failed (exit code 128)". That was safe (it never echoes argv or
+# a token) but it threw away the diagnosis along with the danger. A real
+# deployment sat in a retry loop against two private repos with no
+# credentials configured, and the only clue in the logs was the exit code --
+# identical to what a deleted repo or a typo'd branch produces. Matching on
+# git's own wording restores the "what do I do about it" without ever
+# echoing the raw stderr, argv or paths back to a caller.
+_PERMANENT_CLONE_FAILURES: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("could not read username", "authentication failed", "terminal prompts disabled"),
+        "Repository requires authentication and no GitHub credentials are configured. "
+        "Set GITHUB_TOKEN, or connect the GitHub App for this repository.",
+    ),
+    (
+        ("repository not found",),
+        "Repository not found. It may have been deleted or renamed, or the configured "
+        "credentials may not grant access to it.",
+    ),
+    (
+        ("remote branch", "couldn't find remote ref", "could not find remote branch"),
+        "The configured branch does not exist in the remote repository. Check the "
+        "target's default branch.",
+    ),
+    (
+        ("access denied", "permission denied", "403 forbidden"),
+        "Access denied by the remote. The configured credentials exist but lack "
+        "permission for this repository.",
+    ),
+)
+
+
+def _classify_clone_stderr(stderr: str) -> str | None:
+    """Actionable message for a permanently-failing clone, or None when the
+    cause looks transient (network blip, remote hangup) and a retry is
+    worth attempting.
+
+    Returns only messages composed here -- never the raw stderr -- so a path,
+    an argv or a redacted-but-present token can't reach a log or an API
+    response through this route.
+    """
+    haystack = stderr.lower()
+    for needles, message in _PERMANENT_CLONE_FAILURES:
+        if any(n in haystack for n in needles):
+            return message
+    return None
 
 
 def clone_error_message(exc: Exception) -> str:
@@ -208,6 +268,12 @@ def clone_error_message(exc: Exception) -> str:
     if isinstance(exc, RepoCloneError):
         return str(exc)
     if isinstance(exc, subprocess.CalledProcessError):
+        # Prefer a cause the reader can act on. _classify_clone_stderr only
+        # ever returns strings composed in this module, so this stays free of
+        # raw argv/paths/tokens -- the exit code alone was safe but useless.
+        classified = _classify_clone_stderr(exc.stderr or "")
+        if classified:
+            return classified
         return f"git clone failed (exit code {exc.returncode})"
     return str(exc)
 

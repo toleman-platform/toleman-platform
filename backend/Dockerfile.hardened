@@ -124,9 +124,23 @@ RUN curl -sSL -o /tmp/gosec-install.sh \
 # pkg_resources but warns on every import, so a working image would print a
 # deprecation notice on every semgrep invocation. Drop this pin once semgrep
 # ships an opentelemetry that no longer imports pkg_resources.
+#
+# The floor (#239's transitive-dependency scan job found this) matters just
+# as much as the ceiling: nothing pinned a minimum, so an unconstrained
+# resolve was free to land anywhere below 81 -- observed landing on 70.3.0,
+# which carries CVE-2025-47273 (HIGH, path traversal in PackageIndex).
+# 78.1.1 is the real fix version and stays comfortably under the
+# pkg_resources ceiling, so both constraints hold at once.
+#
+# One setuptools issue in the same scan, CVE-2026-59890 (MEDIUM, MANIFEST.in
+# exclusion bypass via Unicode normalization), needs >=83.0.0 -- above the
+# pkg_resources ceiling, so it stays open until that ceiling can be lifted.
+# Not worked around here: forcing it past 81 would silently break semgrep,
+# which is a worse outcome than one open MEDIUM with a documented reason.
+# Tracked, alongside a HIGH in protobuf blocked the same way, in #265.
 COPY requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt semgrep "setuptools<81" \
+    && pip install -r requirements.txt semgrep "setuptools>=78.1.1,<81" \
     && semgrep --version
 
 COPY . .

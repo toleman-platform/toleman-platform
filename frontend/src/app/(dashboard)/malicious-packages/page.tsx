@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Bug, ExternalLink, RefreshCw, ShieldAlert } from "lucide-react";
-import { api, Finding, Target } from "@/lib/api";
+import { api, ApiError, Finding, Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,6 +31,7 @@ export default function MaliciousPackagesPage() {
   );
   const targetsQuery = useAsyncData<Target[]>(() => api.targets());
   const [checkState, setCheckState] = useState<Record<number, string>>({});
+  const [importWarning, setImportWarning] = useState<Record<number, string>>({});
   const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
 
   const findings = findingsQuery.data ?? [];
@@ -46,8 +47,20 @@ export default function MaliciousPackagesPage() {
     return "clean";
   }
 
+  // The dependency-graph API 403s when it's disabled for the repo, or 404s
+  // when the repo/graph has never been built -- both surface from the
+  // backend as a 502 whose detail names the real HTTP status GitHub gave.
+  // Matched on wording rather than a structured code because
+  // DependencyGraphUnavailable's message is the only signal the API
+  // forwards; this is deliberately specific so a transient/network failure
+  // doesn't get mislabeled as "not enabled" when it isn't.
+  function isDependencyGraphDisabled(err: unknown): boolean {
+    return err instanceof ApiError && err.status === 502 && /403|disabled|404/.test(err.message);
+  }
+
   async function recheck(targetId: number) {
     setCheckState((c) => ({ ...c, [targetId]: "checking" }));
+    setImportWarning((w) => ({ ...w, [targetId]: "" }));
     try {
       // Pull the latest GitHub dependency-graph inventory first (issue #226
       // follow-up) -- a manual scan that only re-checked whatever was
@@ -61,14 +74,23 @@ export default function MaliciousPackagesPage() {
       // when the import can't run at all (no GitHub App/token configured
       // for this workspace, or the dependency graph is disabled/unavailable
       // -- a 502) -- the repo may still have a Trivy-sourced SBOM worth
-      // re-checking even without GitHub access.
+      // re-checking even without GitHub access. The fallback is silent for
+      // any *other* import failure (network blip, unexpected GitHub
+      // response) -- only "the graph isn't enabled for this repo" is
+      // specific and actionable enough to call out on its own.
       let status: "clean" | "found" | "failed";
       let count: number;
       try {
         const res = await api.importGithubSbom(targetId);
         status = res.malware?.status ?? "clean";
         count = res.malware?.malicious_count ?? 0;
-      } catch {
+      } catch (err) {
+        if (isDependencyGraphDisabled(err)) {
+          setImportWarning((w) => ({
+            ...w,
+            [targetId]: "GitHub dependency graph isn't enabled for this repo — checked existing inventory only.",
+          }));
+        }
         const res = await api.malwareCheck(targetId);
         status = res.status;
         count = res.malicious_count;
@@ -195,40 +217,47 @@ export default function MaliciousPackagesPage() {
             flagged later.
           </p>
           <Card className="border-border bg-card">
-            <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3">
-              <TargetPicker
-                targets={targets}
-                value={chosenTargetId ?? targets[0]?.id ?? null}
-                onChange={setChosenTargetId}
-              />
+            <CardContent className="flex flex-col gap-2 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <TargetPicker
+                  targets={targets}
+                  value={chosenTargetId ?? targets[0]?.id ?? null}
+                  onChange={setChosenTargetId}
+                />
+                {(() => {
+                  const activeId = chosenTargetId ?? targets[0]?.id ?? null;
+                  const label = activeId !== null ? checkState[activeId] : undefined;
+                  return (
+                    <>
+                      {label && label !== "checking" && (
+                        <span
+                          className={
+                            label === "clean"
+                              ? "text-xs text-chart-5"
+                              : label === "check failed"
+                                ? "text-xs text-destructive"
+                                : "text-xs text-warning"
+                          }
+                        >
+                          {label}
+                        </span>
+                      )}
+                      <Button
+                        size="sm"
+                        onClick={() => activeId !== null && recheck(activeId)}
+                        disabled={activeId === null || label === "checking"}
+                      >
+                        <RefreshCw className={label === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+                        <span>{label === "checking" ? "Scanning..." : "Import & Check"}</span>
+                      </Button>
+                    </>
+                  );
+                })()}
+              </div>
               {(() => {
                 const activeId = chosenTargetId ?? targets[0]?.id ?? null;
-                const label = activeId !== null ? checkState[activeId] : undefined;
-                return (
-                  <>
-                    {label && label !== "checking" && (
-                      <span
-                        className={
-                          label === "clean"
-                            ? "text-xs text-chart-5"
-                            : label === "check failed"
-                              ? "text-xs text-destructive"
-                              : "text-xs text-warning"
-                        }
-                      >
-                        {label}
-                      </span>
-                    )}
-                    <Button
-                      size="sm"
-                      onClick={() => activeId !== null && recheck(activeId)}
-                      disabled={activeId === null || label === "checking"}
-                    >
-                      <RefreshCw className={label === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-                      <span>{label === "checking" ? "Scanning..." : "Import & Check"}</span>
-                    </Button>
-                  </>
-                );
+                const warning = activeId !== null ? importWarning[activeId] : undefined;
+                return warning ? <p className="text-xs text-warning">{warning}</p> : null;
               })()}
             </CardContent>
           </Card>

@@ -313,6 +313,33 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
     return "\n".join(lines)
 
 
+# (#271) A PR comment is a snapshot that gets read days later. Every severity
+# here is derived from priority_score (app/core/scoring.py), which folds in
+# EPSS and CISA KEV -- both of which move. A finding rendered Medium when the
+# comment was posted can genuinely be Critical by the time someone reviews
+# it, because CISA added its CVE to KEV in between.
+#
+# Snyk's own fix PRs carry this line, and it was the one thing the
+# competitive teardown said to steal outright:
+#
+#   "Max score is 1000. Note that the real score may have changed since the
+#    PR was raised."
+#
+# It is the same instinct as tools_failed/tools_skipped (#243, #253) -- a
+# result is only true as of when it ran -- applied to score freshness rather
+# than scan completeness. Deliberately rendered on every comment, not only
+# when something scored high: a reader cannot know whether a score moved
+# without being told the number has an as-of date at all.
+def _staleness_footer(scanned_at: datetime | None) -> str | None:
+    if scanned_at is None:
+        return None
+    stamp = scanned_at.strftime("%Y-%m-%d %H:%M UTC")
+    return (
+        f"<sub>Severity reflects EPSS/KEV data as of {stamp} and may have changed since. "
+        "Open the finding in Rikugan for the current score.</sub>"
+    )
+
+
 def render_comment(
     findings: list[PRGuardrailFinding],
     new_endpoints: list[dict],
@@ -324,6 +351,7 @@ def render_comment(
     tools_skipped: dict[str, str] | None = None,
     scan_scope: str = "full",
     files_scanned: int = 0,
+    scanned_at: datetime | None = None,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
     predating the multi-tool guardrail (GH-01); None means "don't render a
@@ -331,7 +359,10 @@ def render_comment(
 
     `scan_scope`/`files_scanned`/`tools_skipped` (#243) default to the
     whole-repo case for the same reason, so a caller that doesn't know about
-    diff scoping renders exactly what it used to."""
+    diff scoping renders exactly what it used to.
+
+    `scanned_at` (#271) is when this scan ran. None omits the staleness
+    footer entirely, same backwards-compatible default as everything above."""
     lines = [COMMENT_MARKER, "**Rikugan PR Guardrail**", "", _severity_badge(status), ""]
 
     if scan_scope == "diff":
@@ -382,6 +413,9 @@ def render_comment(
         if tools_run:
             lines.append("")
             lines.append(f"<sub>Scanned with: {', '.join(tools_run)}</sub>")
+        staleness = _staleness_footer(scanned_at)
+        if staleness:
+            lines.append(staleness)
         return "\n".join(lines)
 
     if findings:
@@ -431,6 +465,10 @@ def render_comment(
     if tools_run:
         lines.append("")
         lines.append(f"<sub>Scanned with: {', '.join(tools_run)}</sub>")
+
+    staleness = _staleness_footer(scanned_at)
+    if staleness:
+        lines.append(staleness)
 
     return "\n".join(lines)
 
@@ -725,6 +763,10 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             tools_skipped=skipped_tools,
             scan_scope=pr_scan.scan_scope,
             files_scanned=pr_scan.files_scanned,
+            # (#271) completed_at is set just above this call; falling back
+            # to now() keeps the footer honest rather than omitting it if
+            # that ordering ever changes.
+            scanned_at=pr_scan.completed_at or datetime.utcnow(),
         )
         post_pr_comment(session, target, pr_number, comment_body)
 

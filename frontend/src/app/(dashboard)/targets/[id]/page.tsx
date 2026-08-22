@@ -12,6 +12,8 @@ import { TargetIdBadge } from "./target-id-badge";
 import { ApiScanConfig } from "./api-scan-config";
 import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
+import { TargetDependencies } from "./target-dependencies";
+import { TargetHistory } from "./target-history";
 import { settleOrNull } from "@/lib/settle";
 import { pageSizeFromParams } from "@/lib/pagination";
 
@@ -106,6 +108,10 @@ export default async function TargetDetailPage({
           targets={[target]}
         />
       )}
+
+      {tab === "dependencies" && <TargetDependencies targetId={targetId} />}
+
+      {tab === "history" && <TargetHistory targetId={targetId} />}
 
       {tab === "settings" && (
         <div className="flex flex-col gap-8">

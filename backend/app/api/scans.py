@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, func, select
 
@@ -203,6 +203,72 @@ def active_scans(
         )
 
     return {str(target_id): scans for target_id, scans in by_target.items()}
+
+
+@router.get("/history")
+def scan_history(
+    target_id: int,
+    page: int = 1,
+    page_size: int = 25,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """(#276) Scan history for one target, newest first.
+
+    Deliberately separate from GET /summary rather than an extension of it.
+    That endpoint aggregates to at most one row per (target, tool) precisely
+    so a target scanned nightly for a year does not send hundreds of rows to
+    render one timestamp -- see its docstring. A history view is the one
+    place those individual rows ARE the point, so this returns them, but
+    scoped to a single target and paginated, which keeps the property that
+    made the aggregation worth doing: response size never scales with total
+    scan history.
+
+    Route declared above GET /{scan_id}: FastAPI matches in definition
+    order, and "history" would otherwise be captured as a scan_id and 422
+    on int coercion.
+
+    Workspace-scoped like every other read here (#57) -- a target id from
+    another tenant 404s rather than exposing that tenant's scan cadence,
+    which is itself operational information.
+    """
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        # 404 not 403: the existence of another tenant's target is itself
+        # information.
+        raise HTTPException(status_code=404, detail="target not found")
+
+    page = max(page, 1)
+    page_size = max(min(page_size, 200), 1)
+
+    base = select(Scan).where(Scan.target_id == target_id)
+    total = session.exec(select(func.count()).select_from(base.subquery())).one()
+    rows = session.exec(
+        base.order_by(Scan.started_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    ).all()
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "scan_id": r.id,
+                "tool": r.tool,
+                "branch": r.branch,
+                "status": r.status,
+                "started_at": r.started_at.isoformat() + "Z",
+                "completed_at": (r.completed_at.isoformat() + "Z") if r.completed_at else None,
+                "findings_count": r.findings_count,
+                # Surfaced rather than hidden: a failed scan whose reason is
+                # invisible reads as "nothing happened", which is the
+                # false-all-clear shape this codebase keeps refusing.
+                "error": r.error,
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.get("/{scan_id}")

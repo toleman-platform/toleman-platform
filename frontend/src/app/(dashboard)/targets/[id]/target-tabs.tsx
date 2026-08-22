@@ -16,6 +16,12 @@ import { cn } from "@/lib/utils";
 export const TARGET_TABS = [
   { id: "overview", label: "Overview" },
   { id: "vulnerabilities", label: "Vulnerabilities" },
+  // (#276) Dependencies answers "what is installed here", which the
+  // findings list structurally cannot -- it only ever shows what is
+  // currently flagged. History answers "how has this changed", which the
+  // overview's single "Last scan" timestamp cannot.
+  { id: "dependencies", label: "Dependencies" },
+  { id: "history", label: "History" },
   { id: "settings", label: "Settings" },
 ] as const;
 

@@ -99,13 +99,19 @@ RUN curl -sSL -o /tmp/gosec-install.sh \
 #
 # Installed in the SAME `pip install` invocation as requirements.txt, not a
 # separate one -- verified the hard way: a second, separate `pip install
-# semgrep` call upgrades starlette to whatever its own (looser) constraint
-# allows, silently breaking fastapi==0.115.0 (pinned to
-# starlette<0.39.0,>=0.37.2) with "Router.__init__() got an unexpected
-# keyword argument 'on_startup'" at import time, since pip does not
-# reconsider already-installed packages' constraints across separate
-# invocations. One combined invocation lets pip's resolver satisfy both
-# constraints at once (starlette stays at 0.38.6).
+# semgrep` call upgrades a transitive dependency to whatever its own
+# (looser) constraint allows, silently overriding what requirements.txt
+# resolved to, since pip does not reconsider already-installed packages'
+# constraints across separate invocations. One combined invocation lets
+# pip's resolver satisfy every constraint at once.
+#
+# This is exactly how starlette@0.38.6 (7 real CVEs, including an SSRF --
+# #239) went unnoticed on main: fastapi==0.115.0's own upper bound silently
+# capped it there no matter what was requested elsewhere. requirements.txt
+# now pins fastapi>=0.133.0 (drops that upper bound) and starlette==1.6.0
+# explicitly -- the general lesson about combined installs still applies to
+# every other transitive dependency, starlette is just the one with a name
+# on it now.
 #
 # `setuptools<81` is load-bearing, not hygiene. Nothing here asks for
 # setuptools directly -- semgrep's pinned opentelemetry-instrumentation
@@ -120,9 +126,23 @@ RUN curl -sSL -o /tmp/gosec-install.sh \
 # pkg_resources but warns on every import, so a working image would print a
 # deprecation notice on every semgrep invocation. Drop this pin once semgrep
 # ships an opentelemetry that no longer imports pkg_resources.
+#
+# The floor (#239's transitive-dependency scan job found this) matters just
+# as much as the ceiling: nothing pinned a minimum, so an unconstrained
+# resolve was free to land anywhere below 81 -- observed landing on 70.3.0,
+# which carries CVE-2025-47273 (HIGH, path traversal in PackageIndex).
+# 78.1.1 is the real fix version and stays comfortably under the
+# pkg_resources ceiling, so both constraints hold at once.
+#
+# One setuptools issue in the same scan, CVE-2026-59890 (MEDIUM, MANIFEST.in
+# exclusion bypass via Unicode normalization), needs >=83.0.0 -- above the
+# pkg_resources ceiling, so it stays open until that ceiling can be lifted.
+# Not worked around here: forcing it past 81 would silently break semgrep,
+# which is a worse outcome than one open MEDIUM with a documented reason.
+# Tracked, alongside a HIGH in protobuf blocked the same way, in #265.
 COPY requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt semgrep "setuptools<81" \
+    && pip install -r requirements.txt semgrep "setuptools>=78.1.1,<81" \
     && semgrep --version
 
 COPY . .

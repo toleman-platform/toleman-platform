@@ -1,4 +1,5 @@
 import logging
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI
@@ -15,23 +16,14 @@ logger = logging.getLogger(__name__)
 from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api
 from app.api.auth import current_user, require_admin
 
-app = FastAPI(title="Rikugan - DevSecOps Vulnerability Management Platform")
 
-app.add_middleware(
-    CORSMiddleware,
-    # GH-02: was a single hardcoded localhost:3000 literal, so any
-    # deployment not on that exact origin failed CORS preflight -- and the
-    # login form reported that transport failure as "Invalid email or
-    # password". Driven by PUBLIC_BASE_URL (+ EXTRA_CORS_ORIGINS) now.
-    allow_origins=settings.cors_allow_origins,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    allow_credentials=True,
-)
-
-
-@app.on_event("startup")
-def on_startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # (#239 follow-on) @app.on_event("startup") is deprecated as of the
+    # fastapi/starlette bump that fixed the live starlette CVEs -- still
+    # functional, but `lifespan` is the ASGI-native replacement and the one
+    # actually recommended going forward, so migrated rather than left as a
+    # warning in a freshly-bumped stack.
     validate_production_secrets()
     init_db()
     with Session(engine) as session:
@@ -59,6 +51,24 @@ def on_startup():
                 "then use the 'I've reconnected everything' action there to clear "
                 "this warning."
             )
+    yield
+    # No shutdown behavior needed -- nothing here holds a resource that
+    # requires explicit teardown beyond process exit.
+
+
+app = FastAPI(title="Rikugan - DevSecOps Vulnerability Management Platform", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    # GH-02: was a single hardcoded localhost:3000 literal, so any
+    # deployment not on that exact origin failed CORS preflight -- and the
+    # login form reported that transport failure as "Invalid email or
+    # password". Driven by PUBLIC_BASE_URL (+ EXTRA_CORS_ORIGINS) now.
+    allow_origins=settings.cors_allow_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
 
 
 login_required = [Depends(current_user)]

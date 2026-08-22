@@ -19,6 +19,41 @@ version: 2.1
 # roughly an order of magnitude larger than the workload being moved here.
 # Everything runs on every pipeline; caching keeps that cheap.
 
+commands:
+  install_trivy:
+    # Pinned installer + checksum, matching what backend/Dockerfile does
+    # (finding BLD-04, merged in #234). This started out unpinned on the
+    # reasoning that "a scanner pinned to an old release stops knowing about
+    # new vulnerabilities" -- which does not hold: trivy downloads its
+    # vulnerability database separately at scan time (that DB, and its
+    # cache, is what issue #229 was about). Pinning the *binary* freezes the
+    # scanner engine, not its vulnerability knowledge.
+    #
+    # What was actually unpinned was the install *script*, fetched from a
+    # branch tip -- a mutable URL piped into `sudo sh`. That is the supply-
+    # chain hole BLD-04 named, and a security product's own CI is the last
+    # place to leave one open.
+    #
+    # Extracted to a shared command (#239) rather than duplicated across two
+    # jobs -- two independently-maintained copies of a pinned installer plus
+    # checksum is exactly the kind of duplication that drifts silently until
+    # one job is quietly less pinned than the other.
+    #
+    # To bump: change TRIVY_VERSION, re-fetch, and record the new sum with
+    #   curl -sSL <url> | sha256sum
+    steps:
+      - run:
+          name: Install Trivy
+          command: |
+            TRIVY_VERSION=0.73.0
+            TRIVY_INSTALLER_SHA256=e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+            curl -sSL -o /tmp/trivy-install.sh \
+              "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh"
+            echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c -
+            sudo sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}"
+            rm -f /tmp/trivy-install.sh
+            trivy --version
+
 jobs:
   backend-tests:
     docker:
@@ -227,32 +262,7 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-      - run:
-          name: Install Trivy
-          # Pinned installer + checksum, matching what backend/Dockerfile does
-          # (finding BLD-04, merged in #234). This started out unpinned on the
-          # reasoning that "a scanner pinned to an old release stops knowing
-          # about new vulnerabilities" -- which does not hold: trivy downloads
-          # its vulnerability database separately at scan time (that DB, and
-          # its cache, is what issue #229 was about). Pinning the *binary*
-          # freezes the scanner engine, not its vulnerability knowledge.
-          #
-          # What was actually unpinned was the install *script*, fetched from
-          # a branch tip -- a mutable URL piped into `sudo sh`. That is the
-          # supply-chain hole BLD-04 named, and a security product's own CI is
-          # the last place to leave one open.
-          #
-          # To bump: change TRIVY_VERSION, re-fetch, and record the new sum
-          # with `curl -sSL <url> | sha256sum`.
-          command: |
-            TRIVY_VERSION=0.73.0
-            TRIVY_INSTALLER_SHA256=e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
-            curl -sSL -o /tmp/trivy-install.sh \
-              "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh"
-            echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c -
-            sudo sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}"
-            rm -f /tmp/trivy-install.sh
-            trivy --version
+      - install_trivy
       - run:
           name: Run Trivy (filesystem scan)
           command: trivy fs --format json --output trivy.json . || true
@@ -268,6 +278,103 @@ jobs:
       - store_artifacts:
           path: trivy.json
           destination: trivy-results/trivy.json
+
+  # (#239) Trivy against requirements.txt only sees direct pins. 22 direct
+  # pins in this repo resolve to ~98 actually-installed packages -- roughly
+  # 78% of what we ship was invisible to the job above. That is exactly how
+  # starlette@0.38.6 (7 CVEs including an SSRF, CVE-2026-48818) sat
+  # unnoticed on main: it arrived transitively through fastapi and was never
+  # a direct pin.
+  #
+  # Fix: resolve requirements.txt into a real venv, then point
+  # `trivy rootfs` (not `fs` -- rootfs is the analyzer that reads installed
+  # dist-info/egg-info metadata; fs is manifest/lockfile-oriented and found
+  # zero packages against a bare site-packages tree, verified locally before
+  # writing this job) at site-packages. That scans what pip actually
+  # resolved, not what requirements.txt merely asked for.
+  #
+  # Scoped to this repo's own backend and mcp-server dependencies -- NOT a
+  # general mechanism for scanning customer repos' resolved dependencies.
+  # Doing that safely would mean running `pip install` against arbitrary,
+  # untrusted third-party requirements.txt files, which can execute
+  # arbitrary code via setup.py/build hooks. runner.py's own module
+  # docstring already flags the prerequisite this needs and does not have:
+  # ephemeral container isolation per scan. Tracked separately; see the
+  # follow-up issue this PR links.
+  trivy-transitive-deps:
+    docker:
+      - image: cimg/python:3.12
+    working_directory: ~/project
+    steps:
+      - checkout
+      - install_trivy
+      - run:
+          name: Resolve backend/requirements.txt into a real venv
+          # Mirrors backend/Dockerfile's actual install line -- same
+          # packages (incl. semgrep) and the same setuptools floor/ceiling
+          # -- rather than a plain `pip install -r requirements.txt` alone.
+          # Verified this matters: without semgrep and its setuptools
+          # constraint in the mix, pip's resolver was free to land setuptools
+          # anywhere, and did land somewhere different across two otherwise
+          # identical resolves minutes apart. This job exists to report what
+          # actually ships; scanning a different, unconstrained resolve would
+          # make its findings not just noisy but nondeterministic.
+          command: |
+            python -m venv /tmp/resolved-backend
+            /tmp/resolved-backend/bin/pip install --upgrade pip -q
+            /tmp/resolved-backend/bin/pip install -q -r backend/requirements.txt semgrep "setuptools>=78.1.1,<81"
+      - run:
+          name: Resolve mcp-server/requirements.txt into a real venv
+          command: |
+            python -m venv /tmp/resolved-mcp
+            /tmp/resolved-mcp/bin/pip install --upgrade pip -q
+            /tmp/resolved-mcp/bin/pip install -q -r mcp-server/requirements.txt
+      - run:
+          name: Scan resolved backend dependencies
+          # --skip-files excludes pip's own vendored CycloneDX SBOM
+          # (pip/_vendor/bom.cdx.json). Found the hard way: without it, this
+          # job reported setuptools@70.3.0 and msgpack@1.1.2 as installed
+          # High-severity findings -- neither is actually installed anywhere
+          # in site-packages (confirmed: no msgpack import path exists at
+          # all). Both entries come from pip's internal build-provenance
+          # manifest for pip's OWN vendored copies, which trivy's SBOM
+          # analyzer reads as if it were a real dependency of the
+          # environment. Left unfiltered, this job would report two
+          # unfixable "High" findings on every single run -- exactly the
+          # kind of noise that trains people to stop reading a scanner's
+          # output, which is a worse outcome than not running the scanner.
+          command: |
+            SITE_PACKAGES=$(/tmp/resolved-backend/bin/python -c "import site; print(site.getsitepackages()[0])")
+            trivy rootfs --format json --output backend-transitive.json \
+              --skip-files "**/pip/_vendor/bom.cdx.json" "$SITE_PACKAGES" || true
+      - run:
+          name: Scan resolved mcp-server dependencies
+          command: |
+            SITE_PACKAGES=$(/tmp/resolved-mcp/bin/python -c "import site; print(site.getsitepackages()[0])")
+            trivy rootfs --format json --output mcp-transitive.json \
+              --skip-files "**/pip/_vendor/bom.cdx.json" "$SITE_PACKAGES" || true
+      - run:
+          name: Summarize
+          command: |
+            python3 -c "
+            import json
+            for name in ('backend-transitive.json', 'mcp-transitive.json'):
+                d = json.load(open(name))
+                results = d.get('Results', [])
+                pkgs = sum(len(r.get('Packages') or []) for r in results)
+                vulns = sum(len(r.get('Vulnerabilities') or []) for r in results)
+                high_or_worse = sum(
+                    1 for r in results for v in (r.get('Vulnerabilities') or [])
+                    if v.get('Severity') in ('HIGH', 'CRITICAL')
+                )
+                print(f'## {name}: {pkgs} resolved packages, {vulns} vulnerabilities ({high_or_worse} High/Critical)')
+            "
+      - store_artifacts:
+          path: backend-transitive.json
+          destination: trivy-results/backend-transitive.json
+      - store_artifacts:
+          path: mcp-transitive.json
+          destination: trivy-results/mcp-transitive.json
 
   # --- Image builds (moved off GitHub Actions, 2026-08-21) ----------------
   # These were the last heavy jobs left on Actions, kept there because they
@@ -379,6 +486,7 @@ workflows:
       - semgrep
       - gitleaks
       - trivy
+      - trivy-transitive-deps
       - compose-config
       # fail-fast is off by construction here: independent jobs, so a broken
       # frontend build does not cancel the backend one. When both are broken,

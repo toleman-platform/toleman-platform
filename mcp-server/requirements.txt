@@ -1,2 +1,9 @@
 mcp==1.28.1
 httpx==0.28.1
+# (#239) Not a direct requirement of anything above -- pip resolved it
+# transitively at 70.3.0, which carries CVE-2025-47273 (HIGH, path
+# traversal in PackageIndex). No pkg_resources ceiling applies here (unlike
+# backend/Dockerfile's setuptools<81 -- this process never installs semgrep),
+# so pinned to a plain floor rather than a range. 78.1.1 is the real fix
+# version, verified against OSV.
+setuptools>=78.1.1

@@ -524,6 +524,23 @@ export type SbomComponent = {
 // SBOM standards -- CycloneDX was already produced (`trivy fs --format
 // cyclonedx`); SPDX JSON is the other one compliance tooling commonly
 // expects. Matches GET /api/sbom/{id}/export's `format` query pattern.
+// (#276) One row per scan for a single target, newest first. Distinct from
+// ScanSummary, which aggregates to one row per (target, tool) so list pages
+// don't pull a year of history -- see GET /api/scans/summary's docstring.
+// A history view is the one place the individual rows are the point.
+export type ScanHistoryEntry = {
+  scan_id: number;
+  tool: string;
+  branch: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  findings_count: number;
+  // Non-empty when the scan failed. Rendered rather than hidden: a failure
+  // whose reason is invisible reads as "nothing happened".
+  error: string;
+};
+
 export type SbomExportFormat = "cyclonedx-json" | "spdx-json" | "csv" | "pdf";
 
 // Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows
@@ -1299,6 +1316,10 @@ export const api = {
     ),
   getLatestApiScan: (targetId: number) =>
     jsonFetch<{ target_id: number; scan: ScanRun | null }>(`/api/api-scan/${targetId}/latest`),
+  scanHistory: (targetId: number, page = 1, pageSize = 25) =>
+    jsonFetch<{ total: number; items: ScanHistoryEntry[] }>(
+      `/api/scans/history?target_id=${targetId}&page=${page}&page_size=${pageSize}`,
+    ),
   getSbom: (targetId: number) =>
     jsonFetch<{ target_id: number; count: number; components: SbomComponent[] }>(`/api/sbom/${targetId}`),
   // Dispatches a Celery task and returns immediately with run_id/status:

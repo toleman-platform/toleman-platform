@@ -984,6 +984,42 @@ export class NetworkError extends Error {
   }
 }
 
+// (#235, UI-03) A backend restart -- a routine redeploy, not an outage -- used
+// to blank the whole app for anyone whose Server Component render landed in
+// the few seconds the container was coming back up: UND_ERR_SOCKET: other
+// side closed, with nothing on screen saying so.
+//
+// Retried here, at the one function every api.* call already goes through,
+// rather than at each of the ~80 call sites. Safe for every HTTP method, not
+// just GET: a retry only happens when fetch() itself threw, meaning the
+// request never reached the server -- there is no partially-applied write to
+// duplicate by retrying, unlike retrying after a real (non-2xx) response
+// would be. Never triggered by a 4xx/5xx -- those are real responses from a
+// server that is up, so retrying would just be a slower version of the same
+// failure.
+//
+// Two retries, short fixed backoff: this blocks a page render, so the total
+// added latency in the worst case (~450ms) has to stay small enough not to
+// be its own complaint, while covering the handful of seconds a container
+// actually takes to start accepting connections again.
+const NETWORK_RETRY_DELAYS_MS = [150, 300];
+const NETWORK_RETRY_ATTEMPTS = NETWORK_RETRY_DELAYS_MS.length + 1;
+
+export async function fetchWithConnectionRetry(url: string, init: RequestInit): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < NETWORK_RETRY_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, NETWORK_RETRY_DELAYS_MS[attempt - 1]));
+    }
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError;
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) };
 
@@ -1006,21 +1042,22 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 
   let res: Response;
   try {
-    res = await fetch(`${apiBaseUrl()}${path}`, {
+    res = await fetchWithConnectionRetry(`${apiBaseUrl()}${path}`, {
       ...init,
       cache: "no-store",
       credentials: "include",
       headers,
     });
   } catch (e) {
-    // The request never reached the server: DNS/connection failure, or the
-    // browser rejected it on a CORS preflight. fetch() reports both as a
-    // bare TypeError with no status, which callers previously could not
-    // distinguish from a real HTTP error -- so a CORS rejection on the login
-    // form rendered as "Invalid email or password" (finding BLD-03), sending
-    // people to hunt for a seeding bug instead of a middleware allowlist.
+    // The request never reached the server after every retry: DNS/
+    // connection failure, or the browser rejected it on a CORS preflight.
+    // fetch() reports both as a bare TypeError with no status, which
+    // callers previously could not distinguish from a real HTTP error -- so
+    // a CORS rejection on the login form rendered as "Invalid email or
+    // password" (finding BLD-03), sending people to hunt for a seeding bug
+    // instead of a middleware allowlist.
     throw new NetworkError(
-      `Could not reach the API at ${apiBaseUrl()}. The request never arrived — check that the backend is running and that this origin is allowed by PUBLIC_BASE_URL/EXTRA_CORS_ORIGINS.`,
+      `Could not reach the API at ${apiBaseUrl()}. The request never arrived after ${NETWORK_RETRY_ATTEMPTS} attempts — check that the backend is running and that this origin is allowed by PUBLIC_BASE_URL/EXTRA_CORS_ORIGINS.`,
       e,
     );
   }

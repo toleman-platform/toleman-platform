@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
 import { Tag, Timer, GitBranch, ShieldCheck, ShieldAlert } from "lucide-react";
 import { Groups } from "../admin/groups";
@@ -20,10 +20,12 @@ const TABS = [
   { id: "policies", label: "Policies", icon: ShieldAlert },
 ] as const;
 
-type TabId = (typeof TABS)[number]["id"];
+const TAB_IDS = TABS.map((t) => t.id);
 
 export default function GuardrailsPage() {
-  const [tab, setTab] = useState<TabId>("groups");
+  // (#235) Was useState -- see use-tab-param.ts for why that made every
+  // sub-page here unlinkable and reset on every visit.
+  const [tab, setTab] = useTabParam(TAB_IDS, "groups");
 
   return (
     <div className="flex flex-col gap-6">

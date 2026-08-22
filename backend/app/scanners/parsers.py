@@ -251,7 +251,11 @@ def parse_sbom_upload(raw: dict) -> list[dict]:
             })
         return out
     if "packages" in doc:
-        return parse_spdx_packages(raw)
+        # parse_spdx_packages expects GitHub's own {"sbom": {...}} wrapper
+        # shape -- re-wrap here so a bare, unwrapped SPDX export (what a
+        # user's own tooling produces) parses the same as one fetched
+        # automatically, since `doc` above already unwrapped it if present.
+        return parse_spdx_packages({"sbom": doc})
     return []
 
 def parse_gosec(raw: dict) -> list[dict]:

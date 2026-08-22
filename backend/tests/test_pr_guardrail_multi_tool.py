@@ -58,11 +58,12 @@ def _wire_boundaries(monkeypatch, tool_outputs, failing_tools=()):
     monkeypatch.setattr(
         pr_guardrail_executor,
         "github_get",
-        lambda path: type("R", (), {
+        lambda path, **kwargs: type("R", (), {
             "raise_for_status": lambda self: None,
             "json": lambda self: {"head": {"ref": "feature", "sha": "deadbeef"}, "title": "a pr"},
         })(),
     )
+    monkeypatch.setattr(pr_guardrail_executor, "resolve_github_token", lambda session, workspace_id, slug: None)
     monkeypatch.setattr(pr_guardrail_executor.runner, "clone_repo", lambda *a, **k: "/tmp/fake-repo")
     monkeypatch.setattr(pr_guardrail_executor.runner, "normalize_file_path", lambda fp, repo_path: fp)
     monkeypatch.setattr(pr_guardrail_executor, "_diff_new_endpoints", lambda session, target, repo_path: [])

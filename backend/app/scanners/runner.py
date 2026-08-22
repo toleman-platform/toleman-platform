@@ -52,7 +52,19 @@ TOOL_COMMANDS = {
     # placeholder, same pattern as modelscan's report file.
     "noseyparker": lambda path: ["noseyparker", "scan", "--datastore", NOSEYPARKER_DATASTORE_PLACEHOLDER, path],
     "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", GITLEAKS_REPORT_PLACEHOLDER, "--no-git", "--exit-code", "0"],
-    "trivy": lambda path: ["trivy", "fs", "--format", "json", "--quiet", path],
+    # `--scanners vuln` (issue #244 benchmarking, 2026-08-22): trivy's default
+    # scanner set is [vuln, secret], not [vuln, misconfig] -- misconfig has
+    # never actually run here, since enabling it needs an explicit
+    # `--scanners misconfig`/`misconfig,vuln` this entry never passed.
+    # parsers.parse_trivy reads Vulnerabilities and Misconfigurations from the
+    # JSON, never Secrets -- so the secret scanner has been walking every file
+    # on every invocation and its result was discarded unused (gitleaks
+    # already covers secrets in this pipeline). Measured: 32.9s -> 1.5s on a
+    # venv-inclusive checkout, 13.3s -> 3.8s on a real multi-ecosystem repo
+    # (getsentry/sentry), identical Vulnerabilities output both times --
+    # Misconfigurations was empty before and stays empty after, since that
+    # scanner still isn't enabled. Zero behavior change to parsed findings.
+    "trivy": lambda path: ["trivy", "fs", "--scanners", "vuln", "--format", "json", "--quiet", path],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],
     "trivy-sbom": lambda path: ["trivy", "fs", "--format", "cyclonedx", "--quiet", path],
     "gosec": lambda path: ["gosec", "-fmt=json", "-quiet", "./..."],

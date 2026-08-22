@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.dedup import compute_dedup_hash
+from app.core import code_graph
 from app.core.enforcement import resolve_enforcement_mode
 from app.core.github import github_get, repo_slug_from_url
 from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
@@ -353,6 +354,7 @@ def render_comment(
     scan_scope: str = "full",
     files_scanned: int = 0,
     scanned_at: datetime | None = None,
+    blast_radius_files: int = 0,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
     predating the multi-tool guardrail (GH-01); None means "don't render a
@@ -363,7 +365,12 @@ def render_comment(
     diff scoping renders exactly what it used to.
 
     `scanned_at` (#271) is when this scan ran. None omits the staleness
-    footer entirely, same backwards-compatible default as everything above."""
+    footer entirely, same backwards-compatible default as everything above.
+
+    `blast_radius_files` (#244) is how many of `files_scanned` were pulled
+    in by the import graph rather than literally changed. 0 keeps the
+    original #243 wording, which is the honest rendering for a scan whose
+    radius really was just the diff."""
     lines = [COMMENT_MARKER, "**Rikugan PR Guardrail**", "", _severity_badge(status), ""]
 
     if scan_scope == "diff":
@@ -371,11 +378,24 @@ def render_comment(
         # as whole-repo assurance when only 7 files were examined has been
         # misled by us, not by the scanner -- so the limit is part of the
         # headline, not a footnote.
-        lines.append(
-            f"🔍 **Diff-scoped scan** — only the {files_scanned} file(s) changed in this PR were "
-            "examined, not the whole repository. Pre-existing issues elsewhere in the codebase "
-            "would not appear here."
-        )
+        if blast_radius_files:
+            # The expansion is disclosed rather than folded silently into
+            # files_scanned: "12 files" and "2 changed plus 10 that import
+            # them" describe the same scan, but only the second lets a
+            # reader judge whether the radius covered what they care about.
+            changed_count = files_scanned - blast_radius_files
+            lines.append(
+                f"🔍 **Diff-scoped scan (blast radius expanded)** — {files_scanned} file(s) "
+                f"examined: the {changed_count} changed in this PR, plus {blast_radius_files} "
+                "that import them. The whole repository was not scanned, so pre-existing issues "
+                "outside that set would not appear here."
+            )
+        else:
+            lines.append(
+                f"🔍 **Diff-scoped scan** — only the {files_scanned} file(s) changed in this PR were "
+                "examined, not the whole repository. Pre-existing issues elsewhere in the codebase "
+                "would not appear here."
+            )
         lines.append("")
 
     if tools_skipped:
@@ -668,25 +688,52 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         # very different amounts of assurance and must never be confused for
         # each other in the PR comment or the audit trail.
         scan_paths: list[str] | None = None
+        radius_added = 0
+        radius_note = ""
         if target.diff_scoped_pr_scans:
             changed = _changed_files(slug, pr_number)
             if changed is None:
                 logger.info("pr guardrail: full scan for %s#%s (changed files unavailable)", slug, pr_number)
+                radius_note = "the PR's changed-file list could not be retrieved"
             elif len(changed) > MAX_DIFF_SCOPED_FILES:
                 logger.info(
                     "pr guardrail: full scan for %s#%s (%s changed files exceeds %s)",
                     slug, pr_number, len(changed), MAX_DIFF_SCOPED_FILES,
                 )
+                radius_note = (
+                    f"this PR changes {len(changed)} files, over the {MAX_DIFF_SCOPED_FILES}-file "
+                    "limit for a diff-scoped scan"
+                )
             elif not changed:
                 logger.info("pr guardrail: full scan for %s#%s (no scannable changed files)", slug, pr_number)
+                radius_note = "no scannable changed files"
             else:
-                scan_paths = changed
+                # (#244) Scanning literally-changed files misses the case
+                # where editing A.py makes existing code in B.py vulnerable.
+                # Expand to the changed files' direct importers so the
+                # narrowed scan covers what the change can actually reach.
+                # A None result means the radius could not be established --
+                # or is so wide that a narrowed scan would be one in name
+                # only -- and the scan escalates to full rather than
+                # quietly covering less than it claims.
+                expanded, radius_added, radius_note = code_graph.resolve_blast_radius(
+                    session, target, repo_path, changed, commit_sha=head_sha,
+                )
+                if expanded is None:
+                    logger.info(
+                        "pr guardrail: full scan for %s#%s (blast radius unavailable: %s)",
+                        slug, pr_number, radius_note,
+                    )
+                else:
+                    scan_paths = expanded
 
         parsed, failed_tools, skipped_tools = _run_guardrail_tools(
             guardrail_tools, repo_path, paths=scan_paths
         )
         pr_scan.scan_scope = "diff" if scan_paths is not None else "full"
         pr_scan.files_scanned = len(scan_paths) if scan_paths is not None else 0
+        pr_scan.blast_radius_files = radius_added if scan_paths is not None else 0
+        pr_scan.scope_reason = radius_note
         pr_scan.tools_skipped = ",".join(sorted(skipped_tools))
 
         for item in parsed:
@@ -764,6 +811,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             tools_skipped=skipped_tools,
             scan_scope=pr_scan.scan_scope,
             files_scanned=pr_scan.files_scanned,
+            blast_radius_files=pr_scan.blast_radius_files,
             # (#271) completed_at is set just above this call; falling back
             # to now() keeps the footer honest rather than omitting it if
             # that ordering ever changes.

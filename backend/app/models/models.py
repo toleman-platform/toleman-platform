@@ -712,6 +712,17 @@ class PRGuardrailScan(SQLModel, table=True):
     # the assurance being offered rather than implying whole-repo coverage.
     scan_scope: str = "full"
     files_scanned: int = 0  # meaningful only when scan_scope == "diff"
+    # (#244) How many of files_scanned were pulled in by the code graph
+    # rather than literally changed by the PR -- the blast radius. 0 with
+    # scan_scope "diff" means the changed files import nothing else in this
+    # repo (or are not Python, which the Stage 1 graph cannot follow), not
+    # that the radius went unchecked; scope_reason carries that distinction.
+    blast_radius_files: int = 0
+    # (#244) Why the scope ended up as it did, in the words the PR comment
+    # uses. Persisted rather than recomputed because the graph it was
+    # derived from is replaced on the next scan -- without this, the audit
+    # trail could no longer explain a past scan's coverage.
+    scope_reason: str = ""
     # (GH-04) Why the commit status did not reach GitHub, or "" if it did.
     # Posting is deliberately fail-open -- a GitHub outage must not abort a
     # scan that already produced real findings -- but it used to be fail-open
@@ -1135,3 +1146,36 @@ class ApiToken(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_used_at: Optional[datetime] = None
     revoked_at: Optional[datetime] = None
+
+
+class CodeGraph(SQLModel, table=True):
+    """Persisted import graph for one target (issue #244, Stage 1).
+
+    `edges` maps a repo-relative file path to the list of files that
+    directly import it -- the *importer* direction, because that is the
+    direction blast radius queries ("this file changed; what else is
+    affected?"). The forward edge is its exact inverse and is recoverable by
+    transposing, so only one direction is stored.
+
+    One row per target (unique `target_id`); a rebuild replaces it rather
+    than accumulating history, since only the current structure can narrow a
+    scan. `commit_sha` is what makes the row safe to reuse: it is matched
+    **exactly**, never "close enough", because a graph built from a
+    different commit describes a different import structure and using it
+    would narrow a scan against a tree that no longer exists. That is the
+    staleness rule the issue's discussion asked for, resolved by keying on
+    the commit rather than on an age window -- app.core.code_graph builds
+    from the checkout the scan already has, so a miss costs one rebuild
+    rather than a fallback to scanning everything.
+
+    Python-only in this stage. A target whose changed files are TypeScript
+    or Go gets no expansion from this table, and the PR comment must not
+    describe such a scan as having had its blast radius checked.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", unique=True, index=True)
+    commit_sha: str = Field(index=True)
+    # {file_path: [files importing it]} -- see app/core/code_graph.py
+    edges: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    file_count: int = 0  # Python modules indexed, not edges recorded
+    built_at: datetime = Field(default_factory=datetime.utcnow)

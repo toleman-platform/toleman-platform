@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
 import { Users, Plug, Wrench, Store, Lock, type LucideIcon } from "lucide-react";
 import { UserManagement } from "./user-management";
@@ -28,8 +29,13 @@ const GROUPS: { id: string; label: string; icon: LucideIcon; tabs: TabId[] }[] =
   { id: "tooling", label: "Tooling", icon: Plug, tabs: ["integrations", "tools", "tool-marketplace"] },
 ];
 
+const TAB_IDS = TABS.map((t) => t.id);
+
 export default function AdminPage() {
-  const [tab, setTab] = useState<TabId>("users");
+  // (#235) Was useState -- see use-tab-param.ts for why that made every
+  // sub-page here unlinkable and reset on every visit. Groups (Access /
+  // Tooling) stay derived from the URL-backed tab below, same as before.
+  const [tab, setTab] = useTabParam(TAB_IDS, "users");
 
   const tabsById = useMemo(() => new Map(TABS.map((t) => [t.id, t])), []);
   const activeGroup = GROUPS.find((g) => g.tabs.includes(tab)) ?? GROUPS[0];

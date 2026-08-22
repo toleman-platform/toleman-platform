@@ -41,7 +41,7 @@ import logging
 
 import httpx
 
-from app.core.github import get_github_token, repo_slug_from_url
+from app.core.github import repo_slug_from_url
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +72,15 @@ def fetch_dependency_graph(repo_url: str, token: str | None = None) -> list[dict
 
     Raises DependencyGraphUnavailable when GitHub cannot answer -- never
     returns [] to mean that.
+
+    `token` should be resolved by the caller via
+    `app.core.github_token.resolve_github_token` (issue #227) -- this
+    function no longer falls back to the env/`gh` `GITHUB_TOKEN` pickup
+    itself, since that fallback was removed entirely in favour of a single
+    resolution point every target-repo call site goes through.
     """
     slug = repo_slug_from_url(repo_url)
-    auth = token or get_github_token()
+    auth = token
     headers = {"Accept": "application/vnd.github+json"}
     if auth:
         headers["Authorization"] = f"Bearer {auth}"

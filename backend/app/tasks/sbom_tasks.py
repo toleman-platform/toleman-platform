@@ -110,7 +110,8 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             sources_run = ["trivy"]
             sources_failed: list[str] = []
             try:
-                gh_components = fetch_dependency_graph(target.repo_url, settings.github_token)
+                gh_token = resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url))
+                gh_components = fetch_dependency_graph(target.repo_url, gh_token)
                 gh_new = upsert_components(
                     session, target_id, target.default_branch, gh_components, source="github"
                 )

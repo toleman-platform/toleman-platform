@@ -1379,7 +1379,7 @@ export const api = {
   uploadSbom: async (targetId: number, file: File): Promise<SbomImportResult> => {
     const body = new FormData();
     body.append("file", file);
-    const res = await fetch(`${API_URL}/api/sbom/${targetId}/upload`, {
+    const res = await fetch(`${apiBaseUrl()}/api/sbom/${targetId}/upload`, {
       method: "POST",
       credentials: "include",
       body,

@@ -491,10 +491,23 @@ export default function SbomPage() {
             </p>
           )}
 
+          {/* Issue #226 review: this used to be gated on status === "found"
+              alone, so a "failed" malware check rendered nothing at all --
+              pixel-identical to a successful check that found nothing. The
+              backend goes out of its way to distinguish "checked, clean"
+              from "could not check" (osv_malware.py's None-vs-{} split);
+              collapsing that back together in the one place a person
+              actually reads it would undo the whole point. */}
           {!error && !persistedError && scanSummary?.malware?.status === "found" && (
             <p className="text-sm text-destructive">
               {scanSummary.malware.malicious_count} malicious package
               {scanSummary.malware.malicious_count === 1 ? "" : "s"} detected via OSV
+            </p>
+          )}
+          {!error && !persistedError && scanSummary?.malware?.status === "failed" && (
+            <p className="text-sm text-destructive">
+              Malware check failed to run — these components have <strong>not</strong> been checked against OSV.
+              This is not an all-clear.
             </p>
           )}
 

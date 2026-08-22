@@ -53,6 +53,13 @@ class TestGithubTokenRequest(BaseModel):
 
 def _resolve_workspace_id(session: Session, workspace_id: int | None) -> int:
     if workspace_id is not None:
+        # Issue #226 review nit: a caller-supplied id that doesn't exist used
+        # to sail through here unchecked -- a GET silently read back
+        # "token_set: false" (indistinguishable from "no token saved yet"),
+        # and a PUT surfaced as a bare 500 from the GitHubToken FK constraint
+        # instead of a real 404.
+        if not session.get(Workspace, workspace_id):
+            raise HTTPException(status_code=404, detail=f"workspace {workspace_id} not found")
         return workspace_id
     workspace = session.exec(select(Workspace).order_by(Workspace.id)).first()
     if not workspace:

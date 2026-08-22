@@ -211,6 +211,24 @@ def test_put_get_delete_round_trip_never_echoes_ciphertext(client, engine):
     assert client.get(f"/api/github-token?workspace_id={ws}").json()["token_set"] is False
 
 
+def test_unknown_workspace_id_is_404_not_500(client, engine):
+    # Issue #226 review nit: a caller-supplied workspace_id that doesn't
+    # exist used to sail through _resolve_workspace_id unchecked -- GET
+    # silently read back token_set: false (indistinguishable from "no token
+    # saved yet"), and PUT would have hit the GitHubToken FK constraint as a
+    # bare 500 instead of a real 404.
+    _admin_client(client, engine)
+
+    assert client.get("/api/github-token?workspace_id=999999").status_code == 404
+    assert (
+        client.put(
+            "/api/github-token", json={"token": "ghp_secret", "workspace_id": 999999}
+        ).status_code
+        == 404
+    )
+    assert client.delete("/api/github-token?workspace_id=999999").status_code == 404
+
+
 def test_put_rejects_empty_token(client, engine):
     ws = _admin_client(client, engine)
 

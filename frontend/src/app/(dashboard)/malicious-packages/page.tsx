@@ -40,17 +40,40 @@ export default function MaliciousPackagesPage() {
   const affectedTargetIds = Array.from(new Set(findings.map((f) => f.target_id)));
   const openCount = findings.filter((f) => f.state === "Open").length;
 
+  function malwareLabel(status: "clean" | "found" | "failed", count: number): string {
+    if (status === "found") return `found ${count}`;
+    if (status === "failed") return "check failed";
+    return "clean";
+  }
+
   async function recheck(targetId: number) {
     setCheckState((c) => ({ ...c, [targetId]: "checking" }));
     try {
-      const res = await api.malwareCheck(targetId);
-      const label =
-        res.status === "found"
-          ? `found ${res.malicious_count}`
-          : res.status === "failed"
-            ? "check failed"
-            : "clean";
-      setCheckState((c) => ({ ...c, [targetId]: label }));
+      // Pull the latest GitHub dependency-graph inventory first (issue #226
+      // follow-up) -- a manual scan that only re-checked whatever was
+      // already persisted could still miss a package OSV just flagged if
+      // that package was never in the last SBOM generation's Trivy scan to
+      // begin with. import_github_sbom's own /github-sync endpoint already
+      // runs the OSV malware check itself over the freshly-merged inventory
+      // (best-effort), so one call covers both "import" and "check".
+      //
+      // Falls back to a plain re-check over whatever's already persisted
+      // when the import can't run at all (no GitHub App/token configured
+      // for this workspace, or the dependency graph is disabled/unavailable
+      // -- a 502) -- the repo may still have a Trivy-sourced SBOM worth
+      // re-checking even without GitHub access.
+      let status: "clean" | "found" | "failed";
+      let count: number;
+      try {
+        const res = await api.importGithubSbom(targetId);
+        status = res.malware?.status ?? "clean";
+        count = res.malware?.malicious_count ?? 0;
+      } catch {
+        const res = await api.malwareCheck(targetId);
+        status = res.status;
+        count = res.malicious_count;
+      }
+      setCheckState((c) => ({ ...c, [targetId]: malwareLabel(status, count) }));
       findingsQuery.refetch();
     } catch {
       setCheckState((c) => ({ ...c, [targetId]: "check failed" }));
@@ -110,7 +133,7 @@ export default function MaliciousPackagesPage() {
           <EmptyState
             icon={Bug}
             title="No malicious packages detected"
-            description="The OSV check runs automatically on each SBOM generation, and a re-check re-asserts the latest OSV data over a repo's existing inventory."
+            description="The OSV check runs automatically on each SBOM generation. Use Scan a repository below to pull the latest GitHub dependency inventory and re-check it against OSV's latest data on demand."
           />
         )}
 
@@ -162,12 +185,14 @@ export default function MaliciousPackagesPage() {
         <div className="flex flex-col gap-3">
           <h2 className="text-sm font-medium text-foreground">Scan a repository</h2>
           <p className="text-xs text-muted-foreground">
-            Runs the OSV check over a repo&apos;s existing SBOM inventory (generate one first on{" "}
+            Pulls the latest dependency inventory from GitHub&apos;s dependency graph and runs the OSV check over it
+            in one step. Falls back to checking whatever&apos;s already on file (from a prior{" "}
             <Link href="/sbom" className="text-accent-strong hover:underline">
               SBOM &amp; OSS Vulns
             </Link>{" "}
-            if it has none yet). Also worth re-running on a repo already checked -- OSV adds malicious-package
-            records continuously, so a package clean at scan time can be flagged later.
+            generation) if GitHub import isn&apos;t available for this repo. Worth re-running on a repo already
+            checked, too -- OSV adds malicious-package records continuously, so a package clean at scan time can be
+            flagged later.
           </p>
           <Card className="border-border bg-card">
             <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -200,7 +225,7 @@ export default function MaliciousPackagesPage() {
                       disabled={activeId === null || label === "checking"}
                     >
                       <RefreshCw className={label === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-                      <span>{label === "checking" ? "Scanning..." : "Run OSV Check"}</span>
+                      <span>{label === "checking" ? "Scanning..." : "Import & Check"}</span>
                     </Button>
                   </>
                 );

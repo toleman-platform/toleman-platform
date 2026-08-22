@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { TargetPicker } from "@/components/target-picker";
 
 // Issue #177/#181: malicious dependencies detected via OSV.dev. Hits are
 // persisted as ordinary Critical `Finding` rows (tool="osv-malware"), so this
@@ -30,6 +31,7 @@ export default function MaliciousPackagesPage() {
   );
   const targetsQuery = useAsyncData<Target[]>(() => api.targets());
   const [checkState, setCheckState] = useState<Record<number, string>>({});
+  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
 
   const findings = findingsQuery.data ?? [];
   const targets = targetsQuery.data ?? [];
@@ -156,53 +158,55 @@ export default function MaliciousPackagesPage() {
           })}
       </div>
 
-      {!loading && affectedTargetIds.length > 0 && (
+      {!loading && targets.length > 0 && (
         <div className="flex flex-col gap-3">
-          <h2 className="text-sm font-medium text-foreground">Re-check a repository</h2>
+          <h2 className="text-sm font-medium text-foreground">Scan a repository</h2>
           <p className="text-xs text-muted-foreground">
-            Re-runs the OSV check over a repo&apos;s current SBOM inventory. Useful because OSV adds malicious-package
-            records continuously -- a package clean at scan time can be flagged later.
+            Runs the OSV check over a repo&apos;s existing SBOM inventory (generate one first on{" "}
+            <Link href="/sbom" className="text-accent-strong hover:underline">
+              SBOM &amp; OSS Vulns
+            </Link>{" "}
+            if it has none yet). Also worth re-running on a repo already checked -- OSV adds malicious-package
+            records continuously, so a package clean at scan time can be flagged later.
           </p>
-          <div className="flex flex-col gap-2">
-            {affectedTargetIds.map((tid) => {
-              const target = targetById.get(tid);
-              const label = checkState[tid];
-              return (
-                <Card key={tid} className="border-border bg-card">
-                  <CardContent className="flex items-center justify-between gap-3 px-4 py-3">
-                    <Link href={`/targets/${tid}`} className="truncate font-medium text-foreground hover:underline">
-                      {target?.name ?? `target #${tid}`}
-                    </Link>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {label && label !== "checking" && (
-                        <span
-                          className={
-                            label === "clean"
-                              ? "text-xs text-chart-5"
-                              : label === "check failed"
-                                ? "text-xs text-destructive"
-                                : "text-xs text-warning"
-                          }
-                        >
-                          {label}
-                        </span>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => recheck(tid)}
-                        disabled={label === "checking"}
-                        aria-label={`Re-check ${target?.name ?? tid}`}
+          <Card className="border-border bg-card">
+            <CardContent className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <TargetPicker
+                targets={targets}
+                value={chosenTargetId ?? targets[0]?.id ?? null}
+                onChange={setChosenTargetId}
+              />
+              {(() => {
+                const activeId = chosenTargetId ?? targets[0]?.id ?? null;
+                const label = activeId !== null ? checkState[activeId] : undefined;
+                return (
+                  <>
+                    {label && label !== "checking" && (
+                      <span
+                        className={
+                          label === "clean"
+                            ? "text-xs text-chart-5"
+                            : label === "check failed"
+                              ? "text-xs text-destructive"
+                              : "text-xs text-warning"
+                        }
                       >
-                        <RefreshCw className={label === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-                        <span>{label === "checking" ? "Checking..." : "Re-check"}</span>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                        {label}
+                      </span>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={() => activeId !== null && recheck(activeId)}
+                      disabled={activeId === null || label === "checking"}
+                    >
+                      <RefreshCw className={label === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+                      <span>{label === "checking" ? "Scanning..." : "Run OSV Check"}</span>
+                    </Button>
+                  </>
+                );
+              })()}
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>

@@ -306,7 +306,7 @@ def _wire_common_scan_mocks(monkeypatch, findings):
     monkeypatch.setattr(
         pr_guardrail_executor,
         "github_get",
-        lambda path: type("R", (), {
+        lambda path, params=None, token="": type("R", (), {
             "raise_for_status": lambda self: None,
             "json": lambda self: {"head": {"ref": "feature", "sha": "deadbeef"}, "title": "a pr"},
         })(),

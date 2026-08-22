@@ -4,11 +4,13 @@ from datetime import datetime
 
 from sqlmodel import Session, select
 
-from app.core.config import settings
 from app.core.db import engine
+from app.core.github import repo_slug_from_url
+from app.core.github_token import resolve_github_token
 from app.core.notifications import dispatch_notification
 from app.core.aibom import extract_ai_components, upsert_aibom_components
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
+from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
@@ -75,7 +77,9 @@ def run_sbom_generation(self, target_id: int, run_id: int):
 
         try:
             repo_path = runner.clone_repo(
-                target.repo_url, target.default_branch, settings.github_token, scan_id=f"sbom-{run.id}"
+                target.repo_url, target.default_branch,
+                resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
+                scan_id=f"sbom-{run.id}",
             )
             raw = runner.run_tool("trivy-sbom", repo_path)
             discovered = parse_trivy_sbom(raw)
@@ -106,7 +110,8 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             sources_run = ["trivy"]
             sources_failed: list[str] = []
             try:
-                gh_components = fetch_dependency_graph(target.repo_url, settings.github_token)
+                gh_token = resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url))
+                gh_components = fetch_dependency_graph(target.repo_url, gh_token)
                 gh_new = upsert_components(
                     session, target_id, target.default_branch, gh_components, source="github"
                 )
@@ -130,6 +135,16 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 upsert_aibom_components(session, target_id, target.default_branch, ai_components)
             except Exception:
                 logger.exception("AIBOM extraction failed for target %s", target_id)
+
+            # Issue #181: run the OSV malicious-package check over the freshly
+            # persisted inventory. Free (no clone, no subprocess -- just OSV
+            # HTTP calls against rows we already have) and best-effort: a
+            # malware-check failure must not fail an otherwise-successful SBOM
+            # run, and its own "failed" status is never reported as clean.
+            try:
+                check_and_ingest_malware(session, target)
+            except Exception:
+                logger.exception("Malware check failed for target %s", target_id)
 
             all_count = len(
                 session.exec(

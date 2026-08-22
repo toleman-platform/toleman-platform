@@ -1,10 +1,12 @@
 import csv
 import io
+import json
+import logging
 import re
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlmodel import Session, select
 
@@ -13,12 +15,24 @@ from app.api.deps import get_session
 from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
 from app.core.async_jobs import create_running_row
 from app.core.aibom import AiComponent, aibom_summary, build_aibom
+from app.core.github import repo_slug_from_url
+from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
+from app.core.github_token import resolve_github_token
+from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
+from app.scanners.parsers import parse_sbom_upload
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import AiBomComponent, SbomComponent, SbomRun, Target, User, WorkspaceRole
 from app.tasks.sbom_tasks import run_sbom_generation
 
 router = APIRouter(prefix="/api/sbom", tags=["sbom"])
+
+logger = logging.getLogger(__name__)
+
+# Generous for a real CycloneDX/SPDX document (issue #227 review) -- the
+# first cap on any request body in this codebase, set here because this is
+# also the first multipart-upload endpoint.
+MAX_SBOM_UPLOAD_BYTES = 25 * 1024 * 1024
 
 # upsert_components used to be defined in this module; it now lives in
 # app.core.sbom_ingestion (#59) so app.tasks.sbom_tasks -- which does the
@@ -33,6 +47,17 @@ def _get_target(target_id: int, session: Session) -> Target:
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     return target
+
+
+def _run_malware_check_best_effort(session: Session, target: Target) -> dict:
+    """Issue #181: flag any newly-persisted packages that OSV marks malicious.
+    Best-effort -- a malware-check crash must never fail an otherwise-successful
+    import/upload, and its own "failed" status is never reported as clean."""
+    try:
+        return check_and_ingest_malware(session, target)
+    except Exception:
+        logger.exception("Malware check failed for target %s", target.id)
+        return {"status": "failed", "malicious_count": 0, "findings_created": 0}
 
 
 def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]:
@@ -184,6 +209,110 @@ def generate_sbom(
         status_code=202,
         content={"run_id": run.id, "target_id": target_id, "status": run.status},
     )
+
+
+@router.post("/{target_id}/malware-check")
+def malware_check(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Issue #181: re-check a target's existing SBOM inventory for malicious
+    packages (via OSV.dev) without regenerating the SBOM, since OSV adds
+    MAL- records continuously -- a package clean at scan time can be flagged
+    a week later. Runs synchronously (a handful of OSV HTTP calls, no clone/
+    subprocess) and persists hits as Critical `Finding` rows (tool=
+    "osv-malware"). Returns a distinct "failed" status when OSV is
+    unreachable, so a network outage is never reported as clean."""
+    target = _get_target(target_id, session)
+    result = check_and_ingest_malware(session, target)
+    return {**result, "target_id": target_id}
+
+
+@router.post("/{target_id}/github-sync")
+def import_github_sbom(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Issue #227: import the target's dependency inventory from GitHub's
+    Dependency Graph (see app.core.github_dependency_graph -- the same
+    source app.tasks.sbom_tasks.run_sbom_generation already unions in
+    automatically) independent of a full trivy scan. Runs synchronously (a
+    single GitHub API call, no clone/subprocess), merges the components into
+    the target's persisted SBOM via upsert_components (source="github", so
+    it's tracked the same way as the automatic union), and returns the
+    new_count so the UI can show what changed. A 502 means the dependency
+    graph is unavailable (no token, disabled, or the request was rejected)
+    -- distinct from an empty import, which is a legitimate "repo has no
+    dependencies" result and is reported as count 0."""
+    target = _get_target(target_id, session)
+    slug = repo_slug_from_url(target.repo_url)
+    token = resolve_github_token(session, target.workspace_id, slug)
+    try:
+        components = fetch_dependency_graph(target.repo_url, token)
+    except DependencyGraphUnavailable as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub dependency graph is unavailable for this target: {exc}",
+        )
+    new_components = upsert_components(session, target_id, target.default_branch, components, source="github")
+    malware = _run_malware_check_best_effort(session, target)
+    return {
+        "target_id": target_id,
+        "count": len(components),
+        "new_count": len(new_components),
+        "malware": malware,
+    }
+
+
+@router.post("/{target_id}/upload")
+async def upload_sbom(
+    target_id: int,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Issue #227: import an uploaded SBOM document (CycloneDX JSON or SPDX
+    JSON) into the target's persisted inventory, without a trivy scan or a
+    GitHub connection. Parses the body with parse_sbom_upload, then merges via
+    upsert_components exactly like generate/import. A 400 means the file isn't
+    valid JSON or contains no parseable dependency components; a 413 means it
+    exceeded MAX_SBOM_UPLOAD_BYTES.
+
+    This is the first multipart-upload surface in the codebase, and the
+    first to cap a request body -- `await file.read()` with no limit would
+    materialise the whole upload in memory (json.loads on top roughly
+    doubles that), so a large or concurrent upload could exhaust a worker.
+    """
+    target = _get_target(target_id, session)
+    content = await file.read(MAX_SBOM_UPLOAD_BYTES + 1)
+    if len(content) > MAX_SBOM_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"SBOM must be under {MAX_SBOM_UPLOAD_BYTES // 1024 // 1024} MB",
+        )
+    try:
+        raw = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Uploaded file is not valid JSON")
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=400, detail="Uploaded SBOM must be a JSON object")
+    discovered = parse_sbom_upload(raw)
+    if not discovered:
+        raise HTTPException(
+            status_code=400,
+            detail="No dependency components found in the uploaded document "
+            "(expected CycloneDX JSON or SPDX JSON)",
+        )
+    new_components = upsert_components(session, target_id, target.default_branch, discovered, source="upload")
+    malware = _run_malware_check_best_effort(session, target)
+    return {
+        "target_id": target_id,
+        "count": len(discovered),
+        "new_count": len(new_components),
+        "malware": malware,
+    }
 
 
 @router.get("/{target_id}/runs/{run_id}")

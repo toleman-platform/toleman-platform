@@ -163,6 +163,7 @@ const NOTIFICATION_EVENT_TYPES: { value: NotificationEventType; label: string }[
   { value: "kev_cve", label: "KEV-listed CVE affecting our packages" },
   { value: "sla_breach", label: "A finding breaches its SLA" },
   { value: "scan_failure", label: "A scan fails" },
+  { value: "malicious_package", label: "Malicious package detected" },
 ];
 const NOTIFICATION_CHANNELS: { value: NotificationChannel; label: string }[] = [
   { value: "slack", label: "Slack" },

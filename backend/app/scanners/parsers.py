@@ -3,6 +3,7 @@
 Each parser returns a list of dicts with keys:
   rule_id, title, description, file_path, line_start, line_end, severity, snippet, cve_id
 """
+from app.core.github_dependency_graph import parse_spdx_packages
 from app.models.models import Severity
 
 
@@ -184,6 +185,78 @@ def parse_trivy_sbom(raw: dict) -> list[dict]:
         })
     return out
 
+
+# Fallback ecosystem-from-purl map for the CycloneDX upload branch below,
+# used only when the `aquasecurity:trivy:PkgType` property is absent (e.g.
+# an SBOM produced by a tool other than Trivy). Deliberately not reused for
+# the SPDX branch -- that goes through app.core.github_dependency_graph's own
+# parse_spdx_packages (the same parser app.tasks.sbom_tasks.run_sbom_generation
+# already uses for the automatic GitHub-dependency-graph union), which keeps
+# GitHub-sourced components consistent regardless of which endpoint imported
+# them, rather than this module growing a second, slightly different SPDX
+# parser (issue #227).
+PURL_TYPE_TO_PACKAGE_TYPE = {
+    "pypi": "pip",
+    "npm": "npm",
+    "golang": "gomod",
+    "maven": "maven",
+    "gem": "gem",
+    "cargo": "cargo",
+    "composer": "composer",
+    "nuget": "nuget",
+}
+
+
+def _purl_type(purl: str) -> str:
+    """`pkg:pypi/anthropic@0.121.0` -> `pypi` (the segment between `pkg:` and
+    the first `/`). Empty for anything that isn't a purl."""
+    if not purl.startswith("pkg:"):
+        return ""
+    body = purl[len("pkg:"):]
+    return body.split("/", 1)[0] if "/" in body else body
+
+
+def parse_sbom_upload(raw: dict) -> list[dict]:
+    """Parse an uploaded SBOM document into the standard
+    {name, version, package_type, purl} component dicts (#227).
+
+    Auto-detects the two supported JSON formats: CycloneDX (a top-level
+    `components` array) and SPDX (a top-level `packages` array, or GitHub's
+    `sbom` wrapper). CycloneDX package_type comes from the
+    `aquasecurity:trivy:PkgType` property when present (same as
+    parse_trivy_sbom) and otherwise falls back to the purl type; SPDX reuses
+    app.core.github_dependency_graph.parse_spdx_packages so an uploaded
+    GitHub SBOM parses identically to one fetched automatically.
+    """
+    doc = raw.get("sbom", raw)
+    if "components" in doc:
+        out = []
+        for c in doc.get("components", []) or []:
+            if c.get("type") != "library":
+                continue
+            package_type = ""
+            for prop in c.get("properties", []) or []:
+                if prop.get("name") == "aquasecurity:trivy:PkgType":
+                    package_type = prop.get("value", "")
+                    break
+            purl = c.get("purl", "")
+            if not package_type and purl:
+                ptype = _purl_type(purl)
+                package_type = PURL_TYPE_TO_PACKAGE_TYPE.get(ptype, ptype)
+            out.append({
+                "name": c.get("name", ""),
+                "version": c.get("version", ""),
+                "package_type": package_type,
+                "purl": purl,
+            })
+        return out
+    if "packages" in doc:
+        # parse_spdx_packages expects GitHub's own {"sbom": {...}} wrapper
+        # shape -- re-wrap here so a bare, unwrapped SPDX export (what a
+        # user's own tooling produces) parses the same as one fetched
+        # automatically, since `doc` above already unwrapped it if present.
+        return parse_spdx_packages({"sbom": doc})
+    return []
 
 def parse_gosec(raw: dict) -> list[dict]:
     out = []

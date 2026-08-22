@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
+from app.core.github_token import resolve_github_token
 from app.models.models import Target
 
 router = APIRouter(prefix="/api/github", tags=["github"])
@@ -38,7 +39,7 @@ def repo_activity(target_id: int, session: Session = Depends(get_session)):
     """Recent commit activity on a target's default branch — real GitHub API data."""
     target = _get_target(target_id, session)
     slug = repo_slug_from_url(target.repo_url)
-    res = github_get(f"/repos/{slug}/commits", params={"sha": target.default_branch, "per_page": 20})
+    res = github_get(f"/repos/{slug}/commits", params={"sha": target.default_branch, "per_page": 20}, token=resolve_github_token(session, target.workspace_id, slug) or "")
     if res.status_code != 200:
         raise HTTPException(status_code=res.status_code, detail=res.text[:300])
     commits = res.json()
@@ -64,7 +65,7 @@ def repo_prs(target_id: int, session: Session = Depends(get_session)):
     """
     target = _get_target(target_id, session)
     slug = repo_slug_from_url(target.repo_url)
-    res = github_get(f"/repos/{slug}/pulls", params={"state": "all", "per_page": 20})
+    res = github_get(f"/repos/{slug}/pulls", params={"state": "all", "per_page": 20}, token=resolve_github_token(session, target.workspace_id, slug) or "")
     if res.status_code != 200:
         raise HTTPException(status_code=res.status_code, detail=res.text[:300])
     prs = res.json()
@@ -124,7 +125,7 @@ def org_activity(
     events: list[dict] = []
     for target in targets:
         slug = repo_slug_from_url(target.repo_url)
-        res = github_get(f"/repos/{slug}/commits", params={**commit_params, "sha": target.default_branch})
+        res = github_get(f"/repos/{slug}/commits", params={**commit_params, "sha": target.default_branch}, token=resolve_github_token(session, target.workspace_id, slug) or "")
         if res.status_code != 200:
             continue
         for c in res.json():

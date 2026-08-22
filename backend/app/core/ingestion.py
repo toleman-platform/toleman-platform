@@ -104,6 +104,18 @@ def _maybe_notify_new_finding(session: Session, target: Target, finding: Finding
                 detail=f"{finding.title or finding.rule_id} · {finding.tool} · {finding.file_path}"
                 + (f":{finding.line_start}" if finding.line_start else ""),
             )
+        if finding.tool == "osv-malware":
+            # Issue #179: a malicious dependency is the sharpest case of the
+            # "distinct event" reasoning above -- someone who wants to be paged
+            # for a compromised dependency must not also get every Critical
+            # SAST finding (and vice versa). See the enum's own docstring.
+            dispatch_notification(
+                session,
+                workspace_id=target.workspace_id,
+                event_type=NotificationEventType.MALICIOUS_PACKAGE,
+                subject=f"Malicious package detected: {finding.title}",
+                detail=f"{target.name} · {finding.rule_id}",
+            )
     except Exception:
         logger.exception("Notification dispatch failed for finding %s", finding.id)
 

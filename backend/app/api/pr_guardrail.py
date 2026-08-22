@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, require_security_reviewer, require_workspace_role
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
+from app.core.github_token import resolve_github_token
 from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, recompute_pr_scan_status, set_commit_status
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User, WorkspaceRole
@@ -377,7 +378,7 @@ def override_pr_guardrail_scan(
         target = session.get(Target, pr_scan.target_id)
         if target:
             slug = repo_slug_from_url(target.repo_url)
-            pr_res = github_get(f"/repos/{slug}/pulls/{pr_scan.pr_number}")
+            pr_res = github_get(f"/repos/{slug}/pulls/{pr_scan.pr_number}", token=resolve_github_token(session, target.workspace_id, slug) or "")
             if pr_res.status_code == 200:
                 head_sha = pr_res.json()["head"]["sha"]
                 set_commit_status(session, target, head_sha, "success", f"Overridden: {reason[:100]}")

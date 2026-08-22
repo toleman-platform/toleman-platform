@@ -375,6 +375,12 @@ export type TestConnectionResult = {
   message: string;
 };
 
+export type GithubTokenView = {
+  token_set: boolean;
+  created_at: string | null;
+  expires_at: string | null;
+};
+
 export function githubBlobUrl(repoUrl: string, branch: string, filePath: string, lineStart?: number | null): string {
   const repoPath = new URL(repoUrl).pathname.replace(/\.git$/, "").replace(/^\//, "");
   const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
@@ -431,7 +437,7 @@ export type AuthUser = { id: number; email: string; name: string; role: string }
 // no delivery yet (no SMTP infra in this codebase) -- see the backend's
 // NotificationChannel docstring.
 export type NotificationChannel = "email" | "slack";
-export type NotificationEventType = "critical_finding" | "kev_cve" | "sla_breach" | "scan_failure";
+export type NotificationEventType = "critical_finding" | "kev_cve" | "sla_breach" | "scan_failure" | "malicious_package";
 export type NotificationPreference = { channel: NotificationChannel; event_type: NotificationEventType; enabled: boolean };
 
 // Issue #109: public API personal access tokens.
@@ -547,6 +553,29 @@ export type ScanHistoryEntry = {
 };
 
 export type SbomExportFormat = "cyclonedx-json" | "spdx-json" | "csv" | "pdf";
+
+// Issue #181: result of POST /api/sbom/{id}/malware-check. `status` is
+// "clean" (checked, nothing malicious), "found" (N malicious packages), or
+// "failed" (OSV unreachable -- deliberately distinct from "clean" so an
+// outage never reads as a healthy repo).
+export type MalwareCheckResult = {
+  target_id: number;
+  status: "clean" | "found" | "failed";
+  malicious_count: number;
+  findings_created: number;
+};
+
+// Issue #227: result of POST /api/sbom/{id}/github-sync and
+// /api/sbom/{id}/upload -- both merge components into the persisted SBOM and
+// report how many were net-new (same shape generateSbom's polling returns).
+// Both also run the OSV malicious-package check (#181) over the freshly
+// persisted inventory and report its outcome under `malware`.
+export type SbomImportResult = {
+  target_id: number;
+  count: number;
+  new_count: number;
+  malware?: Omit<MalwareCheckResult, "target_id">;
+};
 
 // Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows
 // (#59) -- every POST that used to clone+scan synchronously now returns one
@@ -1335,6 +1364,38 @@ export const api = {
       method: "POST",
     }),
   getSbomRun: (targetId: number, runId: number) => jsonFetch<SbomRunResult>(`/api/sbom/${targetId}/runs/${runId}`),
+  // Issue #181: re-check a target's existing SBOM inventory for malicious
+  // packages (via OSV.dev) without regenerating the SBOM. Runs synchronously
+  // -- a handful of OSV HTTP calls, no clone/subprocess.
+  malwareCheck: (targetId: number) =>
+    jsonFetch<MalwareCheckResult>(`/api/sbom/${targetId}/malware-check`, { method: "POST" }),
+  // Issue #227: standalone import of a target's dependency inventory from
+  // GitHub's Dependency Graph SBOM API, independent of a full trivy scan.
+  importGithubSbom: (targetId: number) =>
+    jsonFetch<SbomImportResult>(`/api/sbom/${targetId}/github-sync`, { method: "POST" }),
+  // Issue #227: import an uploaded CycloneDX/SPDX SBOM document (multipart
+  // file upload). fetch + FormData rather than jsonFetch, which force-sets a
+  // JSON Content-Type that would break multipart parsing.
+  uploadSbom: async (targetId: number, file: File): Promise<SbomImportResult> => {
+    const body = new FormData();
+    body.append("file", file);
+    const res = await fetch(`${apiBaseUrl()}/api/sbom/${targetId}/upload`, {
+      method: "POST",
+      credentials: "include",
+      body,
+    });
+    if (!res.ok) {
+      let detail: string | undefined;
+      try {
+        const data = await res.json();
+        if (data && typeof data.detail === "string") detail = data.detail;
+      } catch {
+        // body wasn't JSON -- fall through to the generic message
+      }
+      throw new Error(detail || `SBOM upload failed: ${res.status}`);
+    }
+    return res.json();
+  },
   exportSbom: async (targetId: number, format: SbomExportFormat = "cyclonedx-json"): Promise<Blob> => {
     const res = await fetch(`${apiBaseUrl()}/api/sbom/${targetId}/export?format=${format}`, { credentials: "include" });
     if (!res.ok) throw new Error(`export failed: ${res.status}`);
@@ -1456,6 +1517,24 @@ export const api = {
     jsonFetch<TestConnectionResult>("/api/config/test-siem", {
       method: "POST",
       body: JSON.stringify({ webhook_url: webhookUrl || undefined }),
+    }),
+  // Issue #227: per-workspace GitHub token (encrypted, TTL'd, never echoed).
+  getGithubToken: (workspaceId?: number) =>
+    jsonFetch<GithubTokenView>(`/api/github-token${workspaceId ? `?workspace_id=${workspaceId}` : ""}`),
+  saveGithubToken: (token: string, expiresInHours: number | null, workspaceId?: number) =>
+    jsonFetch<GithubTokenView>("/api/github-token", {
+      method: "PUT",
+      body: JSON.stringify({ token, expires_in_hours: expiresInHours, workspace_id: workspaceId }),
+    }),
+  deleteGithubToken: (workspaceId?: number) =>
+    jsonFetch<{ token_set: boolean; deleted: boolean }>(
+      `/api/github-token${workspaceId ? `?workspace_id=${workspaceId}` : ""}`,
+      { method: "DELETE" }
+    ),
+  testGithubToken: (token?: string, workspaceId?: number) =>
+    jsonFetch<TestConnectionResult>("/api/github-token/test", {
+      method: "POST",
+      body: JSON.stringify({ token: token || undefined, workspace_id: workspaceId }),
     }),
   toolsHealth: () =>
     jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(

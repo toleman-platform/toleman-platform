@@ -1,6 +1,6 @@
 # Rikugan — Open-Source DevSecOps Vulnerability Management Platform
 
-See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, dedup engine, two-tier priority scoring, triage state machine.
+See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, OSV.dev malicious-package detection on SBOM inventory (surfaced as `osv-malware` Critical findings), dedup engine, two-tier priority scoring, triage state machine.
 
 **Documentation:** [geekshiv.github.io/rikugan-docs](https://geekshiv.github.io/rikugan-docs) (source: [geekshiv/rikugan-docs](https://github.com/geekshiv/rikugan-docs)).
 
@@ -149,6 +149,16 @@ npm run dev
 Open http://localhost:3000 — redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@rikugan.local` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API — no mock data.
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
+
+## Pre-commit hooks
+
+The repo ships a `.pre-commit-config.yaml` that runs gitleaks v8.21.2 against staged changes before every commit, mirroring the CI self-scan job. Install once per checkout with:
+
+```bash
+pip install pre-commit && pre-commit install
+```
+
+A gitleaks failure blocks the commit; run `git commit` with `SKIP=gitleaks` only when you have a deliberate reason.
 
 ## Architecture decisions made during build (deltas from the design doc)
 

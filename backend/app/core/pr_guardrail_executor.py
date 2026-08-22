@@ -15,8 +15,9 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.dedup import compute_dedup_hash
 from app.core.enforcement import resolve_enforcement_mode
-from app.core.github import get_github_token, github_get, repo_slug_from_url
+from app.core.github import github_get, repo_slug_from_url
 from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
+from app.core.github_token import resolve_github_token
 from app.core.policy import apply_policies, effective_blocking_severities
 from app.core.pr_guardrail import SEVERITY_ORDER, compute_net_new, highest_severity, should_block
 from app.models.models import (
@@ -637,7 +638,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
     slug = repo_slug_from_url(target.repo_url)
 
-    pr_res = github_get(f"/repos/{slug}/pulls/{pr_number}")
+    pr_res = github_get(f"/repos/{slug}/pulls/{pr_number}", token=resolve_github_token(session, target.workspace_id, slug) or "")
     pr_res.raise_for_status()
     pr = pr_res.json()
     head_branch = pr["head"]["ref"]
@@ -657,7 +658,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
     try:
         repo_path = runner.clone_repo(
-            target.repo_url, head_branch, get_github_token(), scan_id=f"pr-{pr_scan.id}"
+            target.repo_url, head_branch, resolve_github_token(session, target.workspace_id, slug) or "", scan_id=f"pr-{pr_scan.id}"
         )
         guardrail_tools = _resolve_guardrail_tools(session, target)
 
@@ -874,7 +875,7 @@ def recompute_pr_scan_status(session: Session, pr_scan: PRGuardrailScan) -> None
         return
     try:
         slug = repo_slug_from_url(target.repo_url)
-        pr_res = github_get(f"/repos/{slug}/pulls/{pr_scan.pr_number}")
+        pr_res = github_get(f"/repos/{slug}/pulls/{pr_scan.pr_number}", token=resolve_github_token(session, target.workspace_id, slug) or "")
         pr_res.raise_for_status()
         head_sha = pr_res.json()["head"]["sha"]
         set_commit_status(

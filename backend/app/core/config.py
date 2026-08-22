@@ -10,7 +10,6 @@ DEFAULT_ADMIN_PASSWORD = "changeme123"
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://rikugan:rikugan@localhost:5432/rikugan"
     redis_url: str = "redis://localhost:6379/0"
-    github_token: str = ""
     workspace_api_key: str = "dev-local-key"
     scan_workdir: str = "/tmp/rikugan-scans"
     session_secret: str = DEFAULT_SESSION_SECRET

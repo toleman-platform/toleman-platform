@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useRef, useState } from "react";
 import {
   api,
   Target,
@@ -113,7 +113,11 @@ export default function SbomPage() {
   // Tagged with the target it describes rather than cleared by an effect on
   // target change: a "3 new components" badge belonging to a different repo
   // is worse than no badge, and deriving the match makes that impossible.
-  const [lastScan, setLastScan] = useState<{ targetId: number; new_count: number } | null>(null);
+  const [lastScan, setLastScan] = useState<{
+    targetId: number;
+    new_count: number;
+    malware?: { status: "clean" | "found" | "failed"; malicious_count: number; findings_created: number };
+  } | null>(null);
   const [tab, setTab] = useState<Tab>("components");
   const searchParams = useSearchParams();
   const [exporting, setExporting] = useState(false);
@@ -123,6 +127,9 @@ export default function SbomPage() {
   const [orgExportError, setOrgExportError] = useState<string | null>(null);
   const [orgExporting, setOrgExporting] = useState(false);
   const [orgSearch, setOrgSearch] = useState("");
+  const [importingGithub, setImportingGithub] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const cancelPollRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -262,6 +269,38 @@ export default function SbomPage() {
     }
   }
 
+  async function importFromGithub() {
+    if (targetId === null) return;
+    setImportingGithub(true);
+    setError(null);
+    try {
+      const res = await api.importGithubSbom(targetId);
+      reloadPersisted();
+      setLastScan({ targetId, new_count: res.new_count, malware: res.malware });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "GitHub SBOM import failed");
+    } finally {
+      setImportingGithub(false);
+    }
+  }
+
+  async function onUploadFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || targetId === null) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const res = await api.uploadSbom(targetId, file);
+      reloadPersisted();
+      setLastScan({ targetId, new_count: res.new_count, malware: res.malware });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "SBOM upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const showBusy = loading || running;
   const currentTarget = targets.find((t) => t.id === targetId);
 
@@ -315,14 +354,40 @@ export default function SbomPage() {
         generateDisabled={targetId === null}
         extra={
           targetId !== ALL_TARGETS ? (
-            <Button
-              variant="outline"
-              className="w-full justify-center"
-              onClick={exportJson}
-              disabled={exporting || targetId === null || !components || components.length === 0}
-            >
-              {exporting ? "Exporting..." : `Export SBOM (${SBOM_FORMATS.find((f) => f.value === format)?.label})`}
-            </Button>
+            <div className="flex flex-col gap-2">
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                onClick={exportJson}
+                disabled={exporting || targetId === null || !components || components.length === 0}
+              >
+                {exporting ? "Exporting..." : `Export SBOM (${SBOM_FORMATS.find((f) => f.value === format)?.label})`}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                onClick={importFromGithub}
+                disabled={importingGithub || targetId === null}
+              >
+                {importingGithub ? "Importing..." : "Import from GitHub"}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full justify-center"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || targetId === null}
+              >
+                {uploading ? "Uploading..." : "Upload SBOM"}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={onUploadFile}
+                aria-label="Upload SBOM document"
+              />
+            </div>
           ) : (
             <Button
               variant="outline"
@@ -423,6 +488,26 @@ export default function SbomPage() {
               {scanSummary.new_count > 0
                 ? `${scanSummary.new_count} new component${scanSummary.new_count === 1 ? "" : "s"} found`
                 : "No new components"}
+            </p>
+          )}
+
+          {/* Issue #226 review: this used to be gated on status === "found"
+              alone, so a "failed" malware check rendered nothing at all --
+              pixel-identical to a successful check that found nothing. The
+              backend goes out of its way to distinguish "checked, clean"
+              from "could not check" (osv_malware.py's None-vs-{} split);
+              collapsing that back together in the one place a person
+              actually reads it would undo the whole point. */}
+          {!error && !persistedError && scanSummary?.malware?.status === "found" && (
+            <p className="text-sm text-destructive">
+              {scanSummary.malware.malicious_count} malicious package
+              {scanSummary.malware.malicious_count === 1 ? "" : "s"} detected via OSV
+            </p>
+          )}
+          {!error && !persistedError && scanSummary?.malware?.status === "failed" && (
+            <p className="text-sm text-destructive">
+              Malware check failed to run — these components have <strong>not</strong> been checked against OSV.
+              This is not an all-clear.
             </p>
           )}
 

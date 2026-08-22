@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, PipelineWorkflow } from "@/lib/api";
+import { safeHref } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -90,7 +91,7 @@ export function PipelineIntegration({
           </p>
           {prUrl && (
             <a
-              href={prUrl}
+              href={safeHref(prUrl)}
               target="_blank"
               rel="noreferrer"
               className="mt-1 inline-block text-xs text-accent-strong underline underline-offset-2"

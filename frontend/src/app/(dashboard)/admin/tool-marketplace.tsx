@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { api, ToolAssignment, ToolRegistryEntry } from "@/lib/api";
+import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { useToolInstall } from "@/hooks/use-tool-install";
@@ -198,7 +199,7 @@ export function ToolMarketplace() {
                           {t.bundled ? "Bundled in the backend image \u2014 no install needed" : t.install_cmd}
                         </code>
                         <a
-                          href={t.docs_url}
+                          href={safeHref(t.docs_url)}
                           target="_blank"
                           rel="noreferrer"
                           aria-label={`${t.display_name} installation docs`}

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, GitHubAppInstallation } from "@/lib/api";
+import { safeHref } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -137,7 +138,7 @@ export function ConnectGithubCard() {
                   <div className="text-sm font-medium text-foreground">
                     <code>{appEntry.app_slug}</code>
                   </div>
-                  <a href={`https://github.com/apps/${appEntry.app_slug}/installations/new`} target="_blank" rel="noreferrer">
+                  <a href={safeHref(`https://github.com/apps/${appEntry.app_slug}/installations/new`)} target="_blank" rel="noreferrer">
                     <Button size="sm" variant="outline">
                       Add installation
                     </Button>

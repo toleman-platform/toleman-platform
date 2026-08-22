@@ -17,7 +17,7 @@ import {
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useActiveScans } from "@/hooks/use-active-scans";
 import { ScanProgress } from "@/components/scan-status";
-import { timeAgo } from "@/lib/utils";
+import { safeHref, timeAgo } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GroupBadge } from "@/components/group-badge";
@@ -665,7 +665,7 @@ export function TargetsList({
                       </span>
                     )}
                     {item.pr_url && (
-                      <a href={item.pr_url} target="_blank" rel="noreferrer" className="text-accent-strong underline underline-offset-2">
+                      <a href={safeHref(item.pr_url)} target="_blank" rel="noreferrer" className="text-accent-strong underline underline-offset-2">
                         PR
                       </a>
                     )}

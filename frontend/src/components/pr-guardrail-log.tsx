@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { ExternalLink, ShieldQuestion } from "lucide-react";
 import { api, ApiError, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
+import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -288,7 +289,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                       )}
                       {entry.pr_url && (
                         <a
-                          href={entry.pr_url}
+                          href={safeHref(entry.pr_url)}
                           target="_blank"
                           rel="noopener noreferrer"
                           title="Open this PR on GitHub"

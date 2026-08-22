@@ -282,6 +282,19 @@ export function ToolMarketplace() {
                       <p className="text-[11px] text-muted-foreground">
                         Which scans run {t.display_name}. Applies to the next scan; no re-scan is triggered.
                       </p>
+                      {/* (#232) CI pipeline is a generation-time default, not
+                          a live control: it decides what a *newly generated*
+                          workflow file contains. It cannot reach back and
+                          edit a workflow already committed to a target's
+                          repo -- that file is durable, sitting in someone
+                          else's repository, not something this platform can
+                          rewrite after the fact. Stated here so toggling
+                          this box for an already-integrated target isn't
+                          mistaken for editing the file that's already
+                          there. */}
+                      <p className="text-[11px] text-muted-foreground">
+                        CI pipeline only affects a newly generated workflow — it does not edit a workflow already committed to a target&apos;s repo.
+                      </p>
                       {/* A registry-only tool has no runnable command, so an
                           enabled box here could never make it execute.
                           Ticking one anyway is the exact GH-01 failure:

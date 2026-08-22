@@ -104,10 +104,28 @@ def test_bundled_tools_are_all_integrated():
 def test_non_integrated_tools_default_every_usage_surface_off():
     # A registry-only tool defaulting to enabled is a silent no-op that reads
     # to an admin as active coverage.
+    #
+    # nuclei (#232) is the one deliberate exception, not a violation of the
+    # rule: it is not in TOOL_COMMANDS because its invocation shape
+    # genuinely differs (a URL list from already-discovered endpoints, not a
+    # repo-path checkout), but api_scan.py's Active API Scanning route has
+    # actually executed it unconditionally since #72 shipped. Defaulting its
+    # api_scan surface off here would be the opposite bug this test guards
+    # against -- a silent, retroactive removal of coverage every existing
+    # user already had. See default_usage_for's and
+    # app.core.tool_usage.is_nuclei_enabled_for_api_scan's docstrings.
     for entry in TOOL_REGISTRY:
         if entry["tool"] in TOOL_COMMANDS:
             continue
         usage = default_usage_for(entry["tool"])
+        if entry["tool"] == "nuclei":
+            assert usage == {
+                "on_demand_scan": False,
+                "ci_pipeline": False,
+                "api_scan": True,
+                "pr_guardrail": False,
+            }, "nuclei must default on for api_scan only -- every other surface stays off"
+            continue
         assert not any(usage[s] for s in USAGE_SURFACES), entry["tool"]
 
 

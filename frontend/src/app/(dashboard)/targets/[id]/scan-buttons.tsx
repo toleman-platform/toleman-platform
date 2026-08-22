@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
@@ -11,10 +11,35 @@ import { useActiveScans } from "@/hooks/use-active-scans";
 
 const TOOLS = SCAN_TOOLS;
 
-export function ScanButtons({ targetId }: { targetId: number }) {
+export function ScanButtons({ targetId, workspaceId }: { targetId: number; workspaceId: number }) {
   const router = useRouter();
   const [tool, setTool] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
+  // (#232) on_demand_scan assignments now actually gate execution
+  // server-side (POST /api/scans/run refuses a disabled tool). A button
+  // that is clickable but always 400s is worse than no button -- so the
+  // same assignment that gates the backend also decides which buttons
+  // render. Starts as the full static list (never fewer options flash
+  // before the real answer loads) and narrows once assignments resolve;
+  // a fetch failure leaves every button visible rather than hiding tools a
+  // user might actually be allowed to run.
+  const [enabledTools, setEnabledTools] = useState<readonly string[]>(TOOLS);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .toolAssignments(workspaceId)
+      .then((rows) => {
+        if (cancelled) return;
+        const disabled = new Set(rows.filter((r) => !r.on_demand_scan).map((r) => r.tool));
+        setEnabledTools(TOOLS.filter((t) => !disabled.has(t)));
+      })
+      .catch(() => {
+        // Leave the full list visible -- see comment above.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId]);
 
   // Issue #212: this used to say "Running..." on one button and nothing
   // else -- no indication of how long the scan had been going, whether it
@@ -91,7 +116,7 @@ export function ScanButtons({ targetId }: { targetId: number }) {
       {/* Wraps: #186 and #189 took this from 5 tools to 7, and a single
           non-wrapping row squeezed the target header beside it (#197). */}
       <div className="flex flex-wrap justify-end gap-2">
-        {TOOLS.map((t) => (
+        {enabledTools.map((t) => (
           <Button key={t} size="sm" variant="outline" disabled={runningTools.has(t)} onClick={() => run(t)}>
             {runningTools.has(t) ? "Running..." : `Run ${t}`}
           </Button>

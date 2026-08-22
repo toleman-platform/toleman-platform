@@ -43,7 +43,6 @@ export default function DashboardError({ error, reset }: { error: Error & { dige
   }, [autoRetried, reset]);
 
   useEffect(() => {
-    // eslint-disable-next-line no-console
     console.error(error);
   }, [error]);
 

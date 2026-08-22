@@ -20,7 +20,6 @@ const TABS = [
   { id: "policies", label: "Policies", icon: ShieldAlert },
 ] as const;
 
-type TabId = (typeof TABS)[number]["id"];
 const TAB_IDS = TABS.map((t) => t.id);
 
 export default function GuardrailsPage() {

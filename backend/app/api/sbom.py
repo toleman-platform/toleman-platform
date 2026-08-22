@@ -43,6 +43,11 @@ def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]
             "version": c.version,
             "package_type": c.package_type,
             "purl": c.purl,
+            # (#227) Which source reported this. "github" alone is the
+            # signal that a package is transitive -- trivy reads manifests,
+            # so anything only GitHub's resolved graph knows about is by
+            # definition not pinned in one.
+            "source": c.source,
             "is_new": c.id in new_ids,
             "first_seen": c.first_seen,
             "last_seen": c.last_seen,

@@ -8,6 +8,7 @@ import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
 import { TargetEnforcement } from "./target-enforcement";
 import { TargetDiffScope } from "./target-diff-scope";
+import { TargetIdBadge } from "./target-id-badge";
 import { ApiScanConfig } from "./api-scan-config";
 import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
@@ -75,11 +76,12 @@ export default async function TargetDetailPage({
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-foreground">{target.name}</h1>
           <p className="mt-1 truncate text-sm text-muted-foreground">{target.repo_url}</p>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+          <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <CriticalityChip label={target.label} />
             <span className="truncate">
               · risk weight {target.criticality_weight}/5 · branch {target.default_branch}
             </span>
+            <TargetIdBadge targetId={targetId} />
           </p>
         </div>
         <ScanButtons targetId={targetId} workspaceId={target.workspace_id} />

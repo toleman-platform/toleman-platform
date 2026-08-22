@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, require_workspace_role
 from app.api.deps import get_session
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
+from app.core.tool_usage import is_nuclei_enabled_for_api_scan
 from app.core.async_jobs import create_running_row
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User, WorkspaceRole
@@ -52,6 +53,19 @@ def trigger_api_scan(
     can only ever fail once a worker picks it up.
     """
     target = _get_target(target_id, session)
+    # (#232) The one and only surface check for Active API Scanning -- see
+    # is_nuclei_enabled_for_api_scan's docstring for why this can't go
+    # through tools_for_surface like the other three surfaces do. Checked
+    # before build_scan_urls below (which can be a slower DB-and-validation
+    # path) so a workspace that has explicitly turned this off gets an
+    # immediate, specific answer rather than the generic "no scannable
+    # endpoints" -- a different failure mode that would otherwise look
+    # identical to a target with no discovered endpoints yet.
+    if not is_nuclei_enabled_for_api_scan(session, target.workspace_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Active API scanning (nuclei) is disabled for this workspace -- enable it in Tool Marketplace",
+        )
     try:
         urls, endpoints = build_scan_urls(session, target, payload.endpoint_ids)
     except ApiScanConfigError as exc:

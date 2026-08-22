@@ -82,7 +82,7 @@ export default async function TargetDetailPage({
             </span>
           </p>
         </div>
-        <ScanButtons targetId={targetId} />
+        <ScanButtons targetId={targetId} workspaceId={target.workspace_id} />
       </div>
 
       <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={findingsResult.total} />

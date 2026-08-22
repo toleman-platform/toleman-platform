@@ -18,6 +18,7 @@ from app.api.deps import get_session
 from app.core.rate_limit import enforce_rate_limit
 from app.models.models import Finding, Scan, Target, User
 from app.scanners import parsers
+from app.core.tool_usage import tools_for_surface
 from app.tasks.scan_tasks import run_scan
 
 router = APIRouter(prefix="/api/public/v1", tags=["public-api"])
@@ -128,6 +129,14 @@ def trigger_scan(
     target = _get_target_scoped(target_id, session, user)
     if tool not in PARSER_MAP:
         raise HTTPException(status_code=400, detail=f"unsupported tool: {tool}")
+    # (#232) Same gate as the internal POST /api/scans/run -- an assignment
+    # disabling a tool for on_demand_scan must hold regardless of which
+    # authenticated caller is asking, or a public API token becomes a way to
+    # route around a workspace's own configuration.
+    if tool not in tools_for_surface(session, target.workspace_id, "on_demand_scan"):
+        raise HTTPException(
+            status_code=400, detail=f"{tool} is disabled for on-demand scanning in this workspace"
+        )
 
     scan = Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
     session.add(scan)

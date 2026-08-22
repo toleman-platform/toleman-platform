@@ -214,6 +214,36 @@ TOOL_REGISTRY = [
         "docs_url": "https://docs.kics.io/latest/getting-started/",
         "version_cmd": ["kics", "version"],
     },
+    # (#232) The mirror image of kics above: nuclei genuinely executes --
+    # Active API Scanning (#72) has run it unconditionally since it shipped
+    # -- but through app.scanners.runner.run_nuclei() and
+    # app.scanners.parsers.parse_nuclei(), a dedicated path outside
+    # TOOL_COMMANDS/PARSER_MAP, because its invocation takes a list of live
+    # discovered URLs rather than a repo-path checkout like every other
+    # entry here. That means it can never appear in runnable_tools() or a
+    # tools_for_surface() result no matter what -- see
+    # app.core.tool_usage.is_nuclei_enabled_for_api_scan, the dedicated
+    # single-tool check api_scan.py actually calls, and
+    # default_usage_for's docstring for why api_scan defaults True here
+    # specifically (preserving existing behavior) while every other surface
+    # correctly defaults False (nuclei cannot run in any of them).
+    #
+    # Registered mainly so this workspace-level toggle has a real row to
+    # live on in Tool Marketplace, not to gain an install button: nuclei is
+    # a Go binary, not pip-installable, so no `pip_package` is set and the
+    # copyable command stays the only install path (matching the "a button
+    # that cannot work is worse than no button" rule already documented on
+    # the marketplace page for every other non-pip tool).
+    {
+        "tool": "nuclei",
+        "display_name": "Nuclei",
+        "category": "API/DAST",
+        "languages": ["language-agnostic (live HTTP endpoints)"],
+        "description": "Active scanning against already-discovered API endpoints (#72) -- misconfigurations, default logins, known-CVE templates. The only tool this platform runs against a live target rather than a repo checkout. Controls the API scan toggle below; has no effect on the other three surfaces.",
+        "install_cmd": "brew install nuclei",
+        "docs_url": "https://docs.projectdiscovery.io/tools/nuclei/install",
+        "version_cmd": ["nuclei", "-version"],
+    },
 ]
 
 # Usage-assignment surfaces a tool can be turned on/off for, per workspace
@@ -262,18 +292,32 @@ INTERNAL_TOOL_KEYS = frozenset({"trivy-sbom"})
 def default_usage_for(tool: str) -> dict:
     """Built-in usage-surface defaults for a tool with no saved
     WorkspaceToolConfig row (issue #75). Mirrors WorkspaceToolConfig's own
-    column defaults for an *integrated* tool (on-demand/CI/PR guardrail on,
-    API scan off since #72 isn't wired up yet) but forces every surface off
-    for a registry-only tool like kics that has no real TOOL_COMMANDS
-    entry -- there is nothing to "run" for it yet, so defaulting it to
-    enabled would be a silent no-op that misleads an admin into thinking
-    it's active.
+    column defaults for an *integrated* tool (on-demand/CI/PR guardrail on)
+    but forces every surface off for a registry-only tool like kics that has
+    no real TOOL_COMMANDS entry -- there is nothing to "run" for it yet, so
+    defaulting it to enabled would be a silent no-op that misleads an admin
+    into thinking it's active.
+
+    (#232) api_scan defaults False for every tool except nuclei, which is
+    the mirror-image special case: nuclei is genuinely not a TOOL_COMMANDS
+    entry (its invocation takes a URL list from Active API Scanning's own
+    discovered-endpoints flow, app.core.api_scan_targets -- nothing like the
+    repo-path shape every other tool shares), so `integrated` above is False
+    for it and it can never appear in tools_for_surface's runnable_tools()
+    intersection. But active API scanning has run unconditionally since #72
+    shipped, gated only on api_base_url being configured -- so defaulting
+    api_scan off for nuclei the day this ships would silently turn off a
+    feature every existing user already has on. See
+    app.core.tool_usage.is_nuclei_enabled_for_api_scan, which resolves this
+    the same saved-row-else-default way as tools_for_surface but without
+    routing through runnable_tools(), since nuclei structurally can't pass
+    that check.
     """
     integrated = tool in TOOL_COMMANDS
     return {
         "on_demand_scan": integrated,
         "ci_pipeline": integrated,
-        "api_scan": False,
+        "api_scan": tool == "nuclei",
         "pr_guardrail": integrated,
     }
 

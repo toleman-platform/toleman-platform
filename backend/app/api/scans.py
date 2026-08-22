@@ -9,6 +9,7 @@ from app.core.async_jobs import create_running_row
 from app.core.rate_limit import enforce_rate_limit
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User
+from app.core.tool_usage import tools_for_surface
 from app.scanners import parsers
 from app.tasks.scan_tasks import run_scan
 
@@ -132,6 +133,18 @@ def run_native_scan(
         return {"error": "target not found"}
     if tool not in PARSER_MAP:
         return {"error": f"unsupported tool: {tool}"}
+    # (#232) The request always names a tool explicitly -- there is no
+    # "tools omitted, use the workspace default" case for this endpoint,
+    # since each button in the UI dispatches one specific tool. So the
+    # assignment's role here is a gate, not a default: an explicitly
+    # requested tool that the workspace has disabled for on_demand_scan is
+    # refused loudly, the same way an unsupported tool already is above --
+    # never silently run anyway (that would be GH-01 again) and never
+    # silently swapped for something else (that would drop what the user
+    # actually asked for, which the issue calls out as its own version of
+    # the same bug).
+    if tool not in tools_for_surface(session, target.workspace_id, "on_demand_scan"):
+        return {"error": f"{tool} is disabled for on-demand scanning in this workspace"}
 
     scan = create_running_row(
         session, Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")

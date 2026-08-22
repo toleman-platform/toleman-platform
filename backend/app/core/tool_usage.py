@@ -37,6 +37,35 @@ def runnable_tools() -> set[str]:
     return (set(runner.TOOL_COMMANDS) & set(parsers.PARSER_MAP)) - set(INTERNAL_TOOL_KEYS)
 
 
+def is_nuclei_enabled_for_api_scan(session: Session, workspace_id: int) -> bool:
+    """(#232) Active API Scanning's one and only surface check.
+
+    nuclei cannot go through tools_for_surface: it structurally fails
+    runnable_tools()'s TOOL_COMMANDS-membership test (its invocation takes a
+    list of live URLs, built by app.core.api_scan_targets from already-
+    discovered endpoints -- nothing like the repo-path shape every generic
+    runner tool shares), so it can never appear in that function's result
+    regardless of any assignment. This mirrors the same saved-row-else-
+    default resolution on a single tool/surface pair instead.
+
+    default_usage_for("nuclei")["api_scan"] is True (see its docstring),
+    matching Active API Scanning's actual behavior since #72: it has always
+    run unconditionally, gated only on api_base_url being configured. So an
+    operator who has never touched this workspace's tool assignments keeps
+    getting exactly what they already have; only an explicit, saved
+    WorkspaceToolConfig row can turn it off.
+    """
+    cfg = session.exec(
+        select(WorkspaceToolConfig).where(
+            WorkspaceToolConfig.workspace_id == workspace_id,
+            WorkspaceToolConfig.tool == "nuclei",
+        )
+    ).first()
+    if cfg is not None:
+        return cfg.api_scan
+    return default_usage_for("nuclei")["api_scan"]
+
+
 def tools_for_surface(session: Session, workspace_id: int, surface: str) -> list[str]:
     """Tools this workspace has enabled for ``surface`` and that can actually
     run, in ``TOOL_REGISTRY`` order (stable, so a PR comment's tool list

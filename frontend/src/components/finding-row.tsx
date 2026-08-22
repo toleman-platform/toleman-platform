@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, ExternalLink, Info } from "lucide-react";
 import { Finding, FindingEnrichment, api, githubBlobUrl } from "@/lib/api";
+import { safeHref } from "@/lib/utils";
 import {
   EPSS_BADGE_COLOR,
   EPSS_NOTABLE_THRESHOLD,
@@ -205,7 +206,7 @@ function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
             {enrichment.cwe_ids.map((cwe) => (
               <a
                 key={cwe}
-                href={`https://cwe.mitre.org/data/definitions/${cwe.replace("CWE-", "")}.html`}
+                href={safeHref(`https://cwe.mitre.org/data/definitions/${cwe.replace("CWE-", "")}.html`)}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
@@ -243,7 +244,7 @@ function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
             {enrichment.references.slice(0, 5).map((url) => (
               <a
                 key={url}
-                href={url}
+                href={safeHref(url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
@@ -375,7 +376,7 @@ export function FindingRow({
                   </span>
                   {repoUrl && finding.file_path && (
                     <a
-                      href={githubBlobUrl(repoUrl, finding.branch, finding.file_path, finding.line_start)}
+                      href={safeHref(githubBlobUrl(repoUrl, finding.branch, finding.file_path, finding.line_start))}
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Open this line on GitHub"

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, ApiError, Target, PullRequest } from "@/lib/api";
+import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -112,7 +113,7 @@ export default function PrHistoryPage() {
                 <Card key={pr.number} className="border-border bg-card">
                   <CardContent className="flex items-center justify-between px-4 py-3">
                     <div>
-                      <a href={pr.url} target="_blank" rel="noreferrer" className="font-medium text-foreground hover:underline">
+                      <a href={safeHref(pr.url)} target="_blank" rel="noreferrer" className="font-medium text-foreground hover:underline">
                         #{pr.number} {pr.title}
                       </a>
                       <div className="mt-1 text-xs text-muted-foreground">

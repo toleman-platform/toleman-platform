@@ -438,6 +438,57 @@ jobs:
                 ;;
             esac
 
+      # (#269) The third and last "we scan what is written down, not what is
+      # shipped" gap. #239 closed it for the resolved Python dependency tree;
+      # this closes it for the image itself -- base-image OS packages, and
+      # the scanner binaries we vendor in, none of which appear in any
+      # manifest we parse.
+      #
+      # Measured locally before writing this: 465 vulnerabilities (167
+      # High/Critical) on the backend image, 191 (37 High/Critical) on the
+      # frontend -- all of it currently invisible to every other job here.
+      # Notably it also covers /usr/local/bin/{gitleaks,gosec,trivy}, the Go
+      # binaries we bundle, which nothing else in this pipeline looks at at
+      # all.
+      #
+      # Scanned right here rather than in a separate job specifically to
+      # avoid rebuilding: the image is already in this executor's daemon,
+      # and a second job would either rebuild it (slow, and --no-cache means
+      # genuinely from scratch) or need a registry to hand it over.
+      - install_trivy
+      - run:
+          name: Scan the built image
+          # Non-blocking (|| true), matching the existing `trivy` job's
+          # posture. This is a brand-new lens on artifacts nobody has
+          # triaged yet -- turning ~200 pre-existing findings into a hard
+          # build failure on the day it merges would just get the job
+          # disabled. The count is reported on every run so the number is
+          # visible and can be driven down deliberately; tightening this to
+          # blocking is a follow-up once a baseline exists.
+          command: |
+            trivy image --format json --output image-scan.json rikugan-ci-image:latest || true
+      - run:
+          name: Summarize image findings
+          command: |
+            python3 -c "
+            import json
+            d = json.load(open('image-scan.json'))
+            results = d.get('Results', [])
+            total = sum(len(r.get('Vulnerabilities') or []) for r in results)
+            high = sum(
+                1 for r in results for v in (r.get('Vulnerabilities') or [])
+                if v.get('Severity') in ('HIGH', 'CRITICAL')
+            )
+            print(f'## << parameters.dockerfile >>: {total} vulnerabilities ({high} High/Critical)')
+            for r in results:
+                n = len(r.get('Vulnerabilities') or [])
+                if n:
+                    print(f'   {r.get(\"Target\")}: {n} ({r.get(\"Type\")})')
+            "
+      - store_artifacts:
+          path: image-scan.json
+          destination: trivy-results/image-scan.json
+
   compose-config:
     # Cheap and fast, so it runs regardless of the image builds: catches a
     # compose file referencing a service, image or build context that does

@@ -11,6 +11,7 @@ frontend/.env.local
 
 .DS_Store
 KT.md
+CLAUDE.md
 .claude/worktrees/
 code-review-report.md
 market-research-report.md

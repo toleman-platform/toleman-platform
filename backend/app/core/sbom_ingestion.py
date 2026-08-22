@@ -5,7 +5,13 @@ from sqlmodel import Session, select
 from app.models.models import SbomComponent
 
 
-def upsert_components(session: Session, target_id: int, branch: str, discovered: list[dict]) -> list[SbomComponent]:
+def upsert_components(
+    session: Session,
+    target_id: int,
+    branch: str,
+    discovered: list[dict],
+    source: str = "trivy",
+) -> list[SbomComponent]:
     """Persist SBOM components (upsert on target+branch+name+version+purl),
     returning the subset that are new since the last run -- same net-new
     pattern used for ApiEndpoint (see upsert_endpoints() in
@@ -32,6 +38,12 @@ def upsert_components(session: Session, target_id: int, branch: str, discovered:
         if existing_row:
             existing_row.last_seen = now
             existing_row.package_type = item.get("package_type", "")
+            # (#227) Union, not overwrite. A component both trivy and
+            # GitHub's Dependency Graph report should end up "trivy,github"
+            # rather than whichever source happened to run second -- the
+            # whole point of the second source is knowing which found what,
+            # and last-writer-wins would erase exactly that.
+            existing_row.source = _merge_sources(existing_row.source, source)
             session.add(existing_row)
         else:
             row = SbomComponent(
@@ -41,6 +53,7 @@ def upsert_components(session: Session, target_id: int, branch: str, discovered:
                 version=item["version"],
                 package_type=item.get("package_type", ""),
                 purl=item["purl"],
+                source=source,
                 first_seen=now,
                 last_seen=now,
             )
@@ -51,3 +64,17 @@ def upsert_components(session: Session, target_id: int, branch: str, discovered:
     for row in new_components:
         session.refresh(row)
     return new_components
+
+# Stable ordering so the stored value is comparable across runs -- "a,b" and
+# "b,a" describing the same thing would defeat any query or UI grouping on it.
+_SOURCE_ORDER = ("trivy", "github")
+
+
+def _merge_sources(existing: str, incoming: str) -> str:
+    seen = {s for s in (existing or "").split(",") if s}
+    seen.update(s for s in (incoming or "").split(",") if s)
+    known = [s for s in _SOURCE_ORDER if s in seen]
+    # Anything unrecognised is preserved rather than dropped: a source added
+    # later without updating _SOURCE_ORDER should degrade to unordered, not
+    # to silently discarded provenance.
+    return ",".join(known + sorted(seen - set(_SOURCE_ORDER)))

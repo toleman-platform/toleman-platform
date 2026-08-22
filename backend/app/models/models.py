@@ -566,6 +566,20 @@ class SbomComponent(SQLModel, table=True):
     version: str
     package_type: str
     purl: str
+    # (#227, raised by @r0075h3ll) Which source reported this component:
+    # "trivy", "github", or "trivy,github" when both did.
+    #
+    # Recorded rather than discarded because the two sources genuinely see
+    # different things -- trivy reads dependency manifests, GitHub's
+    # Dependency Graph reports what those manifests resolve to, including
+    # transitives that appear in no manifest at all. "Only GitHub found
+    # this" is exactly the signal that a package is transitive, and
+    # collapsing it would throw away the reason for adding the second source.
+    #
+    # Defaults to "trivy" so every pre-existing row keeps an accurate
+    # provenance rather than being silently relabelled as something a source
+    # that did not exist yet had confirmed.
+    source: str = "trivy"
     first_seen: datetime = Field(default_factory=datetime.utcnow)
     last_seen: datetime = Field(default_factory=datetime.utcnow)
 
@@ -619,6 +633,15 @@ class SbomRun(SQLModel, table=True):
     # Comma-separated SbomComponent ids that were net-new on this run --
     # same rationale as DiscoveryRun.new_ids above.
     new_ids: str = ""
+    # (#227) Which SBOM sources actually contributed to this run, and which
+    # were attempted but could not answer. Same three-state discipline as
+    # PRGuardrailScan.tools_run/tools_failed (#243, #253): GitHub's
+    # Dependency Graph returning nothing because it is disabled for a
+    # private repo is NOT the same fact as a repo genuinely having no
+    # dependencies, and an inventory that cannot tell those apart is the
+    # false-all-clear shape this codebase keeps refusing.
+    sources_run: str = "trivy"
+    sources_failed: str = ""
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
 

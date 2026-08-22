@@ -34,12 +34,19 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
 
   const components: SbomComponent[] = sbom.components;
   const newCount = components.filter((c) => c.is_new).length;
+  // (#227) A component only GitHub's Dependency Graph reported is transitive
+  // by definition -- trivy reads manifests, so anything absent from one but
+  // present in the resolved graph is not pinned where a manifest scan can
+  // see it. Counting them makes the second source's value visible rather
+  // than silently folding its results into one undifferentiated total.
+  const transitiveOnly = components.filter((c) => c.source === "github").length;
 
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">
         {sbom.count} package{sbom.count === 1 ? "" : "s"} resolved for this target
         {newCount > 0 && <> · {newCount} first seen in the latest scan</>}
+        {transitiveOnly > 0 && <> · {transitiveOnly} transitive (resolved graph only)</>}
       </p>
 
       <Card className="border-border bg-card">
@@ -51,6 +58,7 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
                   <th className="px-4 py-2 font-medium">Package</th>
                   <th className="px-4 py-2 font-medium">Version</th>
                   <th className="px-4 py-2 font-medium">Type</th>
+                  <th className="px-4 py-2 font-medium">Source</th>
                 </tr>
               </thead>
               <tbody>
@@ -66,6 +74,15 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
                     </td>
                     <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{c.version}</td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">{c.package_type}</td>
+                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                      {c.source === "github" ? (
+                        <span title="Only in GitHub's resolved dependency graph — not pinned in any manifest, i.e. transitive">
+                          transitive
+                        </span>
+                      ) : (
+                        (c.source ?? "trivy").replace("trivy,github", "manifest + graph")
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

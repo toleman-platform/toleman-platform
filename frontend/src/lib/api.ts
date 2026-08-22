@@ -515,6 +515,11 @@ export type SbomComponent = {
   version: string;
   package_type: string;
   purl: string;
+  // (#227) "trivy", "github", or "trivy,github". A component only GitHub's
+  // Dependency Graph reported is by definition transitive -- trivy reads
+  // manifests, so anything absent from one but present in the resolved
+  // graph is not pinned anywhere a manifest scan can see.
+  source?: string;
   is_new: boolean;
   first_seen: string;
   last_seen: string;

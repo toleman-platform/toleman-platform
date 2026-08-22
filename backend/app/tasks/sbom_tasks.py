@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.db import engine
 from app.core.notifications import dispatch_notification
 from app.core.aibom import extract_ai_components, upsert_aibom_components
+from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.sbom_ingestion import upsert_components
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
@@ -78,7 +79,47 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             )
             raw = runner.run_tool("trivy-sbom", repo_path)
             discovered = parse_trivy_sbom(raw)
-            new_components = upsert_components(session, target_id, target.default_branch, discovered)
+            new_components = upsert_components(
+                session, target_id, target.default_branch, discovered, source="trivy"
+            )
+
+            # (#227, raised by @r0075h3ll) GitHub's Dependency Graph as a
+            # second source. trivy reads dependency manifests and reports
+            # what is pinned there; GitHub reports what those manifests
+            # actually resolve to, including transitive dependencies that
+            # appear in no manifest at all. On this repo's own backend that
+            # was 22 direct pins versus ~98 installed packages -- the gap
+            # #239 found from the other direction.
+            #
+            # This is the right mechanism for *target* repos specifically.
+            # #239 closed the same gap for our own CI by resolving
+            # requirements.txt into a venv, which deliberately does not
+            # generalise: resolving a customer's manifest means running
+            # `pip install` on untrusted input. GitHub has already done the
+            # resolution server-side, so this needs no checkout and executes
+            # nothing.
+            #
+            # Best-effort and explicitly recorded. A repo whose graph is
+            # disabled (the default for private repos) is not a repo with no
+            # dependencies, so the failure is written to sources_failed
+            # rather than swallowed -- see DependencyGraphUnavailable.
+            sources_run = ["trivy"]
+            sources_failed: list[str] = []
+            try:
+                gh_components = fetch_dependency_graph(target.repo_url, settings.github_token)
+                gh_new = upsert_components(
+                    session, target_id, target.default_branch, gh_components, source="github"
+                )
+                new_components.extend(c for c in gh_new if c not in new_components)
+                sources_run.append("github")
+            except DependencyGraphUnavailable as exc:
+                logger.info(
+                    "GitHub dependency graph unavailable for target %s: %s", target_id, exc
+                )
+                sources_failed.append(f"github ({exc})")
+            except Exception:
+                logger.exception("GitHub dependency graph fetch failed for target %s", target_id)
+                sources_failed.append("github (unexpected error)")
 
             # Issue #190: extract the AIBOM from the same checkout. Free --
             # the clone above already happened, and extraction is regexes
@@ -102,6 +143,8 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             run.count = all_count
             run.new_count = len(new_components)
             run.new_ids = ",".join(str(c.id) for c in new_components)
+            run.sources_run = ",".join(sources_run)
+            run.sources_failed = "; ".join(sources_failed)
             run.completed_at = datetime.utcnow()
             session.add(run)
             session.commit()

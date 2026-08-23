@@ -45,7 +45,7 @@ Every input is queried live from real data -- no fabricated/mocked inputs
 Combined via the *_WEIGHT constants (sum to 100) into a 0-100 composite,
 then a letter grade via GRADE_THRESHOLDS (documented below).
 """
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -142,7 +142,7 @@ def _coverage_score(session: Session, target_ids: list[int]) -> dict:
     if not target_ids:
         return {"score": 0.0, "weight": COVERAGE_WEIGHT, "scanned_targets": 0, "total_targets": 0, "window_days": COVERAGE_WINDOW_DAYS}
 
-    cutoff = datetime.utcnow() - timedelta(days=COVERAGE_WINDOW_DAYS)
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=COVERAGE_WINDOW_DAYS)
     scanned_target_ids = set(
         session.exec(
             select(Scan.target_id).where(Scan.target_id.in_(target_ids), Scan.started_at >= cutoff).distinct()
@@ -226,7 +226,7 @@ def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[in
         for log in logs:
             logs_by_finding.setdefault(log.finding_id, []).append(log)
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     prior_as_of = now - timedelta(days=TREND_WINDOW_DAYS)
 
     current_sum = _weighted_open_sum_at(now, findings, logs_by_finding)

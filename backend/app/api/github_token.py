@@ -12,7 +12,7 @@ status context.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -101,7 +101,7 @@ def save_github_token(
     if payload.expires_in_hours is not None:
         if payload.expires_in_hours < 1:
             raise HTTPException(status_code=400, detail="expires_in_hours must be at least 1")
-        expires_at = datetime.utcnow() + timedelta(hours=payload.expires_in_hours)
+        expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=payload.expires_in_hours)
 
     wid = _resolve_workspace_id(session, payload.workspace_id)
     row = upsert_github_token(session, wid, token, expires_at, created_by=user.id)

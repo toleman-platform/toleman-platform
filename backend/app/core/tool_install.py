@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from sqlmodel import Session
@@ -166,7 +166,7 @@ def perform_install(session: Session, run) -> None:
 
 def _finish(session: Session, run, *, status: str, error: str = "", version: str = "", output: str = "") -> None:
     run.status = status
-    run.completed_at = datetime.utcnow()
+    run.completed_at = datetime.now(UTC).replace(tzinfo=None)
     run.error = error
     run.installed_version = version
     run.output_tail = output

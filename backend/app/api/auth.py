@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -107,7 +107,7 @@ def current_api_token_user(
     if not user:
         raise HTTPException(status_code=401, detail="user not found")
 
-    token.last_used_at = datetime.utcnow()
+    token.last_used_at = datetime.now(UTC).replace(tzinfo=None)
     session.add(token)
     session.commit()
     return user

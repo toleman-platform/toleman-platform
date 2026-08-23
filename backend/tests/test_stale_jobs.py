@@ -8,7 +8,7 @@ local worker left 27 real jobs stuck this way.
 Same in-memory SQLite + TestClient + session-token-login pattern as
 tests/test_celery_offload.py.
 """
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -89,7 +89,7 @@ def _make_workspace_and_target(engine) -> tuple[int, int]:
 
 
 def STALE_STARTED_AT() -> datetime:
-    return datetime.utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60)
+    return datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=settings.stale_job_timeout_seconds + 60)
 
 
 # ---------------------------------------------------------------------------

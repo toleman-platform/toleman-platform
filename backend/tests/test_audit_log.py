@@ -268,9 +268,9 @@ def test_date_range_filter(client, engine):
     finding_id = _make_finding(engine, target_id)
     client.post(f"/api/findings/{finding_id}/triage", params={"to_state": "Accepted Risk"})
 
-    from datetime import datetime, timedelta
-    tomorrow = (datetime.utcnow() + timedelta(days=1)).date().isoformat()
-    yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
+    from datetime import UTC, datetime, timedelta
+    tomorrow = (datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1)).date().isoformat()
+    yesterday = (datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)).date().isoformat()
 
     resp = client.get("/api/audit/log", params={"date_from": tomorrow})
     assert resp.json()["total"] == 0

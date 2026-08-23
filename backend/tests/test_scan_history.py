@@ -9,7 +9,7 @@ single target and paginated, keeping the property that made the aggregation
 worth doing: response size never scales with total scan history.
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -67,7 +67,7 @@ def _target(engine, name="t"):
 
 def _scan(engine, target_id, tool="semgrep", status="completed", minutes_ago=0, findings=0, error=""):
     with Session(engine) as session:
-        started = datetime.utcnow() - timedelta(minutes=minutes_ago)
+        started = datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=minutes_ago)
         session.add(Scan(
             target_id=target_id, tool=tool, branch="main", status=status,
             started_at=started,

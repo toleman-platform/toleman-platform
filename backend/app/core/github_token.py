@@ -21,7 +21,7 @@ status context.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -47,7 +47,7 @@ def _resolve_workspace_token(session: Session, workspace_id: int) -> str | None:
     if not row:
         return None
 
-    if row.expires_at is not None and row.expires_at <= datetime.utcnow():
+    if row.expires_at is not None and row.expires_at <= datetime.now(UTC).replace(tzinfo=None):
         session.delete(row)
         session.commit()
         logger.info("Purged expired GitHub token for workspace %s", workspace_id)
@@ -117,7 +117,7 @@ def upsert_github_token(
         row.token_ciphertext = ciphertext
         row.expires_at = expires_at
         row.created_by = created_by
-        row.created_at = datetime.utcnow()
+        row.created_at = datetime.now(UTC).replace(tzinfo=None)
     else:
         row = GitHubToken(
             workspace_id=workspace_id,
@@ -148,7 +148,7 @@ def purge_expired_tokens(session: Session) -> int:
     """Delete every expired token row regardless of whether it's been read.
     Invoked opportunistically (e.g. on the status GET); the lazy read-path
     purge in _resolve_workspace_token remains the primary mechanism."""
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     expired = session.exec(
         select(GitHubToken).where(GitHubToken.expires_at.is_not(None), GitHubToken.expires_at <= now)
     ).all()

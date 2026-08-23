@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -162,7 +162,7 @@ def export_org_sbom(session: Session = Depends(get_session)):
     repos; a custom schema is reasonable here."""
     ordered, summary, targets, _targets_by_id = _aggregate_org_components(session)
     document = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z",
         "targets": [{"id": t.id, "name": t.name} for t in targets],
         "components": [
             {
@@ -373,7 +373,7 @@ def _build_cyclonedx_document(target: Target, components: list[SbomComponent]) -
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
         "version": 1,
         "metadata": {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z",
             "component": {"type": "application", "name": target.name},
         },
         "components": [
@@ -403,7 +403,7 @@ def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dic
     persisted component becomes one `packages[]` entry plus a
     DESCRIBES relationship from the document root, same shape a real SPDX
     consumer (e.g. an org's compliance tooling) expects to parse."""
-    now = datetime.utcnow().isoformat() + "Z"
+    now = datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"
     # rikugan.local, not rikugan.io -- the project doesn't own that domain;
     # SPDX only requires this namespace be a unique URI, not a resolvable
     # one, so a non-registrable domain is safe here (#154).
@@ -454,7 +454,7 @@ def _render_sbom_csv(target: Target, components: list[SbomComponent]) -> str:
     writer = csv.writer(buf)
     writer.writerow(["Target", target.name])
     writer.writerow(["Branch", target.default_branch])
-    writer.writerow(["Generated At", datetime.utcnow().isoformat() + "Z"])
+    writer.writerow(["Generated At", datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"])
     writer.writerow([])
     writer.writerow(["Name", "Version", "Package Type", "PURL"])
     for c in components:
@@ -475,7 +475,7 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
     story = [
         Paragraph(f"Rikugan SBOM Summary — {target.name}", styles["Title"]),
         Paragraph(f"Branch: {target.default_branch}", styles["Normal"]),
-        Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", styles["Normal"]),
+        Paragraph(f"Generated: {datetime.now(UTC).replace(tzinfo=None).isoformat()}Z", styles["Normal"]),
         Paragraph(f"Components: {len(components)}", styles["Normal"]),
         Spacer(1, 0.25 * inch),
     ]
@@ -588,7 +588,7 @@ def export_aibom(target_id: int, session: Session = Depends(get_session)):
         target_name=target.name,
         repo_url=target.repo_url,
         branch=target.default_branch,
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z",
     )
     base = f"aibom-{target.name}-{target.default_branch}"
     return JSONResponse(

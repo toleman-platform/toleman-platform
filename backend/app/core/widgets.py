@@ -13,7 +13,7 @@ admins). Resolvers reuse the same query shapes already established in
 app/api/dashboard.py and app/api/findings.py rather than duplicating scoping
 logic ad hoc.
 """
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, Callable
 
 from sqlmodel import Session, func, select
@@ -91,7 +91,7 @@ def resolve_findings_trend(session: Session, ws_ids, config: dict) -> dict:
     """
     days = max(1, min(int(config.get("days", 14)), 90))
     findings = list(session.exec(_scoped_findings_query(ws_ids)).all())
-    today = datetime.utcnow().date()
+    today = datetime.now(UTC).replace(tzinfo=None).date()
     points = []
     for i in range(days - 1, -1, -1):
         day = today - timedelta(days=i)
@@ -262,7 +262,7 @@ def resolve_fp_auto_suppressions(session: Session, ws_ids, config: dict) -> dict
     the "when" -- an auto-suppressed finding is marked FALSE_POSITIVE at the
     moment it's first created, so first_seen and the suppression both happen
     in the same instant."""
-    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_start = datetime.now(UTC).replace(tzinfo=None).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     query = _scoped_findings_query(ws_ids).where(
         Finding.state == FindingState.FALSE_POSITIVE,
         Finding.state_reason.like(f"{AUTO_SUPPRESS_REASON_PREFIX}%"),

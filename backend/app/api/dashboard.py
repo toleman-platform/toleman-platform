@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -198,7 +198,7 @@ def put_layout(
     row = session.exec(select(DashboardLayout).where(DashboardLayout.user_id == user.id)).first()
     if row:
         row.widgets = widgets_data
-        row.updated_at = datetime.utcnow()
+        row.updated_at = datetime.now(UTC).replace(tzinfo=None)
     else:
         row = DashboardLayout(user_id=user.id, widgets=widgets_data)
     session.add(row)

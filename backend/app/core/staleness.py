@@ -15,7 +15,7 @@ single tracking row calls `mark_stale_if_needed` before building its
 response, so the first poll after the timeout window flips the row to
 "failed" rather than leaving it stuck.
 """
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlmodel import Session
 
@@ -42,13 +42,13 @@ def mark_stale_if_needed(session: Session, row, message: str | None = None, fail
     # reason `completed_at`/`error` already are: this helper is deliberately
     # schema-tolerant so one sweep covers every long-running row type.
     started_at = getattr(row, "started_at", None) or row.created_at
-    age = datetime.utcnow() - started_at
+    age = datetime.now(UTC).replace(tzinfo=None) - started_at
     if age < timedelta(seconds=settings.stale_job_timeout_seconds):
         return False
 
     row.status = failed_status
     if hasattr(row, "completed_at"):
-        row.completed_at = datetime.utcnow()
+        row.completed_at = datetime.now(UTC).replace(tzinfo=None)
     if hasattr(row, "error"):
         row.error = message or (
             f"Timed out: no update received within "

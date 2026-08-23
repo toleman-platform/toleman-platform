@@ -16,7 +16,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.core.crypto import encrypt_secret
 from app.core.notifications import dispatch_notification
@@ -336,7 +336,7 @@ def test_sla_breach_notification_fires_once_not_on_every_read(client, engine):
             file_path="go.mod",
             severity=Severity.CRITICAL,
             state=FindingState.OPEN,
-            first_seen=datetime.utcnow() - timedelta(days=5),  # well past the 1-day SLA
+            first_seen=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=5),  # well past the 1-day SLA
         )
         session.add(finding)
         session.commit()
@@ -392,13 +392,13 @@ def test_sla_breach_marker_resets_when_no_longer_violated(client, engine):
             file_path="go.mod",
             severity=Severity.CRITICAL,
             state=FindingState.OPEN,
-            first_seen=datetime.utcnow() - timedelta(days=5),
+            first_seen=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=5),
         )
         session.add(finding)
         session.commit()
         session.refresh(finding)
         finding_id = finding.id
-        finding.sla_breach_notified_at = datetime.utcnow() - timedelta(days=4)
+        finding.sla_breach_notified_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=4)
         session.add(finding)
         session.commit()
 

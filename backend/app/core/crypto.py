@@ -19,7 +19,7 @@ to surface it as a confusing per-item failure.
 """
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import lru_cache
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -141,6 +141,6 @@ def reseed_encryption_key_canary(session: Session) -> None:
         session.add(EncryptionKeyCanary(ciphertext=ciphertext))
     else:
         canary.ciphertext = ciphertext
-        canary.updated_at = datetime.utcnow()
+        canary.updated_at = datetime.now(UTC).replace(tzinfo=None)
         session.add(canary)
     session.commit()

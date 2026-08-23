@@ -1,6 +1,6 @@
 import logging
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -69,7 +69,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
         if not target:
             run.status = "failed"
             run.error = "target not found"
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
             session.add(run)
             session.commit()
             return {"error": "target not found", "run_id": run.id}
@@ -148,7 +148,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             run.new_ids = ",".join(str(c.id) for c in new_components)
             run.sources_run = ",".join(sources_run)
             run.sources_failed = "; ".join(sources_failed)
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
             session.add(run)
             session.commit()
             return {"run_id": run.id, "count": all_count, "new_count": len(new_components)}
@@ -159,7 +159,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             if self.request.retries >= self.max_retries:
                 run.status = "failed"
                 run.error = "git clone failed after retries"
-                run.completed_at = datetime.utcnow()
+                run.completed_at = datetime.now(UTC).replace(tzinfo=None)
                 session.add(run)
                 session.commit()
             raise
@@ -168,7 +168,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             # runner.clone_error_message avoids echoing raw subprocess argv/paths
             # (and, historically, an embedded GitHub token) back into run state.
             run.error = runner.clone_error_message(exc)
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
             session.add(run)
             session.commit()
             return {"error": run.error, "run_id": run.id}

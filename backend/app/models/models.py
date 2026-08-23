@@ -1,8 +1,15 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import SQLModel, Field
+
+
+def _utcnow() -> datetime:
+    """Naive UTC timestamp, matching the semantics of the deprecated
+    ``datetime.utcnow`` so values stay interchangeable with the naive
+    ``datetime`` columns used throughout the schema."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class Severity(str, Enum):
@@ -46,13 +53,13 @@ class User(SQLModel, table=True):
     password_hash: str
     role: UserRole = UserRole.ADMIN
     token_version: int = Field(default=1)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Organization(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Workspace(SQLModel, table=True):
@@ -60,7 +67,7 @@ class Workspace(SQLModel, table=True):
     organization_id: int = Field(foreign_key="organization.id")
     name: str
     api_key: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     # PR Guardrail enforcement mode (issue #62): "block" (fail the build on
     # policy-blocking findings), "alert" (still scan + comment, but the
     # commit status is non-blocking), or "disabled" (skip PR Guardrail
@@ -106,7 +113,7 @@ class WorkspaceMembership(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id", index=True)
     workspace_id: int = Field(foreign_key="workspace.id", index=True)
     role: WorkspaceRole = WorkspaceRole.VIEWER
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Target(SQLModel, table=True):
@@ -134,7 +141,7 @@ class Target(SQLModel, table=True):
     owner: Optional[str] = None          # team or person accountable
     environment: Optional[str] = None    # production / staging / dev / ...
     lifecycle: Optional[str] = None      # active / maintenance / deprecated / ...
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     # Pipeline integration (issue #66): whether a real PR opening
     # .github/workflows/rikugan-scan.yml against this target's default GitHub
     # repo has been opened via the GitHub App. pipeline_pr_url is the actual
@@ -203,7 +210,7 @@ class Group(SQLModel, table=True):
     workspace_id: int = Field(foreign_key="workspace.id", index=True)
     name: str
     color: str = "#6366f1"  # hex color for UI badges
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     # PR Guardrail enforcement mode (issue #62), same vocabulary/inheritance
     # role as Target.enforcement_mode/Workspace.enforcement_mode -- None
     # means "no group-level override configured". See app.core.enforcement.
@@ -224,7 +231,7 @@ class TargetGroup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     target_id: int = Field(foreign_key="target.id", index=True)
     group_id: int = Field(foreign_key="groups.id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Project(SQLModel, table=True):
@@ -232,7 +239,7 @@ class Project(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     target_id: int = Field(foreign_key="target.id")
     name: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class Scan(SQLModel, table=True):
@@ -241,7 +248,7 @@ class Scan(SQLModel, table=True):
     tool: str
     branch: str
     status: str = "running"  # running, completed, failed
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
     findings_count: int = 0
     # (#153) human-readable failure reason -- clone/tool errors and stale-job
@@ -274,7 +281,7 @@ class ToolInstallRun(SQLModel, table=True):
     package: str
     status: str = "running"  # running, completed, failed
     requested_by_user_id: Optional[int] = Field(default=None, foreign_key="user.id")
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
     # Version reported by the tool's own version_cmd *after* installing --
     # proof it actually runs, not just that pip exited zero.
@@ -312,8 +319,8 @@ class Finding(SQLModel, table=True):
     epss_score: Optional[float] = None
     kev_listed: bool = False
 
-    first_seen: datetime = Field(default_factory=datetime.utcnow)
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    first_seen: datetime = Field(default_factory=_utcnow)
+    last_seen: datetime = Field(default_factory=_utcnow)
     mitigated_at: Optional[datetime] = None
     # SLA-breach notification dedup (issue #73): set the first time this
     # finding is observed to be sla_violated at a query-time check (see
@@ -355,7 +362,7 @@ class CveEnrichment(SQLModel, table=True):
     osv_references: Optional[str] = None  # JSON-encoded list[str] of URLs
     osv_found: bool = Field(default=False)
 
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    fetched_at: datetime = Field(default_factory=_utcnow)
 
 
 class EncryptionKeyCanary(SQLModel, table=True):
@@ -381,8 +388,8 @@ class EncryptionKeyCanary(SQLModel, table=True):
     actually been reconnected under the new key."""
     id: Optional[int] = Field(default=None, primary_key=True)
     ciphertext: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class PlatformConfig(SQLModel, table=True):
@@ -436,7 +443,7 @@ class PlatformConfig(SQLModel, table=True):
     # "start simple, grow into a rule table only if needed" reasoning).
     siem_webhook_url: str = ""
     siem_export_severity: Optional[str] = None
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class GitHubAppConfig(SQLModel, table=True):
@@ -465,7 +472,7 @@ class GitHubAppConfig(SQLModel, table=True):
     webhook_secret: str
     html_url: str
     setup_token: Optional[str] = Field(default=None, unique=True, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class GitHubInstallation(SQLModel, table=True):
@@ -479,7 +486,7 @@ class GitHubInstallation(SQLModel, table=True):
     # column existed; those are only resolvable when exactly one
     # GitHubAppConfig exists (see resolve_config_for_installation).
     github_app_config_id: Optional[int] = Field(default=None, foreign_key="githubappconfig.id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class GitHubToken(SQLModel, table=True):
@@ -503,7 +510,7 @@ class GitHubToken(SQLModel, table=True):
     workspace_id: int = Field(foreign_key="workspace.id", unique=True, index=True)
     token_ciphertext: str
     created_by: Optional[int] = Field(default=None, foreign_key="user.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     expires_at: Optional[datetime] = None
 
 
@@ -514,7 +521,7 @@ class FindingStateLog(SQLModel, table=True):
     to_state: str
     reason: str = ""
     actor: str = "system"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     # Issue #123: a bulk-triage call (findings.bulk_triage_findings) still
     # writes one row per finding here -- that's the right granularity for
     # per-finding history (finding_history reads it unfiltered) -- but tags
@@ -548,8 +555,8 @@ class ApiEndpoint(SQLModel, table=True):
     route: str
     file_path: str
     line: int | None = None
-    first_seen: datetime = Field(default_factory=datetime.utcnow)
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    first_seen: datetime = Field(default_factory=_utcnow)
+    last_seen: datetime = Field(default_factory=_utcnow)
 
 
 class DiscoveryRun(SQLModel, table=True):
@@ -575,7 +582,7 @@ class DiscoveryRun(SQLModel, table=True):
     # (mirroring what the old synchronous POST response used to compute
     # inline) without guessing from timestamps after the fact.
     new_ids: str = ""
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
 
 
@@ -604,8 +611,8 @@ class SbomComponent(SQLModel, table=True):
     # provenance rather than being silently relabelled as something a source
     # that did not exist yet had confirmed.
     source: str = "github"
-    first_seen: datetime = Field(default_factory=datetime.utcnow)
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    first_seen: datetime = Field(default_factory=_utcnow)
+    last_seen: datetime = Field(default_factory=_utcnow)
 
 
 class AiBomComponent(SQLModel, table=True):
@@ -639,8 +646,8 @@ class AiBomComponent(SQLModel, table=True):
     # Comma-separated repo-relative paths this reference was found in, so an
     # over-inclusive row can be judged and dismissed rather than argued with.
     evidence: str = ""
-    first_seen: datetime = Field(default_factory=datetime.utcnow)
-    last_seen: datetime = Field(default_factory=datetime.utcnow)
+    first_seen: datetime = Field(default_factory=_utcnow)
+    last_seen: datetime = Field(default_factory=_utcnow)
 
 
 class SbomRun(SQLModel, table=True):
@@ -666,7 +673,7 @@ class SbomRun(SQLModel, table=True):
     # false-all-clear shape this codebase keeps refusing.
     sources_run: str = "github"
     sources_failed: str = ""
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
 
 
@@ -719,7 +726,7 @@ class PRGuardrailScan(SQLModel, table=True):
     # History can show "the decision never reached GitHub" next to the
     # decision itself.
     status_delivery_error: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     completed_at: datetime | None = None
 
 
@@ -772,7 +779,7 @@ class PipelineIntegrationBatch(SQLModel, table=True):
     succeeded: int = 0
     failed: int = 0
     already_integrated: int = 0
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     completed_at: Optional[datetime] = None
     # Issue #35 (Mass CI/CD Rollout Engine): this batch table, originally
     # #68's manual multi-select wrapper, is reused verbatim for scope-based
@@ -828,8 +835,8 @@ class PipelineWorkflowTemplate(SQLModel, table=True):
     name: str
     steps: list = Field(sa_column=Column(JSON), default_factory=list)
     created_by_user_id: int = Field(foreign_key="user.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class PolicyRuleType(str, Enum):
@@ -849,7 +856,7 @@ class PolicyRule(SQLModel, table=True):
     value: str  # for BLOCK_SEVERITY: "Critical"/"High"/"Medium"/"Low"; for SUPPRESS_RULE: a rule_id substring/exact match; for SUPPRESS_LICENSE: a license name like "MIT"
     reason: str = ""
     created_by: str = "system"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     active: bool = True
 
 
@@ -889,7 +896,7 @@ class SlaRule(SQLModel, table=True):
     group_id: Optional[int] = Field(default=None, foreign_key="groups.id", index=True)
     severity: Severity
     days_to_fix: int
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class WorkspaceToolConfig(SQLModel, table=True):
@@ -920,8 +927,8 @@ class WorkspaceToolConfig(SQLModel, table=True):
     ci_pipeline: bool = True
     api_scan: bool = False
     pr_guardrail: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class NotificationChannel(str, Enum):
@@ -972,7 +979,7 @@ class NotificationPreference(SQLModel, table=True):
     channel: NotificationChannel
     event_type: NotificationEventType
     enabled: bool = True
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class FalsePositiveRule(SQLModel, table=True):
@@ -1035,7 +1042,7 @@ class FalsePositiveRule(SQLModel, table=True):
     # bulk-triage's actor is caller-supplied free text too).
     source_finding_id: Optional[int] = Field(default=None, foreign_key="finding.id")
     created_by: str = "system"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
     active: bool = True
     # Incremented + stamped every time app.core.ingestion.ingest_findings
@@ -1071,7 +1078,7 @@ class DashboardLayout(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", unique=True, index=True)
     widgets: list = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class AiAnalysisRun(SQLModel, table=True):
@@ -1089,8 +1096,8 @@ class AiAnalysisRun(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True)
     finding_id: int = Field(foreign_key="finding.id", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_analyzed_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+    last_analyzed_at: datetime = Field(default_factory=_utcnow, index=True)
     analysis_count: int = 1
 
     __table_args__ = (UniqueConstraint("user_id", "finding_id", name="uq_ai_analysis_run_user_finding"),)
@@ -1131,6 +1138,6 @@ class ApiToken(SQLModel, table=True):
     token_hash: str = Field(unique=True, index=True)
     token_prefix: str
     scope: ApiTokenScope = ApiTokenScope.READ
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     last_used_at: Optional[datetime] = None
     revoked_at: Optional[datetime] = None

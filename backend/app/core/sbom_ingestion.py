@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -30,7 +30,7 @@ def upsert_components(
         ).all()
     }
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     new_components: list[SbomComponent] = []
     for item in discovered:
         key = (item["name"], item["version"], item["purl"])

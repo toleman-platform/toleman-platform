@@ -10,7 +10,7 @@ at all.
 Same in-memory SQLite + TestClient + session-token-login pattern as
 tests/test_stale_jobs.py.
 """
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -207,7 +207,7 @@ def test_a_stuck_install_is_reported_failed_not_running(client, engine):
             tool="semgrep",
             package="semgrep",
             status="running",
-            started_at=datetime.utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
+            started_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
         )
         session.add(run)
         session.commit()

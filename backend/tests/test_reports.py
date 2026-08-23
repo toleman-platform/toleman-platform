@@ -5,7 +5,7 @@ tests/test_findings.py -- no shared conftest exists for this yet either.
 """
 import csv
 import io
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -223,7 +223,7 @@ def test_posture_csv_for_single_target_reflects_real_findings(client, engine):
 def test_posture_csv_open_finding_age_matches_seeded_first_seen(client, engine):
     _login(client, engine)
     target_id = _make_target(engine, name="gotest")
-    old_time = datetime.utcnow() - timedelta(days=45)
+    old_time = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=45)
     with Session(engine) as session:
         f = Finding(
             target_id=target_id,

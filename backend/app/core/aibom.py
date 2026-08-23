@@ -323,7 +323,7 @@ def upsert_aibom_components(
     dependency, now pinned; treating it as a new component would hide exactly
     the change a reader most wants to see.
     """
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     from sqlmodel import select
 
@@ -338,7 +338,7 @@ def upsert_aibom_components(
         ).all()
     }
 
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     new_rows = []
     for component in components:
         key = (component.name, component.component_type)

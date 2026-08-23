@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -38,7 +38,7 @@ def get_cve_enrichment(session: Session, cve_id: str) -> CveEnrichment:
         cve_id=cve_id,
         nvd_found=nvd_data is not None,
         osv_found=osv_data is not None,
-        fetched_at=datetime.utcnow(),
+        fetched_at=datetime.now(UTC).replace(tzinfo=None),
     )
     if nvd_data:
         row.nvd_description = nvd_data["description"] or None

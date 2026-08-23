@@ -6,7 +6,7 @@ GET /api/dashboard/widget-data endpoint.
 Follows the same in-memory SQLite + TestClient + session-token-login
 pattern used across tests/test_sla_rules.py and tests/test_workspace_roles.py.
 """
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -108,7 +108,7 @@ def _seed(engine):
         session.refresh(t1)
         session.refresh(t2)
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         findings = [
             Finding(
                 target_id=t1.id, dedup_hash="h1", tool="trivy", rule_id="CVE-1", title="Critical CVE",
@@ -215,7 +215,7 @@ def test_recent_findings_ordered_and_limited(engine):
 
 def test_live_scan_activity_lists_running_scans_most_recent_first(engine):
     t1, t2, _ws_id = _seed(engine)
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     with Session(engine) as session:
         session.add(Scan(target_id=t1, tool="semgrep", branch="main", status="running", started_at=now - timedelta(seconds=30)))
         session.add(Scan(target_id=t2, tool="trivy", branch="main", status="running", started_at=now - timedelta(seconds=5)))
@@ -231,7 +231,7 @@ def test_live_scan_activity_lists_running_scans_most_recent_first(engine):
 
 def test_live_scan_activity_respects_limit(engine):
     t1, _t2, _ws_id = _seed(engine)
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     with Session(engine) as session:
         for i in range(5):
             session.add(Scan(target_id=t1, tool=f"tool-{i}", branch="main", status="running", started_at=now - timedelta(seconds=i)))
@@ -273,7 +273,7 @@ def test_ai_ml_risk_counts_flagged_repos_and_open_ai_tool_findings(engine):
 
 def test_guardrail_activity_lists_recent_scans_and_pending_approvals(engine):
     t1, _t2, _ws_id = _seed(engine)
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     with Session(engine) as session:
         blocked = PRGuardrailScan(
             target_id=t1, pr_number=42, pr_title="Add feature", branch="feature-x",

@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Literal
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -96,7 +96,7 @@ def _maybe_notify_sla_breach(session: Session, finding: Finding, sla_violated: b
     is treated as a fresh breach and notifies again, per the field's
     docstring in app.models.models.Finding."""
     if sla_violated and finding.sla_breach_notified_at is None:
-        finding.sla_breach_notified_at = datetime.utcnow()
+        finding.sla_breach_notified_at = datetime.now(UTC).replace(tzinfo=None)
         session.add(finding)
         session.commit()
         # commit() expires every attribute on `finding` by default -- without

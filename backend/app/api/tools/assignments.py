@@ -8,7 +8,7 @@ SECURITY_ENGINEER-or-admin, same trust level as SlaRule/PolicyRule -- which
 scanners run where is a security-policy decision, not general repo
 housekeeping.
 """
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -105,7 +105,7 @@ def upsert_assignment(
 
     for surface in USAGE_SURFACES:
         setattr(cfg, surface, getattr(payload, surface))
-    cfg.updated_at = datetime.utcnow()
+    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
     session.add(cfg)
     session.commit()

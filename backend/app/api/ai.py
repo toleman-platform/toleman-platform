@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -132,7 +132,7 @@ def _record_analysis_run(session: Session, user: User, finding_id: int) -> None:
         existing = session.exec(
             select(AiAnalysisRun).where(AiAnalysisRun.user_id == user.id, AiAnalysisRun.finding_id == finding_id)
         ).first()
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         if existing:
             existing.last_analyzed_at = now
             existing.analysis_count += 1

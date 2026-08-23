@@ -7,7 +7,7 @@ webhook-driven (real-time, PR opened/synchronize) path call the exact same
 logic instead of two copies drifting apart.
 """
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 from sqlmodel import Session, select
@@ -746,7 +746,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             t for t in guardrail_tools if t not in failed_tools and t not in skipped_tools
         )
         pr_scan.tools_failed = ",".join(failed_tools)
-        pr_scan.completed_at = datetime.utcnow()
+        pr_scan.completed_at = datetime.now(UTC).replace(tzinfo=None)
         session.add(pr_scan)
         session.commit()
         session.refresh(pr_scan)
@@ -767,7 +767,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             # (#271) completed_at is set just above this call; falling back
             # to now() keeps the footer honest rather than omitting it if
             # that ordering ever changes.
-            scanned_at=pr_scan.completed_at or datetime.utcnow(),
+            scanned_at=pr_scan.completed_at or datetime.now(UTC).replace(tzinfo=None),
         )
         post_pr_comment(session, target, pr_number, comment_body)
 
@@ -813,7 +813,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         }
     except Exception as exc:
         pr_scan.status = PRGuardrailStatus.ERROR
-        pr_scan.completed_at = datetime.utcnow()
+        pr_scan.completed_at = datetime.now(UTC).replace(tzinfo=None)
         session.add(pr_scan)
         session.commit()
         return {

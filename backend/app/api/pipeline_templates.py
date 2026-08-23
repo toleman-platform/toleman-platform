@@ -126,7 +126,7 @@ def update_template(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    from datetime import datetime
+    from datetime import UTC, datetime
 
     template = _get_template_scoped(session, user, template_id)
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=template.workspace_id)
@@ -134,7 +134,7 @@ def update_template(
         template.name = payload.name
     if payload.steps is not None:
         template.steps = _validate_steps(payload.steps)
-    template.updated_at = datetime.utcnow()
+    template.updated_at = datetime.now(UTC).replace(tzinfo=None)
     session.add(template)
     session.commit()
     session.refresh(template)

@@ -10,7 +10,7 @@ route here and the webhook-driven real-time path (app/api/webhooks.py) run
 the exact same code, not two copies.
 """
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
@@ -319,7 +319,7 @@ def approve_ignore(
         raise HTTPException(status_code=404, detail="finding not found")
     finding.ignore_status = IgnoreStatus.APPROVED
     finding.ignore_reviewed_by = user.email
-    finding.ignore_reviewed_at = datetime.utcnow()
+    finding.ignore_reviewed_at = datetime.now(UTC).replace(tzinfo=None)
     session.add(finding)
     session.commit()
     session.refresh(finding)
@@ -345,7 +345,7 @@ def reject_ignore(
         raise HTTPException(status_code=404, detail="finding not found")
     finding.ignore_status = IgnoreStatus.REJECTED
     finding.ignore_reviewed_by = user.email
-    finding.ignore_reviewed_at = datetime.utcnow()
+    finding.ignore_reviewed_at = datetime.now(UTC).replace(tzinfo=None)
     session.add(finding)
     session.commit()
     session.refresh(finding)

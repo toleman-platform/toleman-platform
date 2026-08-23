@@ -72,14 +72,6 @@ def test_registry_only_tools_are_never_returned(session):
     assert "kics" not in tools_for_surface(session, 1, "pr_guardrail")
 
 
-def test_internal_invocation_modes_are_never_returned(session):
-    # trivy-sbom is trivy with --format cyclonedx, dispatched only by the
-    # SBOM pipeline. Offering it as a scan tool would return SBOM components
-    # parsed as findings.
-    assert "trivy-sbom" not in runnable_tools()
-    assert "trivy-sbom" not in tools_for_surface(session, 1, "on_demand_scan")
-
-
 def test_every_returned_tool_is_actually_runnable(session):
     for surface in ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail"):
         for tool in tools_for_surface(session, 1, surface):

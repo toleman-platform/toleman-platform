@@ -189,11 +189,12 @@ def generate_sbom(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Dispatch an async SBOM generation run (#59) instead of cloning+
-    running trivy synchronously inside the request handler -- a handful of
-    concurrent requests here used to be enough to exhaust FastAPI's
-    threadpool. Creates a SbomRun row (status="running"), hands the actual
-    clone+scan work to app.tasks.sbom_tasks.run_sbom_generation via
-    .delay(), and returns immediately with the run's id. Poll
+    importing the dependency graph synchronously inside the request handler
+    -- a handful of concurrent requests here used to be enough to exhaust
+    FastAPI's threadpool. Creates a SbomRun row (status="running"), hands
+    the actual clone+import work to
+    app.tasks.sbom_tasks.run_sbom_generation via .delay(), and returns
+    immediately with the run's id. Poll
     GET /api/sbom/{target_id}/runs/{run_id} until status leaves "running" to
     get the same components/new_count payload this used to return
     synchronously."""
@@ -238,14 +239,14 @@ def import_github_sbom(
     """Issue #227: import the target's dependency inventory from GitHub's
     Dependency Graph (see app.core.github_dependency_graph -- the same
     source app.tasks.sbom_tasks.run_sbom_generation already unions in
-    automatically) independent of a full trivy scan. Runs synchronously (a
-    single GitHub API call, no clone/subprocess), merges the components into
-    the target's persisted SBOM via upsert_components (source="github", so
-    it's tracked the same way as the automatic union), and returns the
-    new_count so the UI can show what changed. A 502 means the dependency
-    graph is unavailable (no token, disabled, or the request was rejected)
-    -- distinct from an empty import, which is a legitimate "repo has no
-    dependencies" result and is reported as count 0."""
+    automatically) independent of a full SBOM generation run. Runs
+    synchronously (a single GitHub API call, no clone/subprocess), merges
+    the components into the target's persisted SBOM via upsert_components
+    (source="github", so it's tracked the same way as the automatic union),
+    and returns the new_count so the UI can show what changed. A 502 means
+    the dependency graph is unavailable (no token, disabled, or the request
+    was rejected) -- distinct from an empty import, which is a legitimate
+    "repo has no dependencies" result and is reported as count 0."""
     target = _get_target(target_id, session)
     slug = repo_slug_from_url(target.repo_url)
     token = resolve_github_token(session, target.workspace_id, slug)

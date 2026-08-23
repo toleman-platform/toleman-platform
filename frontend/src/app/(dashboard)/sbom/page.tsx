@@ -216,7 +216,7 @@ export default function SbomPage() {
     try {
       // POST /api/sbom/{target_id} now dispatches a Celery task and returns
       // immediately with status: "running" (#59) instead of blocking until
-      // the clone+trivy scan finishes -- poll
+      // the clone+dependency-graph import finishes -- poll
       // GET /api/sbom/{target_id}/runs/{run_id} until it's done.
       const dispatch = await api.generateSbom(runTargetId);
       cancelPollRef.current = pollUntilSettled(
@@ -312,12 +312,10 @@ export default function SbomPage() {
         </h1>
         <p className="text-sm text-muted-foreground">
           Real CycloneDX SBOM generated from the target&apos;s dependency
-          manifests (requirements.txt, package.json, go.mod, ...) via{" "}
-          <code className="rounded bg-secondary px-1 py-0.5 text-xs">
-            trivy fs --format cyclonedx
-          </code>{" "}
-          — no mocked or inferred data. Results are persisted, so this view
-          reflects the last generation even after a reload.
+          inventory — imported from GitHub&apos;s Dependency Graph and any
+          uploaded CycloneDX/SPDX documents (requirements.txt, package.json,
+          go.mod, ...) — no mocked or inferred data. Results are persisted, so
+          this view reflects the last generation even after a reload.
         </p>
       </div>
 
@@ -340,7 +338,7 @@ export default function SbomPage() {
                 <WhatsIncludedCard
                   key="included"
                   items={[
-                    "All direct dependencies discovered via trivy fs, with pinned versions",
+                    "Resolved dependencies from GitHub's Dependency Graph, with pinned versions",
                     "Known-vulnerable packages cross-referenced against this target's OSS Vulnerabilities tab",
                     "Package URL (purl) and ecosystem per component",
                   ]}

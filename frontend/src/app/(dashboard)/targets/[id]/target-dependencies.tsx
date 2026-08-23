@@ -5,6 +5,25 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Package } from "lucide-react";
 
+// (#227) Human label for a component's provenance source. "github" is handled
+// separately (it gets a tooltip); everything else maps to a short label.
+// Legacy rows from before trivy SBOM generation was removed keep a neutral
+// label rather than being dropped or relabelled as a newer source.
+function sourceLabel(source?: string): string {
+  switch (source) {
+    case "upload":
+      return "upload";
+    case "github,upload":
+      return "graph + upload";
+    case "trivy":
+      return "manifest";
+    case "trivy,github":
+      return "manifest + graph";
+    default:
+      return source ?? "manifest";
+  }
+}
+
 // (#276) A per-target dependency inventory, separate from the findings list.
 //
 // The gap this closes: a target's page could only ever answer "what is
@@ -35,10 +54,10 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
   const components: SbomComponent[] = sbom.components;
   const newCount = components.filter((c) => c.is_new).length;
   // (#227) A component only GitHub's Dependency Graph reported is transitive
-  // by definition -- trivy reads manifests, so anything absent from one but
-  // present in the resolved graph is not pinned where a manifest scan can
-  // see it. Counting them makes the second source's value visible rather
-  // than silently folding its results into one undifferentiated total.
+  // by definition -- it's present in the resolved graph but not pinned in any
+  // manifest an upload would see. Counting them makes the resolved-graph
+  // source's value visible rather than silently folding its results into one
+  // undifferentiated total.
   const transitiveOnly = components.filter((c) => c.source === "github").length;
 
   return (
@@ -80,7 +99,7 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
                           transitive
                         </span>
                       ) : (
-                        (c.source ?? "trivy").replace("trivy,github", "manifest + graph")
+                        sourceLabel(c.source)
                       )}
                     </td>
                   </tr>

@@ -14,7 +14,6 @@ from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
-from app.scanners.parsers import parse_trivy_sbom
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -57,7 +56,7 @@ def _notify_scan_failure(session: Session, target: Target, tool: str, error: str
 def run_sbom_generation(self, target_id: int, run_id: int):
     """Async counterpart to the previously-synchronous POST
     /api/sbom/{target_id} handler (#59): clone the target's default branch,
-    run trivy's CycloneDX SBOM scan, upsert the components, and update the
+    import its GitHub Dependency Graph, upsert the components, and update the
     SbomRun row the endpoint already created so
     GET /api/sbom/{target_id}/runs/{run_id} can report completion.
     """
@@ -81,33 +80,22 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
                 scan_id=f"sbom-{run.id}",
             )
-            raw = runner.run_tool("trivy-sbom", repo_path)
-            discovered = parse_trivy_sbom(raw)
-            new_components = upsert_components(
-                session, target_id, target.default_branch, discovered, source="trivy"
-            )
+            new_components: list = []
 
-            # (#227, raised by @r0075h3ll) GitHub's Dependency Graph as a
-            # second source. trivy reads dependency manifests and reports
-            # what is pinned there; GitHub reports what those manifests
-            # actually resolve to, including transitive dependencies that
-            # appear in no manifest at all. On this repo's own backend that
-            # was 22 direct pins versus ~98 installed packages -- the gap
-            # #239 found from the other direction.
-            #
-            # This is the right mechanism for *target* repos specifically.
-            # #239 closed the same gap for our own CI by resolving
-            # requirements.txt into a venv, which deliberately does not
-            # generalise: resolving a customer's manifest means running
-            # `pip install` on untrusted input. GitHub has already done the
-            # resolution server-side, so this needs no checkout and executes
-            # nothing.
+            # (#227, raised by @r0075h3ll) GitHub's Dependency Graph is the
+            # dependency inventory source. It reports what each manifest
+            # actually resolves to, including transitive dependencies that
+            # appear in no manifest at all -- resolution GitHub has already
+            # done server-side, so this needs no checkout and executes
+            # nothing. On this repo's own backend that was 22 direct pins
+            # versus ~98 installed packages -- the gap #239 found from the
+            # other direction.
             #
             # Best-effort and explicitly recorded. A repo whose graph is
             # disabled (the default for private repos) is not a repo with no
             # dependencies, so the failure is written to sources_failed
             # rather than swallowed -- see DependencyGraphUnavailable.
-            sources_run = ["trivy"]
+            sources_run: list[str] = []
             sources_failed: list[str] = []
             try:
                 gh_token = resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url))

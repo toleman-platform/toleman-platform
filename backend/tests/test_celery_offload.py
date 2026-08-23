@@ -281,11 +281,12 @@ def test_sbom_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, mon
 
     monkeypatch.setattr(sbom_tasks, "engine", engine)
     monkeypatch.setattr(sbom_tasks.runner, "clone_repo", _fake_clone_repo)
-    monkeypatch.setattr(sbom_tasks.runner, "run_tool", lambda tool, repo_path: {})
     monkeypatch.setattr(
         sbom_tasks,
-        "parse_trivy_sbom",
-        lambda raw: [{"name": "anthropic", "version": "0.121.0", "package_type": "pip", "purl": "pkg:pypi/anthropic@0.121.0"}],
+        "fetch_dependency_graph",
+        lambda repo_url, token=None: [
+            {"name": "anthropic", "version": "0.121.0", "package_type": "pip", "purl": "pkg:pypi/anthropic@0.121.0"}
+        ],
     )
 
     res = client.post(f"/api/sbom/{target_id}")

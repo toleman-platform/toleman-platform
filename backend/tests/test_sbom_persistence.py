@@ -4,7 +4,6 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api.sbom import _aggregate_org_components, upsert_components
 from app.models.models import SbomComponent, Target
-from app.scanners.parsers import parse_trivy_sbom
 
 
 @pytest.fixture()
@@ -154,30 +153,3 @@ def test_org_aggregation_only_uses_each_targets_default_branch(session):
 
     assert ordered == []
     assert summary["targets_with_sbom_count"] == 0
-
-
-def test_parse_trivy_sbom_filters_to_library_components_only():
-    raw = {
-        "components": [
-            {
-                "type": "application",
-                "name": "requirements.txt",
-                "properties": [{"name": "aquasecurity:trivy:Type", "value": "pip"}],
-            },
-            {
-                "type": "library",
-                "name": "anthropic",
-                "version": "0.121.0",
-                "purl": "pkg:pypi/anthropic@0.121.0",
-                "properties": [{"name": "aquasecurity:trivy:PkgType", "value": "pip"}],
-            },
-        ]
-    }
-    parsed = parse_trivy_sbom(raw)
-    assert len(parsed) == 1
-    assert parsed[0] == {
-        "name": "anthropic",
-        "version": "0.121.0",
-        "package_type": "pip",
-        "purl": "pkg:pypi/anthropic@0.121.0",
-    }

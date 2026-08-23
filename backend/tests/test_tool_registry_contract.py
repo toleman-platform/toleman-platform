@@ -17,7 +17,6 @@ import pytest
 
 from app.core.tool_registry import (
     BUNDLED_TOOLS,
-    INTERNAL_TOOL_KEYS,
     TOOL_REGISTRY,
     USAGE_SURFACES,
     default_usage_for,
@@ -75,19 +74,12 @@ def test_integrated_flag_is_derived_not_hand_maintained():
         assert entry["integrated"] == (entry["tool"] in TOOL_COMMANDS), entry["tool"]
 
 
-def test_every_runnable_tool_is_in_the_registry_or_declared_internal():
+def test_every_runnable_tool_is_in_the_registry():
     # The registry is what the marketplace shows. A tool Rikugan can dispatch
-    # but never lists is invisible to the operator who has to install it.
-    # Internal invocation modes (trivy-sbom) must opt out by name, so adding
-    # a real scanner without listing it still fails here.
-    missing = sorted(set(TOOL_COMMANDS) - set(ALL_TOOLS) - INTERNAL_TOOL_KEYS)
+    # but never lists is invisible to the operator who has to install it, so
+    # adding a real scanner without listing it still fails here.
+    missing = sorted(set(TOOL_COMMANDS) - set(ALL_TOOLS))
     assert not missing, f"runnable but not in the registry: {missing}"
-
-
-def test_internal_tools_are_real_and_not_double_listed():
-    for key in INTERNAL_TOOL_KEYS:
-        assert key in TOOL_COMMANDS, f"{key!r} is declared internal but is not dispatchable"
-        assert key not in ALL_TOOLS, f"{key!r} is both internal and listed in the marketplace"
 
 
 def test_bundled_tools_all_exist_in_the_registry():

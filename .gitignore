@@ -1,4 +1,3 @@
-deploy.sh
 backend/venv/
 backend/.env
 .env
@@ -16,4 +15,3 @@ CLAUDE.md
 .claude/worktrees/
 code-review-report.md
 market-research-report.md
-deploy.sh

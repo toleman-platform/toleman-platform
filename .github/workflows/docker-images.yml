@@ -1,23 +1,22 @@
 name: Docker Images Build
 
-# TEMPORARY: see the header in ci.yml. Restores the image builds on
-# GitHub-hosted runners while the CircleCI project is re-linked.
+# Builds the images docker-compose.yml actually ships, and scans them.
 #
-# Why these exist: every other job runs Python and Node directly against
-# whatever the runner already has. None of them build the images
-# docker-compose.yml actually ships, so a broken image could -- and did --
-# reach main with every check green. The break: nothing asks for setuptools
-# directly, but semgrep's pinned opentelemetry-instrumentation declares
-# setuptools>=16.0, pip resolved 82.0.0, which removed pkg_resources, which
-# that same module imports. requirements.txt had not changed; a transitive
-# resolve drifted underneath it.
+# Why this exists: every other job runs Python and Node directly against
+# whatever the runner already has. None of them build the images, so a
+# broken image could -- and did -- reach main with every check green. The
+# break: nothing asks for setuptools directly, but semgrep's pinned
+# opentelemetry-instrumentation declares setuptools>=16.0, pip resolved
+# 82.0.0, which removed pkg_resources, which that same module imports.
+# requirements.txt had not changed; a transitive resolve drifted underneath
+# it.
 #
-# On main plus manual dispatch rather than every PR: --no-cache builds of
-# three images are slow by construction, and this is a budget the repo has
-# already exhausted twice. Dispatch this manually on a branch that touches a
-# Dockerfile or requirements.txt before merging.
-
+# That failure mode is exactly what a pre-merge check is for, which is why
+# this runs on pull requests as well as main. It did not, briefly, while CI
+# was rationed against a GitHub Actions minute budget -- a constraint that
+# does not apply to standard runners on a public repository.
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_dispatch:

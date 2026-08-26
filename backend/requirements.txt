@@ -10,7 +10,7 @@
 fastapi==0.134.0
 # Pinned explicitly, not left to resolve transitively, for two reasons: this
 # exact package is what #239 was about, so it belongs where Trivy's
-# manifest-only scan (see the mechanism note in .circleci/config.yml) can see
+# manifest-only scan (see the mechanism note in .github/workflows/self-scan.yml) can see
 # it directly rather than only through the fully-resolved-dependency job; and
 # a floor without a pin invites the opposite failure someday -- a new fastapi
 # release loosening its own bound further while requirements.txt looks

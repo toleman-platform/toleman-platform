@@ -521,10 +521,8 @@ export type SbomComponent = {
   version: string;
   package_type: string;
   purl: string;
-  // (#227) "github", "upload", or "github,upload". A component only GitHub's
-  // Dependency Graph reported is by definition transitive -- it's present in
-  // the resolved graph but not pinned anywhere an uploaded manifest scan can
-  // see.
+  // (#227) "github", "upload", or "github,upload" -- which source(s)
+  // reported this component.
   source?: string;
   is_new: boolean;
   first_seen: string;
@@ -532,9 +530,9 @@ export type SbomComponent = {
 };
 
 // Issue #121: export-format parity with Reports (CSV/PDF) plus the two real
-// SBOM standards -- CycloneDX is produced by GitHub's Dependency Graph SBOM
-// API and the upload path; SPDX JSON is the other one compliance tooling
-// commonly expects. Matches GET /api/sbom/{id}/export's `format` query pattern.
+// SBOM standards -- GitHub's Dependency Graph SBOM API returns SPDX JSON;
+// the app's own export and upload paths support both CycloneDX and SPDX
+// JSON. Matches GET /api/sbom/{id}/export's `format` query pattern.
 // (#276) One row per scan for a single target, newest first. Distinct from
 // ScanSummary, which aggregates to one row per (target, tool) so list pages
 // don't pull a year of history -- see GET /api/scans/summary's docstring.

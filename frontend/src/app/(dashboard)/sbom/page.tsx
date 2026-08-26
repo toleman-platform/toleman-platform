@@ -312,10 +312,10 @@ export default function SbomPage() {
         </h1>
         <p className="text-sm text-muted-foreground">
           Real CycloneDX SBOM generated from the target&apos;s dependency
-          inventory — imported from GitHub&apos;s Dependency Graph and any
-          uploaded CycloneDX/SPDX documents (requirements.txt, package.json,
-          go.mod, ...) — no mocked or inferred data. Results are persisted, so
-          this view reflects the last generation even after a reload.
+          inventory — imported from GitHub&apos;s Dependency Graph and uploaded
+          CycloneDX/SPDX JSON documents — no mocked or inferred data. Results
+          are persisted, so this view reflects the last generation even after
+          a reload.
         </p>
       </div>
 
@@ -338,7 +338,7 @@ export default function SbomPage() {
                 <WhatsIncludedCard
                   key="included"
                   items={[
-                    "Resolved dependencies from GitHub's Dependency Graph, with pinned versions",
+                    "Components from GitHub's Dependency Graph and uploaded SBOM documents, with versions when available",
                     "Known-vulnerable packages cross-referenced against this target's OSS Vulnerabilities tab",
                     "Package URL (purl) and ecosystem per component",
                   ]}

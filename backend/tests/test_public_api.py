@@ -92,7 +92,7 @@ def _assign(engine, user_id: int, workspace_id: int, role: WorkspaceRole = Works
 
 
 # ---------------------------------------------------------------------------
-# Token management (/api/api-tokens) -- session-authenticated
+# Token management (/api/api-tokens), session-authenticated
 # ---------------------------------------------------------------------------
 
 
@@ -144,7 +144,7 @@ def test_cannot_revoke_someone_elses_token(client, engine):
 
 
 # ---------------------------------------------------------------------------
-# Public API (/api/public/v1) -- Bearer-token authenticated
+# Public API (/api/public/v1), Bearer-token authenticated
 # ---------------------------------------------------------------------------
 
 

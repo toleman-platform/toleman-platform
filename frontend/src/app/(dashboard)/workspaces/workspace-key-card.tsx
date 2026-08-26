@@ -10,7 +10,7 @@ const MASKED_KEY = "•".repeat(32);
 
 // Issue #224: workspace-id-keyed twin of settings/page.tsx's
 // WorkspaceKeyCard, which took a `targetId` and proxied through
-// api.workspaceKey(targetId) -- the only way to see a workspace's key was
+// api.workspaceKey(targetId), the only way to see a workspace's key was
 // to first pick one of its targets in an unrelated target picker. This
 // looks the key up directly by workspace id (api.workspaceApiKey), for the
 // new Workspaces page where a workspace is what's actually selected.

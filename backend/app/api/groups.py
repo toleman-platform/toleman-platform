@@ -1,6 +1,6 @@
 """Group CRUD (issue #61): workspace-scoped tags/groups ("production",
 "PCI-scope", "internal-tool", ...) for organizing Targets at scale. This is
-the foundation for group-level policy (#62) and group-level SLA (#70) --
+the foundation for group-level policy (#62) and group-level SLA (#70);
 this issue only covers create/list/update/delete of Group rows and reading
 which workspace they belong to. Target<->Group assignment lives in
 app/api/targets.py (POST/DELETE /api/targets/{id}/groups/{group_id}) since
@@ -71,7 +71,7 @@ def create_group(
     user: User = Depends(current_user),
 ):
     # workspace_id lives inside the JSON body, not a path/query param, so
-    # require_workspace_role's name-binding can't see it -- check explicitly
+    # require_workspace_role's name-binding can't see it; check explicitly
     # (same reason POST /api/targets does, see targets.py's create_target).
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
     group = Group(workspace_id=payload.workspace_id, name=payload.name, color=payload.color)
@@ -110,7 +110,7 @@ def delete_group(
     if not group:
         raise HTTPException(status_code=404, detail="group not found")
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=group.workspace_id)
-    # Hard-delete along with its assignments -- unlike PolicyRule this isn't
+    # Hard-delete along with its assignments, unlike PolicyRule this isn't
     # an audit-relevant record, it's pure organizational metadata, so there's
     # no soft-delete/active flag to preserve.
     memberships = session.exec(select(TargetGroup).where(TargetGroup.group_id == group_id)).all()

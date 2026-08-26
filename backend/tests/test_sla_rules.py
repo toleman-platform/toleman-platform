@@ -204,7 +204,7 @@ def test_severity_specific_rules_are_independent(engine):
 
 def test_conflicting_multi_group_resolves_most_restrictive(engine):
     """A target in two groups with different Critical SLAs must resolve to
-    the fewest days -- most-restrictive-wins, same fail-closed philosophy as
+    the fewest days; most-restrictive-wins, same fail-closed philosophy as
     #62's conflicting-groups enforcement_mode resolution."""
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)

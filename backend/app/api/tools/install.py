@@ -1,8 +1,8 @@
-"""`POST /api/tools/{tool}/install` + `GET /api/tools/installs/{id}` --
+"""`POST /api/tools/{tool}/install` + `GET /api/tools/installs/{id}`:
 admin-only one-click install (issue #216).
 
 The endpoint takes a **registry key**, never a package name, so a caller
-can only choose from app.core.tool_registry -- see that module's docstring
+can only choose from app.core.tool_registry; see that module's docstring
 and app.core.tool_install for the full argument about why this is not the
 "shell out to a package manager from a web request" surface #75 declined to
 build.
@@ -22,7 +22,7 @@ from app.tasks.tool_install_tasks import run_tool_install
 router = APIRouter()
 
 # Each request runs pip against a real package index and can pull a large
-# dependency tree, so this is tighter than plain API reads -- enough for an
+# dependency tree, so this is tighter than plain API reads; enough for an
 # admin kitting out a fresh deployment, not enough to hammer the worker pool.
 TOOL_INSTALL_RATE_LIMIT = 6
 TOOL_INSTALL_RATE_WINDOW_SECONDS = 300
@@ -52,7 +52,7 @@ def active_installs(
     Finding CTX-03's second half: useToolInstall held the spinner in local
     React state, so navigating away during an install and coming back offered
     a fresh "Install" button while the job was still running on the worker.
-    Same class of bug as CTX-02 on PR History, and the same fix -- the server
+    Same class of bug as CTX-02 on PR History, and the same fix; the server
     knows what is in flight, so the card can render it without having been
     the thing that started it.
 
@@ -67,7 +67,7 @@ def active_installs(
     out = {}
     for run in running:
         # A worker that died mid-install leaves this "running" forever, which
-        # renders as a permanently spinning card -- indistinguishable from a
+        # renders as a permanently spinning card; indistinguishable from a
         # very slow install of a big dependency tree.
         if mark_stale_if_needed(session, run):
             continue
@@ -98,7 +98,7 @@ def install_tool(
         # the endpoint does not enumerate what does or does not exist.
         raise HTTPException(
             status_code=400,
-            detail=f"{tool!r} cannot be installed from here -- see its install command in the marketplace",
+            detail=f"{tool!r} cannot be installed from here; see its install command in the marketplace",
         )
 
     enforce_rate_limit(

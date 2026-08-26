@@ -3,30 +3,30 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Light/dark design tokens (#115) -- dark is the app's original, unchanged
+/* Light/dark design tokens (#115); dark is the app's original, unchanged
    default (no attribute needed); light is opted into via `data-theme="light"`
    on <html>, set by ThemeInit/ThemeToggle (src/components/theme-toggle.tsx).
    Light values are the real design-board palette, NOT auto-inverted/auto-
-   generated from dark -- see the token-by-token comments below for why each
+   generated from dark; see the token-by-token comments below for why each
    one differs from a naive invert. Every color a component consumes must be
    one of these custom properties (or a Tailwind utility backed by one, via
-   the `@theme inline` block) -- no new literal hex/rgb in component code. */
+   the `@theme inline` block); no new literal hex/rgb in component code. */
 :root {
   color-scheme: dark;
 
   /* Neutral-charcoal repaint (#224, senior UI review): every dark-theme
      surface below used to be a shade of the same blue-slate family
-     (background/card/sidebar/border/muted all had a visible blue hue --
+     (background/card/sidebar/border/muted all had a visible blue hue,
      Tailwind/shadcn's stock slate scale, never actually customized), which
      is exactly the palette every unstyled AI-scaffolded dashboard ships
      with by default. Wiz and Snyk (the two competitor products this pass
      was benchmarked against) both use a true neutral gray canvas and spend
-     color ONLY on the brand accent and semantic severity states -- so
+     color ONLY on the brand accent and semantic severity states; so
      nothing here reads as "trying to be colorful," it reads as deliberate.
      Every value below is a true neutral (equal-ish R/G/B, no channel bias
      toward blue) except the accent and the four semantic colors, which are
      the whole point of having a neutral canvas: they're now the only color
-     in the room. Light mode is unchanged -- its surfaces were already
+     in the room. Light mode is unchanged; its surfaces were already
      near-white/near-black rather than visibly slate-tinted, and the user's
      complaint was specifically about dark mode. */
   --background: #16181b;
@@ -50,7 +50,7 @@
   --accent: #23262a;
   --accent-foreground: #e9eaec;
   /* --accent-strong: brand cyan used as bare text/icon color directly on a
-     canvas/card/sidebar background (links, active nav state, icon tiles) --
+     canvas/card/sidebar background (links, active nav state, icon tiles);
      as opposed to --primary, which is only ever a button/badge *fill*.
      Dark mode's cyan reads fine as text on the app's neutral-charcoal
      background, so it's identical to --primary here; light mode gets its
@@ -94,12 +94,12 @@
   --density-list-gap: 0.5rem;
 }
 
-/* Light mode (#115) -- real, individually-chosen values from the design
+/* Light mode (#115), real, individually-chosen values from the design
    board, not a mechanical invert of the dark palette. Severity/status colors
    in particular are deepened on their own merits for contrast on white
    (e.g. the dark-mode amber #f59e0b is unreadable as text on white, so
    --chart-3/--warning get a real deepened amber here, not a lightness flip).
-   Only tokens whose value actually changes are listed -- everything else
+   Only tokens whose value actually changes are listed; everything else
    (--primary, --primary-foreground, --ring, --sidebar-primary,
    --sidebar-primary-foreground, --sidebar-ring) falls through unchanged
    from :root, per the button-fill reasoning above. */
@@ -125,7 +125,7 @@
   --input: #dde2ea;
   --chart-1: var(--accent-strong); /* "Medium" severity reuses the brand accent */
   --chart-2: #0e6ba8; /* deepened info blue (was unused in dark; now backs "already integrated") */
-  --chart-3: #8a6200; /* deepened amber/warning -- bright yellow is unreadable on white */
+  --chart-3: #8a6200; /* deepened amber/warning; bright yellow is unreadable on white */
   --chart-4: #c0193f; /* deepened red, mirrors --destructive */
   --chart-5: #047857; /* deepened success green */
   --sidebar: #ffffff;
@@ -271,7 +271,7 @@
 
 @layer utilities {
   /* Shared hover/press micro-interaction for interactive surfaces (cards,
-     nav items, table rows) — subtle lift + border glow, not a bouncy
+     nav items, table rows); subtle lift + border glow, not a bouncy
      animation. Respects reduced-motion. */
   .interactive-surface {
     transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;

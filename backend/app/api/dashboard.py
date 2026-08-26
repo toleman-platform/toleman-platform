@@ -24,7 +24,7 @@ def _scoped_targets_query(ws_ids: list[int] | None):
 @router.get("/stats")
 def stats(session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Aggregate counts for dashboard charts. Default-branch, Open findings
-    only, scoped to the caller's workspaces (issue #57 -- admins still see
+    only, scoped to the caller's workspaces (issue #57: admins still see
     everything)."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
@@ -95,7 +95,7 @@ def sla_compliance(session: Session = Depends(get_session), user: User = Depends
     """SLA compliance summary (issue #70): among OPEN (and Reopened, still
     unresolved) findings that a real SlaRule actually applies to, how many
     are past their days-to-fix window. Computed live via
-    app.core.sla.compute_sla_status (query-time, no background job) --
+    app.core.sla.compute_sla_status (query-time, no background job);
     scoped to the caller's workspaces (issue #57)."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
@@ -129,9 +129,9 @@ def security_score(
     """Composite security health score (issue #63): a single 0-100 number +
     letter grade + component breakdown (open findings by severity, SLA
     compliance reused from #70, scan coverage, FP rate, week-over-week
-    trend -- see app.core.security_score for the full formula/constants).
+    trend; see app.core.security_score for the full formula/constants).
     Computable at org (no filter), group, or single-target scope, mirroring
-    #61's `findings.py` group_id filtering convention -- `target_id` and
+    #61's `findings.py` group_id filtering convention, `target_id` and
     `group_id` are mutually exclusive (neither means org-wide). Scoped to
     the caller's workspaces via accessible_workspace_ids (issue #57). The
     same scope resolution backs the `security_score` widget
@@ -163,7 +163,7 @@ class LayoutIn(BaseModel):
 
 @router.get("/widgets")
 def list_widget_catalog():
-    """The full widget catalog (issue #69) -- what's available to add to a
+    """The full widget catalog (issue #69); what's available to add to a
     layout, not a specific user's current layout. Deliberately a small,
     concrete list (see app.core.widgets docstring), not a generic
     chart-builder schema."""
@@ -176,7 +176,7 @@ def list_widget_catalog():
 @router.get("/layout")
 def get_layout(session: Session = Depends(get_session), user: User = Depends(current_user)) -> LayoutOut:
     """The caller's saved dashboard composition, or a sensible default set
-    of widgets if none has been saved yet (issue #69) -- never an empty
+    of widgets if none has been saved yet (issue #69); never an empty
     dashboard just because no row exists."""
     row = session.exec(select(DashboardLayout).where(DashboardLayout.user_id == user.id)).first()
     if row and row.widgets:
@@ -189,7 +189,7 @@ def put_layout(
     body: LayoutIn, session: Session = Depends(get_session), user: User = Depends(current_user)
 ) -> LayoutOut:
     """Persist the caller's dashboard composition (add/remove/reorder all
-    collapse to "save this ordered list"). One row per user -- upserted."""
+    collapse to "save this ordered list"). One row per user, upserted."""
     for w in body.widgets:
         if w.widget_id not in WIDGET_CATALOG:
             raise HTTPException(status_code=400, detail=f"unknown widget_id: {w.widget_id}")
@@ -209,13 +209,13 @@ def put_layout(
 
 @router.get("/widget-data")
 def widget_data(session: Session = Depends(get_session), user: User = Depends(current_user)):
-    """Batch data fetch (issue #69) -- one round-trip for every widget
+    """Batch data fetch (issue #69); one round-trip for every widget
     currently in the caller's layout (or the default set if unsaved),
     rather than the frontend making one request per widget. Each widget's
     real query logic lives in app.core.widgets and is reused as-is, not
     duplicated here. A single widget instance's resolver failing (e.g. a
-    malformed config) doesn't take the rest of the dashboard down with it
-    -- it surfaces as {"error": ...} for just that instance."""
+    malformed config) doesn't take the rest of the dashboard down with it;
+    it surfaces as {"error": ...} for just that instance."""
     ws_ids = accessible_workspace_ids(session, user)
     row = session.exec(select(DashboardLayout).where(DashboardLayout.user_id == user.id)).first()
     widgets = row.widgets if row and row.widgets else build_default_layout()
@@ -232,6 +232,6 @@ def widget_data(session: Session = Depends(get_session), user: User = Depends(cu
             continue
         try:
             result[w["id"]] = {"widget_id": widget_id, "data": entry["resolver"](session, ws_ids, w.get("config") or {})}
-        except Exception as exc:  # noqa: BLE001 -- isolate one widget's failure from the rest
+        except Exception as exc:  # noqa: BLE001, isolate one widget's failure from the rest
             result[w["id"]] = {"widget_id": widget_id, "error": str(exc)}
     return {"widgets": result}

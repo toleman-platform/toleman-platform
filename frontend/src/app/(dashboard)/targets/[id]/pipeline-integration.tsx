@@ -7,7 +7,7 @@ import { safeHref } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-// Issue #66: "Add Pipeline" flow -- preview the generated per-target
+// Issue #66: "Add Pipeline" flow, preview the generated per-target
 // GitHub Actions workflow, then open a real PR against the target's repo
 // adding it, via the GitHub App. Integration status (pipeline_integrated /
 // pipeline_pr_url) is read straight off the Target row so a page reload
@@ -125,7 +125,7 @@ export function PipelineIntegration({
               <p className="text-xs text-chart-3">
                 Requires the <code>TOLEMAN_API_URL</code> / <code>TOLEMAN_API_KEY</code> Actions secrets on
                 the target repo. <code>TOLEMAN_API_URL</code> must be a publicly reachable Toleman
-                deployment -- GitHub&apos;s cloud runners cannot reach localhost.
+                deployment, GitHub&apos;s cloud runners cannot reach localhost.
               </p>
               <pre className="max-h-96 overflow-auto rounded-md bg-secondary p-3 text-[11px] leading-relaxed text-foreground">
                 {workflow.yaml}

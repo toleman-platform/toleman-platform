@@ -428,7 +428,7 @@ def test_endpoint_404_for_inaccessible_target(client, engine):
 
 def test_endpoint_workspace_scoped_org_wide(client, engine):
     """A non-admin viewer only sees their own workspace's targets in the
-    org-wide (no filter) score -- another workspace's Critical findings
+    org-wide (no filter) score; another workspace's Critical findings
     must not drag their score down."""
     client, uid = _login(client, engine, role=UserRole.USER)
     my_ws = _make_workspace(engine, name="mine")

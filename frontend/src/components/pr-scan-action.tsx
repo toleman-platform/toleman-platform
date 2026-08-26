@@ -20,7 +20,7 @@ export function PrScanAction({ targetId, prNumber }: { targetId: number; prNumbe
   const [expanded, setExpanded] = useState(false);
   // CTX-02: `loading` alone is local component state, so navigating away and
   // back reset the button to a clickable "Scan This PR" while the scan was
-  // still running server-side -- inviting a duplicate clone-and-scan, and
+  // still running server-side; inviting a duplicate clone-and-scan, and
   // contradicting the audit-log card lower on the same page. The server is
   // the source of truth for what is in flight.
   const { isPrScanning, refresh: refreshActivePrScans } = useActivePrScans();

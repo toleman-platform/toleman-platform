@@ -213,7 +213,7 @@ def test_put_get_delete_round_trip_never_echoes_ciphertext(client, engine):
 
 def test_unknown_workspace_id_is_404_not_500(client, engine):
     # Issue #226 review nit: a caller-supplied workspace_id that doesn't
-    # exist used to sail through _resolve_workspace_id unchecked -- GET
+    # exist used to sail through _resolve_workspace_id unchecked; GET
     # silently read back token_set: false (indistinguishable from "no token
     # saved yet"), and PUT would have hit the GitHubToken FK constraint as a
     # bare 500 instead of a real 404.

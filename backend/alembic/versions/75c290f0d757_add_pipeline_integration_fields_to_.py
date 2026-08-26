@@ -20,14 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 # NOTE: `alembic revision --autogenerate` also picked up the same
 # pre-existing schema drift already flagged and stripped out of every prior
 # migration since #61 (stale `discoveredendpoint` table, missing finding/scan
-# indexes, NOT NULL tightening on platformconfig columns) -- none of that is
+# indexes, NOT NULL tightening on platformconfig columns); none of that is
 # part of issue #66, so only the two new `target` columns below are kept.
 
 
 def upgrade() -> None:
     op.add_column('target', sa.Column('pipeline_integrated', sa.Boolean(), nullable=False, server_default=sa.text('false')))
     op.add_column('target', sa.Column('pipeline_pr_url', sqlmodel.sql.sqltypes.AutoString(), nullable=True))
-    # Server default only needed to backfill existing rows -- match the
+    # Server default only needed to backfill existing rows, match the
     # model's plain Python-side default (SQLModel field default, not a DB
     # default) going forward, same convention used elsewhere in this file's
     # sibling migrations.

@@ -5,7 +5,7 @@ speed, not a free optimisation: a change in file A can make pre-existing
 code in file B vulnerable, and a diff-scoped scan will not see it.
 
 That makes the honesty properties the important ones to pin, more than the
-speed. Three states must stay distinguishable everywhere they surface --
+speed. Three states must stay distinguishable everywhere they surface,
 persisted columns, the PR comment, tools_run:
 
     ran, found nothing   a real clean result
@@ -64,7 +64,7 @@ class TestManifestGating:
 
     def test_trivy_scans_the_whole_tree_when_a_manifest_moved(self, tmp_path, monkeypatch):
         """Scoping trivy to the manifest file itself would report only direct
-        pins -- the #239 blind spot. It must get the whole checkout."""
+        pins, the #239 blind spot. It must get the whole checkout."""
         seen = {}
 
         def fake_execute(tool, cmd, repo_path):
@@ -130,7 +130,7 @@ class TestPerToolScoping:
             runner.run_tool("gosec", tmp_path, paths=["app.py"])
 
     def test_unscoped_call_is_unchanged(self, tmp_path, monkeypatch):
-        """paths=None must reproduce the old command exactly -- scheduled and
+        """paths=None must reproduce the old command exactly, scheduled and
         default-branch scans still scan everything."""
         seen = {}
         monkeypatch.setattr(runner, "_execute", lambda t, c, p: seen.setdefault("cmd", c) or {})

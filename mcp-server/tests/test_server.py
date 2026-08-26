@@ -1,4 +1,4 @@
-"""Tests for the Toleman MCP server (#108) -- mocked HTTP, no live backend
+"""Tests for the Toleman MCP server (#108), mocked HTTP, no live backend
 needed. Verifies each tool builds the right request against the public API
 (auth header, path, params) and returns the parsed response, plus that
 TOLEMAN_API_TOKEN is actually required at import time.

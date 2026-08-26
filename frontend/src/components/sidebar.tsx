@@ -39,7 +39,7 @@ import { BrandLockup } from "@/components/brand-mark";
 type NavItem = { href: string; label: string; icon: LucideIcon; adminOnly?: boolean };
 type NavGroup = { label: string; items: NavItem[] };
 
-// Regrouped by workflow stage (#116) -- the order a security engineer
+// Regrouped by workflow stage (#116); the order a security engineer
 // actually works a finding (discover -> scan -> triage -> report -> operate)
 // instead of the old flat 13-item "MAIN" list build order.
 const NAV_GROUPS: NavGroup[] = [
@@ -61,7 +61,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/sbom", label: "SBOM & OSS Vulns", icon: Package },
       { href: "/malicious-packages", label: "Malicious Packages", icon: Bug },
       // IA review (#224): AI-repo detection (#185), ModelScan (#186) and
-      // the LLM ruleset (#189) had no dedicated nav entry at all -- findable
+      // the LLM ruleset (#189) had no dedicated nav entry at all; findable
       // only by already knowing to filter Findings by tool name.
       { href: "/ai-security", label: "AI Security", icon: Bot },
     ],
@@ -69,12 +69,12 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Triage",
     items: [
-      // Nav label unified to "Findings" (#116) -- was "Vulnerabilities" here
+      // Nav label unified to "Findings" (#116); was "Vulnerabilities" here
       // while the page header said "Findings" and the dashboard KPI said
       // "Open Vulnerabilities"; all three now agree on one term.
       { href: "/findings", label: "Findings", icon: ShieldAlert },
       { href: "/pr-history", label: "PR History", icon: GitPullRequest },
-      // IA review (#224): daily security-review work, not admin config --
+      // IA review (#224): daily security-review work, not admin config;
       // moved out from under /admin. Deliberately NOT adminOnly: the page
       // itself already gates on admin/security_engineer, this just gives
       // security_engineer users (who could always reach it by typing the
@@ -114,7 +114,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
   const pathname = usePathname();
   const router = useRouter();
   // (BLD-01) Which backend is actually answering. A stale instance holding
-  // the same port is otherwise indistinguishable from a fresh one -- an
+  // the same port is otherwise indistinguishable from a fresh one, an
   // evaluator lost an hour to exactly that.
   const [build, setBuild] = useState<BuildInfo | null>(null);
   useEffect(() => {
@@ -125,7 +125,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
         if (!cancelled) setBuild(b);
       })
       .catch(() => {
-        // Not worth surfacing -- the stamp is a diagnostic aid, and failing
+        // Not worth surfacing; the stamp is a diagnostic aid, and failing
         // to show it must never disturb the nav.
       });
     return () => {
@@ -136,7 +136,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // "More nav below the fold" affordance -- see the comment on the nav
+  // "More nav below the fold" affordance; see the comment on the nav
   // element itself. Recomputed on scroll and on resize, since which items
   // fit depends entirely on viewport height.
   const navRef = useRef<HTMLElement | null>(null);
@@ -222,7 +222,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
 
   return (
     <>
-      {/* Mobile hamburger trigger -- only visible below md, opens the
+      {/* Mobile hamburger trigger, only visible below md, opens the
           off-canvas drawer. */}
       <button
         onClick={() => setMobileOpen(true)}
@@ -274,7 +274,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
             looked complete while Audit Log, GitHub Org Logs, Settings and
             Admin sat below the fold with no cue they existed (measured: 134px
             of nav hidden at 900px, 234px at 800px). The fade below is that
-            missing cue -- it only shows while there's more to scroll to. */}
+            missing cue; it only shows while there's more to scroll to. */}
         <div className="relative flex min-h-0 flex-1 flex-col">
         <nav ref={navRef} onScroll={updateNavScroll} className="flex flex-1 flex-col gap-3 overflow-y-auto p-2">
           {NAV_GROUPS.map((group) => {
@@ -322,7 +322,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
 
           {/* Density, theme and collapse were three full-width stacked rows,
               costing ~90px of sidebar height for controls a user touches once
-              a session -- height the nav list actually needs, since it
+              a session; height the nav list actually needs, since it
               already overflows below the fold (hence the scroll fade above).
               They now sit side by side as an icon row, with titles and
               aria-labels carrying the meaning the visible labels used to.

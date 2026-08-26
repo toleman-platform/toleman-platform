@@ -8,14 +8,14 @@ import { api, ActivePrScans } from "@/lib/api";
  *
  * PrScanAction used to hold "am I scanning" in a local `useState`. Navigating
  * away unmounted the component, so coming back showed a fresh, clickable
- * "Scan This PR" while the scan was still running -- and the audit-log card
+ * "Scan This PR" while the scan was still running, and the audit-log card
  * lower on the same page correctly showed `running`. The obvious next user
  * action was to click again and start a duplicate clone-and-scan.
  *
  * Deliberately the same shape as useActiveScans (#212): the server is the
  * source of truth for what is in flight, so a component can render running
  * state without having been the one that started it. Same adaptive interval,
- * for the same reason -- responsive while something is running, backed off
+ * for the same reason; responsive while something is running, backed off
  * hard while nothing is, since the only thing it watches for then is a scan
  * someone else started.
  */
@@ -26,7 +26,7 @@ export type UseActivePrScansResult = {
   activePrScans: ActivePrScans;
   /** Is a guardrail scan running for this exact PR right now? */
   isPrScanning: (targetId: number, prNumber: number) => boolean;
-  /** Poll immediately -- call right after dispatching so the button flips to
+  /** Poll immediately, call right after dispatching so the button flips to
    * running without waiting out the interval. */
   refresh: () => void;
 };

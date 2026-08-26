@@ -2,7 +2,7 @@
 
 Finding GH-04: set_commit_status() is documented "best-effort: never raises",
 and it failed open into a container log. Enforcement resolution is carefully
-fail-*closed* -- conflicting groups resolve to the most restrictive -- while
+fail-*closed* (conflicting groups resolve to the most restrictive) while
 the transport carrying that decision to GitHub was fail-open and silent. If
 an installation token breaks, PRs stop being marked and nobody is told.
 
@@ -28,7 +28,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # server_default="" so existing rows read as "no delivery problem"
-    # rather than NULL -- the model declares this a non-Optional str, and a
+    # rather than NULL, the model declares this a non-Optional str, and a
     # NULL would render as a phantom error on every historical scan.
     op.add_column(
         "prguardrailscan",

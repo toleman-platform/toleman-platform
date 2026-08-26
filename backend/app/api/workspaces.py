@@ -18,7 +18,7 @@ class UpdateWorkspaceRequest(BaseModel):
     # falling back to the hardcoded "block" default (see app.core.enforcement).
     enforcement_mode: str | None = None
     # Display name (issue #224: the new Workspaces page lets a workspace be
-    # renamed -- previously set once at bootstrap and never editable).
+    # renamed, previously set once at bootstrap and never editable).
     name: str | None = None
 
     @field_validator("enforcement_mode")
@@ -40,9 +40,9 @@ class UpdateWorkspaceRequest(BaseModel):
 def list_workspaces(session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Workspaces the caller can see (issue #32: the admin workspace-role UI
     needs the full list of *its own* workspaces, not just the ones a target
-    happens to already exist under). Was unscoped -- returned every
+    happens to already exist under). Was unscoped (returned every
     workspace platform-wide to any authenticated user, including other
-    tenants' workspace names and ids -- until #224 added a dedicated
+    tenants' workspace names and ids) until #224 added a dedicated
     Workspaces management page that surfaces this list directly instead of
     it only feeding an admin dropdown; accessible_workspace_ids() is the
     same tenant-isolation helper every other workspace-owned list route
@@ -50,7 +50,7 @@ def list_workspaces(session: Session = Depends(get_session), user: User = Depend
     ws_ids = accessible_workspace_ids(session, user)
     # Explicit order (issue #224): without it, Postgres is free to return
     # rows in a different order after any UPDATE touches one of them (e.g.
-    # renaming a workspace) -- the new Workspaces page's "selected" row is
+    # renaming a workspace); the new Workspaces page's "selected" row is
     # keyed by id, not position, but the useWorkspacePicker hook's default
     # selection falls back to whichever workspace lands first when no
     # explicit choice has been made yet, so an unstable order could make
@@ -109,7 +109,7 @@ def regenerate_workspace_key_by_id(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Workspace-id-keyed equivalent of POST
-    /api/targets/{id}/workspace-key/regenerate -- same DEVELOPER bar, same
+    /api/targets/{id}/workspace-key/regenerate, same DEVELOPER bar, same
     in-place overwrite with no grace period (see that route's docstring)."""
     workspace = session.get(Workspace, workspace_id)
     if not workspace:
@@ -132,7 +132,7 @@ def bootstrap(
 
     Creating a brand-new org/workspace (and its API key) is a platform-level
     action, not something scoped to any particular workspace, so this is
-    gated to the global admin role (issue #56) -- not a workspace-scoped
+    gated to the global admin role (issue #56); not a workspace-scoped
     role from #32's WorkspaceMembership/roles model, layered on top of the
     router's existing login_required so /api/workspaces (list) stays
     reachable by any logged-in user.

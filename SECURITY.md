@@ -25,7 +25,7 @@ A report is easiest to act on when it contains:
 - The affected component (backend API, frontend, MCP server, scanner
   runner, PR Guardrail, GitHub App integration) and version or commit
 - Steps to reproduce, ideally a minimal case
-- Any prerequisites — authentication, a particular role, a specific
+- Any prerequisites, authentication, a particular role, a specific
   configuration
 
 ## What to expect
@@ -42,7 +42,7 @@ a prompt response, a real fix, and public credit.
 
 ## Scope
 
-In scope: this repository — the backend API, the frontend, the MCP server,
+In scope: this repository, the backend API, the frontend, the MCP server,
 the scanner runner and its sandboxing, PR Guardrail, the GitHub App
 integration, authentication and session handling, secret storage and
 encryption, and the published container images.
@@ -50,7 +50,7 @@ encryption, and the published container images.
 Out of scope:
 
 - Vulnerabilities in the bundled third-party scanners themselves (Trivy,
-  Semgrep, Gitleaks, gosec, ModelScan). Report those upstream — see NOTICE
+  Semgrep, Gitleaks, gosec, ModelScan). Report those upstream; see NOTICE
   for each project. If Toleman *invokes* one unsafely, that is in scope.
 - Findings that require an attacker to already hold administrator
   credentials on the deployment.
@@ -66,8 +66,8 @@ If you are running Toleman rather than auditing it, the essentials:
 - Set `ENVIRONMENT` to something other than `local`, which enforces that
   `SESSION_SECRET` and `ADMIN_PASSWORD` are changed from their defaults.
 - Set `PLATFORM_ENCRYPTION_KEY` explicitly. Without it a fresh key is
-  generated per process, and every previously encrypted secret — GitHub App
-  credentials, Slack/Jira/SIEM webhooks, the AI provider key — becomes
+  generated per process, and every previously encrypted secret (GitHub App
+  credentials, Slack/Jira/SIEM webhooks, the AI provider key) becomes
   undecryptable on restart.
 - Set `COOKIE_SECURE=True` behind TLS.
 - Change the seeded admin account's password before exposing the instance.

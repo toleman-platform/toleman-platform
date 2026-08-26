@@ -1,7 +1,7 @@
 """Persisting AI-repo detection onto a Target (issue #185).
 
 Split out of ai_repo_detection.py so that module stays pure and trivially
-testable (no Session, no models) -- same separation as app.core.security_score
+testable (no Session, no models); same separation as app.core.security_score
 computing over a resolved id list while the API layer owns scoping.
 """
 from sqlmodel import Session, select
@@ -10,7 +10,7 @@ from app.core.ai_repo_detection import AiRepoDetection, detect_ai_repo
 from app.models.models import SbomComponent, Target
 
 # Cap on how much of the signal list is persisted. Signals are a human
-# explanation, not an inventory -- the full package list already lives in
+# explanation, not an inventory; the full package list already lives in
 # SbomComponent, and an unbounded string here would be a slow column to read
 # on every target list.
 MAX_SIGNAL_CHARS = 500
@@ -18,7 +18,7 @@ MAX_SIGNAL_CHARS = 500
 
 def components_for_target(session: Session, target: Target) -> list[tuple[str, str]]:
     """(name, package_type) for a target's persisted SBOM inventory on its
-    default branch -- the input detect_ai_repo() takes. A DB read, not a
+    default branch; the input detect_ai_repo() takes. A DB read, not a
     re-parse of the repo's manifests."""
     rows = session.exec(
         select(SbomComponent.name, SbomComponent.package_type).where(
@@ -44,7 +44,7 @@ def refresh_ai_repo_status(
 ) -> AiRepoDetection:
     """Recompute detection for `target` and persist it. Returns the result.
 
-    Deliberately does NOT touch is_ai_repo_override -- detection keeps
+    Deliberately does NOT touch is_ai_repo_override; detection keeps
     updating underneath a human decision rather than clobbering it, so the
     UI can still show "auto-detection says X, you have forced Y".
 

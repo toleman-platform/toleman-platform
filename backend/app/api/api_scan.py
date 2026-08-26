@@ -41,30 +41,30 @@ def trigger_api_scan(
     """Issue #72: dispatch an active API scan (nuclei) against endpoints
     already discovered for this target (Sprint 1's API Discovery). Async,
     same POST-creates-tracking-row-and-.delay()s pattern as
-    POST /api/scans/run -- creates a Scan row (tool="api-scan",
+    POST /api/scans/run, creates a Scan row (tool="api-scan",
     status="running") and returns its id immediately; poll
     GET /api/scans/{scan_id} until status leaves "running".
 
     Refuses outright (400, before any Scan row or Celery task exists) if
     the target has no api_base_url configured or has zero scannable
-    endpoints for its current selection -- this is active scanning against
+    endpoints for its current selection; this is active scanning against
     a real network endpoint, so it must fail loud and immediately on
     obviously-unscannable input rather than silently creating a scan that
     can only ever fail once a worker picks it up.
     """
     target = _get_target(target_id, session)
-    # (#232) The one and only surface check for Active API Scanning -- see
+    # (#232) The one and only surface check for Active API Scanning; see
     # is_nuclei_enabled_for_api_scan's docstring for why this can't go
     # through tools_for_surface like the other three surfaces do. Checked
     # before build_scan_urls below (which can be a slower DB-and-validation
     # path) so a workspace that has explicitly turned this off gets an
     # immediate, specific answer rather than the generic "no scannable
-    # endpoints" -- a different failure mode that would otherwise look
+    # endpoints"; a different failure mode that would otherwise look
     # identical to a target with no discovered endpoints yet.
     if not is_nuclei_enabled_for_api_scan(session, target.workspace_id):
         raise HTTPException(
             status_code=400,
-            detail="Active API scanning (nuclei) is disabled for this workspace -- enable it in Tool Marketplace",
+            detail="Active API scanning (nuclei) is disabled for this workspace; enable it in Tool Marketplace",
         )
     try:
         urls, endpoints = build_scan_urls(session, target, payload.endpoint_ids)
@@ -73,7 +73,7 @@ def trigger_api_scan(
     if not urls:
         raise HTTPException(
             status_code=400,
-            detail="no scannable endpoints -- run API Discovery first, or check the endpoint selection",
+            detail="no scannable endpoints; run API Discovery first, or check the endpoint selection",
         )
 
     scan = create_running_row(
@@ -92,7 +92,7 @@ def trigger_api_scan(
 def get_latest_api_scan(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Most recent tool="api-scan" Scan row for this target, so the frontend
     can show 'last scanned' state on page load without holding a scan_id in
-    client state across a reload -- same rationale as discovery/sbom's
+    client state across a reload; same rationale as discovery/sbom's
     persisted-GET pattern, just backed by the shared Scan table instead of a
     dedicated *Run model, since active-scan results reuse the normal Finding
     table (tool="api-scan") rather than a bespoke schema."""

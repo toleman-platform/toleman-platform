@@ -7,13 +7,13 @@ task):
 
   1. Custom Workflow Builder: `PipelineWorkflowTemplate` CRUD
      (app.api.pipeline_templates) and generate_workflow_yaml's new `steps`
-     param -- proves a custom step subset/order actually changes which jobs
+     param, proves a custom step subset/order actually changes which jobs
      the generated GitHub Actions YAML contains.
 
   2. Mass CI/CD Rollout Engine: `POST /api/targets/mass-pipeline-rollout`
      resolves a *scope* (workspace/group/all) into a target set instead of
-     an explicit target_ids list, reusing #68's exact batch/task machinery
-     -- including an optional workflow_template_id recorded on the batch so
+     an explicit target_ids list, reusing #68's exact batch/task machinery;
+     including an optional workflow_template_id recorded on the batch so
      the Celery task (app.tasks.pipeline_tasks) generates each item's PR
      workflow from that template's steps.
 
@@ -184,7 +184,7 @@ def test_generate_workflow_yaml_custom_steps_subset_and_order(engine):
 
 
 def test_generate_workflow_yaml_custom_steps_includes_gosec_without_detection(engine):
-    # gosec included purely because the template says so -- no scan history,
+    # gosec included purely because the template says so, no scan history,
     # no language-detection call needed to justify it, unlike the None-steps
     # (default) path.
     with Session(engine) as session:
@@ -478,7 +478,7 @@ def test_task_passes_template_steps_to_open_pipeline_pr(client, engine, monkeypa
 
 def test_task_without_template_calls_open_pipeline_pr_two_arg_form(client, engine, monkeypatch, eager_celery):
     """#68's original manual bulk flow (no workflow_template_id) must keep
-    calling open_pipeline_pr(session, target) with no steps kwarg at all --
+    calling open_pipeline_pr(session, target) with no steps kwarg at all;
     proves #35 didn't change pre-existing behavior for that path."""
     ws = _make_workspace(engine)
     _make_target(engine, ws, name="t0")

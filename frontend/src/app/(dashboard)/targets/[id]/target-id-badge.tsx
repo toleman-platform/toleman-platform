@@ -4,8 +4,8 @@ import { useState } from "react";
 import { Copy, Check } from "lucide-react";
 
 // (#274) Snyk surfaces a project's ID directly on its detail page with a
-// copy button, for API use. Ours was reachable -- it's in the URL
-// (/targets/[id]) -- but not a labeled, one-click-copyable value on the
+// copy button, for API use. Ours was reachable, it's in the URL
+// (/targets/[id]), but not a labeled, one-click-copyable value on the
 // page itself the way the workspace API key already has its own copy
 // affordance (workspace-key-card.tsx). Someone scripting against
 // GET /api/targets/{id} or building a public-API integration had to

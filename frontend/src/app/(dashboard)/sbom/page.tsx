@@ -106,7 +106,7 @@ export default function SbomPage() {
   // useWorkspacePicker: the user's choice wins and a reload cannot move them.
   const targetId = chosenTargetId ?? targets[0]?.id ?? null;
   const setTargetId = setChosenTargetId;
-  // Only meaningful relative to a scan just triggered in this session -- the
+  // Only meaningful relative to a scan just triggered in this session; the
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" badge at all until a POST has completed here (same convention as
   // the API Discovery page).
@@ -195,7 +195,7 @@ export default function SbomPage() {
   const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
 
   // Trivy's existing CVE scan already produces real Finding rows with
-  // tool="trivy" and a populated cve_id -- OSS/dependency vulnerabilities
+  // tool="trivy" and a populated cve_id, OSS/dependency vulnerabilities
   // aren't a new concept, so we filter the existing findings API rather than
   // standing up a parallel endpoint.
   const { data: ossFindings, isInitialLoading: ossLoading } = useAsyncData<Finding[]>(
@@ -216,7 +216,7 @@ export default function SbomPage() {
     try {
       // POST /api/sbom/{target_id} now dispatches a Celery task and returns
       // immediately with status: "running" (#59) instead of blocking until
-      // the clone+trivy scan finishes -- poll
+      // the clone+trivy scan finishes; poll
       // GET /api/sbom/{target_id}/runs/{run_id} until it's done.
       const dispatch = await api.generateSbom(runTargetId);
       cancelPollRef.current = pollUntilSettled(
@@ -315,8 +315,8 @@ export default function SbomPage() {
           manifests (requirements.txt, package.json, go.mod, ...) via{" "}
           <code className="rounded bg-secondary px-1 py-0.5 text-xs">
             trivy fs --format cyclonedx
-          </code>{" "}
-          — no mocked or inferred data. Results are persisted, so this view
+          </code>{" "},
+          no mocked or inferred data. Results are persisted, so this view
           reflects the last generation even after a reload.
         </p>
       </div>
@@ -405,7 +405,7 @@ export default function SbomPage() {
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
             Aggregated from every already-scanned target&apos;s persisted SBOM
-            (default branch) — read-only, no new scans are triggered here.
+            (default branch); read-only, no new scans are triggered here.
           </p>
 
           {orgDisplayError && <p className="text-sm text-destructive">{orgDisplayError}</p>}
@@ -492,7 +492,7 @@ export default function SbomPage() {
           )}
 
           {/* Issue #226 review: this used to be gated on status === "found"
-              alone, so a "failed" malware check rendered nothing at all --
+              alone, so a "failed" malware check rendered nothing at all;
               pixel-identical to a successful check that found nothing. The
               backend goes out of its way to distinguish "checked, clean"
               from "could not check" (osv_malware.py's None-vs-{} split);
@@ -506,7 +506,7 @@ export default function SbomPage() {
           )}
           {!error && !persistedError && scanSummary?.malware?.status === "failed" && (
             <p className="text-sm text-destructive">
-              Malware check failed to run — these components have <strong>not</strong> been checked against OSV.
+              Malware check failed to run; these components have <strong>not</strong> been checked against OSV.
               This is not an all-clear.
             </p>
           )}
@@ -557,7 +557,7 @@ export default function SbomPage() {
                   <p className="text-sm text-muted-foreground">
                     {components.length} components found
                   </p>
-                  {/* 1396 components on a real target -- rendering them all
+                  {/* 1396 components on a real target, rendering them all
                       was the single longest scroll in the app. */}
                   <ActivityPagination
                     total={components.length}

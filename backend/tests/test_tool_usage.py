@@ -1,4 +1,4 @@
-"""Tests for app.core.tool_usage -- the resolver that makes Tool Marketplace's
+"""Tests for app.core.tool_usage; the resolver that makes Tool Marketplace's
 per-tool usage-assignment checkboxes actually govern what runs.
 
 Before this existed the four checkboxes (on-demand / API scan / CI pipeline /
@@ -61,7 +61,7 @@ def test_enabling_a_tool_off_by_default_surfaces_it(session):
 
 
 def test_registry_only_tools_are_never_returned(session):
-    # kics is catalogued for visibility but has no TOOL_COMMANDS entry --
+    # kics is catalogued for visibility but has no TOOL_COMMANDS entry;
     # returning it would hand the caller a name that raises
     # "unsupported tool" the moment it tried to run it.
     assert "kics" not in runnable_tools()
@@ -87,7 +87,7 @@ def test_every_returned_tool_is_actually_runnable(session):
 
 
 def test_turning_everything_off_returns_empty_not_a_default(session):
-    # An operator who genuinely disables every tool must get [] -- callers
+    # An operator who genuinely disables every tool must get []; callers
     # have to be able to tell "nothing was checked" from "checked and clean".
     for entry in TOOL_REGISTRY:
         session.add(WorkspaceToolConfig(workspace_id=1, tool=entry["tool"], pr_guardrail=False))
@@ -108,7 +108,7 @@ def test_resolution_order_is_stable_registry_order(session):
 
 
 def test_defaults_match_default_usage_for(session):
-    # The resolver must not invent its own defaults -- it has to agree with
+    # The resolver must not invent its own defaults; it has to agree with
     # the single source of truth the assignments API also reads.
     for entry in TOOL_REGISTRY:
         tool = entry["tool"]

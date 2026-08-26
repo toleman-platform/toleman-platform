@@ -2,7 +2,7 @@
 
 Adds MALICIOUS_PACKAGE to the native notificationeventtype Postgres enum so
 the #179 notification can be subscribed to independently of critical_finding.
-Adding an enum member is a manual op.execute -- Alembic autogenerate does not
+Adding an enum member is a manual op.execute; Alembic autogenerate does not
 detect new enum values (only new columns/tables), and the value must exist in
 the DB type before the model can write it.
 

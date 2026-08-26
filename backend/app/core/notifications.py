@@ -4,18 +4,18 @@ sender rather than reimplementing outbound delivery.
 Recipient resolution: "users with this event type enabled, in the relevant
 workspace" means every user holding a WorkspaceMembership in that workspace,
 plus every global admin (admins bypass workspace scoping everywhere else in
-this codebase -- see accessible_workspace_ids/enforce_workspace_role in
-app.api.auth -- so they're included here too), filtered down to whichever of
+this codebase; see accessible_workspace_ids/enforce_workspace_role in
+app.api.auth, so they're included here too), filtered down to whichever of
 those users has a NotificationPreference row for (event_type, channel) with
 enabled=True.
 
 Slack channel: there is exactly one Slack webhook per platform
-(PlatformConfig.slack_webhook_url, #74) -- not one per user. A user "opting
+(PlatformConfig.slack_webhook_url, #74); not one per user. A user "opting
 in" to Slack for an event type doesn't get a private DM (that would require
 real Slack OAuth/user-token infrastructure this project doesn't have); it
 means they're named in the single message posted to the platform's
 configured channel. If nobody has opted in for an event, or no webhook is
-configured, nothing is sent -- this module never fabricates a delivery.
+configured, nothing is sent; this module never fabricates a delivery.
 
 Email channel: there is no SMTP/email-sending infrastructure anywhere in
 this codebase (checked: no smtplib/SendGrid/SES/Mailgun usage, no SMTP_*
@@ -66,7 +66,7 @@ def _users_opted_in(
             NotificationPreference.user_id.in_(user_ids),
             NotificationPreference.event_type == event_type,
             NotificationPreference.channel == channel,
-            NotificationPreference.enabled == True,  # noqa: E712 -- SQLModel/SQLAlchemy comparison, not a truthy check
+            NotificationPreference.enabled == True,  # noqa: E712, SQLModel/SQLAlchemy comparison, not a truthy check
         )
     ).all()
     if not prefs:
@@ -86,7 +86,7 @@ def dispatch_notification(
     """Fire a real notification for `event_type` to every user in
     `workspace_id` (plus global admins) who has opted in, on every channel
     they've enabled. Best-effort: a delivery failure on one channel/user is
-    logged, never raised -- matches #74's Jira/Slack best-effort philosophy
+    logged, never raised; matches #74's Jira/Slack best-effort philosophy
     so a notification-delivery problem can never break ingestion, a scan
     task, or a findings GET request.
     """
@@ -113,7 +113,7 @@ def _dispatch_slack(
     if not config or not config.slack_webhook_url:
         logger.info(
             "Notification event %s has %d Slack-opted-in recipient(s) but no Slack webhook is "
-            "configured (Admin > Global Integrations) -- skipping.",
+            "configured (Admin > Global Integrations), skipping.",
             event_type.value,
             len(users),
         )
@@ -124,7 +124,7 @@ def _dispatch_slack(
 
     try:
         # slack_webhook_url is encrypted at rest (see app/api/config.py's
-        # POST handler) -- must decrypt before use, same as its own
+        # POST handler); must decrypt before use, same as its own
         # test-connection endpoint already does.
         webhook_url = decrypt_secret(config.slack_webhook_url)
         ok, result = send_slack_message(webhook_url, text)
@@ -146,7 +146,7 @@ def _dispatch_email(
     if not users:
         return
     # No SMTP/email-sending infrastructure exists in this codebase (see
-    # module docstring) -- log clearly rather than fabricate a send. Each
+    # module docstring), log clearly rather than fabricate a send. Each
     # opted-in user is named individually so this is a real, useful signal
     # in server logs about what a future email integration needs to cover,
     # not a swallowed no-op.

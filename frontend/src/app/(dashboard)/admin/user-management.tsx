@@ -20,7 +20,7 @@ export function UserManagement() {
   const [submitting, setSubmitting] = useState(false);
 
   // Issue #118: both actions below used to apply instantly with no
-  // confirmation -- a bare red "Delete" link, and a role `<select>` that
+  // confirmation, a bare red "Delete" link, and a role `<select>` that
   // fired `onRoleChange` on every `onChange`, including an accidental
   // escalation to admin (global, bypasses all workspace scoping). Both now
   // route through the shared `ConfirmDialog` instead of mutating on click.
@@ -54,7 +54,7 @@ export function UserManagement() {
 
   function requestRoleChange(u: AuthUser, newRole: string) {
     if (newRole === u.role) return;
-    // Only admin escalation needs a confirmation gate (per #118) -- it's a
+    // Only admin escalation needs a confirmation gate (per #118), it's a
     // global role that bypasses all workspace-scoped permissions, unlike
     // moving between the other four roles.
     if (newRole === "admin") {
@@ -140,7 +140,7 @@ export function UserManagement() {
               <div className="flex items-center gap-2">
                 {/* The role `<select>` already displays the current role; the
                     Badge that used to sit beside it repeated the identical
-                    value (it can never differ -- the select is controlled
+                    value (it can never differ; the select is controlled
                     straight off `u.role`) and left the Delete column ragged,
                     since each role string is a different width. */}
                 <select

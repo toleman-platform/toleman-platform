@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 
 // Issue #72: lets a developer set the live base URL of this target's
 // deployed API. This is the ONLY source of a scan host for Active API
-// Scanning (see Target.api_base_url's docstring in app/models/models.py) --
+// Scanning (see Target.api_base_url's docstring in app/models/models.py),
 // deliberately requires an explicit save here rather than being inferred
 // from repo_url, so a caller can never point an active scan at an
 // arbitrary/unowned third-party URL.
@@ -53,7 +53,7 @@ export function ApiScanConfig({ targetId, initialApiBaseUrl }: { targetId: numbe
         </Button>
       </div>
       <p id={`api-base-url-${targetId}-hint`} className="text-xs text-muted-foreground">
-        Required before running an active scan -- discovered routes are combined with this host, never an
+        Required before running an active scan; discovered routes are combined with this host, never an
         arbitrary URL.
       </p>
       {error && <p className="text-xs text-destructive">{error}</p>}

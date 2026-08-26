@@ -2,7 +2,7 @@
 
 Two things are being pinned down here.
 
-The first is that `GET /api/scans/active` exists at all -- a scan dispatched
+The first is that `GET /api/scans/active` exists at all, a scan dispatched
 from one page used to be invisible on every other page, so Targets happily
 showed "last scanned 3 days ago" while a scan was in flight.
 
@@ -148,8 +148,8 @@ def test_median_resists_a_single_outlier(engine):
 
 
 def test_failed_runs_are_not_sampled(engine):
-    # A failed run's duration measures how long the platform took to give up
-    # -- usually a clone timeout -- not how long the work takes.
+    # A failed run's duration measures how long the platform took to give up (
+    # usually a clone timeout) not how long the work takes.
     _, target_id = _make_workspace_and_target(engine)
     with Session(engine) as session:
         started = datetime.utcnow() - timedelta(seconds=900)
@@ -301,7 +301,7 @@ def test_get_scan_omits_eta_when_history_is_too_thin(engine, client):
         scan_id = running.id
 
     body = client.get(f"/api/scans/{scan_id}").json()
-    # Null, not a default -- the UI shows elapsed time instead.
+    # Null, not a default; the UI shows elapsed time instead.
     assert body["eta_seconds"] is None
     assert body["elapsed_seconds"] >= 4
 

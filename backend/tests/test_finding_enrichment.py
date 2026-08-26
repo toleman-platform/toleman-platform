@@ -1,5 +1,5 @@
 """Tests for GET /api/findings/{id}/enrichment (issue #71) and the
-core.cve_enrichment caching layer -- CVE/CWE/fix-version data sourced from
+core.cve_enrichment caching layer, CVE/CWE/fix-version data sourced from
 NVD + OSV.dev, explicitly without any AI provider involved.
 
 Follows the same in-memory SQLite + dependency_override pattern used in
@@ -92,7 +92,7 @@ def _make_finding(engine, target_id, **overrides) -> int:
 
 
 # ---------------------------------------------------------------------------
-# core.cve_enrichment.get_cve_enrichment -- caching behavior
+# core.cve_enrichment.get_cve_enrichment, caching behavior
 # ---------------------------------------------------------------------------
 
 

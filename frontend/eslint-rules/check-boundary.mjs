@@ -5,7 +5,7 @@
  * Runs the full ESLint config but reports on this one rule only. That is
  * deliberate: `npx eslint src` currently surfaces 24 pre-existing errors
  * unrelated to this work, so a blanket lint gate would either fail CI on day
- * one or have to be non-blocking -- and a non-blocking gate does not prevent
+ * one or have to be non-blocking; and a non-blocking gate does not prevent
  * anything. Scoping the gate to this rule makes it genuinely enforced now,
  * without holding it hostage to a cleanup it has nothing to do with.
  */

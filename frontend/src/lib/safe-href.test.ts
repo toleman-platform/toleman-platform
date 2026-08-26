@@ -3,7 +3,7 @@ import { safeHref } from "./utils";
 
 // (#275) Snyk Code flagged two <a href={...}> sites as DOM-based XSS; both
 // were false positives on inspection (a hardcoded prefix, a server-built
-// template), but the underlying pattern -- a dynamic value reaching href --
+// template), but the underlying pattern (a dynamic value reaching href)
 // is real across 11 sites in this app, and "safe today by local invariant"
 // is exactly the kind of thing that regresses silently. This is the shared
 // enforcement the report recommended killing the pattern with.
@@ -25,7 +25,7 @@ describe("safeHref", () => {
 
   it("rejects javascript: obfuscated with embedded control characters", () => {
     // The WHATWG URL parser strips tabs/newlines before reading the scheme,
-    // same as a real browser does -- a hand-rolled regex checking for a
+    // same as a real browser does; a hand-rolled regex checking for a
     // leading "javascript:" would miss this the way the flagged code paths
     // originally could have, if their local invariants ever slipped.
     expect(safeHref("java\tscript:alert(1)")).toBeUndefined();

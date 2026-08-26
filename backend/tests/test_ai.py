@@ -1,11 +1,11 @@
 """Tests for /api/ai (provider dispatch: Anthropic vs. any OpenAI-compatible
-endpoint -- Kimi/Moonshot, Ollama, vLLM, LM Studio, etc.) and /api/config's
+endpoint, Kimi/Moonshot, Ollama, vLLM, LM Studio, etc.) and /api/config's
 handling of the new provider fields.
 
 Follows the same TestClient + in-memory SQLite harness pattern established in
 tests/test_rate_limit.py and tests/test_findings.py (no shared conftest exists
 yet in this repo). The Anthropic SDK call and the openai_compatible httpx call
-are both mocked here -- these tests verify OUR dispatch/request-building/
+are both mocked here; these tests verify OUR dispatch/request-building/
 response-parsing logic, not that any real vendor endpoint works.
 """
 import httpx
@@ -205,7 +205,7 @@ def test_analyze_openai_compatible_builds_expected_request_and_parses_response(c
     assert captured["json"]["model"] == "qwen2.5:0.5b"
     assert captured["json"]["messages"][0]["role"] == "user"
     assert "SQL Injection" in captured["json"]["messages"][0]["content"]
-    # No key configured -- self-hosted backends (Ollama) typically need none.
+    # No key configured; self-hosted backends (Ollama) typically need none.
     assert "Authorization" not in captured["headers"]
 
 
@@ -373,7 +373,7 @@ def test_update_config_rejects_unknown_provider(client, engine):
 
 
 # ---------------------------------------------------------------------------
-# Issue #122: AI Analysis real entry point -- recent-analyses tracking +
+# Issue #122: AI Analysis real entry point; recent-analyses tracking +
 # GET /api/ai/recent
 # ---------------------------------------------------------------------------
 
@@ -544,8 +544,8 @@ def test_analyze_returns_404_for_finding_outside_non_admin_callers_workspace(cli
     finding_id, _target_id, _ws_id = _make_finding_with_ids(engine, target_name="Other Target")
     _set_config(engine, ai_provider="anthropic", anthropic_api_key="sk-ant-test")
 
-    # Log in as a plain (non-admin) user with no WorkspaceMembership at all
-    # -- accessible_workspace_ids() returns [] for them, so the finding
+    # Log in as a plain (non-admin) user with no WorkspaceMembership at all,
+    # accessible_workspace_ids() returns [] for them, so the finding
     # (which belongs to a workspace they're not a member of) must 404, not
     # leak via a successful analysis.
     with Session(engine) as session:

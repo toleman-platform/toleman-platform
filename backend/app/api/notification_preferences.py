@@ -34,7 +34,7 @@ def set_preferences(
     """Idempotent upsert per (channel, event_type), relying on
     NotificationPreference's unique constraint. Absence of a row in the
     payload for a given (channel, event_type) leaves any existing row
-    untouched -- this endpoint only touches pairs the client actually sent,
+    untouched; this endpoint only touches pairs the client actually sent,
     it doesn't reset everything else to disabled."""
     existing = {
         (r.channel, r.event_type): r

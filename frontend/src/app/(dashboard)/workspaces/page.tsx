@@ -14,11 +14,11 @@ import { WorkspaceKeyCard } from "./workspace-key-card";
 import { WorkspaceRoles } from "../admin/workspace-roles";
 
 // Issue #224: workspaces previously had no dedicated management surface at
-// all -- the only ways to reach one were the per-workspace API key buried
+// all; the only ways to reach one were the per-workspace API key buried
 // behind a target picker in Settings, and role assignment buried as one of
 // eleven flat tabs in Admin. This page is the one place to see every
 // workspace this user can access, rename it, and manage its API key and
-// role assignments -- absorbing the old "Workspace Roles" admin tab.
+// role assignments; absorbing the old "Workspace Roles" admin tab.
 function RenamableWorkspaceRow({
   workspace,
   displayName,

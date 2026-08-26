@@ -6,12 +6,12 @@ name: CI
 # Actions minutes ran out twice, and came back in #333 when the move to the
 # toleman-platform org left the CircleCI project bound to the old
 # geekshiv/rikugan-platform path and nothing reported on #332 at all. They
-# stay here for good now -- GitHub Actions has no minute limit on standard
+# stay here for good now; GitHub Actions has no minute limit on standard
 # runners for public repositories, which is what made CircleCI necessary in
 # the first place.
 #
-# The heavier jobs are split out by cost of a different kind -- run duration
-# rather than billed minutes -- into self-scan.yml and docker-images.yml.
+# The heavier jobs are split out by cost of a different kind (run duration
+# rather than billed minutes) into self-scan.yml and docker-images.yml.
 #
 # Note for outside contributions: GitHub does not expose repository secrets
 # to workflows triggered by a pull request from a fork, and `pull_request`
@@ -109,7 +109,7 @@ jobs:
         run: npm test
 
       # The custom ESLint rule that blocks a Server Component importing a
-      # value out of a "use client" module (#206). Run explicitly -- its
+      # value out of a "use client" module (#206). Run explicitly; its
       # fixtures contain the violation on purpose and the normal lint pass
       # ignores them.
       - name: Test custom lint rules

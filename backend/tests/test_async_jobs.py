@@ -1,4 +1,4 @@
-"""Test for the one line of real duplication extracted in #222 -- see
+"""Test for the one line of real duplication extracted in #222; see
 app.core.async_jobs's module docstring for why the rest of the
 create-row-then-dispatch pattern was deliberately left alone.
 """
@@ -38,7 +38,7 @@ def test_the_returned_row_is_refreshed_from_the_database(engine):
 
 
 def test_works_with_a_foreign_key_relationship(engine):
-    # Scan/DiscoveryRun/SbomRun all carry a target_id -- confirm the helper
+    # Scan/DiscoveryRun/SbomRun all carry a target_id; confirm the helper
     # is not accidentally Scan-specific despite being introduced alongside
     # it.
     with Session(engine) as session:

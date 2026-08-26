@@ -2,7 +2,7 @@
 left "running" past `settings.stale_job_timeout_seconds` (its Celery task
 never reached a worker, or the worker died mid-task) must flip to "failed"
 with a reason on the next poll, instead of leaving the frontend spinning on
-an indefinite "running" status forever -- caught live when a misconfigured
+an indefinite "running" status forever; caught live when a misconfigured
 local worker left 27 real jobs stuck this way.
 
 Same in-memory SQLite + TestClient + session-token-login pattern as
@@ -144,7 +144,7 @@ def test_mark_stale_if_needed_ignores_already_settled_rows(engine):
 
 
 def test_mark_stale_if_needed_handles_row_with_no_error_field(engine):
-    """PipelineIntegrationBatch has no `error` column -- must not blow up."""
+    """PipelineIntegrationBatch has no `error` column; must not blow up."""
     with Session(engine) as session:
         user = User(email="admin@example.com", name="Admin", password_hash=hash_password("x"), role=UserRole.ADMIN)
         session.add(user)

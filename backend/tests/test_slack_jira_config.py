@@ -4,7 +4,7 @@ endpoints, and Jira auto-ticket-creation on ingestion).
 Follows the same TestClient + in-memory SQLite harness + httpx-mock pattern
 established in tests/test_ai.py for the OpenAI-compatible provider (#67).
 These tests verify OUR request-building/response-parsing/dispatch logic
-against a mocked HTTP layer -- there's no real Slack workspace or Jira
+against a mocked HTTP layer, there's no real Slack workspace or Jira
 instance available in this sandbox (see test_live_http_roundtrip.py for a
 "real HTTP call against a server we control" style check, mirroring #67's
 local OpenAI-compatible server verification).
@@ -415,7 +415,7 @@ def test_ingestion_skips_jira_ticket_when_auto_create_disabled(engine, monkeypat
 
 
 def test_ingestion_does_not_recreate_ticket_for_existing_finding_rescan(engine, monkeypatch):
-    """Only net-new findings trigger auto-create -- a rescan that just bumps
+    """Only net-new findings trigger auto-create, a rescan that just bumps
     last_seen on an already-existing finding must not fire another ticket."""
     _set_config(
         engine,
@@ -457,7 +457,7 @@ def test_ingestion_does_not_recreate_ticket_for_existing_finding_rescan(engine, 
 
 
 def test_ingestion_jira_failure_does_not_break_ingestion(engine, monkeypatch):
-    """A Jira outage/misconfiguration must not fail the scan/ingestion --
+    """A Jira outage/misconfiguration must not fail the scan/ingestion,
     best-effort per app.core.ingestion._maybe_auto_create_jira_ticket."""
     _set_config(
         engine,

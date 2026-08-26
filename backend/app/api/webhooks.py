@@ -1,8 +1,8 @@
-"""GitHub webhook receiver — real-time PR Guardrail trigger (as opposed to
+"""GitHub webhook receiver: real-time PR Guardrail trigger (as opposed to
 the on-demand "Scan This PR" button in app/api/pr_guardrail.py).
 
 Unauthenticated by necessity (GitHub calls this directly, no session cookie
-available) — trust is established via HMAC signature verification against
+available); trust is established via HMAC signature verification against
 the App's webhook secret instead, same as any GitHub webhook integration.
 
 GitHub's webhook delivery expects a fast response (~10s timeout), so the
@@ -30,7 +30,7 @@ TRIGGERING_ACTIONS = {"opened", "reopened", "synchronize"}
 def _candidate_configs(session: Session, payload_installation_id: int | None) -> list[GitHubAppConfig]:
     """Which GitHubAppConfig(s) could plausibly have delivered this webhook
     (#34). Every GitHub App webhook delivery includes the firing
-    installation's id in the payload -- resolve straight to that
+    installation's id in the payload, resolve straight to that
     installation's own App config when present (correct even with multiple
     Apps/installations). Falls back to trying every configured App's secret
     when the id is missing/unresolvable, so a delivery isn't rejected just
@@ -75,7 +75,7 @@ async def github_webhook(
 ):
     raw_body = await request.body()
     # Parsing untrusted JSON is safe before signature verification (no
-    # side effects, just structure) -- doing so lets us pull the firing
+    # side effects, just structure); doing so lets us pull the firing
     # installation's id out of the payload (every App webhook delivery
     # carries one) so multi-App/multi-install signature verification (#34)
     # can go straight to the right App's secret instead of trying them all.

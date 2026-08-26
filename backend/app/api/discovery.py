@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.api.auth import require_workspace_role
 from app.api.deps import get_session
 from app.core.async_jobs import create_running_row
-from app.core.discovery_ingestion import upsert_endpoints  # noqa: F401 -- re-exported, see docstring below
+from app.core.discovery_ingestion import upsert_endpoints  # noqa: F401, re-exported, see docstring below
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import ApiEndpoint, DiscoveryRun, Target, User, WorkspaceRole
 from app.tasks.discovery_tasks import run_discovery as run_discovery_task
@@ -13,8 +13,8 @@ from app.tasks.discovery_tasks import run_discovery as run_discovery_task
 router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 
 # upsert_endpoints used to be defined in this module; it now lives in
-# app.core.discovery_ingestion (#59) so app.tasks.discovery_tasks -- which
-# does the actual clone+discover work on a Celery worker -- can import it
+# app.core.discovery_ingestion (#59) so app.tasks.discovery_tasks (which
+# does the actual clone+discover work on a Celery worker) can import it
 # without an app.api.discovery <-> app.tasks.discovery_tasks import cycle.
 # Re-imported above (not re-implemented) so `from app.api.discovery import
 # upsert_endpoints` (used by tests) keeps working unchanged.
@@ -34,7 +34,7 @@ def run_discovery(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Dispatch an async API Discovery run (#59) instead of cloning+grepping
-    synchronously inside the request handler -- a handful of concurrent
+    synchronously inside the request handler, a handful of concurrent
     requests here used to be enough to exhaust FastAPI's threadpool. Creates
     a DiscoveryRun row (status="running"), hands the actual clone+discover
     work to app.tasks.discovery_tasks.run_discovery via .delay(), and
@@ -103,7 +103,7 @@ def get_discovery_run(target_id: int, run_id: int, session: Session = Depends(ge
 
 @router.get("/{target_id}")
 def list_discovered_endpoints(target_id: int, session: Session = Depends(get_session)):
-    """Persisted results without re-running a scan -- the page should show
+    """Persisted results without re-running a scan; the page should show
     real state on load, not force a re-scan every visit."""
     target = _get_target(target_id, session)
     endpoints = session.exec(

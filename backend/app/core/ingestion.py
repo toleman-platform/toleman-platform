@@ -32,7 +32,7 @@ def _meets_auto_create_threshold(severity: Severity, threshold: str) -> bool:
 def _maybe_auto_create_jira_ticket(session: Session, finding: Finding) -> None:
     """Issue #74 v1 auto-ticket-creation: fires a real Jira issue-creation
     call when PlatformConfig.jira_auto_create_severity is set and this new
-    finding's severity meets that threshold. Best-effort -- a Jira outage or
+    finding's severity meets that threshold. Best-effort; a Jira outage or
     misconfiguration must not fail the whole ingestion/scan, so failures are
     logged, not raised."""
     config = session.exec(select(PlatformConfig)).first()
@@ -56,7 +56,7 @@ def _maybe_auto_create_jira_ticket(session: Session, finding: Finding) -> None:
 def _maybe_export_to_siem(session: Session, target: Target, finding: Finding) -> None:
     """Issue #114: fires a real webhook POST when PlatformConfig.siem_webhook_url
     is set and this new finding's severity meets siem_export_severity. Same
-    best-effort philosophy as the Jira hook above -- a SIEM webhook outage
+    best-effort philosophy as the Jira hook above; a SIEM webhook outage
     must not fail the whole ingestion/scan."""
     config = session.exec(select(PlatformConfig)).first()
     if not config or not config.siem_webhook_url or not config.siem_export_severity:
@@ -79,7 +79,7 @@ def _maybe_notify_new_finding(session: Session, target: Target, finding: Finding
     """Issue #73 notification dispatch, same hook point as #74's Jira
     auto-create above: fires for every net-new Finding right after it gets a
     real id. Two independent triggers can both fire for the same finding
-    (e.g. a Critical finding that's also KEV-listed) -- each is its own
+    (e.g. a Critical finding that's also KEV-listed); each is its own
     NotificationEventType/preference, not a single combined event, so a user
     can opt into "tell me about KEV CVEs" without also getting every
     Critical SAST finding. Best-effort, same as the Jira hook: a delivery
@@ -106,7 +106,7 @@ def _maybe_notify_new_finding(session: Session, target: Target, finding: Finding
             )
         if finding.tool == "osv-malware":
             # Issue #179: a malicious dependency is the sharpest case of the
-            # "distinct event" reasoning above -- someone who wants to be paged
+            # "distinct event" reasoning above; someone who wants to be paged
             # for a compromised dependency must not also get every Critical
             # SAST finding (and vice versa). See the enum's own docstring.
             dispatch_notification(
@@ -156,7 +156,7 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
 
         if existing:
             # epss_score/kev_listed are intentionally left as whatever was set at
-            # creation time on rescans -- re-fetching per-finding on every rescan
+            # creation time on rescans, re-fetching per-finding on every rescan
             # isn't worth the network cost; MVP tradeoff, staleness is acceptable.
             existing.last_seen = datetime.utcnow()
             existing.scan_id = scan.id
@@ -194,10 +194,10 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
 
     session.commit()
 
-    # False-positive auto-suppression (issue #76) -- runs before the Jira/
+    # False-positive auto-suppression (issue #76); runs before the Jira/
     # notification hooks below, on purpose: a finding matching a learned
     # false-positive rule (same rule_id+tool+file basename previously
-    # triaged FALSE_POSITIVE, anywhere in this workspace -- see
+    # triaged FALSE_POSITIVE, anywhere in this workspace; see
     # app.core.fp_learning) is not a real net-new alert, so it must not
     # trigger a Jira ticket or a critical/KEV notification. It's still
     # created as a real Finding row (not silently dropped) so it stays
@@ -211,12 +211,12 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
     session.commit()
 
     # Auto-create Jira tickets for net-new findings meeting the configured
-    # severity threshold (issue #74 v1) -- after commit so each finding has
+    # severity threshold (issue #74 v1); after commit so each finding has
     # a real id to reference/link. Best-effort, never blocks ingestion.
     for finding in newly_created:
         session.refresh(finding)
         if finding.state == FindingState.FALSE_POSITIVE:
-            continue  # auto-suppressed above -- not a real net-new alert
+            continue  # auto-suppressed above, not a real net-new alert
         _maybe_auto_create_jira_ticket(session, finding)
         _maybe_export_to_siem(session, target, finding)
         _maybe_notify_new_finding(session, target, finding)

@@ -5,7 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 /**
  * Multi-select state for a paginated list (issue #210).
  *
- * Three lists -- findings, targets, scans -- each hand-rolled the same four
+ * Three lists (findings, targets, scans) each hand-rolled the same four
  * primitives: a `Set`, `toggleOne`, `toggleAll` and `allSelected`. They drifted,
  * and the drift caused a real bug: `allSelected` and "select all" were computed
  * against the *filtered* list while the page rendered only a slice of it, so
@@ -27,7 +27,7 @@ export type UseSelectionResult = {
   /** Select or clear every id on the current page. */
   toggleAllVisible: (checked: boolean) => void;
   clear: () => void;
-  /** Every visible row is selected. False for an empty page -- "all of
+  /** Every visible row is selected. False for an empty page, "all of
    * nothing" should not render as a ticked box. */
   allVisibleSelected: boolean;
   /** Some but not all visible rows are selected. Drives `indeterminate`,

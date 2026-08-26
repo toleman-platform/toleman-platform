@@ -215,7 +215,7 @@ def test_pending_queue_only_shows_requested(client, engine):
 
 def test_list_findings_for_a_scan(client, engine):
     # ADMIN bypasses workspace scoping (accessible_workspace_ids returns
-    # None) -- this test's scan targets target_id=1, which doesn't exist as
+    # None); this test's scan targets target_id=1, which doesn't exist as
     # a real row, so a non-admin caller would 404 on the workspace check.
     client = _login(client, engine, role=UserRole.ADMIN)
     scan_id, finding_id = _make_pr_scan_and_finding(engine)
@@ -228,13 +228,13 @@ def test_list_findings_for_a_scan(client, engine):
 
 # ---------------------------------------------------------------------------
 # #112: approving every blocking finding must unblock the scan, not just the
-# finding row -- previously the whole-PR `override` was the only way out.
+# finding row; previously the whole-PR `override` was the only way out.
 # ---------------------------------------------------------------------------
 
 
 def _patch_github(monkeypatch):
     """Approving the last blocking finding tries to update GitHub's commit
-    status -- stub both calls so these tests never touch the network, same
+    status, stub both calls so these tests never touch the network, same
     boundary-mocking approach as test_celery_offload.py's eager-mode tests."""
     monkeypatch.setattr(
         pr_guardrail_executor,

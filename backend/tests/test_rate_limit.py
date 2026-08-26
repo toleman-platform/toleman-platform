@@ -42,7 +42,7 @@ def client(engine):
     app.dependency_overrides[get_session] = override_get_session
 
     # require_workspace() (used by the ingest endpoint) doesn't go through
-    # the get_session dependency -- it opens its own Session against the
+    # the get_session dependency; it opens its own Session against the
     # module-level `engine` it imported directly from app.core.db. Swap that
     # bound name too, or ingest tests would silently hit the real Postgres
     # engine instead of our in-memory SQLite one.
@@ -50,7 +50,7 @@ def client(engine):
     deps_module.engine = engine
 
     rate_limit._reset_for_tests()
-    # Deliberately not using `with TestClient(app) as c:` here -- that would
+    # Deliberately not using `with TestClient(app) as c:` here; that would
     # run the app's real @app.on_event("startup") handler, which connects to
     # the *real* Postgres engine (app.core.db.engine) to create tables and
     # seed the admin user. We only want our overridden in-memory SQLite
@@ -72,7 +72,7 @@ def _make_user(engine, email="attacker@example.com", password="correct-horse") -
 
 
 def _make_workspace_and_target(engine) -> tuple[int, str, int]:
-    """Returns (workspace_id, workspace_api_key, target_id) as plain values --
+    """Returns (workspace_id, workspace_api_key, target_id) as plain values;
     not the ORM objects, since those get detached once the session here
     closes and would raise DetachedInstanceError on later attribute access."""
     with Session(engine) as session:
@@ -105,7 +105,7 @@ def test_login_rate_limit_allows_up_to_limit_then_429(client, engine):
         responses.append(resp)
 
     # First 5 attempts (the configured limit) go through to the auth check
-    # and correctly fail with 401 (wrong password) -- the limiter doesn't
+    # and correctly fail with 401 (wrong password); the limiter doesn't
     # block them.
     for resp in responses[:5]:
         assert resp.status_code == 401
@@ -141,7 +141,7 @@ def test_scan_run_rate_limit_triggers_per_user(client, engine):
     responses = []
     for _ in range(11):
         # target_id=999 doesn't exist, so allowed requests short-circuit to
-        # {"error": "target not found"} without touching git/subprocess --
+        # {"error": "target not found"} without touching git/subprocess,
         # we're only proving the limiter fires, not exercising the scanner.
         resp = client.post("/api/scans/run", params={"target_id": 999, "tool": "semgrep"})
         responses.append(resp)
@@ -193,7 +193,7 @@ def test_ingest_rate_limit_does_not_leak_across_workspace_keys(client, engine):
     assert blocked.status_code == 429
 
     # A request with an unrelated/invalid key is rejected by auth (401), not
-    # by the rate limiter -- proving the limiter is keyed per workspace and
+    # by the rate limiter; proving the limiter is keyed per workspace and
     # a different key isn't sharing the exhausted budget.
     other = client.post(
         f"/api/ingest/{target_id}",

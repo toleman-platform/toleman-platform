@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 # Same retry rationale as app/tasks/scan_tasks.py's RETRYABLE_EXCEPTIONS:
 # only a `git clone` failure whose cause looks transient (network/remote
-# issue) is worth retrying. RepoCloneError -- bad repo_url/branch, or a
+# issue) is worth retrying. RepoCloneError, bad repo_url/branch, or a
 # permanent remote failure classified by runner._classify_clone_stderr
-# (missing credentials, deleted repo, nonexistent branch, access denied) --
+# (missing credentials, deleted repo, nonexistent branch, access denied);
 # and anything else are deterministic and will fail identically on retry.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
 
@@ -98,7 +98,7 @@ def run_discovery(self, target_id: int, run_id: int):
             return {"run_id": run.id, "count": all_count, "new_count": len(new_endpoints)}
         except RETRYABLE_EXCEPTIONS:
             # Transient failure: only mark the run permanently failed once
-            # retries are exhausted -- otherwise let it propagate so
+            # retries are exhausted; otherwise let it propagate so
             # Celery's autoretry_for schedules the next attempt.
             if self.request.retries >= self.max_retries:
                 run.status = "failed"

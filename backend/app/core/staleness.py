@@ -3,8 +3,8 @@
 Scan/DiscoveryRun/SbomRun/PipelineIntegrationBatch all share the same
 create-row(status="running")-then-dispatch-via-.delay() pattern (see
 ARCHITECTURE.md's "Async long-running work"). If the dispatched task never
-actually reaches a worker -- a worker listening on the wrong queue, a worker
-process that died mid-task -- the row is left "running" forever with no
+actually reaches a worker (a worker listening on the wrong queue, a worker
+process that died mid-task) the row is left "running" forever with no
 error and no indication anything is wrong beyond an indefinite frontend
 spinner. This was caught live: a misconfigured local worker left 27 real
 jobs stuck this way.
@@ -36,7 +36,7 @@ def mark_stale_if_needed(session: Session, row, message: str | None = None, fail
         return False
 
     # PRGuardrailScan (CTX-02's caller) records `created_at` rather than
-    # `started_at`, and its terminal-failure state is "error", not "failed" --
+    # `started_at`, and its terminal-failure state is "error", not "failed";
     # its status vocabulary is PRGuardrailStatus, shared with the GitHub
     # commit status it maps onto. Both are read via getattr for the same
     # reason `completed_at`/`error` already are: this helper is deliberately

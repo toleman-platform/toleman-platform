@@ -4,7 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Group } from "@/lib/api";
 
 // Shared "filter by group" dropdown for the targets list and findings list
-// (issue #61) -- drives a `group_id` search param the same way
+// (issue #61), drives a `group_id` search param the same way
 // findings-filter-bar.tsx already drives severity/tool/state/target_id, so
 // filtering survives navigation/back-forward and can be linked directly.
 export function GroupFilter({ groups }: { groups: Group[] }) {

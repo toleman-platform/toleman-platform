@@ -1,9 +1,9 @@
 """SBOM source tracking (#227): which source reported each component
 
 GitHub's Dependency Graph joins trivy as a second SBOM source. The two see
-genuinely different things -- trivy reads dependency manifests, GitHub
+genuinely different things (trivy reads dependency manifests, GitHub
 reports what those manifests resolve to, including transitives that appear
-in no manifest at all -- so which source found a component is information
+in no manifest at all) so which source found a component is information
 worth keeping, not an implementation detail.
 
 Every existing row defaults to "trivy", which is accurate: it is the only

@@ -1,8 +1,8 @@
-"""SIEM export (issue #114): a generic outbound webhook -- one JSON POST per
+"""SIEM export (issue #114): a generic outbound webhook; one JSON POST per
 qualifying finding, the same shape virtually every SIEM/log pipeline can
 ingest directly (Splunk HTTP Event Collector, Elastic/Datadog generic
 webhook input) or relay through a small middleware. Deliberately not one
-specific vendor's proprietary wire format for this first version -- see
+specific vendor's proprietary wire format for this first version; see
 PlatformConfig.siem_webhook_url's docstring for why.
 
 Same "shared low-level sender + test function call it" shape as
@@ -59,8 +59,8 @@ def send_finding_to_siem(webhook_url: str, finding: Finding, target: Target) -> 
 
 
 def test_siem_webhook(webhook_url: str) -> tuple[bool, str]:
-    """POST a real test event to `webhook_url`. Returns (success, message)
-    -- message is the real HTTP response either way."""
+    """POST a real test event to `webhook_url`. Returns (success, message);
+    message is the real HTTP response either way."""
     test_event = {
         "source": "toleman",
         "event_type": "test_connection",

@@ -17,7 +17,7 @@ import { ArrowUp, ArrowDown, Building2, GitBranch, Trash2, Pencil, Save, Workflo
 // by the Mass CI/CD Rollout Engine (targets-list.tsx's "Mass Rollout"
 // dialog) instead of #66's fixed default scanner set. Deliberately a
 // structured checkbox+reorder editor over the known scanner catalog, not a
-// drag-and-drop arbitrary-DAG builder -- mirrors the up/down-button reorder
+// drag-and-drop arbitrary-DAG builder; mirrors the up/down-button reorder
 // UX already established for the dashboard widget list
 // (components/dashboard/widget-shell.tsx), same "plain buttons, not a drag
 // library" convention. Same workspace-picker-then-CRUD-list shape as the
@@ -170,7 +170,7 @@ export function WorkflowTemplates() {
             <div>
               <div className="font-medium text-foreground">Custom Workflow Builder</div>
               <div className="text-xs text-muted-foreground">
-                Named, ordered scanner step lists for CI/CD pipeline rollout -- pick which of Toleman&apos;s
+                Named, ordered scanner step lists for CI/CD pipeline rollout; pick which of Toleman&apos;s
                 scanners run (and in what order) instead of the default full set. Used by Mass Rollout on
                 the Targets page.
               </div>
@@ -272,7 +272,7 @@ export function WorkflowTemplates() {
                 <EmptyState
                   icon={Workflow}
                   title="No custom workflow templates yet"
-                  description="For this workspace -- Mass Rollout uses the default scanner set until you create one."
+                  description="For this workspace, Mass Rollout uses the default scanner set until you create one."
                 />
               )}
             </>

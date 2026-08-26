@@ -9,7 +9,7 @@ because of a real, twice-recurring incident: any deployment where the
 configured PLATFORM_ENCRYPTION_KEY diverges from whatever key originally
 encrypted a stored secret (a container recreated against a different
 ``.env``, a lost/rotated key, a fresh clone on another machine) doesn't fail
-at the point of divergence -- it fails silently, later, the first time
+at the point of divergence; it fails silently, later, the first time
 *anything* touches an encrypted secret. In practice that has meant a
 Mass Rollout batch item dying with a raw ``cryptography.fernet.InvalidToken``
 traceback three stack frames deep in a Celery worker log, which is not an
@@ -29,14 +29,14 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Arbitrary fixed plaintext -- its content doesn't matter, only that the same
+# Arbitrary fixed plaintext; its content doesn't matter, only that the same
 # constant is used to seed the canary and to verify it later.
 _CANARY_PLAINTEXT = "toleman-encryption-key-canary-v1"
 
 # Pre-rename value of _CANARY_PLAINTEXT. Any database seeded before the
 # Rikugan -> Toleman rename holds a canary row encrypting *this* string, so
-# verification has to accept it too. Without this, the rename alone -- with
-# the encryption key completely unchanged -- would make every existing
+# verification has to accept it too. Without this, the rename alone (with
+# the encryption key completely unchanged) would make every existing
 # deployment fail its boot-time key-health check and log the CRITICAL
 # "PLATFORM_ENCRYPTION_KEY MISMATCH" alert, sending operators to reconnect
 # integrations that were never broken. Seeding always uses the current
@@ -48,8 +48,8 @@ class SecretDecryptionError(ValueError):
     """Raised by ``decrypt_secret`` when the configured encryption key cannot
     decrypt a stored value. A ``ValueError`` subclass (not a new exception
     hierarchy) so every existing ``except ValueError`` call site keeps working
-    unchanged; callers that want to react specifically to a key mismatch --
-    rather than lump it in with generic validation errors -- can now catch
+    unchanged; callers that want to react specifically to a key mismatch (
+    rather than lump it in with generic validation errors) can now catch
     this type by name instead of string-matching the message."""
 
 
@@ -112,12 +112,12 @@ def check_encryption_key_health(session: Session) -> bool:
     - Row exists: try to decrypt it with the *current* key and confirm it
       round-trips to the expected plaintext. Success means the running key
       is the same one every other encrypted secret in this database was
-      written under. Failure means it changed since -- every encrypted
+      written under. Failure means it changed since, every encrypted
       secret (GitHub App credentials, Slack/Jira/SIEM webhooks, the AI
       key) is now undecryptable, since Fernet has no recovery path for a
       lost key.
 
-    Deliberately never auto-repairs a mismatch by reseeding -- that would
+    Deliberately never auto-repairs a mismatch by reseeding; that would
     just hide the same failure one layer later. See
     ``reseed_encryption_key_canary`` for the explicit, admin-triggered reset.
     """
@@ -140,8 +140,8 @@ def check_encryption_key_health(session: Session) -> bool:
 def reseed_encryption_key_canary(session: Session) -> None:
     """Re-seed the canary under the *current* key, marking it as the new
     source of truth. Only ever called from the explicit, admin-triggered
-    "I've reconnected everything" action (POST /api/config/encryption-key/reseed)
-    -- deliberately not automatic, since resetting the canary before every
+    "I've reconnected everything" action (POST /api/config/encryption-key/reseed);
+    deliberately not automatic, since resetting the canary before every
     affected integration has actually been reconnected would just make the
     health check lie about integrations that are still broken."""
     from app.models.models import EncryptionKeyCanary

@@ -1,14 +1,14 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Toleman wordmark/branding lockup (#116) -- a hex-aperture mark ("an eye on
+ * Toleman wordmark/branding lockup (#116), a hex-aperture mark ("an eye on
  * terrain") replacing the generic Lucide shield-in-tile icon previously used
  * on both the sidebar and login screen. Exported as a real reusable
  * component (not inline SVG copy-pasted per screen) specifically so future
  * Login (#124) and Onboarding (#131) work can import it directly rather than
  * re-deriving the mark.
  *
- * Colors are intentionally NOT hardcoded hex -- the gradient stops and inner
+ * Colors are intentionally NOT hardcoded hex, the gradient stops and inner
  * dot resolve to the theme's `--primary`/`--sidebar` custom properties (see
  * globals.css, #115) via `currentColor`/CSS var references, so the mark
  * stays correct in both light and dark without a second copy.
@@ -63,7 +63,7 @@ export function BrandLockup({
       {/* The two lines were `gap-0` + `leading-none`, which jammed the
           wordmark onto the tagline with no breathing room. The tagline also
           carried tracking-[0.16em], whose trailing letter-space is rendered
-          after the final "N" -- so the block sat visibly left of the
+          after the final "N"; so the block sat visibly left of the
           wordmark's optical centre. Slightly tighter tracking plus a
           matching negative right margin cancels that trailing space, and a
           2px gap separates the lines without loosening either. */}

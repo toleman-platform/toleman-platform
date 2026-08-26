@@ -19,7 +19,7 @@ const TABS = [
 type TabId = (typeof TABS)[number]["id"];
 
 // IA review (#224): Control Plane keeps only what this app itself needs to
-// run -- who can use it and what tools/integrations it talks to. Scan
+// run; who can use it and what tools/integrations it talks to. Scan
 // policy config moved to /guardrails, Approval Queue moved to its own
 // /approval-queue route, and Workspace Roles moved into the new
 // /workspaces page (which also absorbed the per-workspace API key that
@@ -32,7 +32,7 @@ const GROUPS: { id: string; label: string; icon: LucideIcon; tabs: TabId[] }[] =
 const TAB_IDS = TABS.map((t) => t.id);
 
 export default function AdminPage() {
-  // (#235) Was useState -- see use-tab-param.ts for why that made every
+  // (#235) Was useState; see use-tab-param.ts for why that made every
   // sub-page here unlinkable and reset on every visit. Groups (Access /
   // Tooling) stay derived from the URL-backed tab below, same as before.
   const [tab, setTab] = useTabParam(TAB_IDS, "users");
@@ -73,8 +73,8 @@ export default function AdminPage() {
 
         {/* Bug fix #118 preserved: bounded scroll container so an
             off-screen tab's focus-scroll never escapes to <main>. Kept even
-            though neither remaining group currently overflows two tabs --
-            Tooling has 3 -- since a future tab addition regressing this is
+            though neither remaining group currently overflows two tabs (
+            Tooling has 3) since a future tab addition regressing this is
             a one-line CSS omission that's easy to miss. */}
         <div className="min-w-0 overflow-x-auto border-b border-border">
           <div className="flex w-max min-w-full gap-1">

@@ -7,7 +7,7 @@ every PR in milliseconds, and the script catches a tool that is declared but
 not actually usable, which no amount of static checking can tell you.
 
 The thing both are guarding against is the same. A scanner that is missing or
-broken does not announce itself -- `run_scan` catches the failure, the scan
+broken does not announce itself; `run_scan` catches the failure, the scan
 completes, and the repo shows zero findings. Zero findings from a broken
 scanner looks exactly like zero findings from clean code.
 """
@@ -53,7 +53,7 @@ def test_every_entry_has_the_required_fields(entry):
 def test_version_cmd_is_an_argv_list_not_a_string(entry):
     # A string would be split by a shell somewhere down the line. Every
     # subprocess call in this codebase passes argv lists precisely so no
-    # shell ever parses these -- see runner.clone_repo's same rule.
+    # shell ever parses these; see runner.clone_repo's same rule.
     cmd = entry["version_cmd"]
     assert isinstance(cmd, list) and cmd, f"{entry['tool']}: version_cmd must be a non-empty list"
     assert all(isinstance(part, str) for part in cmd)
@@ -111,7 +111,7 @@ def test_non_integrated_tools_default_every_usage_surface_off():
     # repo-path checkout), but api_scan.py's Active API Scanning route has
     # actually executed it unconditionally since #72 shipped. Defaulting its
     # api_scan surface off here would be the opposite bug this test guards
-    # against -- a silent, retroactive removal of coverage every existing
+    # against, a silent, retroactive removal of coverage every existing
     # user already had. See default_usage_for's and
     # app.core.tool_usage.is_nuclei_enabled_for_api_scan's docstrings.
     for entry in TOOL_REGISTRY:
@@ -124,7 +124,7 @@ def test_non_integrated_tools_default_every_usage_surface_off():
                 "ci_pipeline": False,
                 "api_scan": True,
                 "pr_guardrail": False,
-            }, "nuclei must default on for api_scan only -- every other surface stays off"
+            }, "nuclei must default on for api_scan only; every other surface stays off"
             continue
         assert not any(usage[s] for s in USAGE_SURFACES), entry["tool"]
 

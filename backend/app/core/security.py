@@ -75,7 +75,7 @@ def verify_session_token(token: str) -> int | None:
 
 def generate_api_token() -> tuple[str, str, str]:
     """Issue #109: mint a new public-API personal access token. Returns
-    (plaintext, token_hash, token_prefix) -- the caller persists only
+    (plaintext, token_hash, token_prefix); the caller persists only
     token_hash/token_prefix and returns plaintext to the client exactly
     once; it can never be re-derived from what's stored.
 

@@ -7,7 +7,7 @@ Scan row for every accessible target into the app process and grouped it in
 Python, which scales with total scan history rather than with the number of
 targets. There was no direct test coverage for this endpoint despite it
 backing the Scans page's "last scanned" line and filter for every target on
-every page load -- these tests exist so the query can be rewritten as
+every page load; these tests exist so the query can be rewritten as
 SQL-side aggregation with a guarantee that the response shape is unchanged.
 
 Same in-memory SQLite + TestClient + session-token-login pattern as

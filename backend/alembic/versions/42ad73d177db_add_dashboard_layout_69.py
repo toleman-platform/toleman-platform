@@ -21,7 +21,7 @@ def upgrade() -> None:
     # Hand-trimmed from `alembic revision --autogenerate`: the raw diff also
     # picked up unrelated pre-existing schema drift (index/column changes on
     # finding/scan/platformconfig/slarule, a leftover `discoveredendpoint`
-    # table) that isn't part of issue #69 -- only the new DashboardLayout
+    # table) that isn't part of issue #69; only the new DashboardLayout
     # table belongs in this migration.
     op.create_table(
         'dashboardlayout',

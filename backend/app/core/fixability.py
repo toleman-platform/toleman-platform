@@ -17,7 +17,7 @@ Three values, and the third one is the point:
     unknown       we have not established either way
 
 `unknown` is not a polite way of saying "no fix". Enrichment is best-effort
-and network-dependent -- osv_found is False when the lookup failed, when the
+and network-dependent; osv_found is False when the lookup failed, when the
 finding carries no CVE (most SAST and secrets findings), or when enrichment
 simply has not run yet. Collapsing that into no_known_fix would tell someone
 "nothing you can do" about a finding we never looked up, which is the same
@@ -40,7 +40,7 @@ VALID_FIXABILITY = frozenset({FIXABLE, NO_KNOWN_FIX, UNKNOWN})
 def fixability_for_enrichment(row: CveEnrichment | None) -> str:
     """Verdict from an already-loaded enrichment row."""
     if row is None or not row.osv_found:
-        # No advisory resolved -- we do not know, and must not imply we do.
+        # No advisory resolved; we do not know, and must not imply we do.
         return UNKNOWN
     if not row.fixed_versions:
         return NO_KNOWN_FIX
@@ -65,7 +65,7 @@ def fixability_for_finding(session: Session, finding: Finding) -> str:
 
 
 def fixed_version_summary(row: CveEnrichment | None) -> str | None:
-    """Shortest honest answer to "upgrade to what?" -- e.g. "0.40.0", or
+    """Shortest honest answer to "upgrade to what?", e.g. "0.40.0", or
     "0.40.0 (starlette)" when the advisory names a package. None when there
     is nothing to suggest.
 

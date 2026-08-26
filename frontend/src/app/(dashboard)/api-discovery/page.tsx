@@ -33,7 +33,7 @@ export default function ApiDiscoveryPage() {
   const targets = targetsData ?? [];
   const targetId = chosenTargetId ?? targets[0]?.id ?? null;
   const setTargetId = setChosenTargetId;
-  // Only meaningful relative to a scan just triggered in this session -- the
+  // Only meaningful relative to a scan just triggered in this session; the
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" column at all until a POST has completed here.
   // Tagged with the target it describes rather than cleared by an effect on
@@ -96,7 +96,7 @@ export default function ApiDiscoveryPage() {
     try {
       // POST /api/discovery/{target_id} now dispatches a Celery task and
       // returns immediately with status: "running" (#59) instead of
-      // blocking until the clone+grep finishes -- poll
+      // blocking until the clone+grep finishes; poll
       // GET /api/discovery/{target_id}/runs/{run_id} until it's done.
       const dispatch = await api.runDiscovery(runTargetId);
       cancelPollRef.current = pollUntilSettled(
@@ -151,7 +151,7 @@ export default function ApiDiscoveryPage() {
       // against already-discovered endpoints) and returns immediately
       // (#72, same async pattern as runScan/runDiscovery). Issue #212: the
       // poll, the elapsed counter and the ETA now come from useScanRun, so
-      // a DAST run -- which is typically the longest-running scan here --
+      // a DAST run (which is typically the longest-running scan here)
       // reports progress the same way a SAST run does instead of showing a
       // bare "Scanning...".
       const dispatch = await api.runApiScan(scanTargetId, selected.size > 0 ? Array.from(selected) : undefined);
@@ -168,7 +168,7 @@ export default function ApiDiscoveryPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">API Discovery</h1>
         <p className="text-sm text-muted-foreground">
-          Static route extraction over the target&apos;s source (Flask/FastAPI/Express/Gin/Django/Spring patterns) —
+          Static route extraction over the target&apos;s source (Flask/FastAPI/Express/Gin/Django/Spring patterns),
           real grep matches with file:line provenance, not an inferred/mocked inventory. Results are persisted, so
           this view reflects the last scan even after a reload.
         </p>
@@ -284,7 +284,7 @@ export default function ApiDiscoveryPage() {
                   : `Last active scan: ${lastApiScan.status}`}
               {lastApiScan.status === "completed" && lastApiScan.findings_count > 0 && targetId !== null && (
                 <>
-                  {" — "}
+                  {" · "}
                   <Link href={`/targets/${targetId}`} className="underline">
                     view findings
                   </Link>

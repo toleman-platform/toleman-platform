@@ -11,7 +11,7 @@ Covers:
     BLOCKING_SEVERITIES behavior, unchanged.
 
 Follows the same in-memory SQLite + dependency_override pattern used in
-tests/test_findings.py -- no shared conftest exists yet either.
+tests/test_findings.py; no shared conftest exists yet either.
 """
 import pytest
 from fastapi.testclient import TestClient

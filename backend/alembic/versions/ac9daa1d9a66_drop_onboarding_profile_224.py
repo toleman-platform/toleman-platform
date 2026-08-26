@@ -1,7 +1,7 @@
 """drop onboarding profile (issue #224)
 
 The first-run questionnaire and its /onboarding route were removed
-entirely -- this drops the table their answers were persisted in
+entirely; this drops the table their answers were persisted in
 (9f7506526474). Any scanner toggles the questionnaire wrote into
 WorkspaceToolConfig (issue #75) are untouched: those rows are the platform's
 real, live tool configuration, editable in Tool Marketplace regardless of

@@ -3,7 +3,7 @@
 PR Guardrail became multi-tool (finding GH-01): it now runs whatever tools a
 workspace has assigned to the pr_guardrail surface instead of a hardcoded
 semgrep. Once the tool set is operator-configurable, "0 net-new findings"
-is only meaningful alongside what was actually run -- and a scan where an
+is only meaningful alongside what was actually run; and a scan where an
 assigned tool failed must be distinguishable from a clean one.
 
 Revision ID: b7e4c9a1d2f3
@@ -24,7 +24,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # server_default="" so existing rows get a real empty string rather than
-    # NULL -- the model declares these non-Optional str, and a NULL would
+    # NULL, the model declares these non-Optional str, and a NULL would
     # surface as None on every historical scan and break "which tools ran"
     # rendering for them.
     op.add_column(

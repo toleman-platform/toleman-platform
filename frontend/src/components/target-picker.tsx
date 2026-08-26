@@ -17,7 +17,7 @@ export function TargetPicker({
   value: number | null;
   onChange: (id: number) => void;
   allowAll?: boolean;
-  /** Accessible name for the select -- callers that render a visible
+  /** Accessible name for the select, callers that render a visible
    * heading instead of a <label> should pass what that heading says. */
   label?: string;
 }) {

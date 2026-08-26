@@ -1,4 +1,4 @@
-"""Real static-analysis route discovery — regex over source files, no fabricated data.
+"""Real static-analysis route discovery: regex over source files, no fabricated data.
 
 Covers common framework routing conventions. Not exhaustive (no AST parsing),
 but every result is a genuine grep match with file:line provenance.
@@ -35,7 +35,7 @@ def discover_endpoints(repo_path: Path) -> list[dict]:
 
         rel_path = str(path.relative_to(repo_path))
         for line_no, line in enumerate(text.splitlines(), start=1):
-            # A line matches at most one framework's route pattern -- several
+            # A line matches at most one framework's route pattern, several
             # patterns overlap syntactically (e.g. `router.get("...")` reads
             # as both FastAPI and Express), so stop at the first hit instead
             # of tagging the same line under multiple frameworks.

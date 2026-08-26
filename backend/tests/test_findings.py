@@ -2,7 +2,7 @@
 bulk-triage endpoint.
 
 Follows the same in-memory SQLite + dependency_override pattern used in
-tests/test_rate_limit.py -- no shared conftest existed for this yet either,
+tests/test_rate_limit.py, no shared conftest existed for this yet either,
 so a scoped client/engine fixture pair lives here.
 """
 import pytest
@@ -196,7 +196,7 @@ def test_search_matches_rule_id(client, engine):
 
 def test_search_matches_cve_id(client, engine):
     # Issue #122: AI Analysis' finding-search typeahead searches by
-    # "title/CVE/target", reusing this endpoint -- cve_id must be in scope.
+    # "title/CVE/target", reusing this endpoint; cve_id must be in scope.
     _login(client, engine)
     target_id = _make_target(engine)
     _make_finding(engine, target_id, title="A", rule_id="r1", cve_id="CVE-2020-28483")
@@ -224,7 +224,7 @@ def test_search_matches_target_name(client, engine):
 def test_search_by_target_name_respects_workspace_scoping_for_admin_query_too(client, engine):
     # Regression guard: adding the Target join for search must not change
     # result counts when ws_ids is None (admin, already joined) vs. not
-    # None -- same target shouldn't appear twice due to a double join.
+    # None, same target shouldn't appear twice due to a double join.
     _login(client, engine)
     target_id = _make_target(engine, name="unique-target-xyz")
     _make_finding(engine, target_id, title="Only one", rule_id="r1")

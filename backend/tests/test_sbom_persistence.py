@@ -70,7 +70,7 @@ def test_different_branches_are_independent(session):
 
 def test_version_bump_is_treated_as_a_new_component(session):
     """Upgrading a package version is a real supply-chain event worth
-    surfacing as new -- not silently folded into the old row, since name+
+    surfacing as new, not silently folded into the old row, since name+
     version+purl is the identity key (purl encodes the version too)."""
     upsert_components(session, target_id=1, branch="main", discovered=[_comp(version="0.121.0")])
     new = upsert_components(session, target_id=1, branch="main", discovered=[_comp(version="0.122.0")])
@@ -92,7 +92,7 @@ def _target(session, name="repo-a", branch="main"):
 
 def test_org_aggregation_groups_same_component_version_across_targets(session):
     """Same package+version scanned into two different targets should
-    collapse into a single group row listing both target ids -- this is the
+    collapse into a single group row listing both target ids; this is the
     whole point of the org-wide view (e.g. 'is log4j 2.14 anywhere')."""
     t1 = _target(session, name="repo-a")
     t2 = _target(session, name="repo-b")
@@ -145,7 +145,7 @@ def test_org_aggregation_counts_targets_without_any_sbom(session):
 
 def test_org_aggregation_only_uses_each_targets_default_branch(session):
     """A component upserted on a non-default branch must not appear in the
-    org-wide aggregation -- same 'default branch only' rule as the per-target
+    org-wide aggregation, same 'default branch only' rule as the per-target
     GET/export endpoints."""
     t1 = _target(session, name="repo-a", branch="main")
     upsert_components(session, target_id=t1.id, branch="feature-x", discovered=[_comp()])

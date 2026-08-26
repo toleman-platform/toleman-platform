@@ -23,7 +23,7 @@ function ruleLabel(t: PolicyRuleType) {
 
 export function Policies() {
   // Issue #118: this used to derive its workspace list from `targets`
-  // (labeling each as `Workspace ${id} (${target.name})` -- a raw,
+  // (labeling each as `Workspace ${id} (${target.name})`, a raw,
   // target-name-based label unlike every other admin tab's clean
   // `workspace.name`). Switched to the same `api.workspaces()` source the
   // other 5 workspace pickers use, so the label format (and the duplicate-

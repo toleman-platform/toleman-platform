@@ -44,7 +44,7 @@ FRONTEND_URL = settings.public_base_url.rstrip("/")
 
 # Fallback when a workspace has no usable pr_guardrail assignment resolved
 # (see _resolve_guardrail_tools). Kept because semgrep is bundled in the
-# backend image and was the historical hardcoded behavior -- but it is now a
+# backend image and was the historical hardcoded behavior; but it is now a
 # floor, not the whole story: whatever else the workspace assigns runs too.
 GUARDRAIL_FALLBACK_TOOL = "semgrep"
 MAX_NEW_FINDINGS_IN_RESPONSE = 20
@@ -54,7 +54,7 @@ MAX_NEW_ENDPOINTS_IN_RESPONSE = 10
 def _resolve_guardrail_tools(session: Session, target: Target) -> list[str]:
     """Tools to run for this target's PR guardrail scan.
 
-    Reads the workspace's real pr_guardrail usage assignments (GH-01 --
+    Reads the workspace's real pr_guardrail usage assignments (GH-01:
     before this, those checkboxes were decorative and only semgrep ever
     ran). Falls back to semgrep alone if the workspace has somehow resolved
     to nothing runnable, so a guardrail scan never silently degrades into
@@ -85,10 +85,10 @@ def _run_guardrail_tools(
 
     Three outcomes, kept separate on purpose:
 
-    * **ran** -- findings (possibly none), a real result
-    * **failed** -- the tool raised; recorded rather than aborting the scan,
+    * **ran**: findings (possibly none), a real result
+    * **failed**: the tool raised; recorded rather than aborting the scan,
       since one broken scanner shouldn't discard what the others found
-    * **skipped** -- diff scoping left it nothing to examine (``trivy`` with
+    * **skipped**: diff scoping left it nothing to examine (``trivy`` with
       no manifest change, ``tfsec`` with no Terraform). Mapped to its reason.
 
     The caller must not treat a run with non-empty ``failed`` or ``skipped``
@@ -129,7 +129,7 @@ def _changed_files(slug: str, pr_number: int) -> list[str] | None:
     """Repo-relative paths the PR adds or modifies.
 
     Returns None when the list can't be established, which the caller must
-    treat as "fall back to a full scan" -- never as "nothing changed".
+    treat as "fall back to a full scan"; never as "nothing changed".
 
     Deleted files are excluded: there is no file left to scan, and their
     findings disappear from the head branch anyway. Renames report only the
@@ -168,7 +168,7 @@ def _changed_files(slug: str, pr_number: int) -> list[str] | None:
 def _severity_str(severity) -> str:
     """Findings carry a Severity enum member up to this point; f-string-ing
     an enum directly renders "Severity.MEDIUM" (its default __repr__-ish
-    __str__), not "Medium" -- a real bug found via a screenshot of an actual
+    __str__), not "Medium"; a real bug found via a screenshot of an actual
     posted PR comment. Persisted PRGuardrailFinding.severity is already a
     plain str, so this also passes those through unchanged."""
     return severity.value if hasattr(severity, "value") else str(severity)
@@ -210,7 +210,7 @@ def _persist_findings(session: Session, pr_scan_id: int, net_new: list[dict]) ->
 
 def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dict]:
     """Real static-analysis route discovery on the PR branch, diffed against
-    what's already persisted for the target's default branch -- same
+    what's already persisted for the target's default branch; same
     net-new pattern as findings, but informational only (no ignore workflow;
     unlike vulnerabilities, a new API endpoint isn't inherently something to
     approve/reject, just something to be aware of in review)."""
@@ -229,7 +229,7 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
 
     if not existing:
         # (GH-06) No baseline has ever been discovered for the default
-        # branch, so there is nothing to diff against -- and diffing against
+        # branch, so there is nothing to diff against; and diffing against
         # an empty set makes the *entire repository* look new.
         #
         # An external evaluation hit exactly this: a PR touching one file got
@@ -238,11 +238,11 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
         # visible artefact this tool produces, at the moment a team is
         # deciding whether to trust it.
         #
-        # "No baseline" is not "everything is new" -- same distinction this
+        # "No baseline" is not "everything is new", same distinction this
         # codebase draws between a check that found nothing and a check that
         # never ran. Report nothing rather than something false.
         logger.info(
-            "PR guardrail: no persisted endpoint baseline for target %s branch %s -- "
+            "PR guardrail: no persisted endpoint baseline for target %s branch %s, "
             "skipping the new-endpoint diff for this scan rather than reporting the "
             "whole repo as new",
             target.id, target.default_branch,
@@ -260,14 +260,14 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
 COMMENT_MARKER = "<!-- toleman-pr-guardrail -->"
 
 # Pre-rename marker. Comments posted before the Rikugan -> Toleman rename
-# carry this one, so the lookup below has to match either -- otherwise the
+# carry this one, so the lookup below has to match either; otherwise the
 # first rescan after upgrading would fail to find its own prior comment and
 # post a second one alongside it on every PR the guardrail has ever touched.
 # Only ever matched, never emitted: new comments always carry COMMENT_MARKER,
 # so a PR migrates to the new marker the first time it is rescanned.
 LEGACY_COMMENT_MARKERS = ("<!-- rikugan-pr-guardrail -->",)
 
-# Severities whose per-finding <details> block is expanded by default -- the
+# Severities whose per-finding <details> block is expanded by default; the
 # ones a reviewer needs to see without an extra click. Medium/Low collapse
 # since they're rarely PR-blocking on their own (see BLOCKING_SEVERITIES in
 # app/core/pr_guardrail.py).
@@ -275,7 +275,7 @@ OPEN_BY_DEFAULT_SEVERITIES = {"Critical", "High"}
 
 
 def _severity_badge(status: PRGuardrailStatus) -> str:
-    """shields.io-style top-line pass/fail badge -- same visual pattern as
+    """shields.io-style top-line pass/fail badge, same visual pattern as
     the SafeDep bot's badge comments already seen on this repo's PRs (e.g.
     PR #11), rebuilt via img.shields.io instead of a static PNG so the label
     changes with the real scan outcome."""
@@ -294,7 +294,7 @@ def _severity_counts(findings: list[PRGuardrailFinding]) -> dict[str, int]:
 def _severity_count_table(findings: list[PRGuardrailFinding]) -> str:
     """One-line (single header + single data row) GFM table summarizing
     net-new finding counts by severity, meant to be the first thing a
-    reviewer sees -- before any per-finding detail."""
+    reviewer sees; before any per-finding detail."""
     counts = _severity_counts(findings)
     header = "| " + " | ".join(SEVERITY_ORDER) + " |"
     divider = "|" + "|".join(["---"] * len(SEVERITY_ORDER)) + "|"
@@ -304,7 +304,7 @@ def _severity_count_table(findings: list[PRGuardrailFinding]) -> str:
 
 def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_id: int) -> str:
     """GFM table (Severity | Rule | Title | Location | Links) for one
-    severity group's findings -- replaces the old flat prose-bullet list."""
+    severity group's findings, replaces the old flat prose-bullet list."""
     lines = [
         "| Severity | Rule | Title | Location | Links |",
         "|---|---|---|---|---|",
@@ -324,7 +324,7 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
 
 # (#271) A PR comment is a snapshot that gets read days later. Every severity
 # here is derived from priority_score (app/core/scoring.py), which folds in
-# EPSS and CISA KEV -- both of which move. A finding rendered Medium when the
+# EPSS and CISA KEV; both of which move. A finding rendered Medium when the
 # comment was posted can genuinely be Critical by the time someone reviews
 # it, because CISA added its CVE to KEV in between.
 #
@@ -334,8 +334,8 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
 #   "Max score is 1000. Note that the real score may have changed since the
 #    PR was raised."
 #
-# It is the same instinct as tools_failed/tools_skipped (#243, #253) -- a
-# result is only true as of when it ran -- applied to score freshness rather
+# It is the same instinct as tools_failed/tools_skipped (#243, #253) (a
+# result is only true as of when it ran) applied to score freshness rather
 # than scan completeness. Deliberately rendered on every comment, not only
 # when something scored high: a reader cannot know whether a score moved
 # without being told the number has an as-of date at all.
@@ -377,10 +377,10 @@ def render_comment(
     if scan_scope == "diff":
         # Stated up front, above the result. A reader who takes "no findings"
         # as whole-repo assurance when only 7 files were examined has been
-        # misled by us, not by the scanner -- so the limit is part of the
+        # misled by us, not by the scanner; so the limit is part of the
         # headline, not a footnote.
         lines.append(
-            f"🔍 **Diff-scoped scan** — only the {files_scanned} file(s) changed in this PR were "
+            f"🔍 **Diff-scoped scan**, only the {files_scanned} file(s) changed in this PR were "
             "examined, not the whole repository. Pre-existing issues elsewhere in the codebase "
             "would not appear here."
         )
@@ -396,10 +396,10 @@ def render_comment(
     if tools_failed:
         # Rendered before anything else, and never alongside a clean-pass
         # tick: a PR scanned with a broken scanner is inconclusive, not
-        # clean. Naming the tool is what makes it actionable -- "scan
+        # clean. Naming the tool is what makes it actionable, "scan
         # failed" alone sends people to the container logs.
         lines.append(
-            f"⚠️ **{', '.join(tools_failed)} failed to run — this PR was not fully scanned.** "
+            f"⚠️ **{', '.join(tools_failed)} failed to run; this PR was not fully scanned.** "
             "Findings below (if any) are from the tools that did run, and may be incomplete."
         )
         lines.append("")
@@ -408,14 +408,14 @@ def render_comment(
         if tools_failed:
             lines.append(
                 "No net-new findings from the tools that completed. "
-                "This is **not** an all-clear — see the warning above."
+                "This is **not** an all-clear; see the warning above."
             )
         elif scan_scope == "diff":
             # No tick here. A green check next to a partial scan is the exact
             # thing that turns a narrowed check into a false all-clear.
             lines.append(
                 "No net-new findings or API changes in the changed files. "
-                "This covers the diff only — see the scope note above."
+                "This covers the diff only; see the scope note above."
             )
         else:
             lines.append("No net-new findings or API changes vs the default branch. ✅")
@@ -468,7 +468,7 @@ def render_comment(
         lines.append("")
 
     if status == PRGuardrailStatus.BLOCKED:
-        lines.append("This PR is **blocked** pending fix or AppSec override — [review in Toleman]"
+        lines.append("This PR is **blocked** pending fix or AppSec override, [review in Toleman]"
                       f"({FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}).")
 
     if tools_run:
@@ -484,7 +484,7 @@ def render_comment(
 
 def _get_installation_token_or_none(session: Session, target: Target) -> str | None:
     """Resolve the installation token for THIS target's repo specifically
-    (#34) -- previously this always grabbed installation row #1 and App
+    (#34), previously this always grabbed installation row #1 and App
     config row #1 regardless of which repo/target the caller actually
     needed a token for, so PR Guardrail would silently use the wrong App's
     installation token (or fail) for any repo not owned by the first
@@ -527,7 +527,7 @@ def _find_existing_comment_id(slug: str, pr_number: int, token: str) -> int | No
 
 
 def post_pr_comment(session: Session, target: Target, pr_number: int, body: str) -> None:
-    """Best-effort: never raises -- a scan result that fails to post a comment
+    """Best-effort: never raises; a scan result that fails to post a comment
     is still useful.
 
     Update-in-place (#127): look for a prior Toleman comment on this PR via
@@ -572,8 +572,8 @@ def set_commit_status(session: Session, target: Target, sha: str, state: str, de
     """Post the commit status. Never raises; returns "" on success or a short
     human-readable reason on failure.
 
-    (GH-04) Still fail-open at the transport layer -- a GitHub outage must not
-    abort a scan that already produced real findings -- but no longer *silent*.
+    (GH-04) Still fail-open at the transport layer (a GitHub outage must not
+    abort a scan that already produced real findings) but no longer *silent*.
     Enforcement resolution is carefully fail-closed (conflicting groups resolve
     to the most restrictive), while the channel carrying that decision to
     GitHub failed open into a container log nobody reads. If an installation
@@ -624,7 +624,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
     Enforcement mode (issue #62, app.core.enforcement.resolve_enforcement_mode)
     gates this at the very top: "disabled" means PR Guardrail doesn't run for
-    this target/PR at all -- no clone, no PRGuardrailScan row, no PR comment,
+    this target/PR at all, no clone, no PRGuardrailScan row, no PR comment,
     no commit status. "block"/"alert" both run the full scan below; the
     difference between them only affects the commit status sent to GitHub
     at the end (see the set_commit_status call)."""
@@ -673,7 +673,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
         # (#243) Scope the scan to the PR's changed files when the target
         # opts in. Every path back to a full scan is explicit, and the scope
-        # actually used is persisted -- a diff scan and a full scan report
+        # actually used is persisted; a diff scan and a full scan report
         # very different amounts of assurance and must never be confused for
         # each other in the PR comment or the audit trail.
         scan_paths: list[str] | None = None
@@ -729,8 +729,8 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         net_new = compute_net_new(parsed, existing_hashes)
 
         # Policy-as-code (ROADMAP Sprint 4): apply the target's workspace
-        # active policy rules -- org-level suppression + severity threshold
-        # override -- before deciding whether to block. No policies configured
+        # active policy rules (org-level suppression + severity threshold
+        # override) before deciding whether to block. No policies configured
         # for the workspace means today's default behavior is unchanged.
         policies = session.exec(
             select(PolicyRule).where(
@@ -783,7 +783,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         summary_desc = f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)"
         if failed_tools:
             # An assigned tool did not run. Whatever the other tools found,
-            # this PR was NOT fully checked -- reporting "success" here would
+            # this PR was NOT fully checked; reporting "success" here would
             # be the exact false all-clear this project treats as a bug
             # (see issue #229, and osv_malware.py's None-vs-{} handling).
             # GitHub's "error" state is visually distinct from both success
@@ -796,8 +796,8 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             # Alert mode: real blocking findings exist, but this
             # target/group/workspace is configured to warn rather than fail
             # the build. GitHub commit statuses only support
-            # success/failure/pending/error -- there's no dedicated "neutral"
-            # state -- so we use "success" (non-blocking) with a description
+            # success/failure/pending/error (there's no dedicated "neutral"
+            # state) so we use "success" (non-blocking) with a description
             # that makes clear this is alert-mode, not a clean scan.
             commit_state, commit_desc = "success", f"[alert mode, non-blocking] {summary_desc}"
         else:
@@ -842,7 +842,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 def recompute_pr_scan_status(session: Session, pr_scan: PRGuardrailScan) -> None:
     """Re-evaluate a BLOCKED PRGuardrailScan after an individual finding's
     ignore-request is approved (#112). Before this, the only way to unblock
-    a PR was the blunt whole-scan `override` -- approving every one of a
+    a PR was the blunt whole-scan `override`; approving every one of a
     PR's blocking findings individually still left the scan (and GitHub
     commit status) stuck on BLOCKED forever, since approve_ignore only
     touched the finding row, never the scan.
@@ -896,7 +896,7 @@ def recompute_pr_scan_status(session: Session, pr_scan: PRGuardrailScan) -> None
         )
     except Exception:
         # Best-effort, same philosophy as the rest of this module's GitHub
-        # calls -- the scan row itself is already correctly updated above;
+        # calls; the scan row itself is already correctly updated above;
         # a failure here just means GitHub's commit status lags until the
         # next real scan or a retry, not a failed approval.
         logger.exception(

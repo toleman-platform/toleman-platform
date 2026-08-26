@@ -7,7 +7,7 @@ two different targets that happen to share a repo name) would race: one
 scan's rmtree could delete files out from under another scan's still-running
 clone/tool invocation. These tests prove that scan-scoped identifiers now
 produce distinct, non-colliding workdirs, and that the failed clone_repo
-call. (No real network access is used -- subprocess.run is monkeypatched.)
+call. (No real network access is used, subprocess.run is monkeypatched.)
 """
 import subprocess
 from pathlib import Path
@@ -86,7 +86,7 @@ def test_clone_repo_different_targets_same_repo_name_isolated(isolated_workdir):
 
 def test_clone_repo_reclones_into_same_scan_id_dir_if_rerun(isolated_workdir):
     """Retrying the *same* scan (same scan_id) is still expected to clobber its
-    own prior partial checkout -- that's not a race since it's sequential."""
+    own prior partial checkout, that's not a race since it's sequential."""
     dest_a = runner.clone_repo("https://github.com/acme/widgets.git", "main", scan_id=99)
     (dest_a / "stale.txt").write_text("leftover")
 

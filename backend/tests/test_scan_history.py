@@ -4,7 +4,7 @@ Deliberately a separate endpoint from GET /api/scans/summary rather than an
 extension of it. That endpoint aggregates to at most one row per
 (target, tool) precisely so a target scanned nightly for a year doesn't send
 hundreds of rows to render one timestamp. A history view is the one place
-those individual rows are the point -- so this returns them, scoped to a
+those individual rows are the point, so this returns them, scoped to a
 single target and paginated, keeping the property that made the aggregation
 worth doing: response size never scales with total scan history.
 """
@@ -109,7 +109,7 @@ class TestHistory:
 
     def test_failure_reason_is_surfaced(self, client, engine):
         """A failed scan whose reason is invisible reads as 'nothing
-        happened' -- the false-all-clear shape this codebase keeps refusing
+        happened'; the false-all-clear shape this codebase keeps refusing
         (#253)."""
         _admin(client, engine)
         tid = _target(engine)
@@ -146,7 +146,7 @@ class TestPagination:
         assert {i["scan_id"] for i in p1}.isdisjoint({i["scan_id"] for i in p2})
 
     def test_page_size_is_capped(self, client, engine):
-        """Response size must never scale with total history -- the whole
+        """Response size must never scale with total history, the whole
         reason /summary aggregates instead of listing."""
         _admin(client, engine)
         tid = _target(engine)
@@ -172,7 +172,7 @@ class TestAccess:
 
     def test_history_route_is_not_shadowed_by_the_scan_id_route(self, client, engine):
         """GET /{scan_id} would capture "history" and 422 on int coercion if
-        declared first -- FastAPI matches in definition order."""
+        declared first, FastAPI matches in definition order."""
         _admin(client, engine)
         tid = _target(engine)
         res = client.get(f"/api/scans/history?target_id={tid}")

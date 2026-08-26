@@ -1,7 +1,7 @@
 # Toleman backend image: FastAPI API server AND Celery worker share this image
 # (docker-compose.yml runs the same image with a different command for the
 # celery-worker service). Bundles the 4 scanner CLIs the platform wraps
-# (Semgrep, Trivy, Gitleaks, gosec) so native scans work out of the box --
+# (Semgrep, Trivy, Gitleaks, gosec) so native scans work out of the box;
 # see backend/app/scanners/runner.py for how they're invoked.
 #
 # Pinned to Python 3.12 exactly: 3.9 is too old for this codebase, and 3.14
@@ -11,9 +11,9 @@
 FROM python:3.12-slim AS base
 
 # Pinned scanner versions. gitleaks is pinned to the exact version already
-# proven working in .github/workflows/self-scan.yml -- keep it in sync with
+# proven working in .github/workflows/self-scan.yml; keep it in sync with
 # that file. All three now download their release asset directly, so none of
-# them makes an api.github.com call during the build -- see the Trivy block
+# them makes an api.github.com call during the build; see the Trivy block
 # below for why that mattered.
 ARG GITLEAKS_VERSION=8.21.2
 ARG TRIVY_VERSION=0.73.0
@@ -23,7 +23,7 @@ ARG GOSEC_VERSION=2.28.0
 # architecture, taken from each project's published checksums file for the
 # tag pinned above. These replace the former installer-script checksums:
 # the scripts are no longer used, so verifying them verified nothing that
-# still runs. Verifying the tarball is strictly stronger -- it covers the
+# still runs. Verifying the tarball is strictly stronger; it covers the
 # binary that actually ends up in the image rather than the program that
 # fetched it.
 ARG TRIVY_SHA256_AMD64=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # .github/workflows/self-scan.yml, generalized for both container arches.
 # Architecture is detected with `dpkg --print-architecture` (always accurate
 # for the image actually being built) rather than the BuildKit TARGETARCH
-# arg -- `docker compose build`'s default (non-buildx) builder doesn't
+# arg, `docker compose build`'s default (non-buildx) builder doesn't
 # reliably populate TARGETARCH, which left it empty and broke this step.
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
@@ -72,7 +72,7 @@ RUN set -eux; \
 # mutable-URL problem. What it could not fix is that the script resolves the
 # release through an *unauthenticated* api.github.com call at build time.
 # That call is rate-limited per runner IP, and when it is throttled the
-# script reports `unable to find 'vX.Y.Z'` -- indistinguishable from a
+# script reports `unable to find 'vX.Y.Z'`, indistinguishable from a
 # deleted release, and fatal to the build. gosec below failed exactly that
 # way on the first publish run, then succeeded unchanged on a re-run.
 #
@@ -99,7 +99,7 @@ RUN set -eux; \
 # --- gosec (Go SAST) ---------------------------------------------------
 # Same treatment as trivy above, and for the same reason: this is the step
 # whose api.github.com lookup was throttled and failed the first publish run
-# with a message claiming the release did not exist. It did -- the asset URL
+# with a message claiming the release did not exist. It did, the asset URL
 # below returned 200 throughout.
 #
 # To bump: change the ARG and take the new sums from
@@ -119,27 +119,27 @@ RUN set -eux; \
 
 # --- Python dependencies + Semgrep (SAST) -----------------------------
 # Semgrep isn't in requirements.txt (it's a standalone CLI, same as the other
-# three scanners) -- installed the same way CI installs it in
+# three scanners); installed the same way CI installs it in
 # .github/workflows/self-scan.yml (`pip install semgrep`).
 #
 # Installed in the SAME `pip install` invocation as requirements.txt, not a
-# separate one -- verified the hard way: a second, separate `pip install
+# separate one; verified the hard way: a second, separate `pip install
 # semgrep` call upgrades a transitive dependency to whatever its own
 # (looser) constraint allows, silently overriding what requirements.txt
 # resolved to, since pip does not reconsider already-installed packages'
 # constraints across separate invocations. One combined invocation lets
 # pip's resolver satisfy every constraint at once.
 #
-# This is exactly how starlette@0.38.6 (7 real CVEs, including an SSRF --
+# This is exactly how starlette@0.38.6 (7 real CVEs, including an SSRF;
 # #239) went unnoticed on main: fastapi==0.115.0's own upper bound silently
 # capped it there no matter what was requested elsewhere. requirements.txt
 # now pins fastapi>=0.133.0 (drops that upper bound) and starlette==1.6.0
-# explicitly -- the general lesson about combined installs still applies to
+# explicitly; the general lesson about combined installs still applies to
 # every other transitive dependency, starlette is just the one with a name
 # on it now.
 #
 # `setuptools<81` is load-bearing, not hygiene. Nothing here asks for
-# setuptools directly -- semgrep's pinned opentelemetry-instrumentation
+# setuptools directly, semgrep's pinned opentelemetry-instrumentation
 # (0.46b0) declares `setuptools>=16.0`, so pip installs the newest one.
 # setuptools 82.0.0 removed `pkg_resources`, which that same module imports
 # at line 4 of its dependencies.py, so an unconstrained resolve builds an
@@ -154,13 +154,13 @@ RUN set -eux; \
 #
 # The floor (#239's transitive-dependency scan job found this) matters just
 # as much as the ceiling: nothing pinned a minimum, so an unconstrained
-# resolve was free to land anywhere below 81 -- observed landing on 70.3.0,
+# resolve was free to land anywhere below 81; observed landing on 70.3.0,
 # which carries CVE-2025-47273 (HIGH, path traversal in PackageIndex).
 # 78.1.1 is the real fix version and stays comfortably under the
 # pkg_resources ceiling, so both constraints hold at once.
 #
 # One setuptools issue in the same scan, CVE-2026-59890 (MEDIUM, MANIFEST.in
-# exclusion bypass via Unicode normalization), needs >=83.0.0 -- above the
+# exclusion bypass via Unicode normalization), needs >=83.0.0; above the
 # pkg_resources ceiling, so it stays open until that ceiling can be lifted.
 # Not worked around here: forcing it past 81 would silently break semgrep,
 # which is a worse outcome than one open MEDIUM with a documented reason.
@@ -187,7 +187,7 @@ ENV BUILD_VERSION=${BUILD_VERSION} \
 # arbitrary cloned third-party repositories, so a scanner parsing hostile
 # input is the exact place you do not want root.
 #
-# HOME must be a real, writable directory rather than left at "/" -- the
+# HOME must be a real, writable directory rather than left at "/"; the
 # scanners keep caches under it and silently fail or re-download on every
 # invocation otherwise. Concretely: trivy stores its vulnerability DB in
 # $HOME/.cache/trivy (a multi-hundred-MB download it refuses to run without),

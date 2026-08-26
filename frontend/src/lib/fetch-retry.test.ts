@@ -77,18 +77,18 @@ describe("fetchWithConnectionRetry", () => {
     const result = await promise;
 
     expect(result).toBe(finalError);
-    // Exactly 3 attempts -- confirms this does not silently keep retrying
+    // Exactly 3 attempts; confirms this does not silently keep retrying
     // beyond the bounded backoff, which would turn a real outage into an
     // even-longer hang on every page render.
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it("never retries an HTTP error response -- only a fetch() throw", async () => {
+  it("never retries an HTTP error response, only a fetch() throw", async () => {
     // A 500 is a real response from a server that is up. Retrying it here
     // would just be a slower version of the same failure, and could
     // duplicate a non-idempotent write if this were ever reused for a
     // path that doesn't already guarantee the request never reached the
-    // server. fetchWithConnectionRetry only sees fetch() *throwing* -- an
+    // server. fetchWithConnectionRetry only sees fetch() *throwing*; an
     // ok-or-not Response is never something it decides to retry.
     const errorResponse = new Response("server error", { status: 500 });
     const fetchMock = vi.fn().mockResolvedValue(errorResponse);

@@ -43,7 +43,7 @@ DEFAULT_PAGE_SIZE = 25
 
 class FindingOut(Finding):
     """Finding plus resolved SLA fields (issue #70), computed on read via
-    app.core.sla.compute_sla_status -- not stored columns. sla_days is None
+    app.core.sla.compute_sla_status, not stored columns. sla_days is None
     when no SlaRule applies to this finding's (group, severity) or
     workspace default; sla_violated is always False in that case (never a
     fabricated countdown). Subclasses Finding (not a table) purely to reuse
@@ -51,7 +51,7 @@ class FindingOut(Finding):
     endpoint already returns Finding rows almost as-is elsewhere."""
     sla_days: int | None = None
     sla_violated: bool = False
-    # (#246) "can I close this today?" -- derived from CveEnrichment, not a
+    # (#246) "can I close this today?", derived from CveEnrichment, not a
     # stored column, so it cannot drift from the enrichment it summarises.
     # "unknown" means we have not established either way; it is NOT a softer
     # way of saying no_known_fix. See app.core.fixability.
@@ -87,19 +87,19 @@ def _fixability_map(session: Session, findings: list[Finding]) -> dict[int, str]
 
 def _maybe_notify_sla_breach(session: Session, finding: Finding, sla_violated: bool) -> None:
     """Issue #73 sla_breach trigger, fired at the same query-time point #70
-    already computes sla_violated (see module docstring in app.core.sla --
+    already computes sla_violated (see module docstring in app.core.sla,
     there's no background job for this). Dedup via
     Finding.sla_breach_notified_at: set the first time a finding is
     observed violating, never re-fired on subsequent reads while it stays
     violated. Reset to None once no longer violated (mitigated, or SLA rule
-    changed) so a later re-violation -- e.g. reopened past its SLA again --
+    changed) so a later re-violation (e.g. reopened past its SLA again)
     is treated as a fresh breach and notifies again, per the field's
     docstring in app.models.models.Finding."""
     if sla_violated and finding.sla_breach_notified_at is None:
         finding.sla_breach_notified_at = datetime.utcnow()
         session.add(finding)
         session.commit()
-        # commit() expires every attribute on `finding` by default -- without
+        # commit() expires every attribute on `finding` by default, without
         # this refresh, the caller's subsequent finding.model_dump() (in
         # _to_finding_out) triggers an implicit per-attribute reload that
         # SQLAlchemy/pydantic can mishandle mid-request (observed as a
@@ -147,9 +147,9 @@ class FindingEnrichmentResponse(BaseModel):
     """No-AI enrichment (issue #71): real CWE/CVSS/description from NVD and
     known fixed versions from OSV.dev, both keyed off Finding.cve_id.
     Fields are null when not applicable (e.g. a secrets-detection or SAST
-    finding with no cve_id has no CVE/OSV data at all -- that's correct, not
+    finding with no cve_id has no CVE/OSV data at all, that's correct, not
     a bug) or when the upstream source didn't have data for this CVE.
-    Distinct from AI Analysis (app/api/ai.py) -- this always works with zero
+    Distinct from AI Analysis (app/api/ai.py); this always works with zero
     AI provider configured."""
     finding_id: int
     cve_id: str | None = None
@@ -187,7 +187,7 @@ def _apply_triage(
         # Issue #76: teach the false-positive learning engine right at the
         # moment a human marks this as noise, so the same shape of finding
         # (same rule_id+tool+file basename) is auto-suppressed on future
-        # ingestion -- including in a different repo within this workspace.
+        # ingestion; including in a different repo within this workspace.
         # Best-effort: a learning failure must never block the triage action
         # itself, same "never break the primary action" philosophy as the
         # Jira/notification hooks in app.core.ingestion.
@@ -247,7 +247,7 @@ def list_findings(
     if environment is not None or owner is not None:
         # (#251) Filter findings by the owning target's metadata. Needs the
         # Target join, which only happens above when ws_ids is not None (an
-        # admin caller skips it), so join here if it hasn't happened yet --
+        # admin caller skips it), so join here if it hasn't happened yet;
         # joining twice raises rather than silently duplicating rows.
         if not target_joined:
             query = query.join(Target, Target.id == Finding.target_id)
@@ -272,14 +272,14 @@ def list_findings(
             query = query.where(
                 Finding.cve_id.in_(known_cves), Finding.cve_id.not_in(fixable_cves)
             )
-        else:  # unknown -- no CVE at all, or no resolved advisory
+        else:  # unknown, no CVE at all, or no resolved advisory
             query = query.where(
                 or_(Finding.cve_id.is_(None), Finding.cve_id.not_in(known_cves))
             )
     if search:
         # Issue #122: AI Analysis' finding-search typeahead reuses this
         # query param rather than new backend search logic, and searches by
-        # "title/CVE/target" per that issue -- so cve_id and the target's
+        # "title/CVE/target" per that issue; so cve_id and the target's
         # name need to be in scope here too, not just title/file_path/rule_id.
         if not target_joined:
             query = query.join(Target, Target.id == Finding.target_id)
@@ -331,7 +331,7 @@ def list_remediations(
     """(#247) Open findings for a target, grouped into the upgrades that
     would close them: "upgrade starlette to 0.40.0, fixes 3 issues".
 
-    Workspace-scoped like every other read here (#57) -- a target id from
+    Workspace-scoped like every other read here (#57), a target id from
     another tenant returns 404, not that tenant's remediation plan.
     """
     target = session.get(Target, target_id)
@@ -407,7 +407,7 @@ def get_finding_enrichment(
             raise HTTPException(status_code=404, detail="finding not found")
 
     if not finding.cve_id:
-        # No CVE on this finding (SAST/secrets finding) -- nothing to
+        # No CVE on this finding (SAST/secrets finding); nothing to
         # enrich from NVD/OSV. Correct, not a bug: return an all-null body
         # rather than a 404, so the frontend can render "no enrichment
         # available" instead of treating it as an error.
@@ -446,7 +446,7 @@ def bulk_triage_findings(
     # (a real 30-finding bulk action produced 30 near-identical cards). Tag
     # every row this call writes with one shared batch_id so /api/audit/log
     # can group them back into a single feed item. Only stamped when there's
-    # actually more than one finding -- a "batch" of one is just a normal
+    # actually more than one finding; a "batch" of one is just a normal
     # single triage and shouldn't render as a collapsible group.
     batch_id = uuid4().hex if len(payload.finding_ids) > 1 else None
     updated = []
@@ -455,7 +455,7 @@ def bulk_triage_findings(
         if not finding:
             continue
         # finding_id is inside the request body's finding_ids list, and each
-        # one can belong to a different target/workspace -- check per finding
+        # one can belong to a different target/workspace; check per finding
         # rather than once, the same reason create_target checks explicitly
         # instead of using require_workspace_role (see its comment).
         enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, finding_id=finding_id)

@@ -147,7 +147,7 @@ def test_single_triage_is_not_grouped(client, engine):
 
 
 def test_bulk_triage_of_single_finding_is_not_grouped(client, engine):
-    """A 'batch' of exactly one finding is just a normal triage -- it
+    """A 'batch' of exactly one finding is just a normal triage; it
     shouldn't render as a collapsible group of one."""
     _login(client, engine)
     target_id = _make_target(engine)

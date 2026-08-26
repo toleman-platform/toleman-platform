@@ -2,13 +2,13 @@
 
 Two halves, mirroring #74's Jira auto-create / #73's notifications shape:
 
-  1. learn_suppression_rule() -- called from app.api.findings whenever a
+  1. learn_suppression_rule(), called from app.api.findings whenever a
      Finding is triaged to FindingState.FALSE_POSITIVE. Extracts a signature
      (rule_id, tool, file_path basename) from the finding and upserts a
      FalsePositiveRule for its workspace (deduped so re-triaging the same
      shape of finding twice doesn't stack duplicate rules).
 
-  2. find_matching_rule() / apply_auto_suppression() -- called from
+  2. find_matching_rule() / apply_auto_suppression(), called from
      app.core.ingestion.ingest_findings for every newly-created Finding,
      right alongside the existing dedup/Jira/notification hooks. If an
      active rule matches, the finding is created as usual (so it still shows
@@ -29,14 +29,14 @@ from app.models.models import FalsePositiveRule, Finding, FindingState, FindingS
 logger = logging.getLogger(__name__)
 
 # Prefix stamped onto Finding.state_reason when a finding is auto-suppressed
-# at ingestion time -- lets the "auto-suppressed this month" dashboard figure
+# at ingestion time; lets the "auto-suppressed this month" dashboard figure
 # (app.core.widgets.resolve_fp_auto_suppressions) query Finding directly by
 # state + a LIKE on this prefix instead of needing a second event-log table.
 AUTO_SUPPRESS_REASON_PREFIX = "auto-suppressed via learned false-positive rule"
 
 
 def _file_path_pattern(file_path: str) -> str | None:
-    """Basename of a file path, normalized -- see FalsePositiveRule's
+    """Basename of a file path, normalized; see FalsePositiveRule's
     docstring for why the pattern is a basename, not a full path. Returns
     None (matches "any file") if the path is empty/unusable."""
     if not file_path:
@@ -57,12 +57,12 @@ def learn_suppression_rule(session: Session, finding: Finding, actor: str = "sys
     """Extracts a suppression signature from `finding` (just triaged to
     FALSE_POSITIVE) and upserts a FalsePositiveRule scoped to its target's
     workspace. Returns None (no-op) if the finding's Target can't be
-    resolved -- shouldn't happen in practice, but ingestion/triage must
+    resolved; shouldn't happen in practice, but ingestion/triage must
     never hard-fail on this best-effort learning step.
 
     Upsert, not insert-always: an identical active rule (same workspace +
     rule_id + tool + file_path_pattern) already existing means this exact
-    false-positive shape was already learned -- bump its audit fields
+    false-positive shape was already learned, bump its audit fields
     (source_finding_id/created_by/created_at) to point at the latest
     occurrence rather than stacking a duplicate row a security engineer
     would then have to de-duplicate by hand in the management UI.
@@ -134,7 +134,7 @@ def apply_auto_suppression(session: Session, rule: FalsePositiveRule, finding: F
     """Marks a newly-created Finding FALSE_POSITIVE at ingestion time because
     it matched `rule`, logging the transition the same way any other triage
     is logged (FindingStateLog) so it's fully visible/undoable via the
-    normal finding history + triage UI -- an auto-suppress engine a user
+    normal finding history + triage UI; an auto-suppress engine a user
     can't inspect or revert would be a real product bug, not just a gap."""
     reason = f"{AUTO_SUPPRESS_REASON_PREFIX} #{rule.id}"
     log = FindingStateLog(

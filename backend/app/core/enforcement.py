@@ -2,8 +2,8 @@
 
 Whether PR Guardrail actually fails the build ("block"), just posts a PR
 comment without failing the commit status ("alert"), or doesn't run at all
-("disabled") is configurable at three levels -- Target, Group (#61), and
-Workspace -- with most-specific-wins inheritance:
+("disabled") is configurable at three levels; Target, Group (#61), and
+Workspace; with most-specific-wins inheritance:
 
     target.enforcement_mode
         -> (if unset) the target's group(s)' enforcement_mode
@@ -17,7 +17,7 @@ blocking findings actually fails the build or just warns.
 
 A target can carry multiple groups (see TargetGroup, #61). If those groups
 disagree, we resolve to the MOST RESTRICTIVE setting rather than e.g. "first
-group wins" or "last group wins" -- a security gate should fail closed, not
+group wins" or "last group wins"; a security gate should fail closed, not
 have its strictest group's intent silently overridden by a laxer one purely
 because of join-row ordering. Restrictiveness order: block > alert >
 disabled.
@@ -70,7 +70,7 @@ def resolve_enforcement_mode(session: Session, target: Target) -> EnforcementMod
 
 def resolve_enforcement_mode_with_source(session: Session, target: Target) -> tuple[EnforcementMode, str]:
     """Same resolution as resolve_enforcement_mode, plus a human-readable
-    label of where the effective mode came from -- for the "Enforcement:
+    label of where the effective mode came from; for the "Enforcement:
     Block (inherited from workspace)" style legibility the frontend target
     detail page shows (issue #62)."""
     if target.enforcement_mode:

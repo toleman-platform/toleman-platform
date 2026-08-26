@@ -315,7 +315,7 @@ def test_ingestion_skips_siem_export_when_no_webhook_configured(engine, monkeypa
 
 
 def test_ingestion_siem_failure_does_not_break_ingestion(engine, monkeypatch):
-    """A SIEM webhook outage must not fail the scan/ingestion -- best-effort
+    """A SIEM webhook outage must not fail the scan/ingestion, best-effort
     per app.core.ingestion._maybe_export_to_siem."""
     _set_config(
         engine,
@@ -342,7 +342,7 @@ def test_ingestion_siem_failure_does_not_break_ingestion(engine, monkeypatch):
 
 
 def test_ingestion_does_not_reexport_existing_finding_on_rescan(engine, monkeypatch):
-    """Only net-new findings trigger export -- a rescan that just bumps
+    """Only net-new findings trigger export, a rescan that just bumps
     last_seen on an already-existing finding must not fire another event."""
     _set_config(
         engine,

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Set True in any production/HTTPS deployment so the session cookie is
     # only ever sent over TLS. Defaults to False so local http:// dev works.
     cookie_secure: bool = False
-    # toleman.local, not toleman.io -- the project doesn't own that domain
+    # toleman.local, not toleman.io, the project doesn't own that domain
     # and shipping it as a public-repo default could mislead someone into
     # thinking it's a real, owned address (#154).
     admin_email: str = "admin@toleman.local"
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     environment: str = "local"
 
     # Issue #72 (Active API Scanning): nuclei CLI invocation knobs. Defaults
-    # are deliberately conservative -- exclude tags known to send disruptive
+    # are deliberately conservative, exclude tags known to send disruptive
     # traffic (dos/fuzz can crash a target; intrusive templates attempt
     # actual exploitation, not just detection) so a first-run scan against a
     # real deployed API defaults to passive/safe detection templates only.
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Issue #153: a Scan/DiscoveryRun/SbomRun/PipelineIntegrationBatch row can
     # be left "running" forever if its Celery task never actually reaches a
     # worker (e.g. a worker listening on the wrong queue) or the worker
-    # process dies mid-task -- there's no beat/cron in this project to sweep
+    # process dies mid-task, there's no beat/cron in this project to sweep
     # for that, so app/core/staleness.py checks lazily on read instead. 15
     # minutes comfortably exceeds every real tool's own timeout (nuclei's
     # above included) so this only fires for jobs that are actually stuck,
@@ -61,9 +61,9 @@ class Settings(BaseSettings):
     #
     # Finding GH-02: these were five hardcoded "http://localhost:3000" /
     # ":8000" literals spread across main.py, api/github_app.py and
-    # core/pr_guardrail_executor.py. Every link Toleman posted to GitHub --
+    # core/pr_guardrail_executor.py. Every link Toleman posted to GitHub (
     # the PR comment's "review in Toleman", the commit status target_url,
-    # the "request ignore" link -- pointed at the developer's own laptop, so
+    # the "request ignore" link) pointed at the developer's own laptop, so
     # no teammate on a shared repository could follow any of them. The same
     # constant pinned CORS to a single origin, which made running on any
     # other port surface as "Invalid email or password" at the login form.
@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     # host-native instance still held :3000/:8000. The browser resolved
     # localhost to the old process, so the "fresh" install showed 1,434
     # findings and 35 targets while the new container database held zero.
-    # Nothing in the product flagged the mismatch -- it was only caught by
+    # Nothing in the product flagged the mismatch; it was only caught by
     # querying Postgres directly. An hour of review can go into an instance
     # that is not the one being reviewed.
     #

@@ -1,6 +1,6 @@
 """Tests for issue #57: GET/list routes on findings and targets (plus the
-dashboard aggregates) never filtered by workspace, so any authenticated user
--- including a viewer with no WorkspaceMembership at all -- could list or
+dashboard aggregates) never filtered by workspace, so any authenticated user (
+including a viewer with no WorkspaceMembership at all) could list or
 view every workspace's findings and targets. #32 already gated the write
 paths; this covers the read-path counterpart added by
 app.api.auth.accessible_workspace_ids.
@@ -192,7 +192,7 @@ def test_get_finding_in_other_workspace_returns_404(client, engine):
 
 
 def test_get_workspace_key_in_other_workspace_returns_404(client, engine):
-    """The workspace-key endpoint leaks a secret (api_key), not just data --
+    """The workspace-key endpoint leaks a secret (api_key), not just data;
     same scoping applies."""
     ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
     client, uid = _login(client, engine, role=UserRole.VIEWER)
@@ -266,7 +266,7 @@ def test_dashboard_posture_scoped_to_caller_workspace(client, engine):
 def test_get_pr_guardrail_findings_in_other_workspace_returns_404(client, engine):
     """A viewer with no membership in the scan's workspace must not be able
     to read PR Guardrail findings for it by guessing/incrementing
-    pr_scan_id -- the read-path counterpart to #57 for this router."""
+    pr_scan_id; the read-path counterpart to #57 for this router."""
     ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
     scan_a = _make_pr_scan(engine, target_a)
     scan_b = _make_pr_scan(engine, target_b)

@@ -1,7 +1,7 @@
 """Compliance / audit-evidence posture reports (CSV + PDF export).
 
 Reuses the same "default branch is the org's current state" convention as
-GET /api/dashboard/posture and the persisted-state-only SBOM endpoints --
+GET /api/dashboard/posture and the persisted-state-only SBOM endpoints;
 this pulls real rows out of Finding / Scan / SbomComponent, never
 fabricated content, matching the pattern already established by
 GET /api/sbom/{target_id}/export and GET /api/sbom/org/export.
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 
 
 def _get_targets(session: Session, target_id: Optional[int], ws_ids: Optional[list[int]]) -> list[Target]:
-    """`ws_ids` is `accessible_workspace_ids()`'s result -- None for admins
+    """`ws_ids` is `accessible_workspace_ids()`'s result; None for admins
     (no filter), else the caller's workspace ids (issue #86, same
     unscoped-aggregate bug class #57 fixed on dashboard/findings/targets).
     A caller with no memberships (ws_ids == []) gets an empty report rather
@@ -45,7 +45,7 @@ def _get_targets(session: Session, target_id: Optional[int], ws_ids: Optional[li
 
 def _enum_value(v) -> str:
     """Normalize a Severity/FindingState enum (or plain str) query result to
-    its plain string value -- str(Severity.CRITICAL) renders as
+    its plain string value, str(Severity.CRITICAL) renders as
     'Severity.CRITICAL' via Enum's default __str__, which is not what
     belongs in an audit report."""
     return v.value if hasattr(v, "value") else v
@@ -64,7 +64,7 @@ def _age_bucket(age_days: int) -> str:
 def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Optional[list[int]]) -> dict:
     """Assemble the real audit-evidence dataset: finding counts by
     severity/state, SLA/age of open findings, scan history/coverage, and an
-    SBOM component summary -- all scoped to each target's default branch,
+    SBOM component summary; all scoped to each target's default branch,
     mirroring GET /api/dashboard/posture's convention. `ws_ids` scopes the
     org-wide (target_id is None) case to the caller's workspaces (issue #86)."""
     targets = _get_targets(session, target_id, ws_ids)
@@ -122,7 +122,7 @@ def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Opt
                 }
             )
 
-        # Latest scan per tool for this target -- "coverage" is which
+        # Latest scan per tool for this target; "coverage" is which
         # (target, tool) pairs have ever been scanned and when they last ran,
         # not a full run-by-run history.
         all_scans = session.exec(
@@ -370,8 +370,8 @@ def posture_report(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    """Real audit-evidence posture report -- finding counts by
-    severity/state, open-finding SLA/age, scan coverage, and SBOM summary --
+    """Real audit-evidence posture report (finding counts by
+    severity/state, open-finding SLA/age, scan coverage, and SBOM summary)
     built from persisted Finding/Scan/SbomComponent rows. target_id omitted
     means org-wide (every target the caller can see), same "0/omitted = all"
     convention as TargetPicker's ALL_TARGETS sentinel on the frontend.

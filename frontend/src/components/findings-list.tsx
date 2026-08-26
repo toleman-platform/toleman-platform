@@ -30,7 +30,7 @@ export function FindingsList({
 }) {
   const repoUrlByTargetId = new Map(targets.map((t) => [t.id, t.repo_url]));
   // Issue #117: criticality chip + target name shown next to each finding's
-  // target -- see Target.label in backend/app/models/models.py.
+  // target; see Target.label in backend/app/models/models.py.
   const targetById = new Map(targets.map((t) => [t.id, t]));
   const router = useRouter();
   const pathname = usePathname();
@@ -41,7 +41,7 @@ export function FindingsList({
   // Issue #210: selection state now comes from useSelection, which is page-
   // aware by construction. The hand-rolled version here computed "select all"
   // against the rendered array, which was correct only because this list is
-  // server-paginated -- the same code in targets-list was not, and silently
+  // server-paginated; the same code in targets-list was not, and silently
   // selected rows the user could not see (#204).
   const visibleIds = useMemo(() => findings.map((f) => f.id), [findings]);
   const selection = useSelection(visibleIds);
@@ -90,7 +90,7 @@ export function FindingsList({
 
       {total > pageSize && <ActivityPagination total={total} page={page} pageSize={pageSize} position="top" />}
 
-      {/* gap tracks density too (#172) -- 25 rows of an 8px gap is another
+      {/* gap tracks density too (#172); 25 rows of an 8px gap is another
           200px of scroll on a page whose whole point is scanning a list. */}
       <div className="flex flex-col" style={{ gap: "var(--density-list-gap)" }}>
         {findings.map((f) => (
@@ -130,7 +130,7 @@ export function FindingsList({
       </div>
 
       {/* Footer pager, now the shared component rather than a hand-rolled
-          copy of it -- the top one above states the result-set size before
+          copy of it, the top one above states the result-set size before
           the reader scrolls 3700px looking for it. */}
       {total > 0 && <ActivityPagination total={total} page={page} pageSize={pageSize} />}
     </div>

@@ -11,7 +11,7 @@ upgrades that closes the most findings, and what does each one leave behind?**
 Two properties this must not get wrong, both about overstating:
 
 * The recommended version is the *lowest* version that clears every grouped
-  CVE -- the smallest upgrade that does the job, not the newest release. A
+  CVE; the smallest upgrade that does the job, not the newest release. A
   recommendation to jump further than necessary gets ignored, and rightly.
 * `unresolved` is reported explicitly. If three of five CVEs on a package
   have a fix and two do not, "upgrade to X fixes 3 issues" is true and

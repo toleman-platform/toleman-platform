@@ -63,7 +63,7 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
       set(tool, {
         status: run.status,
         version: run.installed_version,
-        // The real reason, not a generic "failed" -- "No matching
+        // The real reason, not a generic "failed"; "No matching
         // distribution" and "the tool did not report a version when run"
         // call for completely different responses from an admin.
         error: run.error,
@@ -101,7 +101,7 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
 
   // (CTX-03) Adopt installs that were already running before this component
   // mounted. Without this, navigating away during an install and coming back
-  // showed a fresh "Install" button for a job still running on the worker --
+  // showed a fresh "Install" button for a job still running on the worker;
   // the same lost-in-flight-state bug as CTX-02 on PR History, and the same
   // fix: ask the server what is running rather than trusting local state to
   // have survived.
@@ -117,7 +117,7 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
         }
       })
       .catch(() => {
-        // A failed adopt is not worth an error banner -- the page still
+        // A failed adopt is not worth an error banner; the page still
         // works, it just cannot show a pre-existing install until reload.
       });
     return () => {

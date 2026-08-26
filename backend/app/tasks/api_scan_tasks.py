@@ -14,7 +14,7 @@ from app.tasks.celery_app import celery_app
 logger = logging.getLogger(__name__)
 
 # Only a nuclei run that timed out (subprocess.TimeoutExpired) is worth
-# retrying -- the target API may just have been slow/unreachable for a
+# retrying; the target API may just have been slow/unreachable for a
 # moment. ApiScanConfigError (no api_base_url configured, or every
 # discovered route resolved outside the configured host) and
 # FileNotFoundError (nuclei binary missing) are deterministic and won't
@@ -48,12 +48,12 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
     """Issue #72: active scan (nuclei) against a target's already-discovered
     API endpoints. POST /api/api-scan/{target_id} creates the Scan row
     (tool="api-scan", status="running") so it can return the id immediately,
-    then dispatches this task via .delay() -- same async-job pattern as
+    then dispatches this task via .delay(), same async-job pattern as
     run_scan/run_discovery/run_sbom_generation.
 
     Unlike those, this never clones the repo: it builds live URLs from
     Target.api_base_url + persisted ApiEndpoint rows (app.core.api_scan_targets,
-    the actual safety boundary -- see that module's docstring) and probes
+    the actual safety boundary; see that module's docstring) and probes
     them directly with nuclei. Results are ingested through the exact same
     ingest_findings() path every other scanner uses, tagged tool="api-scan",
     so they get real dedup/priority-scoring/SLA/notification treatment

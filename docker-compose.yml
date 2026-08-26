@@ -59,7 +59,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # Compose service names, not the .env file's localhost defaults --
+      # Compose service names, not the .env file's localhost defaults;
       # these are always correct on the internal compose network regardless
       # of what's in .env.
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-osp}:${POSTGRES_PASSWORD:-osp}@postgres:5432/${POSTGRES_DB:-osp}
@@ -86,7 +86,7 @@ services:
 
   celery-worker:
     # (BLD-05) Same Dockerfile, same context, same resulting image as
-    # `backend` -- only the command differs. Without a shared `image:` tag
+    # `backend`; only the command differs. Without a shared `image:` tag
     # Compose treated them as two unrelated builds of an identical ~1.3 GB
     # image; an external review measured that as roughly half of a
     # 17-minute cold `--no-cache` build.
@@ -132,7 +132,7 @@ services:
     build:
       context: ./frontend
       args:
-        # Build-time only (inlined into the browser bundle) -- must be an
+        # Build-time only (inlined into the browser bundle); must be an
         # address the browser on the host can reach, i.e. the published
         # backend port below, not the internal "backend" service name.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
@@ -147,7 +147,7 @@ services:
       API_INTERNAL_URL: http://backend:8000
       # (BLD-02) The address the *browser* uses, read at runtime and injected
       # per request by app/layout.tsx. This is the one to change when the
-      # backend moves to a different port or host -- a restart is enough, no
+      # backend moves to a different port or host; a restart is enough, no
       # frontend rebuild. The NEXT_PUBLIC_API_URL build arg above is now only
       # a fallback for images built before this change.
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}

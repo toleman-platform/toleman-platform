@@ -1,7 +1,7 @@
 """Target ownership metadata (#251): owner, environment, lifecycle
 
 criticality_weight already multiplies every finding's priority_score, but
-nothing recorded why a target is critical -- the number was an assertion
+nothing recorded why a target is critical; the number was an assertion
 nobody could audit. These three columns make it explainable and give the
 findings list the facets people actually filter by.
 

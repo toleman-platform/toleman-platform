@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { THEME_COOKIE_KEY, THEME_STORAGE_KEY, type Theme } from "@/lib/theme";
 
 // Re-exported for existing importers. Server Components must import these
-// from "@/lib/theme" directly -- see that module's comment for why importing
+// from "@/lib/theme" directly; see that module's comment for why importing
 // them from this ("use client") file silently breaks the server-side read.
 export { THEME_COOKIE_KEY, THEME_STORAGE_KEY };
 export type { Theme };
@@ -22,7 +22,7 @@ const STORAGE_KEY = THEME_STORAGE_KEY;
  * useLayoutEffect-only approach: density is a subtle spacing change where a
  * one-frame flash is an acceptable trade-off (documented there), but a full
  * dark<->light color flip is much more jarring, and the raw server HTML
- * paints before React ever hydrates -- a client-only fix can't prevent that
+ * paints before React ever hydrates; a client-only fix can't prevent that
  * first paint from being wrong. Instead, the root layout (a Server
  * Component, see src/app/layout.tsx) reads a `toleman-theme` cookie via
  * `next/headers` and renders `<html data-theme="...">` directly in the
@@ -44,7 +44,7 @@ function applyTheme(theme: Theme) {
 function persistTheme(theme: Theme) {
   window.localStorage.setItem(STORAGE_KEY, theme);
   // 1 year, lax, no Secure requirement so this also works over plain http in
-  // local/dev docker-compose -- this cookie carries no sensitive data, it's
+  // local/dev docker-compose; this cookie carries no sensitive data, it's
   // purely a rendering preference read by the root layout.
   document.cookie = `${THEME_COOKIE_KEY}=${theme}; path=/; max-age=31536000; samesite=lax`;
 }
@@ -55,7 +55,7 @@ function readStoredTheme(): Theme {
   return stored === "light" ? "light" : "dark";
 }
 
-/** See the FOUC-handling note above -- this is a client-side safety net,
+/** See the FOUC-handling note above; this is a client-side safety net,
  * not the primary defense (that's the server-rendered `data-theme`
  * attribute in src/app/layout.tsx). */
 export function ThemeInit() {
@@ -78,7 +78,7 @@ export function ThemeToggle({
   // the `data-theme` attribute in src/app/layout.tsx (threaded down through
   // DashboardLayout -> Sidebar -> here) so the very first client render
   // matches the server-rendered HTML exactly. Reading localStorage directly
-  // in a useState lazy initializer -- the pattern DensityToggle uses --
+  // in a useState lazy initializer (the pattern DensityToggle uses)
   // looks equivalent but isn't: it runs during the client's first render
   // too, and localStorage is client-only, so it can disagree with what the
   // server actually sent and trigger a real hydration-mismatch error (this
@@ -88,7 +88,7 @@ export function ThemeToggle({
   // There's deliberately no effect here reconciling `theme` against
   // localStorage on mount: the cookie (server-known, drives `initialTheme`)
   // and localStorage are always written together by `persistTheme` below,
-  // so they only disagree in a rare manual-tampering edge case -- not worth
+  // so they only disagree in a rare manual-tampering edge case; not worth
   // a `setState`-in-effect (flagged by react-hooks/set-state-in-effect,
   // and a real cascading-render smell) to guard against. `ThemeInit`
   // already corrects the actual page colors (the part that matters) from

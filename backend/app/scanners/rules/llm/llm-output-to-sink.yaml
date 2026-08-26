@@ -1,14 +1,14 @@
 ## Issue #189: LLM output reaching a dangerous sink.
 ##
 ## This is the highest-value rule in the set and the one worth being
-## strictest about. It is ordinary injection -- the only novelty is that the
+## strictest about. It is ordinary injection; the only novelty is that the
 ## untrusted source is a model rather than a request parameter. Treating
 ## model output as trusted is the most common real mistake in LLM code.
 ##
 ## Every rule here uses `mode: taint`, i.e. real dataflow from an LLM call to
 ## a sink. That is not a stylistic choice. Written as plain `patterns` with a
 ## `pattern-sources` block, Semgrep silently ignores the sources and matches
-## the sink alone -- which was caught live: `os.system("ls -la")` with a
+## the sink alone; which was caught live: `os.system("ls -la")` with a
 ## literal argument was reported as an LLM-output-to-shell finding in a file
 ## that merely happened to also call an LLM. A rule that flags every
 ## subprocess call in any file touching an LLM is worse than no rule, because
@@ -38,7 +38,7 @@ rules:
               - pattern: $CLIENT.generate_content(...)
               # LangChain-style calls are matched only when the receiver is
               # *named* like an LLM object. A bare `$CHAIN.run(...)` matches
-              # any method called `run` -- including subprocess.run(), which
+              # any method called `run`, including subprocess.run(), which
               # made every subprocess call in this very repo both a source
               # and a sink and so tainted itself. Six false positives on real
               # code, caught by running the rules against this repo before
@@ -81,7 +81,7 @@ rules:
               - pattern: $CLIENT.generate_content(...)
               # LangChain-style calls are matched only when the receiver is
               # *named* like an LLM object. A bare `$CHAIN.run(...)` matches
-              # any method called `run` -- including subprocess.run(), which
+              # any method called `run`, including subprocess.run(), which
               # made every subprocess call in this very repo both a source
               # and a sink and so tainted itself. Six false positives on real
               # code, caught by running the rules against this repo before
@@ -111,7 +111,7 @@ rules:
     message: >-
       Output from an LLM call is executed as SQL. Text-to-SQL is a legitimate
       pattern, but the generated statement must run against a read-only,
-      least-privilege connection and be validated -- not passed straight to
+      least-privilege connection and be validated, not passed straight to
       execute().
     metadata:
       category: security

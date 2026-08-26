@@ -1,4 +1,4 @@
-Toleman — Open-Source DevSecOps Vulnerability Management Platform
+Toleman: Open-Source DevSecOps Vulnerability Management Platform
 Copyright 2026 Toleman Contributors
 
 This product includes software developed by the Toleman Contributors,
@@ -44,9 +44,9 @@ the Semgrep Registry and are governed by Semgrep's own terms, not by this
 license. The curated LLM ruleset under backend/app/scanners/rules/ is
 Toleman's own work and is covered by LICENSE.
 
-Vulnerability, exploit-prediction and advisory data consumed at runtime --
+Vulnerability, exploit-prediction and advisory data consumed at runtime (
 including the NVD, the CISA Known Exploited Vulnerabilities catalog, FIRST's
-EPSS scores, and OSV -- are retrieved from their respective providers and
+EPSS scores, and OSV) are retrieved from their respective providers and
 remain subject to those providers' terms of use. Toleman redistributes none
 of it.
 

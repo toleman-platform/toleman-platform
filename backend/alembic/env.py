@@ -9,13 +9,13 @@ from sqlmodel import SQLModel
 from alembic import context
 
 # Make `app` importable regardless of cwd (mirrors how uvicorn/pytest are
-# invoked from backend/) -- this file lives at backend/alembic/env.py.
+# invoked from backend/); this file lives at backend/alembic/env.py.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # Import every module that defines a table (table classes register
 # themselves on SQLModel.metadata as a side effect of the class body
 # executing) *before* reading target_metadata below. All tables currently
-# live in app.models.models -- see the "grep -rn table=True" check at the
+# live in app.models.models; see the "grep -rn table=True" check at the
 # top of this migration's PR description; if a future PR adds a second
 # models module, import it here too or autogenerate will silently miss it.
 from app.models import models  # noqa: F401, E402
@@ -31,7 +31,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Read DATABASE_URL from the same app.core.config.settings the FastAPI app
-# uses (issue #58) -- not a hardcoded/separate alembic.ini URL -- so
+# uses (issue #58) (not a hardcoded/separate alembic.ini URL) so
 # `alembic upgrade head` and the running app always agree on where the DB
 # is. alembic.ini's sqlalchemy.url is deliberately left blank; this
 # overrides it at runtime. Escape any literal "%" (ConfigParser's

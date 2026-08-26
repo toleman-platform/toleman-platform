@@ -9,7 +9,7 @@ const eslintConfig = defineConfig([
   ...nextTs,
   // Issue #206. Next ships no rule for this; `no-async-client-component` is
   // a different thing. Twice now a Server Component has imported a value out
-  // of a "use client" module -- once silently (#196), once loudly (#204).
+  // of a "use client" module, once silently (#196), once loudly (#204).
   {
     plugins: { toleman: { rules: { "no-client-value-import-in-server": noClientValueImportInServer } } },
     rules: {

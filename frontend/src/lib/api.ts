@@ -9,17 +9,17 @@
 //
 // Resolved per call instead, from three sources in order:
 //
-//   server-side   API_INTERNAL_URL   -- how this container reaches the
+//   server-side   API_INTERNAL_URL      how this container reaches the
 //                                       backend on the compose network
 //                                       (e.g. http://backend:8000); a plain
 //                                       runtime var, never bundled.
 //   browser       window.__TOLEMAN_API_URL__
-//                                    -- injected per request by the root
+//                                       injected per request by the root
 //                                       layout from PUBLIC_API_URL, so it is
 //                                       a *runtime* value: change the env and
 //                                       restart, no rebuild.
 //   either        NEXT_PUBLIC_API_URL
-//                                    -- the build-time inline, kept as a
+//                                       the build-time inline, kept as a
 //                                       fallback so an image built before
 //                                       this change, and plain `next dev`,
 //                                       both keep working unchanged.
@@ -41,7 +41,7 @@ export function apiBaseUrl(): string {
   return window.__TOLEMAN_API_URL__ || process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
 }
 
-// A group/tag badge embedded on a Target (issue #61) -- e.g. "production",
+// A group/tag badge embedded on a Target (issue #61), e.g. "production",
 // "PCI-scope". Also the shape returned standalone by the /api/groups CRUD
 // endpoints (which additionally carry workspace_id/created_at, see Group
 // below).
@@ -51,9 +51,9 @@ export type GroupBadge = { id: number; name: string; color: string };
 // Guardrail scan actually fails the build ("block"), just warns via a
 // non-blocking commit status ("alert"), or PR Guardrail doesn't run at all
 // ("disabled"). Settable at Target/Group/Workspace level with
-// most-specific-wins inheritance -- null means "inherit", not "alert".
+// most-specific-wins inheritance; null means "inherit", not "alert".
 export type EnforcementMode = "block" | "alert" | "disabled";
-// Where an *effective* (resolved) enforcement mode came from -- surfaced on
+// Where an *effective* (resolved) enforcement mode came from; surfaced on
 // GET /api/targets/{id} as effective_enforcement_mode/enforcement_mode_source
 // so the target detail page can show "Enforcement: Block (inherited from
 // workspace)" instead of just a raw settable field.
@@ -73,7 +73,7 @@ export type Target = {
   pipeline_integrated: boolean;
   pipeline_pr_url: string | null;
   // AI/ML repo detection (issue #185). `is_ai_repo_effective` is the one to
-  // gate on -- the server folds the human override over detection so the
+  // gate on, the server folds the human override over detection so the
   // client never reimplements that precedence. The raw fields are kept so
   // the UI can distinguish auto-detected from manually forced:
   //   is_ai_repo          what detection concluded
@@ -91,16 +91,16 @@ export type Target = {
   effective_enforcement_mode?: EnforcementMode;
   enforcement_mode_source?: EnforcementModeSource;
   // Issue #72: live base URL of this target's deployed API. Active API
-  // scanning refuses to run until this is set -- see api.runApiScan.
+  // scanning refuses to run until this is set; see api.runApiScan.
   api_base_url: string | null;
   // Issue #243: scan only the PR's changed files instead of the whole
   // checkout. Plain per-target boolean, not nullable-to-inherit like
-  // enforcement_mode -- it trades coverage for speed, so it is switched on
+  // enforcement_mode; it trades coverage for speed, so it is switched on
   // one target at a time rather than defaulted from above.
   diff_scoped_pr_scans: boolean;
 };
 
-// GET /api/targets/{id}/pipeline-workflow (issue #66) -- generated,
+// GET /api/targets/{id}/pipeline-workflow (issue #66), generated,
 // target-specific GitHub Actions workflow YAML, not yet written to GitHub.
 export type PipelineWorkflow = {
   yaml: string;
@@ -117,7 +117,7 @@ export type PipelineIntegrateResult = {
   branch: string;
 };
 
-// Issue #68: bulk "Add Pipeline" -- multi-select wrapper around #66's
+// Issue #68: bulk "Add Pipeline", multi-select wrapper around #66's
 // per-target mechanism above. POST /api/targets/bulk-pipeline-integrate
 // dispatches a Celery task (#59-style async job) and returns immediately;
 // poll GET /api/targets/bulk-pipeline-integrate/{batch_id} until status
@@ -137,7 +137,7 @@ export type PipelineBatchItem = {
 
 export type PipelineIntegrationBatch = {
   batch_id: number;
-  status: RunStatus; // batch itself only ever reaches "running" or "completed" -- per-item outcomes (including failures) live in `items`
+  status: RunStatus; // batch itself only ever reaches "running" or "completed", per-item outcomes (including failures) live in `items`
   total: number;
   succeeded: number;
   failed: number;
@@ -155,7 +155,7 @@ export type PipelineIntegrationBatch = {
 };
 
 // Custom Workflow Builder (issue #35): the fixed catalog of scanners a
-// PipelineWorkflowTemplate's step list may reference -- kept in sync with
+// PipelineWorkflowTemplate's step list may reference, kept in sync with
 // backend/app/core/pipeline_workflow.py's SUPPORTED_TOOLS.
 export const PIPELINE_WORKFLOW_TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"] as const;
 export type PipelineWorkflowTool = (typeof PIPELINE_WORKFLOW_TOOLS)[number];
@@ -206,7 +206,7 @@ export type Finding = {
   first_seen: string;
   last_seen: string;
   // Issue #70: resolved SLA (days-to-fix), computed on read via
-  // app.core.sla.compute_sla_status -- sla_days is null when no SlaRule
+  // app.core.sla.compute_sla_status; sla_days is null when no SlaRule
   // applies to this finding's group(s)/severity or workspace default;
   // sla_violated is only ever true when a real rule applies AND the
   // finding is still open past that window.
@@ -214,16 +214,16 @@ export type Finding = {
   sla_violated: boolean;
   // (#246) Can this be closed today? "fixable" (an upgrade exists),
   // "no_known_fix" (the advisory lists none), or "unknown" (we have not
-  // established either way -- NOT a softer way of saying no_known_fix; most
+  // established either way; NOT a softer way of saying no_known_fix; most
   // SAST and secrets findings carry no CVE to look up).
   fixability?: "fixable" | "no_known_fix" | "unknown";
 };
 
-// Issue #75: one entry from GET /api/tools/registry -- every OSS scanner
+// Issue #75: one entry from GET /api/tools/registry; every OSS scanner
 // Toleman knows about (app.core.tool_registry.TOOL_REGISTRY), merged with a
 // real live health check the same way the original 4-tool /health always
 // worked. `integrated` is false for a registry-only tool (e.g. kics) with
-// no real TOOL_COMMANDS entry -- Toleman can show it and check for the binary,
+// no real TOOL_COMMANDS entry; Toleman can show it and check for the binary,
 // but can't actually dispatch a scan for it yet.
 export type ToolRegistryEntry = {
   tool: string;
@@ -240,16 +240,16 @@ export type ToolRegistryEntry = {
   // (CTX-03) Which process saw this tool: "api" (the web process probed it
   // directly just now) or "worker" (the Celery worker reported it when it
   // installed it). Installs run on the worker, and so do scans, so a
-  // worker-only tool is genuinely usable -- the card must say "installed",
+  // worker-only tool is genuinely usable; the card must say "installed",
   // not "not installed", but should be honest about where.
   checked_in: "api" | "worker";
   // (#216) Whether one-click install applies. False for tools needing
-  // brew/go/docker, which the backend image cannot install into itself --
+  // brew/go/docker, which the backend image cannot install into itself;
   // those keep the copyable install_cmd and get no button.
   installable: boolean;
   // Whether the shipped image already carries this tool. An external review
   // found the marketplace showing `brew install gitleaks` to an admin
-  // operating a Debian container -- where brew does not exist and gitleaks
+  // operating a Debian container; where brew does not exist and gitleaks
   // was already installed. For a bundled tool the install command is not
   // just wrong for the platform, it answers a question that does not apply.
   bundled: boolean;
@@ -282,7 +282,7 @@ export type ToolAssignment = {
 };
 
 // A single workspace-scoped SLA (days-to-fix) rule, keyed by severity and
-// optionally a repo Group (issue #70) -- group_id null means "workspace
+// optionally a repo Group (issue #70); group_id null means "workspace
 // default", applied to targets with no group-specific rule for that
 // severity. See app.core.sla.resolve_sla_days for the group ->
 // workspace-default -> "no SLA" resolution.
@@ -295,10 +295,10 @@ export type SlaRule = {
   created_at: string;
 };
 
-// No-AI enrichment (issue #71) -- real CVE/CWE/CVSS/fix-version data sourced
+// No-AI enrichment (issue #71), real CVE/CWE/CVSS/fix-version data sourced
 // from NVD + OSV.dev, cached server-side. Fields are null when not
 // applicable (no cve_id on the finding) or when the upstream source had no
-// data for this CVE. Distinct from AiStatus/analyzeFinding below -- this
+// data for this CVE. Distinct from AiStatus/analyzeFinding below; this
 // always works with zero AI provider configured.
 export type FindingEnrichment = {
   finding_id: number;
@@ -319,10 +319,10 @@ export type AiStatus = {
   provider: AiProvider;
 };
 
-// Issue #122: one entry from GET /api/ai/recent -- a finding this user has
+// Issue #122: one entry from GET /api/ai/recent; a finding this user has
 // previously run AI analysis on, most-recently-analyzed first. Backed by
 // AiAnalysisRun (one row per user+finding, upserted on repeat analysis),
-// not a full analysis-history log -- there's no stored analysis text here,
+// not a full analysis-history log; there's no stored analysis text here,
 // just enough to re-open the finding and re-run analysis.
 export type AiRecentAnalysis = {
   finding_id: number;
@@ -391,7 +391,7 @@ export function githubBlobUrl(repoUrl: string, branch: string, filePath: string,
 export type Summary = { total: number; open: number; mitigated: number };
 
 // Issue #63: composite security health score. Mirrors
-// backend/app/core/security_score.py's return shape exactly -- see that
+// backend/app/core/security_score.py's return shape exactly; see that
 // module's docstring for how each component/weight is computed.
 export type SecurityScoreComponent = {
   score: number;
@@ -432,9 +432,9 @@ export type FindingsQuery = {
 export type AuthUser = { id: number; email: string; name: string; role: string };
 
 // Issue #73: notification preferences. `slack` posts to the single
-// platform-wide webhook (#74) -- opting in means being named in that
+// platform-wide webhook (#74); opting in means being named in that
 // message, not a private DM. `email` is a real saveable preference but has
-// no delivery yet (no SMTP infra in this codebase) -- see the backend's
+// no delivery yet (no SMTP infra in this codebase); see the backend's
 // NotificationChannel docstring.
 export type NotificationChannel = "email" | "slack";
 export type NotificationEventType = "critical_finding" | "kev_cve" | "sla_breach" | "scan_failure" | "malicious_package";
@@ -522,7 +522,7 @@ export type SbomComponent = {
   package_type: string;
   purl: string;
   // (#227) "trivy", "github", or "trivy,github". A component only GitHub's
-  // Dependency Graph reported is by definition transitive -- trivy reads
+  // Dependency Graph reported is by definition transitive; trivy reads
   // manifests, so anything absent from one but present in the resolved
   // graph is not pinned anywhere a manifest scan can see.
   source?: string;
@@ -532,12 +532,12 @@ export type SbomComponent = {
 };
 
 // Issue #121: export-format parity with Reports (CSV/PDF) plus the two real
-// SBOM standards -- CycloneDX was already produced (`trivy fs --format
+// SBOM standards; CycloneDX was already produced (`trivy fs --format
 // cyclonedx`); SPDX JSON is the other one compliance tooling commonly
 // expects. Matches GET /api/sbom/{id}/export's `format` query pattern.
 // (#276) One row per scan for a single target, newest first. Distinct from
 // ScanSummary, which aggregates to one row per (target, tool) so list pages
-// don't pull a year of history -- see GET /api/scans/summary's docstring.
+// don't pull a year of history; see GET /api/scans/summary's docstring.
 // A history view is the one place the individual rows are the point.
 export type ScanHistoryEntry = {
   scan_id: number;
@@ -556,7 +556,7 @@ export type SbomExportFormat = "cyclonedx-json" | "spdx-json" | "csv" | "pdf";
 
 // Issue #181: result of POST /api/sbom/{id}/malware-check. `status` is
 // "clean" (checked, nothing malicious), "found" (N malicious packages), or
-// "failed" (OSV unreachable -- deliberately distinct from "clean" so an
+// "failed" (OSV unreachable: deliberately distinct from "clean" so an
 // outage never reads as a healthy repo).
 export type MalwareCheckResult = {
   target_id: number;
@@ -566,7 +566,7 @@ export type MalwareCheckResult = {
 };
 
 // Issue #227: result of POST /api/sbom/{id}/github-sync and
-// /api/sbom/{id}/upload -- both merge components into the persisted SBOM and
+// /api/sbom/{id}/upload; both merge components into the persisted SBOM and
 // report how many were net-new (same shape generateSbom's polling returns).
 // Both also run the OSV malicious-package check (#181) over the freshly
 // persisted inventory and report its outcome under `malware`.
@@ -578,7 +578,7 @@ export type SbomImportResult = {
 };
 
 // Async job status shared by the Scan/DiscoveryRun/SbomRun tracking rows
-// (#59) -- every POST that used to clone+scan synchronously now returns one
+// (#59), every POST that used to clone+scan synchronously now returns one
 // of these immediately, and the frontend polls the matching GET until
 // status leaves "running".
 export type RunStatus = "running" | "completed" | "failed";
@@ -592,15 +592,15 @@ export type ScanRun = {
   findings_count: number;
   started_at: string;
   completed_at: string | null;
-  // (#153) failure reason -- set on real clone/tool errors and on the
+  // (#153) failure reason; set on real clone/tool errors and on the
   // lazy stale-job timeout (app/core/staleness.py); "" while running/completed.
-  // Deliberately not named `error` -- the sibling { error: string } shape
+  // Deliberately not named `error`, the sibling { error: string } shape
   // (scan/target not found) is used as a discriminator via `"error" in scan`
   // elsewhere, and this field must not collide with that check.
   error_message: string;
   // (#212) Timing. `elapsed_seconds` is always present; `eta_seconds` is
   // null whenever it cannot be grounded in this target's own history with
-  // this tool -- render elapsed time in that case rather than substituting a
+  // this tool, render elapsed time in that case rather than substituting a
   // default, since a wrong estimate costs more trust than no estimate.
   elapsed_seconds: number;
   eta_seconds: number | null;
@@ -619,7 +619,7 @@ export type ActiveScan = {
 };
 export type ActiveScans = Record<string, ActiveScan[]>;
 
-// GET /api/pr-guardrail/active (finding CTX-02) -- PR Guardrail scans running
+// GET /api/pr-guardrail/active (finding CTX-02), PR Guardrail scans running
 // right now, keyed "targetId:prNumber". Same server-is-the-source-of-truth
 // shape as ActiveScans above: PrScanAction previously held in-flight state in
 // a local useState, so navigating away and back showed a clickable
@@ -634,7 +634,7 @@ export type ActivePrScan = {
 export type ActivePrScans = Record<string, ActivePrScan>;
 
 // GET /health (finding BLD-01). An evaluator reviewed a stale host-native
-// instance for an hour while believing they were on a freshly built stack --
+// instance for an hour while believing they were on a freshly built stack,
 // the old process held the same port, and nothing in the product said which
 // instance was answering. `database` is host:port/dbname with credentials
 // stripped server-side.
@@ -648,7 +648,7 @@ export type BuildInfo = {
 // GET /api/scans/summary (#120): per-target scan history so the Scans page
 // can show a real "last scanned Xd ago · tool, tool" line and support a
 // last-scanned filter, instead of the old flat grid which had no scan
-// history surfaced at all. Keyed by target id (as a string -- JSON object
+// history surfaced at all. Keyed by target id (as a string, JSON object
 // keys).
 export type ScanSummaryEntry = {
   last_scan_at: string | null;
@@ -671,7 +671,7 @@ export type TargetSummaryEntry = {
 export type TargetSummary = Record<string, TargetSummaryEntry>;
 
 // AI Bill of Materials (issue #190). `generated` distinguishes "we looked
-// and found no models" from "no AIBOM has ever been generated" -- collapsing
+// and found no models" from "no AIBOM has ever been generated"; collapsing
 // those would let an unanalysed repo read as one with no AI dependencies.
 export type AiBomComponent = {
   id: number;
@@ -777,7 +777,7 @@ export type PolicyRule = {
   active: boolean;
 };
 
-// Issue #76: a learned false-positive suppression rule -- created
+// Issue #76: a learned false-positive suppression rule; created
 // automatically when a Finding is triaged to "False Positive" (see
 // app.core.fp_learning.learn_suppression_rule), consumed at ingestion time
 // to auto-suppress matching new Findings anywhere in the workspace
@@ -799,7 +799,7 @@ export type FalsePositiveRule = {
 export type FpRuleStats = { active_rules: number; total_matches: number };
 
 // The ephemeral (non-persisted-id) shape returned inline in a scan's
-// response body -- distinct from PrGuardrailFinding below, which is the
+// response body; distinct from PrGuardrailFinding below, which is the
 // persisted row with its own id and ignore-request lifecycle.
 export type PrGuardrailFindingSummary = {
   tool: string;
@@ -843,19 +843,19 @@ export type PrGuardrailLogEntry = {
   new_endpoints_count: number;
   // GH-01: which tools this scan actually ran, and which were assigned but
   // failed. A non-empty tools_failed means new_findings_count is
-  // inconclusive, not clean -- render it as a warning, never as a pass.
+  // inconclusive, not clean; render it as a warning, never as a pass.
   tools_run: string[];
   tools_failed: string[];
   // (#243) Assigned tools that had nothing to examine once the scan was
   // scoped to the PR's changed files. Like tools_failed, these are NOT
-  // evidence of safety -- render them as "not run", never fold them into
+  // evidence of safety; render them as "not run", never fold them into
   // the scanned-with line. scan_scope is "full" or "diff"; files_scanned is
   // meaningful only when "diff".
   tools_skipped?: string[];
   scan_scope?: "full" | "diff";
   files_scanned?: number;
   // (GH-04) Non-empty when the commit status never reached GitHub. The scan
-  // itself is still valid -- this says the *decision* was not delivered, so
+  // itself is still valid; this says the *decision* was not delivered, so
   // the PR is unmarked on GitHub even though Toleman reached a verdict.
   status_delivery_error: string;
   override_reason: string;
@@ -865,7 +865,7 @@ export type PrGuardrailLogEntry = {
   // server-side from the target's repo_url + pr_number. Null if the repo
   // URL can't be parsed.
   pr_url: string | null;
-  // Present only on org-wide log rows (issue #64) -- a single-target log
+  // Present only on org-wide log rows (issue #64); a single-target log
   // doesn't need these since the picker already implies the target.
   target_id?: number;
   target_name?: string | null;
@@ -886,7 +886,7 @@ export type PrGuardrailOrgLog = {
 // Configurable dashboard (issue #69): a small, concrete widget catalog
 // (KPI cards, findings trend, CVE timeline, SLA compliance, top risky
 // repos, recent findings, security score) rather than a generic
-// chart-config system -- each widget's real data comes from
+// chart-config system; each widget's real data comes from
 // GET /api/dashboard/widget-data, batched for every widget currently in
 // the caller's layout. "security_score" (#63) was added after #69 shipped.
 export type WidgetId =
@@ -948,7 +948,7 @@ export type RecentFindingItem = {
   sla_violated: boolean;
   // (#246) Can this be closed today? "fixable" (an upgrade exists),
   // "no_known_fix" (the advisory lists none), or "unknown" (we have not
-  // established either way -- NOT a softer way of saying no_known_fix; most
+  // established either way; NOT a softer way of saying no_known_fix; most
   // SAST and secrets findings carry no CVE to look up).
   fixability?: "fixable" | "no_known_fix" | "unknown";
 };
@@ -956,7 +956,7 @@ export type RecentFindingsData = { items: RecentFindingItem[] };
 // Issue #76: "X findings auto-suppressed this month" widget data.
 export type FpAutoSuppressionsData = { count: number; since: string };
 
-// Issue #224: three new widgets -- live scan activity (surfaces
+// Issue #224: three new widgets; live scan activity (surfaces
 // GET /api/scans/active-equivalent data on the dashboard itself), AI/ML
 // risk (AI-repo detection + ModelScan/LLM-ruleset findings, previously
 // invisible outside the dedicated AI Security page) and guardrail activity
@@ -1008,7 +1008,7 @@ export type WidgetDataEntry =
 
 export type WidgetDataResponse = { widgets: Record<string, WidgetDataEntry> };
 
-// Carries the real HTTP status alongside the message (issue #121) -- callers
+// Carries the real HTTP status alongside the message (issue #121); callers
 // that need to distinguish "session expired/revoked" (401) from any other
 // failure (e.g. PR History's error state) previously only had the message
 // string to go on. Still `instanceof Error` for every existing
@@ -1035,7 +1035,7 @@ export class NetworkError extends Error {
   }
 }
 
-// (#235, UI-03) A backend restart -- a routine redeploy, not an outage -- used
+// (#235, UI-03) A backend restart (a routine redeploy, not an outage) used
 // to blank the whole app for anyone whose Server Component render landed in
 // the few seconds the container was coming back up: UND_ERR_SOCKET: other
 // side closed, with nothing on screen saying so.
@@ -1043,9 +1043,9 @@ export class NetworkError extends Error {
 // Retried here, at the one function every api.* call already goes through,
 // rather than at each of the ~80 call sites. Safe for every HTTP method, not
 // just GET: a retry only happens when fetch() itself threw, meaning the
-// request never reached the server -- there is no partially-applied write to
+// request never reached the server; there is no partially-applied write to
 // duplicate by retrying, unlike retrying after a real (non-2xx) response
-// would be. Never triggered by a 4xx/5xx -- those are real responses from a
+// would be. Never triggered by a 4xx/5xx; those are real responses from a
 // server that is up, so retrying would just be a slower version of the same
 // failure.
 //
@@ -1075,7 +1075,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) };
 
   // Server Components/route handlers run on the Node server, not in the
-  // browser — `credentials: "include"` is a no-op there since there's no
+  // browser; `credentials: "include"` is a no-op there since there's no
   // browser cookie jar to draw from. Without forwarding the incoming
   // request's session cookie explicitly, every server-side call 401s and
   // gets silently swallowed by callers' .catch(() => []), which is exactly
@@ -1103,12 +1103,12 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
     // The request never reached the server after every retry: DNS/
     // connection failure, or the browser rejected it on a CORS preflight.
     // fetch() reports both as a bare TypeError with no status, which
-    // callers previously could not distinguish from a real HTTP error -- so
+    // callers previously could not distinguish from a real HTTP error; so
     // a CORS rejection on the login form rendered as "Invalid email or
     // password" (finding BLD-03), sending people to hunt for a seeding bug
     // instead of a middleware allowlist.
     throw new NetworkError(
-      `Could not reach the API at ${apiBaseUrl()}. The request never arrived after ${NETWORK_RETRY_ATTEMPTS} attempts — check that the backend is running and that this origin is allowed by PUBLIC_BASE_URL/EXTRA_CORS_ORIGINS.`,
+      `Could not reach the API at ${apiBaseUrl()}. The request never arrived after ${NETWORK_RETRY_ATTEMPTS} attempts; check that the backend is running and that this origin is allowed by PUBLIC_BASE_URL/EXTRA_CORS_ORIGINS.`,
       e,
     );
   }
@@ -1121,7 +1121,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
       const body = await res.json();
       if (body && typeof body.detail === "string") detail = body.detail;
     } catch {
-      // response body wasn't JSON -- fall through to the generic message
+      // response body wasn't JSON, fall through to the generic message
     }
     throw new ApiError(detail || `API ${path} failed: ${res.status}`, res.status);
   }
@@ -1191,7 +1191,7 @@ export const api = {
   // per-component breakdown. Org-wide with no args; pass exactly one of
   // targetId/groupId to scope (mutually exclusive, enforced server-side).
   // Also backs the "Security Score" dashboard widget (#69's widget system)
-  // for its org-wide default view -- this function is what the widget's own
+  // for its org-wide default view; this function is what the widget's own
   // scope selector calls for a scoped (group/target) drill-down, since
   // there's no per-widget-instance config editor in this dashboard yet.
   securityScore: (scope: { targetId?: number; groupId?: number } = {}) => {
@@ -1222,7 +1222,7 @@ export const api = {
     jsonFetch<{ open: number; by_severity: Record<string, number>; by_tool: Record<string, number> }>(
       "/api/dashboard/stats"
     ),
-  // Issue #69: configurable dashboard -- widget catalog, per-user saved
+  // Issue #69: configurable dashboard; widget catalog, per-user saved
   // layout (add/remove/reorder), and one batched call for every widget's
   // real data.
   dashboardWidgets: () => jsonFetch<WidgetCatalogEntry[]>("/api/dashboard/widgets"),
@@ -1234,7 +1234,7 @@ export const api = {
     "/api/dashboard/posture"
   ),
   // Dispatches a Celery task and returns immediately with status: "running"
-  // (#59) -- callers must poll api.getScan(scan_id) until status leaves
+  // (#59); callers must poll api.getScan(scan_id) until status leaves
   // "running". target-not-found/unsupported-tool are still synchronous
   // 200 { error } responses (validated before dispatch).
   runScan: (targetId: number, tool: string) =>
@@ -1247,7 +1247,7 @@ export const api = {
   activeScans: () => jsonFetch<ActiveScans>("/api/scans/active"),
   activePrScans: () => jsonFetch<ActivePrScans>("/api/pr-guardrail/active"),
   // (BLD-01) Which instance is actually answering on this address. No
-  // session required -- container healthchecks call it too.
+  // session required, container healthchecks call it too.
   buildInfo: () => jsonFetch<BuildInfo>("/health"),
   // (CTX-03) Tool installs already running, keyed by registry key, so the
   // marketplace can adopt one that started before this page mounted.
@@ -1257,7 +1257,7 @@ export const api = {
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   // Issue #109: personal access tokens for the public API
-  // (/api/public/v1/*, Bearer-token auth) -- distinct from the workspace
+  // (/api/public/v1/*, Bearer-token auth); distinct from the workspace
   // API key above, which is CI-ingest-only and shared workspace-wide.
   apiTokens: () => jsonFetch<ApiToken[]>("/api/api-tokens"),
   createApiToken: (name: string, scope: ApiTokenScope) =>
@@ -1274,7 +1274,7 @@ export const api = {
     jsonFetch<PipelineIntegrateResult | { error: string }>(`/api/targets/${targetId}/pipeline-integrate`, {
       method: "POST",
     }),
-  // Issue #68: multi-select "Add Pipeline" -- dispatches a Celery batch and
+  // Issue #68: multi-select "Add Pipeline", dispatches a Celery batch and
   // returns immediately (#59-style async job); poll
   // getPipelineIntegrationBatch(batch_id) until status leaves "running".
   bulkPipelineIntegrate: (targetIds: number[]) =>
@@ -1285,7 +1285,7 @@ export const api = {
   getPipelineIntegrationBatch: (batchId: number) =>
     jsonFetch<PipelineIntegrationBatch>(`/api/targets/bulk-pipeline-integrate/${batchId}`),
   // Issue #35 (Mass CI/CD Rollout Engine): scope-based sibling to
-  // bulkPipelineIntegrate above -- resolves an entire workspace/group/"all
+  // bulkPipelineIntegrate above, resolves an entire workspace/group/"all
   // accessible" scope into a target set server-side instead of an explicit
   // target_ids list, reusing the exact same batch tracking + polling
   // (getPipelineIntegrationBatch above works for both).
@@ -1329,7 +1329,7 @@ export const api = {
   getDiscoveredEndpoints: (targetId: number) =>
     jsonFetch<{ target_id: number; count: number; endpoints: Endpoint[] }>(`/api/discovery/${targetId}`),
   // Dispatches a Celery task and returns immediately with run_id/status:
-  // "running" (#59) -- poll api.getDiscoveryRun(targetId, run_id) until
+  // "running" (#59), poll api.getDiscoveryRun(targetId, run_id) until
   // status leaves "running".
   runDiscovery: (targetId: number) =>
     jsonFetch<{ run_id: number; target_id: number; status: RunStatus }>(`/api/discovery/${targetId}`, {
@@ -1338,7 +1338,7 @@ export const api = {
   getDiscoveryRun: (targetId: number, runId: number) =>
     jsonFetch<DiscoveryRunResult>(`/api/discovery/${targetId}/runs/${runId}`),
   // Issue #72: active API scanning (nuclei) against endpoints already
-  // discovered above. Same dispatch-then-poll shape as runScan -- 202 with
+  // discovered above. Same dispatch-then-poll shape as runScan, 202 with
   // scan_id immediately, poll api.getScan(scan_id) until status leaves
   // "running". endpointIds narrows to a specific selection; omit to scan
   // every discovered endpoint for the target's default branch. A 400 means
@@ -1357,7 +1357,7 @@ export const api = {
   getSbom: (targetId: number) =>
     jsonFetch<{ target_id: number; count: number; components: SbomComponent[] }>(`/api/sbom/${targetId}`),
   // Dispatches a Celery task and returns immediately with run_id/status:
-  // "running" (#59) -- poll api.getSbomRun(targetId, run_id) until status
+  // "running" (#59), poll api.getSbomRun(targetId, run_id) until status
   // leaves "running".
   generateSbom: (targetId: number) =>
     jsonFetch<{ run_id: number; target_id: number; status: RunStatus }>(`/api/sbom/${targetId}`, {
@@ -1365,8 +1365,8 @@ export const api = {
     }),
   getSbomRun: (targetId: number, runId: number) => jsonFetch<SbomRunResult>(`/api/sbom/${targetId}/runs/${runId}`),
   // Issue #181: re-check a target's existing SBOM inventory for malicious
-  // packages (via OSV.dev) without regenerating the SBOM. Runs synchronously
-  // -- a handful of OSV HTTP calls, no clone/subprocess.
+  // packages (via OSV.dev) without regenerating the SBOM. Runs synchronously,
+  // a handful of OSV HTTP calls, no clone/subprocess.
   malwareCheck: (targetId: number) =>
     jsonFetch<MalwareCheckResult>(`/api/sbom/${targetId}/malware-check`, { method: "POST" }),
   // Issue #227: standalone import of a target's dependency inventory from
@@ -1390,7 +1390,7 @@ export const api = {
         const data = await res.json();
         if (data && typeof data.detail === "string") detail = data.detail;
       } catch {
-        // body wasn't JSON -- fall through to the generic message
+        // body wasn't JSON, fall through to the generic message
       }
       throw new Error(detail || `SBOM upload failed: ${res.status}`);
     }
@@ -1414,7 +1414,7 @@ export const api = {
     const params = new URLSearchParams({ format });
     // Target ids are positive (DB serial starting at 1); 0 is the shared
     // "All repositories" sentinel from components/target-picker.tsx's
-    // ALL_TARGETS -- omitting target_id entirely is how the backend knows
+    // ALL_TARGETS; omitting target_id entirely is how the backend knows
     // to build the org-wide report.
     if (targetId !== null && targetId !== 0) {
       params.set("target_id", String(targetId));
@@ -1454,7 +1454,7 @@ export const api = {
   updateWorkspace: (id: number, patch: { enforcement_mode?: EnforcementMode | null; name?: string }) =>
     jsonFetch<WorkspaceSummary>(`/api/workspaces/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   // Issue #224: workspace-id-keyed API key lookup/rotation, for the new
-  // Workspaces page -- direct by id rather than proxying through
+  // Workspaces page; direct by id rather than proxying through
   // api.workspaceKey(targetId), which forced picking an arbitrary target
   // from that workspace just to get at its shared key.
   workspaceApiKey: (workspaceId: number) =>
@@ -1589,7 +1589,7 @@ export const api = {
   createPolicy: (p: { workspace_id: number; rule_type: PolicyRuleType; value: string; reason?: string }) =>
     jsonFetch<PolicyRule>("/api/policies", { method: "POST", body: JSON.stringify(p) }),
   deletePolicy: (id: number) => jsonFetch<PolicyRule>(`/api/policies/${id}`, { method: "DELETE" }),
-  // Issue #76: false-positive learning engine -- rules are learned
+  // Issue #76: false-positive learning engine; rules are learned
   // automatically from triage, this is view/expire/revoke only (see
   // app/api/fp_rules.py's module docstring for why there's no manual POST).
   fpRules: (workspaceId?: number) =>

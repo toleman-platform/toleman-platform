@@ -9,7 +9,7 @@ from app.models.models import GitHubAppConfig, GitHubInstallation
 
 
 def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token: str) -> dict:
-    """GitHub App Manifest — https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
+    """GitHub App Manifest, https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest
 
     Permissions mirror the architecture doc's Integration & Permissions Matrix:
     contents (clone + commit fixes), pull_requests + statuses (PR Guardrail),
@@ -17,35 +17,35 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
     .github/workflows/), metadata read-only (mandatory baseline).
 
     ``workflows: write`` is required in addition to ``contents: write`` for
-    any Contents-API write under ``.github/workflows/`` -- GitHub gates that
+    any Contents-API write under ``.github/workflows/``, GitHub gates that
     path behind its own separate permission scope regardless of the App's
     general contents access (confirmed live: without it, PUT
     /repos/{owner}/{repo}/contents/.github/workflows/<file> 403s with
     "Resource not accessible by integration" even though creating the
     backing branch via POST git/refs succeeds fine on contents:write alone).
     An App installed before this permission existed needs its installation
-    owner to re-approve the updated permission set in GitHub's UI --
+    owner to re-approve the updated permission set in GitHub's UI,
     ``setup_on_update: True`` below prompts that on next install/reconfigure,
     but doesn't retroactively grant it to installations that don't revisit
     that flow.
 
     ``setup_url`` carries ``?cfg=<setup_token>`` baked in at manifest-creation
     time (#34: multi-App support). ``setup_url`` is a fixed property of the
-    App once created via the manifest conversion — GitHub calls exactly this
+    App once created via the manifest conversion, GitHub calls exactly this
     URL (appending its own ``installation_id``/``setup_action`` params) every
     time *this* App is installed/reconfigured, for the life of the App, so
     the token reliably tells /setup-callback which GitHubAppConfig row a new
     installation belongs to without needing to guess or brute-force it.
     """
     return {
-        # (GH-05) "Toleman" -- not "Rikugan", and not the older "OSP
+        # (GH-05) "Toleman", not "Rikugan", and not the older "OSP
         # DevSecOps" that one replaced in turn. This string
         # is the product's signature on every pull request in an adopting
         # org: GitHub derives the bot login from it, so the old name shipped
         # as `osp-devsecops-*[bot]` on every PR comment. Cosmetic internally,
         # not cosmetic externally.
         #
-        # Only affects Apps created from here on -- an App's name is fixed at
+        # Only affects Apps created from here on; an App's name is fixed at
         # creation, so an existing installation keeps its old bot login until
         # its owner renames it in GitHub's own App settings.
         "name": f"Toleman DevSecOps {name_suffix}",
@@ -65,7 +65,7 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         # automatic. This was `[]` with no hook_attributes, so the App
         # subscribed to nothing: a human had to open PR History and press
         # "Scan This PR" for anything to happen. An external review put it
-        # exactly right -- "blocking mode" that depends on someone
+        # exactly right; "blocking mode" that depends on someone
         # remembering to press a button is advisory in practice, and a
         # required check nobody triggers blocks every PR forever.
         #
@@ -76,7 +76,7 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         # manifest that declares hook_attributes. The only missing piece was
         # the subscription itself.
         #
-        # backend_url must be reachable *from GitHub* -- see
+        # backend_url must be reachable *from GitHub*; see
         # settings.public_api_url. A localhost value produces an App whose
         # deliveries can never arrive; build_manifest's caller warns about
         # that rather than failing, since creating the App is still useful
@@ -144,7 +144,7 @@ def get_installation_account(config: GitHubAppConfig, installation_id: int) -> d
 #   (a) there was no way to select *which* App to use once more than one
 #       existed (dev App vs prod App, or different Apps per install target);
 #   (b) even installations of a *single* App were broken beyond the first
-#       one -- repo sync and PR Guardrail token minting always used
+#       one, repo sync and PR Guardrail token minting always used
 #       whichever installation happened to be row #1, silently ignoring
 #       every other real installation.
 # The helpers below replace every such lookup with a real resolution: an
@@ -159,7 +159,7 @@ def resolve_config_for_installation(session: Session, installation: GitHubInstal
     if installation.github_app_config_id is not None:
         return session.get(GitHubAppConfig, installation.github_app_config_id)
     # Legacy installation row created before github_app_config_id existed.
-    # Only safe to guess when there's exactly one App configured -- with
+    # Only safe to guess when there's exactly one App configured; with
     # multiple Apps an unlinked installation is genuinely ambiguous.
     configs = session.exec(select(GitHubAppConfig)).all()
     return configs[0] if len(configs) == 1 else None

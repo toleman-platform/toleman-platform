@@ -1,6 +1,6 @@
 """Tests for GET /api/github/org-activity (issue #123: repo filter + real
 pagination on GitHub Org Logs). The GitHub API boundary is mocked the same
-way tests/test_enforcement_mode.py mocks it -- monkeypatch the github_get
+way tests/test_enforcement_mode.py mocks it, monkeypatch the github_get
 symbol imported into app.api.github, no real network calls.
 """
 import pytest

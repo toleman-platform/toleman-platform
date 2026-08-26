@@ -11,7 +11,7 @@ import { Policies } from "../admin/policies";
 
 // IA review (#224): this is the old admin/page.tsx "Scan Config" group,
 // promoted to its own top-level route. Same tabs, same components, same
-// adminOnly sidebar visibility -- only the URL and grouping changed.
+// adminOnly sidebar visibility; only the URL and grouping changed.
 const TABS = [
   { id: "groups", label: "Repo Groups", icon: Tag },
   { id: "sla-rules", label: "SLA Rules", icon: Timer },
@@ -23,7 +23,7 @@ const TABS = [
 const TAB_IDS = TABS.map((t) => t.id);
 
 export default function GuardrailsPage() {
-  // (#235) Was useState -- see use-tab-param.ts for why that made every
+  // (#235) Was useState; see use-tab-param.ts for why that made every
   // sub-page here unlinkable and reset on every visit.
   const [tab, setTab] = useTabParam(TAB_IDS, "groups");
 

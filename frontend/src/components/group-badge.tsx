@@ -1,6 +1,6 @@
 import { GroupBadge as GroupBadgeType } from "@/lib/api";
 
-// Small colored pill for a target's group/tag (issue #61) -- used on the
+// Small colored pill for a target's group/tag (issue #61), used on the
 // targets list, target detail page, and anywhere else a target's groups are
 // surfaced. Uses the group's own `color` (set in Admin > Repo Groups)
 // directly as inline style since the palette is user-chosen, not one of the

@@ -1,8 +1,8 @@
-# OSP frontend image: Next.js 16 app, built for production and served with
+# Toleman frontend image: Next.js 16 app, built for production and served with
 # the standalone Node server (see next.config.ts `output: "standalone"`) so
 # the runtime image doesn't need the full node_modules tree.
 #
-# NEXT_PUBLIC_API_URL is a *build-time* arg -- Next.js inlines
+# NEXT_PUBLIC_API_URL is a *build-time* arg, Next.js inlines
 # NEXT_PUBLIC_-prefixed vars into the browser bundle at `next build` time, so
 # it must be passed as a build arg (docker-compose.yml does this) and set to
 # an address the browser (running on the host, not in a container) can
@@ -22,7 +22,7 @@
 # 26.x is built on Debian 13 (trixie), whose util-linux stack is unpatched in
 # the image (CVE-2026-53612 alone accounts for seven of those highs). Trading
 # one CRITICAL for 32 extra fixable HIGHs is not an upgrade, and 26.x is not
-# an LTS line -- `node:lts` still resolves to 24.x.
+# an LTS line, `node:lts` still resolves to 24.x.
 #
 # The one remaining CRITICAL (CVE-2026-59873, tar) is in npm's bundled
 # dependencies. It is reachable only by running npm against a hostile tarball;
@@ -49,12 +49,12 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0
 
 # Standalone output already traces the minimal node_modules subset needed at
-# runtime -- .next/static and public/ are copied in separately since the
+# runtime, .next/static and public/ are copied in separately since the
 # standalone server doesn't serve them from within .next/standalone itself.
 # --- Non-root runtime user -------------------------------------------------
 # Previously ran as root (semgrep dockerfile.security.missing-user). The
 # node:22-slim base already ships an unprivileged `node` user (uid 1000), so
-# there is no useradd here -- COPY --chown just hands the traced standalone
+# there is no useradd here; COPY --chown just hands the traced standalone
 # output to it directly, which also avoids a second full-size layer that a
 # separate `RUN chown -R` would create.
 COPY --from=builder --chown=node:node /app/public ./public

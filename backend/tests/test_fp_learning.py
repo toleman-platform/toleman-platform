@@ -6,7 +6,7 @@ Covers both halves of the feature:
   2. ingest_findings auto-suppresses a NEW finding matching a learned rule's
      signature (rule_id + tool + file basename), including across two
      *different* Targets in the same Workspace (the "cross-repo" case the
-     issue is about) -- and does NOT suppress across workspace boundaries,
+     issue is about); and does NOT suppress across workspace boundaries,
      or once a rule is expired/deleted.
 
 Plus the management API (GET/PATCH/DELETE /api/fp-rules): workspace
@@ -75,7 +75,7 @@ def _login(client, engine, role=UserRole.ADMIN, email="user@example.com", passwo
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-        client.cookies.set("rikugan_session", token)
+        client.cookies.set("toleman_session", token)
         return user
 
 
@@ -153,7 +153,7 @@ def test_triage_to_false_positive_learns_a_rule(client, engine):
         rule = rules[0]
         assert rule.rule_id == "python.hardcoded-secret"
         assert rule.tool == "semgrep"
-        # Basename only, not the full path -- see FalsePositiveRule docstring.
+        # Basename only, not the full path; see FalsePositiveRule docstring.
         assert rule.file_path_pattern == "config.py"
         assert rule.source_finding_id == finding_id
         assert rule.created_by == "alice"
@@ -237,7 +237,7 @@ def test_ingestion_auto_suppresses_matching_finding_in_a_different_target_same_w
         session.commit()
 
     # Ingest a same-shaped (same rule_id+tool+basename), but different-path,
-    # finding into repo B -- proves basename-based cross-repo generalization,
+    # finding into repo B; proves basename-based cross-repo generalization,
     # not literal path identity.
     with Session(engine) as session:
         target = session.get(Target, target_b)
@@ -288,7 +288,7 @@ def test_ingestion_does_not_suppress_across_workspace_boundary(engine):
 
     with Session(engine) as session:
         new_finding = session.exec(select(Finding).where(Finding.target_id == target_b)).first()
-        assert new_finding.state == FindingState.OPEN  # not suppressed -- different workspace
+        assert new_finding.state == FindingState.OPEN  # not suppressed, different workspace
 
 
 def test_expired_rule_no_longer_auto_suppresses(engine):
@@ -319,7 +319,7 @@ def test_expired_rule_no_longer_auto_suppresses(engine):
 
     with Session(engine) as session:
         new_finding = session.exec(select(Finding).where(Finding.target_id == target_b)).first()
-        assert new_finding.state == FindingState.OPEN  # rule expired -- must not fire
+        assert new_finding.state == FindingState.OPEN  # rule expired; must not fire
 
 
 def test_wildcard_rule_matches_any_file_path(engine):

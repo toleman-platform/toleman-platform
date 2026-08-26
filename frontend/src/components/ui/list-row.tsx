@@ -11,8 +11,8 @@ import { Card, CardContent } from "@/components/ui/card";
  *       <CardContent style={{ paddingTop: "var(--density-row-py)",
  *                             paddingBottom: "var(--density-row-py)" }}>
  *
- * The `py-0` is not cosmetic. The base Card carries `py-6` -- 48px that no
- * density token can reach -- so a row without it ignores the density setting
+ * The `py-0` is not cosmetic. The base Card carries `py-6`, 48px that no
+ * density token can reach, so a row without it ignores the density setting
  * almost entirely. That was the actual cause of "Compact only saves 7%" in
  * #172, and the fix had to be applied file by file. Putting it here means the
  * next list gets it for free instead of reintroducing the bug.
@@ -30,7 +30,7 @@ export type ListRowProps = {
   selected?: boolean;
   onSelectChange?: (checked: boolean) => void;
   /** Names the row for assistive tech: "Select finding <title>". Required
-   * whenever `selectable` is set -- an unnamed checkbox is not usable. */
+   * whenever `selectable` is set; an unnamed checkbox is not usable. */
   selectLabel?: string;
   /** Hover affordance for a row that navigates somewhere. */
   interactive?: boolean;
@@ -104,7 +104,7 @@ export function ListRows({ children, className }: { children: React.ReactNode; c
  *
  * Wired to `useSelection`'s `allVisibleSelected` / `someVisibleSelected`.
  * `indeterminate` is a DOM property with no JSX attribute, so it has to be
- * set through a ref -- which is exactly the kind of detail that gets skipped
+ * set through a ref; which is exactly the kind of detail that gets skipped
  * when each list rolls its own, leaving a half-selected page showing an
  * unticked box.
  */

@@ -10,7 +10,7 @@ from app.core.config import DEFAULT_SESSION_SECRET, settings
 
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
-API_TOKEN_PREFIX = "rikugan_pat_"
+API_TOKEN_PREFIX = "toleman_pat_"
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -75,7 +75,7 @@ def verify_session_token(token: str) -> int | None:
 
 def generate_api_token() -> tuple[str, str, str]:
     """Issue #109: mint a new public-API personal access token. Returns
-    (plaintext, token_hash, token_prefix) -- the caller persists only
+    (plaintext, token_hash, token_prefix); the caller persists only
     token_hash/token_prefix and returns plaintext to the client exactly
     once; it can never be re-derived from what's stored.
 

@@ -1,9 +1,8 @@
 """Issue #109: personal access token management for the public API
 (`/api/public/v1/*`, see app/api/public_api.py). Session-authenticated
-(current_user) -- this is the "manage my own tokens" surface used by the
+(current_user); this is the "manage my own tokens" surface used by the
 Settings -> Workspace page, not the public API itself.
 """
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -37,7 +36,7 @@ def _token_out(token: ApiToken) -> dict:
 
 @router.get("")
 def list_api_tokens(session: Session = Depends(get_session), user: User = Depends(current_user)):
-    """A user's own tokens only -- these are personal credentials, not
+    """A user's own tokens only; these are personal credentials, not
     workspace-shared like `Workspace.api_key`, so there's no admin-bypass
     "see everyone's tokens" here even for admins."""
     tokens = session.exec(select(ApiToken).where(ApiToken.user_id == user.id)).all()
@@ -66,7 +65,7 @@ def create_api_token(
     session.refresh(token)
 
     # The only point in this token's lifetime the plaintext value exists
-    # anywhere but the caller's own clipboard -- never returned again, same
+    # anywhere but the caller's own clipboard, never returned again, same
     # "shown once at creation" pattern as the GitHub App manifest flow's
     # generated secrets.
     return {**_token_out(token), "token": plaintext}

@@ -10,12 +10,12 @@ container. Every scan and discovery run failed, and the only signal was:
 Exit 128 is what git returns for a missing repo, a missing branch, a bad URL
 *and* absent credentials, so the log said nothing about which. On top of that,
 `RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)` meant each doomed
-clone was attempted four times with backoff -- seven queued scans produced
+clone was attempted four times with backoff; seven queued scans produced
 roughly fifty identical tracebacks and no diagnosis.
 
 The safety property that produced the vague message is real and is preserved:
 nothing here may echo raw stderr, argv, paths, or a token. These tests pin
-both halves -- useful message, no leak.
+both halves, useful message, no leak.
 """
 
 import subprocess
@@ -66,21 +66,21 @@ class TestNoLeak:
     def test_message_never_echoes_stderr_contents(self):
         stderr = (
             "fatal: could not read Username for 'https://github.com'\n"
-            "/tmp/rikugan-scans/secret-path-9f2\n"
+            "/tmp/toleman-scans/secret-path-9f2\n"
             "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         )
         msg = _classify_clone_stderr(stderr) or ""
         assert "ghp_" not in msg
-        assert "/tmp/rikugan-scans" not in msg
+        assert "/tmp/toleman-scans" not in msg
         assert "secret-path" not in msg
 
     def test_clone_error_message_never_echoes_argv(self):
         exc = subprocess.CalledProcessError(
-            128, ["git", "clone", "--depth", "1", "--", "https://github.com/x/y.git", "/tmp/rikugan-scans/y-1"]
+            128, ["git", "clone", "--depth", "1", "--", "https://github.com/x/y.git", "/tmp/toleman-scans/y-1"]
         )
         exc.stderr = AUTH
         msg = clone_error_message(exc)
-        assert "/tmp/rikugan-scans" not in msg
+        assert "/tmp/toleman-scans" not in msg
         assert "git clone --depth" not in msg
 
 
@@ -140,7 +140,7 @@ class TestNotRetried:
             assert not issubclass(RepoCloneError, module.RETRYABLE_EXCEPTIONS), module.__name__
 
     def test_token_is_scrubbed_before_classification(self, monkeypatch, tmp_path):
-        """Scrubbing must happen first -- otherwise a token could reach the
+        """Scrubbing must happen first; otherwise a token could reach the
         classifier and, in a future change, a message."""
         monkeypatch.setattr(runner.settings, "scan_workdir", str(tmp_path))
         token = "ghp_ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"

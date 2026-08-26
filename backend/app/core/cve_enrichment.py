@@ -1,5 +1,4 @@
 import json
-from datetime import UTC, datetime
 
 from sqlmodel import Session, select
 
@@ -15,14 +14,14 @@ def get_cve_enrichment(session: Session, cve_id: str) -> CveEnrichment:
     from NVD + OSV.dev and persisting on first lookup.
 
     NVD/OSV data for an already-published CVE is effectively immutable, so
-    once a row exists here it is never re-fetched -- a real forever-cache
+    once a row exists here it is never re-fetched; a real forever-cache
     (in contrast to core/epss.py and core/kev.py's short in-process TTL,
     which is right for those because they track whole catalogs that
     genuinely change; a single CVE's description/CVSS/fix version does not).
 
     A CVE for which both lookups fail (network down, or genuinely not
-    indexed by either source) is still cached with nvd_found=osv_found=False
-    -- this is what actually removes the blocking per-request network cost
+    indexed by either source) is still cached with nvd_found=osv_found=False;
+    this is what actually removes the blocking per-request network cost
     from the hot path per the issue's caching requirement, at the cost of
     not automatically retrying a transient outage. Given NVD/OSV's
     reliability in practice this is an acceptable tradeoff; a future retry

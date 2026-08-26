@@ -9,7 +9,7 @@ KEV_TIMEOUT_SECONDS = 20.0
 # ingestion call (security review finding: up to 20s blocking a threadpool
 # worker per request, and CI push endpoints get hit far more often than the
 # KEV list actually changes) was a real availability problem. A KEV catalog
-# update is a rare event -- caching it in-process for an hour trades a small
+# update is a rare event, caching it in-process for an hour trades a small
 # amount of staleness for removing that blocking cost from the hot path.
 _CACHE_TTL_SECONDS = 60 * 60
 _cache: dict[str, object] = {"cve_ids": None, "fetched_at": 0.0}

@@ -68,7 +68,7 @@ export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[
         ))}
       </select>
 
-      {/* (#246) "Which of these can I close today?" -- the question severity
+      {/* (#246) "Which of these can I close today?", the question severity
           cannot answer. "Unknown" is offered as its own choice rather than
           folded into "No known fix": for most SAST and secrets findings we
           have no advisory to look up, and claiming there is no fix for a

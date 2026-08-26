@@ -1,9 +1,9 @@
 """Configurable-dashboard widget catalog + real data resolvers (issue #69).
 
-Deliberately ~6 concrete, real widgets backed by real queries -- NOT a
+Deliberately ~6 concrete, real widgets backed by real queries; NOT a
 generic "arbitrary chart config" system. Adding a new widget type later
 means adding one entry to WIDGET_CATALOG plus one resolver function here,
-not a rewrite -- mirrors the "one entry + one file" extensibility
+not a rewrite; mirrors the "one entry + one file" extensibility
 documented in ARCHITECTURE.md for the admin page's tabs. `security_score`
 below is exactly that: #63's composite score, added after #69 shipped.
 
@@ -13,7 +13,7 @@ admins). Resolvers reuse the same query shapes already established in
 app/api/dashboard.py and app/api/findings.py rather than duplicating scoping
 logic ad hoc.
 """
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import Any, Callable
 
 from sqlmodel import Session, func, select
@@ -26,7 +26,7 @@ from app.models.models import Finding, FindingState, Severity, Target
 
 WidgetResolver = Callable[[Session, "list[int] | None", dict], Any]
 
-# Findings still counted as "open" for KPI/trend/ranking purposes -- mirrors
+# Findings still counted as "open" for KPI/trend/ranking purposes, mirrors
 # app.core.sla.CLOSED_STATES's complement (Reopened still counts as open).
 OPEN_STATES = (FindingState.OPEN, FindingState.REOPENED)
 
@@ -58,7 +58,7 @@ def _target_names(session: Session, target_ids: set[int]) -> dict[int, str]:
 
 
 def resolve_kpi_cards(session: Session, ws_ids, config: dict) -> dict:
-    """Open / critical / high / mitigated counts + targets onboarded --
+    """Open / critical / high / mitigated counts + targets onboarded;
     reuses the same counting logic as GET /api/dashboard/summary and
     /stats, just returned as one bundle for the KPI-cards widget."""
     targets = _scoped_targets(session, ws_ids)
@@ -83,8 +83,8 @@ def resolve_findings_trend(session: Session, ws_ids, config: dict) -> dict:
     A "grouped by week from first_seen/state transitions" trend was the
     first idea, but this platform's real seeded finding history only spans
     about a day (first_seen ranges from 2026-08-12 16:00 to 2026-08-13
-    15:08 at the time this was written -- checked live against Postgres,
-    not assumed) -- grouping that into weekly buckets would render a
+    15:08 at the time this was written, checked live against Postgres,
+    not assumed); grouping that into weekly buckets would render a
     single, meaningless bar. Reconstructing a real *daily* open-count
     snapshot (as of the end of each day, from real first_seen/mitigated_at
     timestamps) is honest with sparse history today and still correct once
@@ -158,7 +158,7 @@ def resolve_sla_compliance(session: Session, ws_ids, config: dict) -> dict:
 
 def resolve_top_risky_repos(session: Session, ws_ids, config: dict) -> dict:
     """Targets ranked by open critical/high count, tie-broken by summed
-    priority_score (app.core.scoring) -- config: `limit` (default 5,
+    priority_score (app.core.scoring), config: `limit` (default 5,
     clamped 1-50)."""
     limit = max(1, min(int(config.get("limit", 5)), 50))
     targets = _scoped_targets(session, ws_ids)
@@ -191,12 +191,12 @@ def resolve_top_risky_repos(session: Session, ws_ids, config: dict) -> dict:
 
 
 def resolve_recent_findings(session: Session, ws_ids, config: dict) -> dict:
-    """Most recently first-seen findings, org-wide -- config: `limit`
+    """Most recently first-seen findings, org-wide; config: `limit`
     (default 10, clamped 1-100). Reuses app.core.sla.compute_sla_status the
     same way GET /api/findings does.
 
     Issue #119: a UX audit flagged 4 visually-identical rows in this widget.
-    Checked live against Postgres -- there was zero real duplication (no
+    Checked live against Postgres; there was zero real duplication (no
     repeated `dedup_hash`, distinct `id`s, `SELECT dedup_hash, count(*) ...
     HAVING count(*) > 1` returned 0 rows across all findings): a single scan
     can legitimately trigger the same rule (e.g. Semgrep's
@@ -233,18 +233,18 @@ def resolve_recent_findings(session: Session, ws_ids, config: dict) -> dict:
 
 
 def resolve_security_score(session: Session, ws_ids, config: dict) -> dict:
-    """Composite security health score (issue #63) -- same
+    """Composite security health score (issue #63), same
     app.core.security_score.compute_security_score used by the standalone
     GET /api/dashboard/security-score endpoint, so the widget and the
     dedicated endpoint always agree for the same scope. config:
-    `target_id`/`group_id` (both optional, mutually exclusive -- neither
+    `target_id`/`group_id` (both optional, mutually exclusive; neither
     means org-wide), matching #61's group_id filtering convention. The
     "Security Score" widget itself always resolves org-wide (its
     default_config is {}); a scoped view is a client-side-only
     interaction in the widget's own component (frontend/src/components/
     dashboard/widgets.tsx's SecurityScoreWidget), which calls
     GET /api/dashboard/security-score directly rather than round-tripping
-    through a saved per-instance widget config -- there's no config-editing
+    through a saved per-instance widget config; there's no config-editing
     UI in this dashboard yet (see DashboardBoard), so a fixed
     scope-per-saved-widget-instance wouldn't give real drill-down anyway."""
     target_id = config.get("target_id")
@@ -256,11 +256,11 @@ def resolve_security_score(session: Session, ws_ids, config: dict) -> dict:
 def resolve_fp_auto_suppressions(session: Session, ws_ids, config: dict) -> dict:
     """"X findings auto-suppressed this month" (issue #76). Counts real
     Finding rows the false-positive learning engine set to FALSE_POSITIVE at
-    ingestion time this calendar month -- identified by
+    ingestion time this calendar month, identified by
     app.core.fp_learning.AUTO_SUPPRESS_REASON_PREFIX stamped onto
     Finding.state_reason by apply_auto_suppression, not a separate event-log
     table (see FalsePositiveRule's docstring for why). first_seen is used as
-    the "when" -- an auto-suppressed finding is marked FALSE_POSITIVE at the
+    the "when"; an auto-suppressed finding is marked FALSE_POSITIVE at the
     moment it's first created, so first_seen and the suppression both happen
     in the same instant."""
     month_start = utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -276,7 +276,7 @@ def resolve_fp_auto_suppressions(session: Session, ws_ids, config: dict) -> dict
 def resolve_live_scan_activity(session: Session, ws_ids, config: dict) -> dict:
     """Every scan currently running, most-recently-started first (issue
     #224). Same query GET /api/scans/active uses (Scan.status == "running",
-    workspace-scoped, stale rows swept via mark_stale_if_needed) --
+    workspace-scoped, stale rows swept via mark_stale_if_needed);
     duplicated here rather than imported, since that endpoint returns a
     by-target dict shaped for the target detail page's scan-buttons UI,
     not the flat most-recent-first list this widget wants.
@@ -322,7 +322,7 @@ def resolve_live_scan_activity(session: Session, ws_ids, config: dict) -> dict:
 def resolve_ai_ml_risk(session: Session, ws_ids, config: dict) -> dict:
     """AI/ML-repo count plus open findings from the two AI-specific scanners
     (issue #224): AI-repo detection (#185), ModelScan (#186) and the LLM
-    ruleset (#189) shipped with no dashboard-level visibility at all -- an
+    ruleset (#189) shipped with no dashboard-level visibility at all; an
     org with several AI/ML repos had no way to tell from the dashboard
     whether those scanners had found anything without already knowing to
     filter Findings by tool name.
@@ -346,7 +346,7 @@ def resolve_ai_ml_risk(session: Session, ws_ids, config: dict) -> dict:
 
 def resolve_guardrail_activity(session: Session, ws_ids, config: dict) -> dict:
     """Recent PR Guardrail scan decisions plus the pending-approval count
-    (issue #224) -- the Approval Queue (moved to its own nav item this same
+    (issue #224), the Approval Queue (moved to its own nav item this same
     IA pass) is daily work with no at-a-glance visibility on the dashboard
     itself; this surfaces both "is PR Guardrail actually catching things"
     and "is anything waiting on security review" without a click.
@@ -471,7 +471,7 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
 # Sensible out-of-the-box composition for a user with no saved
 # DashboardLayout row yet. Order mirrors the previous fixed dashboard
 # (frontend/(dashboard)/page.tsx pre-#69) reasonably closely. security_score
-# leads the list (#63) -- a CISO/CTO's single-number read on posture belongs
+# leads the list (#63); a CISO/CTO's single-number read on posture belongs
 # above the granular KPI breakdown, not after it.
 DEFAULT_WIDGET_ORDER = [
     "security_score",
@@ -486,7 +486,7 @@ DEFAULT_WIDGET_ORDER = [
 
 def build_default_layout() -> list[dict]:
     """Deliberately deterministic instance ids (`default-<widget_id>`, not
-    uuid4) -- this is regenerated on every call for a user with no saved
+    uuid4); this is regenerated on every call for a user with no saved
     DashboardLayout row (both GET /layout and GET /widget-data call it
     independently), so a random id here would make the two responses'
     instance ids disagree and break the frontend's data[widget.id] lookup

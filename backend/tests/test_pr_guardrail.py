@@ -105,7 +105,7 @@ def test_render_comment_severity_count_table_reflects_mix():
     ]
     body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=1, pr_scan_id=1)
 
-    # Header row names every severity column, single data row with counts --
+    # Header row names every severity column, single data row with counts;
     # a "one-line" summary table appearing before any per-finding detail.
     header_idx = body.index("| Informational | Low | Medium | High | Critical |")
     data_idx = body.index("| 0 | 1 | 0 | 1 | 2 |")
@@ -198,7 +198,7 @@ def test_find_existing_comment_id_finds_marker_tagged_comment():
             200,
             [
                 {"id": 111, "body": "unrelated comment"},
-                {"id": 222, "body": f"{COMMENT_MARKER}\n**Rikugan PR Guardrail**"},
+                {"id": 222, "body": f"{COMMENT_MARKER}\n**Toleman PR Guardrail**"},
             ],
         )
         assert _find_existing_comment_id("acme/repo", 7, "tok") == 222

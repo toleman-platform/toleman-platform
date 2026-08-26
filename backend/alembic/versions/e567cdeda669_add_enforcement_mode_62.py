@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 # NOTE: `alembic revision --autogenerate` also picked up a batch of unrelated
 # pre-existing schema drift (a stale `discoveredendpoint` table, missing
-# indexes on finding/scan, NOT NULL tightening on platformconfig columns) --
+# indexes on finding/scan, NOT NULL tightening on platformconfig columns);
 # same drift #61's migration (1aec0547092a) already noted and deliberately
 # left out. Not part of issue #62 either; this migration only adds the three
 # new nullable enforcement_mode columns below.

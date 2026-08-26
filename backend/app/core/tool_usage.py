@@ -2,8 +2,8 @@
 per-workspace usage assignments an operator sets in Tool Marketplace
 (``WorkspaceToolConfig``, issue #75).
 
-Until this module existed, those four checkboxes -- On-demand / API scan /
-CI pipeline / PR guardrail -- were *write-only*. They persisted, they were
+Until this module existed, those four checkboxes (On-demand / API scan /
+CI pipeline / PR guardrail) were *write-only*. They persisted, they were
 served back by ``GET /api/tools/assignments``, the UI rendered them ticked,
 and nothing at execution time ever read them. PR Guardrail in particular
 hardcoded ``GUARDRAIL_TOOL = "semgrep"``, so a workspace with Gitleaks
@@ -17,8 +17,8 @@ Resolution order for a (workspace, tool, surface) triple:
   2. otherwise ``tool_registry.default_usage_for(tool)``, the built-in
      default (mirrors the "None = inherit" pattern used by enforcement mode).
 
-On top of that, ``tools_for_surface`` only ever returns tools Rikugan can
-genuinely execute -- a key in ``runner.TOOL_COMMANDS`` *with* a parser in
+On top of that, ``tools_for_surface`` only ever returns tools Toleman can
+genuinely execute; a key in ``runner.TOOL_COMMANDS`` *with* a parser in
 ``parsers.PARSER_MAP``. A registry-only entry like ``kics`` has nothing to
 run; returning it would hand the caller a tool name that raises
 ``ValueError: unsupported tool`` the moment it tried.
@@ -42,7 +42,7 @@ def is_nuclei_enabled_for_api_scan(session: Session, workspace_id: int) -> bool:
     nuclei cannot go through tools_for_surface: it structurally fails
     runnable_tools()'s TOOL_COMMANDS-membership test (its invocation takes a
     list of live URLs, built by app.core.api_scan_targets from already-
-    discovered endpoints -- nothing like the repo-path shape every generic
+    discovered endpoints; nothing like the repo-path shape every generic
     runner tool shares), so it can never appear in that function's result
     regardless of any assignment. This mirrors the same saved-row-else-
     default resolution on a single tool/surface pair instead.
@@ -72,7 +72,7 @@ def tools_for_surface(session: Session, workspace_id: int, surface: str) -> list
 
     Returns ``[]`` when an operator has genuinely turned every tool off for
     this surface. Callers must treat that as "nothing was checked", NOT as
-    "checked and clean" -- the distinction that ``osv_malware.py`` already
+    "checked and clean"; the distinction that ``osv_malware.py`` already
     draws between ``None`` and ``{}``, and the one whose absence made
     GH-01 a silent pass instead of a loud misconfiguration.
     """

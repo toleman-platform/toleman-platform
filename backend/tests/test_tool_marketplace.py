@@ -53,7 +53,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -93,7 +93,7 @@ def test_registry_lists_every_tool_with_health_and_integration_flag(client, engi
         assert "integrated" in entry
         assert "category" in entry
         assert "install_cmd" in entry
-    # kics has no real TOOL_COMMANDS entry -- registry-only, not integrated.
+    # kics has no real TOOL_COMMANDS entry, registry-only, not integrated.
     kics = next(e for e in body if e["tool"] == "kics")
     assert kics["integrated"] is False
     # semgrep is a real, wired-up scanner.
@@ -175,7 +175,7 @@ def test_security_engineer_can_save_assignment_and_it_persists(client, engine):
 
     # A second write to the same (workspace, tool) updates in place rather
     # than creating a duplicate row (the UniqueConstraint would otherwise
-    # reject it) -- confirm via the list endpoint reflecting the update.
+    # reject it); confirm via the list endpoint reflecting the update.
     res2 = client.put(
         "/api/tools/assignments",
         json={
@@ -219,7 +219,7 @@ def test_assignments_scoped_to_accessible_workspaces(client, engine):
     ws_b = _make_workspace(engine, "b")
     client, uid = _login(client, engine, role=UserRole.USER)
     _membership(engine, uid, ws_a, WorkspaceRole.VIEWER)
-    # No membership in ws_b -- issue #57-style tenant isolation.
+    # No membership in ws_b, issue #57-style tenant isolation.
 
     res = client.get(f"/api/tools/assignments?workspace_id={ws_b}")
     assert res.status_code == 404
@@ -253,7 +253,7 @@ def test_admin_bypasses_workspace_membership_for_read_and_write(client, engine):
 AI_ML_TOOLS = {"modelscan", "garak", "medusa", "snyk-agent-scan", "cisco-aibom"}
 
 # Of those, the ones still catalog-only. modelscan graduated out of this set
-# in #186 when it got a real TOOL_COMMANDS entry -- the not-integrated
+# in #186 when it got a real TOOL_COMMANDS entry, the not-integrated
 # assertions below deliberately failed at that moment, which is what they
 # are for. Move a tool out of here when it gets wired up for real.
 AI_ML_CATALOG_ONLY_TOOLS = AI_ML_TOOLS - {"modelscan"}
@@ -271,7 +271,7 @@ def test_ai_ml_tools_are_registered(client, engine):
 
 def test_ai_ml_tools_report_as_not_integrated(client, engine):
     """None of them has a TOOL_COMMANDS entry yet, so `integrated` must be
-    False -- the same invariant kics relies on. If someone wires one up for
+    False; the same invariant kics relies on. If someone wires one up for
     real, this assertion is the reminder to move it out of catalog-only."""
     client, _ = _login(client, engine, role=UserRole.ADMIN)
     by_tool = {t["tool"]: t for t in client.get("/api/tools/registry").json()}
@@ -330,7 +330,7 @@ def test_modelscan_is_integrated_after_186(client, engine):
 
 
 # ---------------------------------------------------------------------------
-# Registry health-check caching (#221) -- see app.core.tool_health_cache.
+# Registry health-check caching (#221); see app.core.tool_health_cache.
 # GET /api/tools/registry used to run a live subprocess `--version` check
 # for every registry entry on every request; that check is now cached for
 # a short TTL and invalidated the moment an install through this UI settles.
@@ -340,7 +340,7 @@ def test_modelscan_is_integrated_after_186(client, engine):
 @pytest.fixture(autouse=True)
 def _isolated_tool_health_cache():
     """The cache module holds process-global state keyed only by tool name,
-    with no per-test namespace -- forced onto the in-memory fallback here
+    with no per-test namespace; forced onto the in-memory fallback here
     (same technique as test_tool_health_cache.py) so these tests are
     deterministic regardless of whether a real Redis happens to be
     reachable in whatever environment runs the suite, and so a health entry
@@ -367,7 +367,7 @@ def test_registry_reuses_a_cached_health_check_on_the_second_request(client, eng
         second = client.get("/api/tools/registry").json()
 
     # One subprocess check per tool across both requests combined, not one
-    # per tool per request -- this is the entire point of the cache.
+    # per tool per request; this is the entire point of the cache.
     semgrep_calls = [c for c in mocked.call_args_list if c.args[0] == "semgrep"]
     assert len(semgrep_calls) == 1
 
@@ -378,7 +378,7 @@ def test_registry_reuses_a_cached_health_check_on_the_second_request(client, eng
 
 
 def test_registry_response_is_unchanged_by_caching(client, engine):
-    # The response shape/content must be identical to the uncached version --
+    # The response shape/content must be identical to the uncached version;
     # this is a performance change, not a behavior change.
     client, _ = _login(client, engine, role=UserRole.ADMIN)
     uncached = client.get("/api/tools/registry").json()
@@ -428,7 +428,7 @@ def test_an_install_settling_invalidates_that_tools_cached_health(engine):
 
 
 def test_a_failed_install_also_invalidates_the_cache(engine):
-    # Failure is still new information -- "we just tried and it did not
+    # Failure is still new information; "we just tried and it did not
     # work" is exactly as stale-cache-worthy as a success.
     from app.core import tool_health_cache, tool_install
     from app.models.models import ToolInstallRun

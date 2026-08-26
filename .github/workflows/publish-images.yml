@@ -2,22 +2,44 @@ name: Publish Docker Images
 
 # Issue #159: publish prebuilt images to GHCR so `docker compose up` (with
 # `image:` instead of `build:`) or a standalone `docker run` doesn't require
-# building from source. Images are private, matching this repo's current
-# visibility -- GHCR access follows the same collaborator/team permissions
-# as the repo itself, no separate account/token needed to pull.
+# building from source.
 #
-# Triggers on version tags (v1.2.3) for real releases, plus workflow_dispatch
-# for on-demand rebuilds (e.g. after a base-image security patch with no
-# code change).
+# Two bugs made this never actually work:
+#
+# 1. It only triggered on `v*.*.*` tags, and this repo has never cut a tag --
+#    so the workflow had never run once and no image had ever been pushed,
+#    while README told people to `docker pull` them.
+#
+# 2. `latest` was gated on `{{is_default_branch}}`, which is false for a tag
+#    ref. So even after tagging a release, the only tag produced would have
+#    been the bare version; never the `:latest` the README asks for.
+#
+# Now: every push to main publishes `edge`, so a pullable image exists
+# continuously without waiting for a release; tags publish the full semver
+# set plus `latest`. Both also publish an immutable `sha-<short>` tag, which
+# is what to pin to when you need to know exactly what you are running.
 on:
   push:
+    branches: [main]
     tags: ["v*.*.*"]
   workflow_dispatch:
 
+# A second push to main should not leave two multi-arch builds racing to
+# publish the same `edge` tag.
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  REGISTRY: ghcr.io
   BACKEND_IMAGE: ghcr.io/${{ github.repository }}-backend
   FRONTEND_IMAGE: ghcr.io/${{ github.repository }}-frontend
+  # arm64 is emulated through QEMU, and the backend image pip-installs
+  # semgrep; which makes a two-platform build disproportionately slow for
+  # something published on every merge. Releases get both architectures;
+  # `edge` gets amd64 only. Apple Silicon developers wanting arm64 build
+  # from source (the default `docker compose up --build` path) or use a
+  # tagged release.
+  PLATFORMS: ${{ github.ref_type == 'tag' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
 
 jobs:
   publish:
@@ -25,6 +47,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Both required by attest-build-provenance below.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
 
@@ -45,18 +70,24 @@ jobs:
           images: ${{ env.BACKEND_IMAGE }}
           tags: |
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=sha,format=short
+            # Only a real release moves `latest`, and a prerelease
+            # (v1.0.0-rc1, which contains a hyphen) must not.
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
 
       - name: Build + push backend
+        id: backend-build
         uses: docker/build-push-action@v6
         with:
           context: backend
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.backend-meta.outputs.tags }}
           labels: ${{ steps.backend-meta.outputs.labels }}
           # (BLD-01) Stamp the real build identity into the image so a
-          # running instance can say which one it is -- GET /health and the
+          # running instance can say which one it is; GET /health and the
           # sidebar both surface it. A published image with version "dev"
           # would defeat the point.
           build-args: |
@@ -70,15 +101,83 @@ jobs:
           images: ${{ env.FRONTEND_IMAGE }}
           tags: |
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
 
       - name: Build + push frontend
+        id: frontend-build
         uses: docker/build-push-action@v6
         with:
           context: frontend
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.PLATFORMS }}
           push: true
           tags: ${{ steps.frontend-meta.outputs.tags }}
           labels: ${{ steps.frontend-meta.outputs.labels }}
+          # Baked in at build time because Next.js inlines NEXT_PUBLIC_*
+          # into the client bundle. It is only a fallback: the dashboard
+          # layout injects `window.__TOLEMAN_API_URL__` from PUBLIC_API_URL
+          # at runtime and app/lib/api.ts prefers that, so a deployment on
+          # another host does not need a rebuilt image.
           build-args: |
             NEXT_PUBLIC_API_URL=http://localhost:8000
+
+      # Signed provenance linking each published image back to the exact
+      # workflow run and commit that produced it. Worth more here than on a
+      # typical project: this image bundles four security scanners, and
+      # "where did this binary come from" is the question the tool exists to
+      # help its users ask about their own dependencies.
+      #
+      # continue-on-error, deliberately. Both images are already pushed by
+      # the time these run, so a failure here means "published, but not
+      # attested"; and failing the job at that point reports a successful
+      # publish as a broken one, which is what happened on the first run.
+      # The attestation API is also not available on every plan and
+      # repository-visibility combination, so this must degrade rather than
+      # gate. Check the step's own status to see whether an image carries
+      # provenance; the summary below records it either way.
+      - name: Attest backend provenance
+        id: backend-attest
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.BACKEND_IMAGE }}
+          subject-digest: ${{ steps.backend-build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest frontend provenance
+        id: frontend-attest
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.FRONTEND_IMAGE }}
+          subject-digest: ${{ steps.frontend-build.outputs.digest }}
+          push-to-registry: true
+
+      # always(), so the record of what was pushed survives a failure in the
+      # non-gating steps above. Previously this was skipped on the first
+      # failure, leaving a run that had genuinely published two images with
+      # no record of their digests anywhere.
+      - name: Summarize what was published
+        if: always()
+        run: |
+          {
+            echo "## Published images"
+            echo
+            echo "**Backend** (\`${{ env.BACKEND_IMAGE }}\`)"
+            echo '```'
+            echo "${{ steps.backend-meta.outputs.tags }}"
+            echo '```'
+            echo "digest: \`${{ steps.backend-build.outputs.digest }}\`"
+            echo
+            echo "**Frontend** (\`${{ env.FRONTEND_IMAGE }}\`)"
+            echo '```'
+            echo "${{ steps.frontend-meta.outputs.tags }}"
+            echo '```'
+            echo "digest: \`${{ steps.frontend-build.outputs.digest }}\`"
+            echo
+            echo "platforms: \`${{ env.PLATFORMS }}\`"
+            echo
+            echo "provenance attestation: backend \`${{ steps.backend-attest.outcome }}\`, frontend \`${{ steps.frontend-attest.outcome }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

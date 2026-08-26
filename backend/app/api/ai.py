@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +13,7 @@ from app.models.models import AiAnalysisRun, Finding, PlatformConfig, Target, Us
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
-# Real network timeout for self-hosted/local model backends -- local inference
+# Real network timeout for self-hosted/local model backends; local inference
 # (especially CPU-only Ollama) can be much slower than a hosted API, so this is
 # generous rather than the usual short API timeout.
 OPENAI_COMPATIBLE_TIMEOUT_SECONDS = 60.0
@@ -124,7 +123,7 @@ def status(session: Session = Depends(get_session)):
 
 
 def _record_analysis_run(session: Session, user: User, finding_id: int) -> None:
-    """Issue #122: upsert the (user, finding) "recently analyzed" marker --
+    """Issue #122: upsert the (user, finding) "recently analyzed" marker;
     see AiAnalysisRun's docstring for why this is an upsert, not an insert.
     Best-effort: a failure here must never fail the analysis response
     itself (same "never break the primary action" philosophy as the
@@ -181,8 +180,8 @@ def analyze_finding(finding_id: int, session: Session = Depends(get_session), us
 def recent_analyses(
     limit: int = 8, session: Session = Depends(get_session), user: User = Depends(current_user)
 ) -> list[dict]:
-    """Issue #122: "recent analyses" landing state for the AI Analysis page
-    -- findings this user has previously run AI analysis on, most-recent
+    """Issue #122: "recent analyses" landing state for the AI Analysis page;
+    findings this user has previously run AI analysis on, most-recent
     first. Deliberately per-user (not workspace-wide) since AiAnalysisRun
     tracks who ran the analysis; still re-checked against the caller's
     current accessible workspaces (not just filtered at write time) so a

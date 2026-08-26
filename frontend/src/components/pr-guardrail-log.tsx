@@ -213,7 +213,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
   const [expanded, setExpanded] = useState<number | null>(null);
 
   // The org-wide view carries aggregate stats; the per-repo one has none.
-  // Returning both from a single fetcher keeps them in lockstep -- the two
+  // Returning both from a single fetcher keeps them in lockstep; the two
   // separate state slots could previously show one repo's log beside another
   // view's stats if the requests interleaved.
   const {
@@ -232,7 +232,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
   const stats = data?.stats ?? null;
 
   // A 401 means the GitHub session lapsed, which has its own reconnect
-  // affordance -- it is not a generic page error.
+  // affordance; it is not a generic page error.
   const sessionExpired = loadError !== null && isSessionError(loadError);
   const error = sessionExpired ? null : (loadError?.message ?? null);
 
@@ -308,14 +308,14 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                       <div className="mt-1 text-xs text-muted-foreground">Override reason: {entry.override_reason}</div>
                     )}
                     {/* GH-01: a scan where an assigned tool failed is
-                        inconclusive, not clean -- say so next to the counts
+                        inconclusive, not clean; say so next to the counts
                         rather than letting "0 new findings" read as a pass. */}
                     {entry.status_delivery_error && (
                       <div className="mt-1 text-xs text-destructive">{entry.status_delivery_error}</div>
                     )}
                     {entry.tools_failed?.length > 0 && (
                       <div className="mt-1 text-xs text-destructive">
-                        {entry.tools_failed.join(", ")} failed to run — PR not fully scanned
+                        {entry.tools_failed.join(", ")} failed to run; PR not fully scanned
                       </div>
                     )}
                     {/* (#243) A diff-scoped scan looked at a fraction of the
@@ -325,7 +325,7 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
                         whole-repo assurance it never had. */}
                     {entry.scan_scope === "diff" && (
                       <div className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                        Diff-scoped — {entry.files_scanned ?? 0} changed file(s) only, not the full repo
+                        Diff-scoped, {entry.files_scanned ?? 0} changed file(s) only, not the full repo
                       </div>
                     )}
                     {(entry.tools_skipped?.length ?? 0) > 0 && (

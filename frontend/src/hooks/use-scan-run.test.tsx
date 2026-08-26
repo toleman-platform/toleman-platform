@@ -71,7 +71,7 @@ describe("useScanRun", () => {
     const { result } = renderHook(() => useScanRun());
     act(() => result.current.track(1));
     await advanceOnePoll();
-    // Null must survive the whole way to the UI -- no default substituted
+    // Null must survive the whole way to the UI, no default substituted
     // anywhere in between.
     expect(result.current.etaSeconds).toBeNull();
   });
@@ -83,7 +83,7 @@ describe("useScanRun", () => {
     await advanceOnePoll();
     expect(result.current.elapsedSeconds).toBe(10);
 
-    // No new poll, but the stopwatch should still advance -- otherwise the
+    // No new poll, but the stopwatch should still advance; otherwise the
     // number visibly freezes between requests. The exact value depends on
     // how many timer ticks land, so this asserts movement past the server's
     // last word rather than a specific count.

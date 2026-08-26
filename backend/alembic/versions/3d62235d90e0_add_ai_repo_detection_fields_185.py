@@ -4,7 +4,7 @@ Adds the AI/ML repo flag every AI-specific scanner in epic #192 gates on,
 plus the signal list explaining why it fired and a human override that wins
 over detection.
 
-Existing rows default to is_ai_repo=False / signals="" / override=NULL --
+Existing rows default to is_ai_repo=False / signals="" / override=NULL,
 i.e. "not an AI repo, nobody has decided otherwise". Detection recomputes on
 the next scan, so this is a safe starting state rather than a guess: a repo
 that is genuinely an AI repo flips to True the first time it's scanned, and

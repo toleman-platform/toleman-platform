@@ -1,7 +1,7 @@
 """Tests for model-file scanning (issue #186).
 
 The parser fixtures are pinned against a REAL `modelscan 0.8.8 -r json` run
-against a pickle whose __reduce__ calls os.system -- not a schema invented
+against a pickle whose __reduce__ calls os.system, not a schema invented
 from the docs, which don't publish one. Regenerate with:
 
     python -c "import pickle,os
@@ -113,7 +113,7 @@ def test_arbitrary_code_operator_is_floored_at_critical_even_if_downgraded():
 
 
 def test_non_code_execution_operator_keeps_its_reported_severity():
-    """The floor is targeted, not a blanket 'everything is Critical' -- that
+    """The floor is targeted, not a blanket 'everything is Critical'; that
     is how a signal turns into wallpaper."""
     other = {
         "issues": [
@@ -161,7 +161,7 @@ def _cmd():
 
 def test_exit_1_is_success_with_findings_not_a_failure(monkeypatch):
     """Exit 1 means 'scan ok, vulnerabilities found'. Treating it as an error
-    would discard exactly the findings this tool exists to produce -- the
+    would discard exactly the findings this tool exists to produce; the
     hazard checkov/tfsec avoid with --soft-fail, which modelscan lacks."""
     monkeypatch.setattr(subprocess, "run", _fake_run(1, REAL_UNSAFE_REPORT))
     raw = _run_modelscan(_cmd())

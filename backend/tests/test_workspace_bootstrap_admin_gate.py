@@ -1,6 +1,6 @@
 """Tests for issue #56: POST /api/workspaces/bootstrap creates a brand-new
 Organization + Workspace + API key, which is a platform-level action, not a
-within-workspace one -- it must be gated to the global admin role, not just
+within-workspace one; it must be gated to the global admin role, not just
 any authenticated user (the router's blanket login_required previously let
 any logged-in user, including role=viewer/developer, create arbitrary new
 orgs/workspaces and mint their API keys).
@@ -52,7 +52,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -101,7 +101,7 @@ def test_admin_can_bootstrap_workspace(client, engine):
 
 
 def test_bootstrap_still_requires_login_at_all(client, engine):
-    """No session cookie -- should 401 (login_required from the router),
+    """No session cookie; should 401 (login_required from the router),
     not fall through to the admin check with a None user."""
     res = client.post("/api/workspaces/bootstrap", params={
         "org_name": "acme-anon", "workspace_name": "prod",

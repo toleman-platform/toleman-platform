@@ -38,7 +38,7 @@ export function ConnectGithubCard() {
 
   // (GH-03) Whether GitHub could actually reach this backend's webhook
   // endpoint. The App now subscribes to pull_request, so automatic scanning
-  // works -- unless PUBLIC_API_URL is a localhost address, in which case
+  // works; unless PUBLIC_API_URL is a localhost address, in which case
   // deliveries never arrive and it looks exactly like a scanner finding
   // nothing. Better said before the App is created than discovered after.
   const [webhookReachable, setWebhookReachable] = useState<boolean | null>(null);
@@ -50,7 +50,7 @@ export function ConnectGithubCard() {
         if (!cancelled) setWebhookReachable(d.webhook_reachable);
       })
       .catch(() => {
-        // Advisory only -- never block the connect flow on it.
+        // Advisory only; never block the connect flow on it.
       });
     return () => {
       cancelled = true;
@@ -118,7 +118,7 @@ export function ConnectGithubCard() {
           <div>
             <div className="font-medium text-foreground">GitHub</div>
             <div className="text-xs text-muted-foreground">
-              Install one or more Rikugan GitHub Apps to sync and auto-discover repos
+              Install one or more Toleman GitHub Apps to sync and auto-discover repos
             </div>
           </div>
         </div>
@@ -168,14 +168,14 @@ export function ConnectGithubCard() {
                       <>
                         <CheckCircle2 className="h-3.5 w-3.5 text-chart-5" />
                         <span className="text-muted-foreground">
-                          Webhook secret set — real-time PR scanning active if this App&apos;s webhook is configured
+                          Webhook secret set, real-time PR scanning active if this App&apos;s webhook is configured
                         </span>
                       </>
                     ) : (
                       <>
                         <XCircle className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="text-muted-foreground">
-                          No webhook secret set — PRs from this App only scan on-demand (PR History page)
+                          No webhook secret set, PRs from this App only scan on-demand (PR History page)
                         </span>
                       </>
                     )}

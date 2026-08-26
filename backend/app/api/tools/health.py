@@ -1,12 +1,12 @@
-"""`GET /api/tools/health` -- the original Sprint 1 health check.
+"""`GET /api/tools/health`: the original Sprint 1 health check.
 
 Kept for backwards compatibility with the original Sprint 1 shape (the
 frontend's existing ToolsHealth component, and any external caller relying
-on it) -- registry.py's `/registry` supersedes it for the marketplace page,
+on it); registry.py's `/registry` supersedes it for the marketplace page,
 but there is no reason to break this one.
 
 `_check_one` is the shared subprocess `--version` check reused by
-registry.py -- the two endpoints check the same thing (is this binary
+registry.py; the two endpoints check the same thing (is this binary
 present and does it answer), just over different tool sets.
 """
 import shutil
@@ -26,7 +26,7 @@ VERSION_COMMANDS = {
 
 
 def _check_one(tool: str, cmd: list[str], checked_in: str = "api") -> dict:
-    """`checked_in` records which process ran the probe -- "api" (this web
+    """`checked_in` records which process ran the probe, "api" (this web
     process) or "worker" (the Celery worker).
 
     This is not bookkeeping. Finding CTX-03: one-click install runs on the
@@ -35,7 +35,7 @@ def _check_one(tool: str, cmd: list[str], checked_in: str = "api") -> dict:
     topology. A successful Checkov install (version 3.3.13, `which checkov`
     resolving fine in the worker) showed permanently as "not installed" on
     the marketplace card, even after "Recheck all". The card was answering a
-    question nobody asked -- "is it installed next to the web server" --
+    question nobody asked ("is it installed next to the web server")
     while every scan runs on the worker.
     """
     binary_path = shutil.which(cmd[0])
@@ -62,7 +62,7 @@ def _check_one(tool: str, cmd: list[str], checked_in: str = "api") -> dict:
 @router.get("/health")
 def tools_health():
     """Real version + reachability check for each of the 4 originally
-    integrated scanners -- no simulated status. See /registry for the full
+    integrated scanners, no simulated status. See /registry for the full
     tool marketplace (issue #75), which includes this same live check for
     every registered tool, not just these four."""
     return [_check_one(tool, cmd) for tool, cmd in VERSION_COMMANDS.items()]

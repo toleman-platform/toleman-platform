@@ -10,7 +10,6 @@ route here and the webhook-driven real-time path (app/api/webhooks.py) run
 the exact same code, not two copies.
 """
 import logging
-from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
@@ -79,7 +78,7 @@ def active_pr_scans(
     Finding CTX-02: PrScanAction tracked in-flight state in a local
     `useState`, so navigating away unmounted the component and the button
     came back as a fresh, clickable "Scan This PR" while the scan was still
-    running -- and the audit-log card lower on the *same page* correctly
+    running; and the audit-log card lower on the *same page* correctly
     showed `running`. Two components on one screen disagreeing about one job,
     with the obvious user action being to click again and start a duplicate
     clone-and-scan.
@@ -89,7 +88,7 @@ def active_pr_scans(
     truth for what is running, so any surface can render it without having
     been the one that started it.
 
-    Stale rows are swept here for the same reason that endpoint does it --
+    Stale rows are swept here for the same reason that endpoint does it;
     this is often the first read to touch a row a dead worker left "running",
     and without the sweep it would render as permanently in flight, which is
     indistinguishable from a hung platform.
@@ -155,7 +154,7 @@ def _scan_out(
 ) -> dict:
     """`target_by_id` (org-wide mode, #64) adds target_id/target_name to the
     row and is also used to resolve pr_url. `target` (single-target mode)
-    is the one target already fetched by the caller, used only for pr_url --
+    is the one target already fetched by the caller, used only for pr_url;
     single-target rows don't carry target_id/target_name."""
     if target_by_id is not None:
         target = target_by_id.get(s.target_id)
@@ -204,7 +203,7 @@ def pr_guardrail_log(
 
     Issue #64: when `target_id` is omitted, returns an org-wide aggregate
     across every target the caller can see (via `accessible_workspace_ids`,
-    #57) instead of a single target -- each row carries its target id/name
+    #57) instead of a single target; each row carries its target id/name
     since that's no longer implied by a single-target picker selection. When
     `target_id` is given, behaves exactly as before (single target, no
     target name needed since the picker already tells the caller which
@@ -218,11 +217,11 @@ def pr_guardrail_log(
         ).all()
         # Single-target mode: no target_by_id map (target_id/target_name stay
         # implied by the picker, per #64), but pr_url is still derivable from
-        # the one target we already fetched above -- pass it in directly.
+        # the one target we already fetched above; pass it in directly.
         return [_scan_out(s, target=target) for s in scans]
 
     # Org-wide mode: scope to the caller's accessible workspaces (#57), not
-    # every workspace's data -- None means admin/no filter.
+    # every workspace's data; None means admin/no filter.
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return {"scans": [], "stats": {"total": 0, "passed": 0, "blocked": 0, "overridden": 0, "error": 0, "running": 0}}
@@ -241,13 +240,13 @@ def pr_guardrail_log(
         .order_by(PRGuardrailScan.created_at.desc())
     ).all()
 
-    # Cheap org-wide stats computed from the same rows we just fetched --
+    # Cheap org-wide stats computed from the same rows we just fetched,
     # no extra query, matches the "don't build a new heavy aggregation
     # endpoint just for this" guidance in #64.
     stats = {"total": len(scans), "passed": 0, "blocked": 0, "overridden": 0, "error": 0, "running": 0}
     for s in scans:
         # PRGuardrailStatus subclasses str, so s.status hashes/compares equal
-        # to its plain string value ("running", "passed", ...) -- no .value
+        # to its plain string value ("running", "passed", ...), no .value
         # conversion needed.
         if s.status in stats:
             stats[s.status] += 1
@@ -326,7 +325,7 @@ def approve_ignore(
     session.refresh(finding)
 
     # #112: don't leave the whole-PR status stuck BLOCKED once every
-    # blocking finding has been individually approved for ignore -- the
+    # blocking finding has been individually approved for ignore; the
     # blunt whole-scan override used to be the only way out of that.
     pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
     if pr_scan:

@@ -3,7 +3,7 @@ has assigned to the pr_guardrail surface, not a hardcoded semgrep.
 
 The bug an external evaluation found: a test PR containing a hardcoded AWS
 key, a Django secret key and a concatenated SQL query was scanned, and only
-the SQL injection blocked. The secrets went straight through -- because the
+the SQL injection blocked. The secrets went straight through; because the
 diff scanner was pinned to semgrep while the Tool Marketplace rendered a
 *ticked* "PR guardrail" checkbox for Gitleaks, Trivy and gosec.
 

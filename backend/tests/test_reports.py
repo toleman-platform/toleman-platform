@@ -1,11 +1,11 @@
 """Tests for GET /api/reports/posture (CSV + PDF compliance/audit exports).
 
 Follows the same in-memory SQLite + dependency_override pattern used in
-tests/test_findings.py -- no shared conftest exists for this yet either.
+tests/test_findings.py; no shared conftest exists for this yet either.
 """
 import csv
 import io
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -69,7 +69,7 @@ def _login(client, engine, email="user@example.com", password="whatever123", rol
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -209,7 +209,7 @@ def test_posture_csv_for_single_target_reflects_real_findings(client, engine):
     text = res.text
     rows = list(csv.reader(io.StringIO(text)))
 
-    # Real severity/state counts must appear verbatim -- not fabricated.
+    # Real severity/state counts must appear verbatim, not fabricated.
     assert any(r[:3] == ["govwa", "Critical", "Open"] and r[3] == "1" for r in rows)
     assert any(r[:3] == ["govwa", "High", "Open"] and r[3] == "1" for r in rows)
     assert any(r[:3] == ["govwa", "High", "Mitigated"] and r[3] == "1" for r in rows)
@@ -294,7 +294,7 @@ def test_posture_pdf_is_a_real_parseable_pdf_with_correct_content_type(client, e
     assert body.rstrip().endswith(b"%%EOF")
 
     # Parse it back for real with pypdf to prove it's not a mislabeled text
-    # file -- extracted text should contain the real seeded finding data.
+    # file; extracted text should contain the real seeded finding data.
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(body))
@@ -307,7 +307,7 @@ def test_posture_pdf_is_a_real_parseable_pdf_with_correct_content_type(client, e
 # ---------------------------------------------------------------------------
 # Issue #86: the org-wide posture export must scope to the caller's
 # workspaces via accessible_workspace_ids(), the same helper #57 applied to
-# dashboard/findings/targets -- reports.py just wasn't in scope for that PR.
+# dashboard/findings/targets; reports.py just wasn't in scope for that PR.
 # Two real workspaces, a non-admin caller who is only a member of one of
 # them: the other workspace's findings must not appear in the response body.
 # ---------------------------------------------------------------------------

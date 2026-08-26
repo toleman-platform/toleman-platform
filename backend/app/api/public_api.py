@@ -1,11 +1,11 @@
-"""Issue #109: the public API -- versioned, token-authenticated
+"""Issue #109: the public API, versioned, token-authenticated
 (`Authorization: Bearer <token>`, see app.api.auth.current_api_token_user),
 for third-party/scripted integrations. Distinct from the internal `/api/*`
 routers the frontend calls (session-cookie authenticated).
 
 v1 is deliberately a curated read-mostly surface (targets/findings/scans)
 plus one write endpoint (trigger a scan, gated by a read_write-scoped
-token) rather than exposing every internal endpoint -- narrower surface to
+token) rather than exposing every internal endpoint; narrower surface to
 secure and keep stable across internal refactors. `/api/public/v1` so a
 breaking v2 can exist alongside v1 rather than forcing every integration
 to update in lockstep.
@@ -87,7 +87,7 @@ def get_finding(finding_id: int, session: Session = Depends(get_session), user: 
     finding = session.get(Finding, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
-    # A finding has no workspace_id of its own -- scope via its target,
+    # A finding has no workspace_id of its own, scope via its target,
     # same 404-shaped hiding as every other workspace-owned resource.
     _get_target_scoped(finding.target_id, session, user)
     return finding
@@ -102,7 +102,7 @@ def get_scan(scan_id: int, session: Session = Depends(get_session), user: User =
     return scan
 
 
-# Same limit as the internal POST /api/scans/run -- a public-API token
+# Same limit as the internal POST /api/scans/run, a public-API token
 # dispatching scans still clones+shells a scanner subprocess per call, the
 # rate concern this limit exists for doesn't change based on caller type.
 SCAN_RUN_RATE_LIMIT = 10
@@ -117,8 +117,8 @@ def trigger_scan(
     user: User = Depends(current_api_token_user),
     _write_scope: None = Depends(require_api_token_write_scope),
 ):
-    """Requires a read_write-scoped token (see require_api_token_write_scope)
-    -- the default token scope is read-only, so a caller must have
+    """Requires a read_write-scoped token (see require_api_token_write_scope);
+    the default token scope is read-only, so a caller must have
     deliberately requested write access at token-creation time."""
     enforce_rate_limit(
         key=f"public_api_scan_run:user:{user.id}",
@@ -129,7 +129,7 @@ def trigger_scan(
     target = _get_target_scoped(target_id, session, user)
     if tool not in PARSER_MAP:
         raise HTTPException(status_code=400, detail=f"unsupported tool: {tool}")
-    # (#232) Same gate as the internal POST /api/scans/run -- an assignment
+    # (#232) Same gate as the internal POST /api/scans/run; an assignment
     # disabling a tool for on_demand_scan must hold regardless of which
     # authenticated caller is asking, or a public API token becomes a way to
     # route around a workspace's own configuration.

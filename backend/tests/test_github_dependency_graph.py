@@ -6,13 +6,13 @@ primary inventory source now that trivy no longer generates the SBOM (#328);
 the upload path (`source="upload"`) is the other.
 
 #239 closed that for our own CI by resolving requirements.txt into a venv.
-That deliberately does not generalise to customer repos -- resolving
+That deliberately does not generalise to customer repos; resolving
 someone else's manifest runs arbitrary setup.py code. GitHub has already
 done the resolution server-side, which is what makes this the right
 mechanism here rather than a second copy of #239's approach.
 
 The fixture is a trimmed slice of a REAL response (pallets/flask, 121
-packages), not a hand-written approximation -- including a self-referential
+packages), not a hand-written approximation; including a self-referential
 repo entry and a package with no resolved version, both of which the parser
 has to handle and neither of which I would have invented.
 """
@@ -82,8 +82,8 @@ class TestParsing:
 
 
 class TestUnavailableIsNotEmpty:
-    """The load-bearing distinction. A repo whose graph is disabled -- the
-    default for private repos -- is not a repo with no dependencies.
+    """The load-bearing distinction. A repo whose graph is disabled (the
+    default for private repos) is not a repo with no dependencies.
     Returning [] for both would let a permissions problem render as a clean,
     empty inventory: the false-all-clear shape #229 and #253 are about."""
 
@@ -119,8 +119,8 @@ class TestUnavailableIsNotEmpty:
         assert "could not reach" in str(ei.value).lower()
 
     def test_unavailable_is_not_confused_with_a_genuinely_empty_graph(self, monkeypatch):
-        """A 200 with no packages IS a real answer -- GitHub looked and found
-        nothing -- so it returns [], not an exception. Only the cases where
+        """A 200 with no packages IS a real answer (GitHub looked and found
+        nothing) so it returns [], not an exception. Only the cases where
         we could not ask raise."""
         def fake_get(*args, **kwargs):
             return httpx.Response(
@@ -134,7 +134,7 @@ class TestUnavailableIsNotEmpty:
 class TestSourceMerging:
     def test_both_sources_are_recorded_not_overwritten(self):
         """A component both sources report must end up with both, not
-        whichever ran second -- the whole point of the second source is
+        whichever ran second; the whole point of the second source is
         knowing which found what."""
         assert _merge_sources("github", "upload") == "github,upload"
 

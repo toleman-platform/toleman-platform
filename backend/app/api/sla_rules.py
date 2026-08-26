@@ -1,9 +1,9 @@
 """SlaRule CRUD (issue #70): workspace-scoped days-to-fix rules keyed by
-severity and optionally a repo Group (#61) -- see app/core/sla.py for the
+severity and optionally a repo Group (#61); see app/core/sla.py for the
 group -> workspace-default -> "no SLA" resolution these rules feed.
 
 Gated at SECURITY_ENGINEER (or global admin) rather than DEVELOPER like
-groups.py's CRUD -- an SLA rule is a compliance/security-policy decision
+groups.py's CRUD; an SLA rule is a compliance/security-policy decision
 (same trust level as PolicyRule and ignore-request approval,
 require_security_reviewer), not general repo organization.
 """
@@ -70,7 +70,7 @@ def create_sla_rule(
     user: User = Depends(current_user),
 ):
     payload.validate_days()
-    # workspace_id lives inside the JSON body -- same reason POST
+    # workspace_id lives inside the JSON body, same reason POST
     # /api/groups checks explicitly instead of using a Depends-based
     # require_workspace_role (see groups.py's create_group).
     enforce_workspace_role(session, user, WorkspaceRole.SECURITY_ENGINEER, workspace_id=payload.workspace_id)
@@ -85,7 +85,7 @@ def create_sla_rule(
     if _existing_rule(session, payload.workspace_id, payload.group_id, payload.severity):
         # DB-level UniqueConstraint doesn't reliably catch the NULL-group_id
         # "workspace default" case (Postgres treats NULL as distinct for
-        # uniqueness) -- see SlaRule's docstring. Check explicitly so callers
+        # uniqueness); see SlaRule's docstring. Check explicitly so callers
         # get a clean 409 instead of silently stacking duplicate defaults.
         raise HTTPException(status_code=409, detail="an SLA rule for this workspace/group/severity already exists")
 

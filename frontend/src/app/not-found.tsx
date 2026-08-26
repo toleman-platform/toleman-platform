@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 // App-wide 404 (Next.js App Router convention: rendered for any unmatched
-// route). Mirrors the login page's branding shell (Rikugan Shield mark in a
+// route). Mirrors the login page's branding shell (Toleman Shield mark in a
 // rounded primary/10 tile + wordmark) since a bare Next.js default 404 has
-// no nav/branding/way back into the app (#126) -- reuses the same dark
+// no nav/branding/way back into the app (#126), reuses the same dark
 // theme tokens from globals.css rather than introducing new colors.
 export default function NotFound() {
   return (
@@ -21,7 +21,7 @@ export default function NotFound() {
             <Shield className="h-8 w-8" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Rikugan</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Toleman</h1>
             <p className="text-sm text-muted-foreground">DevSecOps Vulnerability Management</p>
           </div>
         </CardHeader>

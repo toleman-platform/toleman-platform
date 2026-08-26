@@ -4,7 +4,7 @@ and the admin-only management API. Follows the in-memory SQLite + TestClient +
 session-token-login pattern used by tests/test_sbom_import.py.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -94,7 +94,7 @@ def _admin_client(client, engine, role=UserRole.ADMIN):
             session.add(WorkspaceMembership(user_id=user.id, workspace_id=workspace_id, role=WorkspaceRole.DEVELOPER))
             session.commit()
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return workspace_id
 
 
@@ -214,7 +214,7 @@ def test_put_get_delete_round_trip_never_echoes_ciphertext(client, engine):
 
 def test_unknown_workspace_id_is_404_not_500(client, engine):
     # Issue #226 review nit: a caller-supplied workspace_id that doesn't
-    # exist used to sail through _resolve_workspace_id unchecked -- GET
+    # exist used to sail through _resolve_workspace_id unchecked; GET
     # silently read back token_set: false (indistinguishable from "no token
     # saved yet"), and PUT would have hit the GitHubToken FK constraint as a
     # bare 500 instead of a real 404.

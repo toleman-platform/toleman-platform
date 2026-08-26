@@ -63,7 +63,7 @@ function ApiTokensCard() {
           <h2 className="text-sm font-medium text-foreground">API Tokens</h2>
           <p className="text-xs text-muted-foreground">
             Personal access tokens for the public API (<code>/api/public/v1/*</code>, <code>Authorization: Bearer
-            &lt;token&gt;</code>) -- separate from the workspace API key above, which is CI-ingest-only. Default
+            &lt;token&gt;</code>), separate from the workspace API key above, which is CI-ingest-only. Default
             scope is read-only; request read/write to also trigger scans via the public API.
           </p>
         </div>
@@ -71,7 +71,7 @@ function ApiTokensCard() {
         {justCreated && (
           <div className="flex flex-col gap-2 rounded-md border border-chart-5/40 bg-chart-5/5 p-3">
             <p className="text-xs text-foreground">
-              Copy this token now -- it won&apos;t be shown again.
+              Copy this token now; it won&apos;t be shown again.
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 break-all rounded-md bg-secondary px-3 py-2 text-sm text-foreground">
@@ -402,7 +402,7 @@ function WorkspaceSection() {
   // Both the draft and the "Saved" flag are tagged with the target they
   // belong to. Switching repos then falls back to that repo's stored values
   // automatically, where the previous effect-based reset could leave one
-  // repo's unsaved edits -- or a stale "Saved" -- sitting under another
+  // repo's unsaved edits (or a stale "Saved") sitting under another
   // repo's name for a frame.
   const [draft, setDraft] = useState<{ targetId: number; values: Partial<Target> } | null>(null);
   const [savedTargetId, setSavedTargetId] = useState<number | null>(null);
@@ -507,7 +507,7 @@ function WorkspaceSection() {
           <div>
             <p className="text-sm font-medium text-foreground">Workspace API key</p>
             <p className="text-xs text-muted-foreground">
-              Moved to its own Workspaces page -- manage it there alongside the workspace&apos;s name and roles.
+              Moved to its own Workspaces page, manage it there alongside the workspace&apos;s name and roles.
             </p>
             {/* Two credential types for two different jobs, and an external
                 review found nothing said which one a given integration wants. */}
@@ -530,10 +530,10 @@ function WorkspaceSection() {
 // Issue #130: Settings was one long unsectioned scroll (Profile -> Password
 // -> Notifications -> Target Configuration -> API key), inconsistent with
 // Admin's grouped section-nav (#118) for a conceptually similar
-// multi-section page. Reuses that exact pattern -- a strip of pill buttons,
+// multi-section page. Reuses that exact pattern, a strip of pill buttons,
 // `min-w-0 overflow-x-auto` so an overflowing strip scrolls within its own
 // bounded container instead of pushing width overflow up onto `<main>`
-// (see #118's admin/page.tsx for the full mechanism writeup) -- so the two
+// (see #118's admin/page.tsx for the full mechanism writeup); so the two
 // pages stay visually and behaviorally consistent rather than inventing a
 // second nav pattern.
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [

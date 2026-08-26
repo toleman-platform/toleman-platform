@@ -54,7 +54,7 @@ def create_policy(
         rule_type=rule_type,
         value=value,
         reason=body.get("reason", ""),
-        # Taken from the authenticated session, never the request body -- a
+        # Taken from the authenticated session, never the request body; a
         # client-supplied created_by would let anyone forge the audit trail
         # for who suppressed a finding.
         created_by=user.email,

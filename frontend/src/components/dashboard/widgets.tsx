@@ -49,7 +49,7 @@ import type {
   Target,
 } from "@/lib/api";
 
-// Issue #69: the concrete render for each widget type in the catalog --
+// Issue #69: the concrete render for each widget type in the catalog,
 // deliberately one component per real widget, not a generic chart
 // interpreter. `icon`/`label` here drive both the "Add Widget" picker and
 // the WidgetShell header; `render` consumes exactly the shape returned by
@@ -69,7 +69,7 @@ export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementT
 };
 
 // Locale-independent date formatting (YYYY-MM-DD from the ISO timestamp
-// directly, no Date/toLocaleDateString) -- the server and the browser
+// directly, no Date/toLocaleDateString); the server and the browser
 // render this same server component's HTML with potentially different
 // locales/timezone configs, and toLocaleDateString() previously produced
 // a real hydration mismatch (e.g. "13/08/2026" server-side vs
@@ -79,7 +79,7 @@ function formatDate(iso: string): string {
 }
 
 // Widget-scoped, compact variants of the shared empty/error patterns
-// (src/components/ui/empty-state.tsx, error-state.tsx) -- widgets need
+// (src/components/ui/empty-state.tsx, error-state.tsx); widgets need
 // inline JSX (a <Link> to the admin tab that fixes the empty state) inside
 // the description, which the shared components' string-only `description`
 // prop doesn't support, so these stay local but follow the same
@@ -104,7 +104,7 @@ function EmptyState({ children, icon: Icon = Inbox }: { children: React.ReactNod
 
 function KpiCardsWidget({ data }: { data: KpiCardsData }) {
   const items = [
-    // Label unified to "Findings" (#116) -- was "Open Vulnerabilities" while
+    // Label unified to "Findings" (#116); was "Open Vulnerabilities" while
     // the sidebar nav said "Vulnerabilities" and the page header said
     // "Findings"; all three now use the same term.
     { icon: ShieldAlert, iconClass: "bg-destructive/10 text-destructive", value: data.open, label: "Open Findings" },
@@ -164,7 +164,7 @@ function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
     return (
       <EmptyState>
         No findings auto-suppressed since {formatDate(data.since)}. Rules are learned when a finding is triaged{" "}
-        &quot;False Positive&quot; -- manage them on the{" "}
+        &quot;False Positive&quot;, manage them on the{" "}
         <Link href="/admin" className="text-accent-strong underline">
           Admin &rsaquo; False Positive Rules
         </Link>{" "}
@@ -188,7 +188,7 @@ function FindingsTrendWidget({ data }: { data: FindingsTrendData }) {
 
 // Issue #224: surfaces GET /api/scans/active's data (previously only
 // visible on the Scans page and each target's own detail page) directly on
-// the dashboard -- "is anything running right now" is a question people
+// the dashboard; "is anything running right now" is a question people
 // otherwise had to go looking for.
 function LiveScanActivityWidget({ data }: { data: LiveScanActivityData }) {
   if (data.items.length === 0) return <EmptyState icon={Loader2}>No scans running right now.</EmptyState>;
@@ -222,7 +222,7 @@ function LiveScanActivityWidget({ data }: { data: LiveScanActivityData }) {
 }
 
 // Issue #224: AI-repo detection, ModelScan and the LLM ruleset had no
-// dashboard-level presence -- an org running them had to already know to
+// dashboard-level presence; an org running them had to already know to
 // look at the dedicated AI Security page (or filter Findings by tool name)
 // to tell whether either scanner had found anything.
 function AiMlRiskWidget({ data }: { data: AiMlRiskData }) {
@@ -309,8 +309,8 @@ function GuardrailActivityWidget({ data }: { data: GuardrailActivityData }) {
 function TopRiskyReposWidget({ data }: { data: TopRiskyReposData }) {
   if (data.items.length === 0) return <EmptyState>No open findings yet.</EmptyState>;
   // (#250) The counts are the actionable part of this row, so they link
-  // where the count came from -- that target's open findings at that
-  // severity -- rather than dumping the reader on the target overview to
+  // where the count came from (that target's open findings at that
+  // severity) rather than dumping the reader on the target overview to
   // re-apply the filter by hand. The row is a div, not a Link, because a
   // link inside a link is invalid and the browser resolves it unpredictably.
   return (
@@ -379,7 +379,7 @@ function RecentFindingsWidget({ data }: { data: RecentFindingsData }) {
           <div className="min-w-0">
             {/* Issue #117/#119: reuse the shared truncate-with-tooltip
                 affordance so a long title isn't silently clipped, and show
-                file_path in the subtitle -- the same rule can legitimately
+                file_path in the subtitle; the same rule can legitimately
                 fire on several files in one scan (e.g. Semgrep's
                 django-no-csrf-token across multiple templates), which
                 otherwise renders as visually-identical rows since title/
@@ -411,7 +411,7 @@ const SCORE_COMPONENT_LABEL: Record<string, string> = {
 
 // Real underlying metric shown alongside each 0-100 sub-score so it can't be
 // misread as a raw count (e.g. "Open findings score: 0" previously looked
-// like "0 open findings" when it actually meant "worst possible score" --
+// like "0 open findings" when it actually meant "worst possible score",
 // the real count (often in the hundreds) lives in c.open_findings on the
 // findings component, same field the KPI Cards widget's "Open Findings"
 // count is derived from, just default-branch-scoped here vs. all-branches
@@ -444,7 +444,7 @@ function TrendIcon({ direction }: { direction: "improving" | "stable" | "worseni
 }
 
 // Issue #63: composite security health score gauge, with a scope selector
-// (org-wide / a Group / a single Target) for drill-down -- reuses the same
+// (org-wide / a Group / a single Target) for drill-down; reuses the same
 // scoping concepts as #61's group filtering. The widget's own batched data
 // (`initialData`, from GET /api/dashboard/widget-data) covers the org-wide
 // default view; switching scope calls GET /api/dashboard/security-score
@@ -475,7 +475,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
   // Org scope is already batched into `initialData` by
   // GET /api/dashboard/widget-data, so it needs no request of its own.
   // Switching back to it must show that data again rather than whichever
-  // repo was last selected -- deriving here makes that automatic, where the
+  // repo was last selected; deriving here makes that automatic, where the
   // previous version had to remember to write `initialData` back.
   const score = scope.kind === "org" ? initialData : (scopedScore ?? initialData);
   const error = loadError?.message ?? null;
@@ -525,12 +525,12 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
         <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-center gap-6 sm:gap-8">
           {/* max-w-4xl (896px), not max-w-2xl (672px): the gauge (280px) +
               gap (32px) + score list (up to 480px) need ~792px to sit on one
-              line, and 672px was just short of that -- forcing an unwanted
+              line, and 672px was just short of that; forcing an unwanted
               wrap on every desktop viewport instead of only the ones that
               actually need it.
 
               Issue #173/#224: this row used to be `justify-around`, then a
-              `justify-center` pair with a `w-full max-w-md` list -- but
+              `justify-center` pair with a `w-full max-w-md` list; but
               `width: 100%` on a flex child ignores the parent's centering and
               just claims the available row width for itself, so on a wide
               dashboard card the gauge stayed pinned to the left, the list
@@ -542,7 +542,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               sidebar + the dashboard grid, not the viewport), so on any
               layout narrower than the gauge+list's combined ~790px but still
               past the 640px `sm:` breakpoint, the row forced both fixed-width
-              children into a space too small for them -- flexbox's default
+              children into a space too small for them; flexbox's default
               shrink then compressed the gauge's box (see shrink-0 on
               SecurityScoreGauge's own root for why that broke the arc/number
               alignment) instead of just wrapping. `flex-wrap` here reacts to
@@ -551,7 +551,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               isn't room beside it.
 
               The list itself must stay shrinkable (`w-full max-w-[480px]`,
-              no `shrink-0`) even though that looks backwards -- this whole
+              no `shrink-0`) even though that looks backwards; this whole
               dashboard's widget grid (dashboard-board.tsx) has no explicit
               `grid-cols-1` below `lg:`, so its single implicit column sizes
               itself to content rather than clamping to the viewport. Giving
@@ -560,7 +560,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               actually available, which the grid dutifully accommodated by
               growing the entire page 1000+px wider than the viewport on
               mobile instead of wrapping. Letting it shrink is what lets the
-              grid track -- and the whole page -- stay pinned to the real
+              grid track (and the whole page) stay pinned to the real
               viewport width; flex-wrap plus a max-width cap is enough to
               keep it from looking cramped once there IS room. */}
           <SecurityScoreGauge score={score.score} grade={score.grade} />

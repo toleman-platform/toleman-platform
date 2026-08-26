@@ -7,13 +7,13 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ShieldOff } from "lucide-react";
 
 // Nav restructure (IA review, #224): Approval Queue used to be reachable
-// only as a tab inside /admin -- and /admin's own sidebar link is
+// only as a tab inside /admin; and /admin's own sidebar link is
 // `adminOnly`, so a security_engineer (who this page's own role check has
 // always permitted) had no nav path to it at all. They could still open
 // /admin by typing the URL, since nothing backend-enforced ever blocked the
 // route itself, but nothing pointed them there. Promoting this to its own
 // route under Triage is a deliberate widening of *navigability*, not of
-// *access* -- the role check below is copied verbatim from what
+// *access*; the role check below is copied verbatim from what
 // admin/page.tsx already enforced (admin or security_engineer), not
 // loosened.
 const ALLOWED_ROLES = ["admin", "security_engineer"];

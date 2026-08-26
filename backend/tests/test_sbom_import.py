@@ -1,9 +1,9 @@
 """Tests for issue #227's two SBOM import paths, which sit alongside
 Generate SBOM rather than replacing it:
 
-  - POST /api/sbom/{id}/github-sync -- pull the target's dependency inventory
+  - POST /api/sbom/{id}/github-sync, pull the target's dependency inventory
     from GitHub's Dependency Graph SBOM API without a trivy scan.
-  - POST /api/sbom/{id}/upload -- import an uploaded CycloneDX/SPDX JSON
+  - POST /api/sbom/{id}/upload, import an uploaded CycloneDX/SPDX JSON
     document as multipart form data.
 
 Both merge into the persisted SbomComponent inventory via upsert_components
@@ -105,7 +105,7 @@ def _dev_client_with_target(client, engine) -> tuple[TestClient, int]:
         session.commit()
         token = create_session_token(user.id, user.token_version)
 
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, target_id
 
 

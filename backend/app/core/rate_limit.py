@@ -1,4 +1,4 @@
-"""Fixed-window rate limiting for Rikugan API endpoints.
+"""Fixed-window rate limiting for Toleman API endpoints.
 
 Backend: Redis-first, in-memory fallback.
 
@@ -17,7 +17,7 @@ REDIS_URL at a real Redis instance to get accurate shared limits.
 
 This is intentionally a small hand-rolled limiter (fixed window via
 Redis INCR/EXPIRE, or an equivalent in-memory sliding window) rather than a
-third-party dependency like slowapi -- it needs no app-level wiring
+third-party dependency like slowapi; it needs no app-level wiring
 (exception handlers, middleware) and stays entirely inside the endpoints
 that use it, which keeps the change surface minimal.
 """
@@ -98,7 +98,7 @@ def enforce_rate_limit(key: str, limit: int, window_seconds: int) -> None:
         try:
             allowed, retry_after = _check_redis(client, key, limit, window_seconds)
         except Exception:
-            # Redis started failing mid-flight (network blip, etc) -- degrade
+            # Redis started failing mid-flight (network blip, etc); degrade
             # to the in-memory counter for this request rather than 500ing.
             allowed, retry_after = _check_memory(key, limit, window_seconds)
     else:
@@ -107,7 +107,7 @@ def enforce_rate_limit(key: str, limit: int, window_seconds: int) -> None:
     if not allowed:
         raise HTTPException(
             status_code=429,
-            detail=f"Too many requests. Limit is {limit} per {window_seconds}s -- try again shortly.",
+            detail=f"Too many requests. Limit is {limit} per {window_seconds}s, try again shortly.",
             headers={"Retry-After": str(retry_after)},
         )
 

@@ -24,7 +24,7 @@ const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License",
 // Issue #75: tool marketplace / health page. Extends the original Sprint 1
 // Tools Health tab (still available separately at the "tools" admin tab,
 // which /api/tools/health backs unchanged) with the full registry across
-// every supported category (including the new IaC tools -- Checkov, tfsec,
+// every supported category (including the new IaC tools; Checkov, tfsec,
 // KICS), a real live health check per tool, and a per-workspace usage
 // assignment matrix (on-demand scan / CI pipeline / API scan / PR
 // guardrail).
@@ -33,7 +33,7 @@ const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License",
 // backend can actually install into itself (`installable`, derived from a
 // pip package in the registry); everything needing brew/go/docker keeps the
 // copyable command, because a button that cannot work is worse than no
-// button. The endpoint takes a registry key rather than a package name --
+// button. The endpoint takes a registry key rather than a package name;
 // see app.core.tool_install for why that is what makes this safe.
 export function ToolMarketplace() {
   const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
@@ -47,7 +47,7 @@ export function ToolMarketplace() {
   } = useAsyncData<ToolRegistryEntry[]>(() => api.toolsRegistry());
 
   // Refresh the registry when an install settles so the tool's health check
-  // and version re-run -- otherwise a freshly installed tool keeps showing
+  // and version re-run; otherwise a freshly installed tool keeps showing
   // as missing until the admin reloads the page.
   const { installs, install, dismiss } = useToolInstall(() => refreshRegistry());
 
@@ -175,7 +175,7 @@ export function ToolMarketplace() {
                         )}
                         {/* CTX-03: this tool lives on the Celery worker, not
                             next to the web process. Scans run on the worker,
-                            so it genuinely works -- but say which, rather
+                            so it genuinely works; but say which, rather
                             than implying the web process can see it. */}
                         {t.installed && t.checked_in === "worker" && (
                           <Badge variant="outline" className="border-muted-foreground/20 text-muted-foreground">
@@ -238,7 +238,7 @@ export function ToolMarketplace() {
 
                       {installState?.status === "completed" && (
                         <p role="status" aria-live="polite" className="px-1 text-xs text-chart-5">
-                          Installed{installState.version ? ` — ${installState.version}` : ""}
+                          Installed{installState.version ? ` (${installState.version})` : ""}
                         </p>
                       )}
 
@@ -267,7 +267,7 @@ export function ToolMarketplace() {
                           zero-finding scans after the next deploy. */}
                       {t.installable && (installState?.status === "completed" || (!t.installed && !installState)) && (
                         <p className="px-1 text-[11px] text-muted-foreground">
-                          Installs into the running container — add it to the image to survive a redeploy.
+                          Installs into the running container; add it to the image to survive a redeploy.
                         </p>
                       )}
                     </div>
@@ -277,7 +277,7 @@ export function ToolMarketplace() {
                         Usage assignment{assignment?.is_default ? " (default)" : ""}
                       </span>
                       {/* Says what ticking a box does. Previously four
-                          unexplained checkboxes -- an external review flagged
+                          unexplained checkboxes, an external review flagged
                           that nothing stated whether they took effect, or (per
                           GH-01) whether they were honoured at all. */}
                       <p className="text-[11px] text-muted-foreground">
@@ -287,14 +287,14 @@ export function ToolMarketplace() {
                           a live control: it decides what a *newly generated*
                           workflow file contains. It cannot reach back and
                           edit a workflow already committed to a target's
-                          repo -- that file is durable, sitting in someone
+                          repo; that file is durable, sitting in someone
                           else's repository, not something this platform can
                           rewrite after the fact. Stated here so toggling
                           this box for an already-integrated target isn't
                           mistaken for editing the file that's already
                           there. */}
                       <p className="text-[11px] text-muted-foreground">
-                        CI pipeline only affects a newly generated workflow — it does not edit a workflow already committed to a target&apos;s repo.
+                        CI pipeline only affects a newly generated workflow; it does not edit a workflow already committed to a target&apos;s repo.
                       </p>
                       {/* A registry-only tool has no runnable command, so an
                           enabled box here could never make it execute.
@@ -302,7 +302,7 @@ export function ToolMarketplace() {
                           a checked box for a tool that never runs. */}
                       {!t.integrated && (
                         <p className="text-[11px] text-muted-foreground">
-                          Catalogued for visibility only — Rikugan cannot execute this tool yet, so these have no effect.
+                          Catalogued for visibility only, Toleman cannot execute this tool yet, so these have no effect.
                         </p>
                       )}
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1">

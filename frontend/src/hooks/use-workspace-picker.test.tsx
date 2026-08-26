@@ -20,7 +20,7 @@ describe("useWorkspacePicker", () => {
   it("has no selection before the list arrives", () => {
     workspaces.mockReturnValue(new Promise(() => {}));
     const { result } = renderHook(() => useWorkspacePicker());
-    // Not zero, not the first id of a list nobody has seen -- null, so the
+    // Not zero, not the first id of a list nobody has seen; null, so the
     // scoped fetch below stays disabled rather than requesting workspace 0.
     expect(result.current.workspaceId).toBeNull();
     expect(result.current.isLoading).toBe(true);
@@ -44,7 +44,7 @@ describe("useWorkspacePicker", () => {
 
   it("surfaces a failed workspace load instead of looking empty", async () => {
     // Every panel that hand-rolled this dropped the rejection, so a failed
-    // request rendered as "no workspaces exist" -- a claim the page had not
+    // request rendered as "no workspaces exist"; a claim the page had not
     // earned.
     workspaces.mockRejectedValue(new Error("503"));
     const { result } = renderHook(() => useWorkspacePicker());

@@ -3,8 +3,8 @@ open-finding counts the Repo Sync inventory renders alongside each repo.
 
 The point of the endpoint is that its numbers cannot disagree with the
 Posture dashboard or the composite security score, so these tests pin the
-two scoping rules that could drift -- default-branch-only and open-state-only
--- plus the workspace isolation every list endpoint over workspace-owned
+two scoping rules that could drift (default-branch-only and open-state-only)
+plus the workspace isolation every list endpoint over workspace-owned
 resources has to honour (issue #57).
 
 Same in-memory SQLite + TestClient + session-token-login pattern as
@@ -73,7 +73,7 @@ def _login(client, engine, role=UserRole.ADMIN):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return uid
 
 
@@ -149,7 +149,7 @@ def test_counts_open_findings_by_severity(client, engine):
 
 
 def test_reopened_counts_as_open_but_closed_states_do_not(client, engine):
-    """Mirrors app.core.security_score.OPEN_STATES -- if these two drift, the
+    """Mirrors app.core.security_score.OPEN_STATES; if these two drift, the
     Repo Sync count and the security score start contradicting each other."""
     _login(client, engine)
     ws = _make_workspace(engine)
@@ -175,7 +175,7 @@ def test_only_default_branch_findings_are_counted(client, engine):
 
 
 def test_target_with_no_findings_reports_zero_not_missing(client, engine):
-    """The client distinguishes "scanned and clean" from "no data" -- a target
+    """The client distinguishes "scanned and clean" from "no data"; a target
     present with a zero count is the former, an absent key is the latter."""
     _login(client, engine)
     ws = _make_workspace(engine)

@@ -2,7 +2,7 @@
 produce CycloneDX JSON while Reports offered CSV+PDF. GET /api/sbom/{id}/export
 now accepts format=cyclonedx-json|spdx-json|csv|pdf, all built from the same
 real persisted SbomComponent rows (no mocked content, matching every other
-export in the app -- see reports.py/render_csv/render_pdf for the identical
+export in the app; see reports.py/render_csv/render_pdf for the identical
 pattern this mirrors).
 
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
@@ -51,7 +51,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 

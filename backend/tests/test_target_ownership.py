@@ -1,7 +1,7 @@
 """Target ownership metadata (#251): owner, environment, lifecycle.
 
 `criticality_weight` already multiplies every finding's priority_score, but
-nothing recorded *why* a target is critical -- so the number was an assertion
+nothing recorded *why* a target is critical; so the number was an assertion
 nobody could audit or argue with. These three fields make it explainable, and
 give the findings list the facets people actually filter by.
 
@@ -10,7 +10,7 @@ Two properties worth pinning, both about not inventing data:
 * NULL means "not recorded" and stays distinct from any value an operator
   sets. No backfill guesses "production" for existing targets.
 * The facet endpoints drop nulls rather than offering an "unrecorded" bucket,
-  and are workspace-scoped like every other list endpoint (#57) -- an owner
+  and are workspace-scoped like every other list endpoint (#57); an owner
   name is org-structure information and must not leak across tenants.
 """
 
@@ -56,7 +56,7 @@ def _admin(client, engine):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 

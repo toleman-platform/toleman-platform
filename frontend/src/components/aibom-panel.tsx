@@ -8,7 +8,7 @@ import { AsyncContent } from "@/components/ui/async-content";
 import { ListRow, ListRows } from "@/components/ui/list-row";
 import { useAsyncData } from "@/hooks/use-async-data";
 
-// Issue #190: models and datasets a target depends on -- the part a package
+// Issue #190: models and datasets a target depends on; the part a package
 // SBOM is blind to. Reads persisted rows populated during SBOM generation, so
 // this reflects the last run without re-scanning, same as the Components tab.
 //
@@ -41,7 +41,7 @@ function ComponentRow({ component }: { component: AiBomComponent }) {
       <div className="shrink-0 text-xs">
         {component.unpinned ? (
           // Deliberately amber, not green or red. An unpinned model is not
-          // a vulnerability, but it is not fine either -- the referenced
+          // a vulnerability, but it is not fine either; the referenced
           // weights can change after review.
           <span
             className="text-chart-3"
@@ -82,7 +82,7 @@ export function AiBomPanel({ targetId, targetName }: { targetId: number; targetN
             <Boxes className="mx-auto h-6 w-6 text-muted-foreground" aria-hidden="true" />
             <p className="mt-3 text-sm font-medium text-foreground">No AIBOM generated yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Run an SBOM generation for this target — the AI bill of materials is extracted from the same
+              Run an SBOM generation for this target; the AI bill of materials is extracted from the same
               checkout. Until then, whether this repo uses models or datasets is unknown, not none.
             </p>
           </div>
@@ -101,7 +101,7 @@ export function AiBomPanel({ targetId, targetName }: { targetId: number; targetN
                 <span className="text-chart-3">{data.summary.unpinned} unpinned</span>
               )}
               {data.summary.hosted_api_models > 0 && (
-                <span title="Hosted API models have no pinnable revision from the caller's side — the provider can change what sits behind the name.">
+                <span title="Hosted API models have no pinnable revision from the caller's side; the provider can change what sits behind the name.">
                   {data.summary.hosted_api_models} hosted API
                 </span>
               )}

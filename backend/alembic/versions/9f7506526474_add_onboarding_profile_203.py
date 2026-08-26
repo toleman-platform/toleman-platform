@@ -41,7 +41,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["organization_id"], ["organization.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
-    # One profile per org -- the questionnaire is re-runnable, which updates
+    # One profile per org; the questionnaire is re-runnable, which updates
     # the existing row rather than accumulating a history of answers.
     op.create_index(
         op.f("ix_onboardingprofile_organization_id"),

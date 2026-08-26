@@ -1,4 +1,4 @@
-# Full Rikugan stack: Postgres, Redis, the FastAPI backend, a Celery worker
+# Full Toleman stack: Postgres, Redis, the FastAPI backend, a Celery worker
 # (same image as the backend, different command), and the Next.js frontend.
 #
 # Quickstart:
@@ -51,7 +51,7 @@ services:
       context: ./backend
     # Named so celery-worker can reuse this exact image instead of building
     # the identical Dockerfile a second time (finding BLD-05).
-    image: rikugan-backend:local
+    image: toleman-backend:local
     restart: unless-stopped
     depends_on:
       postgres:
@@ -59,7 +59,7 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # Compose service names, not the .env file's localhost defaults --
+      # Compose service names, not the .env file's localhost defaults;
       # these are always correct on the internal compose network regardless
       # of what's in .env.
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-osp}:${POSTGRES_PASSWORD:-osp}@postgres:5432/${POSTGRES_DB:-osp}
@@ -67,7 +67,7 @@ services:
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.local}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@toleman.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -86,7 +86,7 @@ services:
 
   celery-worker:
     # (BLD-05) Same Dockerfile, same context, same resulting image as
-    # `backend` -- only the command differs. Without a shared `image:` tag
+    # `backend`; only the command differs. Without a shared `image:` tag
     # Compose treated them as two unrelated builds of an identical ~1.3 GB
     # image; an external review measured that as roughly half of a
     # 17-minute cold `--no-cache` build.
@@ -98,7 +98,7 @@ services:
     # and the worker always has something to build from.
     build:
       context: ./backend
-    image: rikugan-backend:local
+    image: toleman-backend:local
     restart: unless-stopped
     command: celery -A app.tasks.celery_app worker -Q scans --loglevel=info
     depends_on:
@@ -119,7 +119,7 @@ services:
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.local}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@toleman.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -132,7 +132,7 @@ services:
     build:
       context: ./frontend
       args:
-        # Build-time only (inlined into the browser bundle) -- must be an
+        # Build-time only (inlined into the browser bundle); must be an
         # address the browser on the host can reach, i.e. the published
         # backend port below, not the internal "backend" service name.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
@@ -147,7 +147,7 @@ services:
       API_INTERNAL_URL: http://backend:8000
       # (BLD-02) The address the *browser* uses, read at runtime and injected
       # per request by app/layout.tsx. This is the one to change when the
-      # backend moves to a different port or host -- a restart is enough, no
+      # backend moves to a different port or host; a restart is enough, no
       # frontend rebuild. The NEXT_PUBLIC_API_URL build arg above is now only
       # a fallback for images built before this change.
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}

@@ -1,6 +1,6 @@
 """Tests for issue #61 (target groups/tags): the Group/TargetGroup models,
 the group CRUD API, target<->group assignment, and that GET /api/targets and
-GET /api/findings actually filter by group_id end to end -- not just storage
+GET /api/findings actually filter by group_id end to end; not just storage
 with no way to use it.
 
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
@@ -64,7 +64,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 

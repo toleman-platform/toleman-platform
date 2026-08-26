@@ -9,7 +9,7 @@ import { settleOrNull } from "@/lib/settle";
 // Issue #120: rebuild of the flat, unfiltered ~165-button scan-trigger grid
 // (33 targets x 5 tools each) into the same search/filter/multi-select
 // pattern Findings and Targets already established, plus #117's
-// CriticalityChip and a Prod-aware confirmation step -- see scans-list.tsx
+// CriticalityChip and a Prod-aware confirmation step; see scans-list.tsx
 // and components/scans-filter-bar.tsx for the actual behavior.
 export default async function OnDemandScanPage() {
   const [targetsResult, summaryResult] = await Promise.all([
@@ -22,7 +22,7 @@ export default async function OnDemandScanPage() {
 
   // Tool filter options: the known on-demand tool set plus anything else
   // real scan history has recorded (e.g. checkov/tfsec run via other
-  // surfaces but still visible in a target's history here) -- real data,
+  // surfaces but still visible in a target's history here), real data,
   // not a hardcoded guess of what's actually been run.
   const toolsFromHistory = new Set<string>(SCAN_TOOLS);
   for (const entry of Object.values(summary)) {

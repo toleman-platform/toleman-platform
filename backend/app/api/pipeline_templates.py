@@ -1,6 +1,6 @@
 """Custom Workflow Builder (issue #35, part of the "Mass CI/CD Rollout
 Engine + Custom Workflow Builder" item): workspace-scoped CRUD for
-`PipelineWorkflowTemplate` rows -- a named, ordered, enable/disable step
+`PipelineWorkflowTemplate` rows, a named, ordered, enable/disable step
 list over #66's fixed scanner catalog (semgrep/gitleaks/trivy/gosec),
 consumed by `app.core.pipeline_workflow.generate_workflow_yaml` and picked
 by id at mass-rollout time (`POST /api/targets/mass-pipeline-rollout`, see
@@ -8,7 +8,7 @@ app/api/targets.py).
 
 Same workspace-scoping + role-gating shape as app/api/groups.py (#61):
 GET is workspace-filtered via `accessible_workspace_ids`, writes require at
-least DEVELOPER on the owning workspace via `enforce_workspace_role` -- the
+least DEVELOPER on the owning workspace via `enforce_workspace_role`; the
 same bar #66/#68 already apply to actually opening pipeline-integration
 PRs, since a template only matters in service of that action.
 """
@@ -105,7 +105,7 @@ def create_template(
 ):
     # enforce_workspace_role raises 403 itself if the caller lacks DEVELOPER+
     # on payload.workspace_id (or the workspace doesn't exist / isn't
-    # accessible) -- same bar as #66's single-target pipeline-integrate.
+    # accessible), same bar as #66's single-target pipeline-integrate.
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
     steps = _validate_steps(payload.steps)
     template = PipelineWorkflowTemplate(

@@ -65,7 +65,7 @@ def _login(client, engine, role=UserRole.USER):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 
@@ -88,7 +88,7 @@ class TestVerdict:
 
     def test_no_advisory_resolved_is_unknown_not_no_fix(self):
         """The distinction the whole feature turns on. osv_found False means
-        the lookup failed or never ran -- saying "no known fix" there would
+        the lookup failed or never ran; saying "no known fix" there would
         tell someone nothing can be done about something we never checked."""
         assert fixability_for_enrichment(enrichment(osv_found=False)) == UNKNOWN
 

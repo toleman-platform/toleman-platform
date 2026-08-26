@@ -1,6 +1,6 @@
 """Tests for GET /api/github/org-activity (issue #123: repo filter + real
 pagination on GitHub Org Logs). The GitHub API boundary is mocked the same
-way tests/test_enforcement_mode.py mocks it -- monkeypatch the github_get
+way tests/test_enforcement_mode.py mocks it, monkeypatch the github_get
 symbol imported into app.api.github, no real network calls.
 """
 import pytest
@@ -46,7 +46,7 @@ def _login(client, engine, email="user@example.com", password="whatever123"):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 

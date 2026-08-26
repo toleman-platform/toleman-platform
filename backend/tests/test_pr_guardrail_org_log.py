@@ -1,6 +1,6 @@
 """Tests for issue #64: GET /api/pr-guardrail/log with no target_id returns
 an org-wide aggregate of PR Guardrail scan history, scoped to the caller's
-accessible workspaces via accessible_workspace_ids (#57) -- not every
+accessible workspaces via accessible_workspace_ids (#57); not every
 workspace's scans. Mirrors the pattern in test_workspace_scoped_reads.py.
 """
 import pytest
@@ -57,7 +57,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -132,7 +132,7 @@ def test_org_log_only_returns_callers_workspace_scans(client, engine):
 
 
 def test_org_log_pr_url_none_when_repo_url_unparseable(client, engine):
-    """A target with an empty repo_url shouldn't crash the endpoint -- pr_url
+    """A target with an empty repo_url shouldn't crash the endpoint; pr_url
     just comes back None for that row (issue #65)."""
     ws_a = _make_workspace(engine, "ws-no-url")
     with Session(engine) as session:

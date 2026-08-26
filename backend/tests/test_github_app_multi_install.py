@@ -55,7 +55,7 @@ def _login(client, engine):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 
@@ -211,7 +211,7 @@ def test_verify_signature_routes_to_correct_app_via_payload_installation_id(engi
     with Session(engine) as session:
         body = b'{"action": "opened"}'
         sig_from_app_b = _sign("secretB", body)
-        # Delivery claims to be from installation 222 (App B) -- only App B's
+        # Delivery claims to be from installation 222 (App B); only App B's
         # secret should verify it, even though App A is also configured.
         assert _verify_signature(body, sig_from_app_b, session, payload_installation_id=222) is True
         assert _verify_signature(body, sig_from_app_b, session, payload_installation_id=111) is False

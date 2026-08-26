@@ -103,8 +103,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
   // "Scan" re-runs whichever on-demand-triggerable tools this target has
   // real history for, falling back to the full default set for a
   // never-scanned target. History can also contain tools that only exist
-  // via CI/webhook ingestion (not runnable through POST /api/scans/run --
-  // see backend/app/scanners/parsers.PARSER_MAP) -- those are filtered out
+  // via CI/webhook ingestion (not runnable through POST /api/scans/run;
+  // see backend/app/scanners/parsers.PARSER_MAP); those are filtered out
   // here rather than dispatched into a guaranteed "unsupported tool" error.
   function toolsForTarget(id: number): readonly string[] {
     const known = (summary[String(id)]?.tools ?? []).filter((t) => (SCAN_TOOLS as readonly string[]).includes(t));
@@ -145,7 +145,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
 
     setScanMessage(
       failed > 0
-        ? `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure) -- check Scan History.`
+        ? `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure); check Scan History.`
         : `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Progress is shown on each row below.`
     );
     setSelected(new Set());
@@ -303,8 +303,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                   {/* Issue #171: this used to be `destructive` on Prod rows,
                       which painted roughly half the page solid red for what
                       is a read-only action. The Prod signal is already
-                      carried twice -- by the red CriticalityChip above and by
-                      the Prod-aware ConfirmDialog below -- so the third copy
+                      carried twice (by the red CriticalityChip above and by
+                      the Prod-aware ConfirmDialog below) so the third copy
                       only diluted what `destructive` means everywhere else in
                       the app. The bulk-action button keeps the destructive
                       variant: one click there fires N scans at once. */}

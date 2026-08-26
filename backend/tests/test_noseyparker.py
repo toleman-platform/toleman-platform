@@ -3,7 +3,7 @@
 Benchmarked against gitleaks, trufflehog and detect-secrets on a 14-secret
 ground-truth corpus with false-positive traps. gitleaks stays the default on
 precision; noseyparker is the recall option, and the only one of the four
-with a rule for credentials embedded in a database connection URI -- a real
+with a rule for credentials embedded in a database connection URI; a real
 gap in what we ship today.
 
 Its output shape differs from every other tool here in two ways worth

@@ -1,0 +1,186 @@
+name: CI
+
+# The gating jobs: what has to pass before a change is trustworthy.
+#
+# History worth keeping: these lived here, moved to CircleCI in #236 because
+# Actions minutes ran out twice, and came back in #333 when the move to the
+# toleman-platform org left the CircleCI project bound to the old
+# geekshiv/rikugan-platform path and nothing reported on #332 at all. They
+# stay here for good now; GitHub Actions has no minute limit on standard
+# runners for public repositories, which is what made CircleCI necessary in
+# the first place.
+#
+# The heavier jobs are split out by cost of a different kind (run duration
+# rather than billed minutes) into self-scan.yml and docker-images.yml.
+#
+# Note for outside contributions: GitHub does not expose repository secrets
+# to workflows triggered by a pull request from a fork, and `pull_request`
+# (rather than `pull_request_target`) runs the workflow from the fork's own
+# ref with a read-only token. Neither is a setting to maintain; both are the
+# default and both matter for a security product accepting public PRs. Do
+# not switch this to pull_request_target to "fix" a permissions error.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# (#233) A force-push during review should not leave a superseded run
+# occupying a runner and reporting a result nobody will act on.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      # Throwaway per-run services. The credentials are fixed only so the
+      # DATABASE_URL below matches; nothing persists past the job.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: toleman
+          POSTGRES_PASSWORD: toleman
+          POSTGRES_DB: toleman
+        options: >-
+          --health-cmd "pg_isready -U toleman -d toleman"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgresql+psycopg://toleman:toleman@localhost:5432/toleman
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run pytest
+        run: python -m pytest -v --junitxml=test-results/pytest.xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: backend/test-results/pytest.xml
+
+  frontend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit and component tests
+        run: npm test
+
+      # The custom ESLint rule that blocks a Server Component importing a
+      # value out of a "use client" module (#206). Run explicitly; its
+      # fixtures contain the violation on purpose and the normal lint pass
+      # ignores them.
+      - name: Test custom lint rules
+        run: npm run test:lint-rules
+
+      # --max-warnings=0 is deliberate: the tree is at zero, and warnings
+      # allowed to accumulate stop being read.
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
+
+      - name: Build (also generates Next.js route types and type-checks)
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+
+  mcp-server-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mcp-server
+    env:
+      TOLEMAN_API_TOKEN: toleman_pat_test
+      TOLEMAN_API_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: mcp-server/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        run: python -m pytest -v --junitxml=test-results/pytest.xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mcp-server-test-results
+          path: mcp-server/test-results/pytest.xml
+
+  compose-config:
+    # Cheap and fast: catches a compose file referencing a service, image or
+    # build context that does not exist.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml
+        run: docker compose -f docker-compose.yml config --quiet
+
+      # The GHCR override is a separate file nothing else exercises, so
+      # without this a service renamed in the base compose file would leave
+      # it silently overriding a service that no longer exists.
+      - name: Validate the GHCR override composes onto it
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ghcr.yml config --quiet
+          # Every service this override names must actually resolve to a
+          # GHCR image; a typo'd service key is otherwise a no-op that only
+          # shows up as an unexpected local build at someone else's `up`.
+          for svc in backend celery-worker frontend; do
+            image=$(docker compose -f docker-compose.yml -f docker-compose.ghcr.yml \
+                      config --format json | python3 -c "
+          import json,sys
+          print(json.load(sys.stdin)['services']['$svc']['image'])")
+            case "$image" in
+              ghcr.io/*) echo "ok  $svc -> $image" ;;
+              *) echo "FAIL $svc resolved to '$image', expected a ghcr.io image" >&2; exit 1 ;;
+            esac
+          done

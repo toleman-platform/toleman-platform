@@ -1,5 +1,5 @@
 """Tests for GET /api/findings/{id}/enrichment (issue #71) and the
-core.cve_enrichment caching layer -- CVE/CWE/fix-version data sourced from
+core.cve_enrichment caching layer, CVE/CWE/fix-version data sourced from
 NVD + OSV.dev, explicitly without any AI provider involved.
 
 Follows the same in-memory SQLite + dependency_override pattern used in
@@ -48,7 +48,7 @@ def _login(client, engine, email="user@example.com", password="whatever123"):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 
@@ -92,7 +92,7 @@ def _make_finding(engine, target_id, **overrides) -> int:
 
 
 # ---------------------------------------------------------------------------
-# core.cve_enrichment.get_cve_enrichment -- caching behavior
+# core.cve_enrichment.get_cve_enrichment, caching behavior
 # ---------------------------------------------------------------------------
 
 

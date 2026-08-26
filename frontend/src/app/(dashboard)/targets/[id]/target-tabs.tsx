@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 //
 // Tab state lives in the URL rather than component state, deliberately. The
 // Admin page keeps its tab in useState, which means none of its tabs are
-// linkable -- you cannot send someone a link to Workspace Roles. A target's
+// linkable; you cannot send someone a link to Workspace Roles. A target's
 // sub-pages get linked to constantly (from a finding, a PR comment, a Slack
 // notification), so a plain `?tab=` query param is worth more here than the
 // convenience of local state.
@@ -17,7 +17,7 @@ export const TARGET_TABS = [
   { id: "overview", label: "Overview" },
   { id: "vulnerabilities", label: "Vulnerabilities" },
   // (#276) Dependencies answers "what is installed here", which the
-  // findings list structurally cannot -- it only ever shows what is
+  // findings list structurally cannot; it only ever shows what is
   // currently flagged. History answers "how has this changed", which the
   // overview's single "Last scan" timestamp cannot.
   { id: "dependencies", label: "Dependencies" },

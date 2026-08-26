@@ -2,7 +2,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Shared "nothing here yet" state (#77) — icon + title + description + an
+ * Shared "nothing here yet" state (#77), icon + title + description + an
  * optional primary/secondary CTA. Replaces the app-wide pattern of a bare
  * `<p className="text-sm text-muted-foreground">No X yet.</p>` with
  * something that actually tells the user what to do next.
@@ -18,7 +18,7 @@ function EmptyState({
   secondaryAction,
   /** Drop the dashed border/background/large padding for use inside a
    * container that already has its own border (e.g. an admin tab's list
-   * card) — keeps the icon + copy + CTA pattern without double-boxing. */
+   * card); keeps the icon + copy + CTA pattern without double-boxing. */
   bare = false,
   className,
 }: {

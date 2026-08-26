@@ -3,14 +3,14 @@
 Most of these are about what the endpoint *refuses*. Installing software in
 response to an HTTP request is an obvious RCE surface, and the only reason it
 is defensible here is that the caller picks a registry key rather than naming
-a package -- so the tests that matter are the ones proving there is no path
+a package; so the tests that matter are the ones proving there is no path
 from a request to an arbitrary package, and that a non-admin cannot reach it
 at all.
 
 Same in-memory SQLite + TestClient + session-token-login pattern as
 tests/test_stale_jobs.py.
 """
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -60,7 +60,7 @@ def _login(client, engine, role=UserRole.ADMIN):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 

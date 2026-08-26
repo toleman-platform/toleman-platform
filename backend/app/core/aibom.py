@@ -8,9 +8,9 @@ inventories models and datasets alongside the packages.
 
 Format is CycloneDX 1.6, which added first-class machine-learning component
 types. Chosen over SPDX 3.0's AI profile for one practical reason: this
-codebase already emits CycloneDX (`trivy fs --format cyclonedx`, persisted as
-SbomComponent), so an AIBOM extends the pipeline that exists rather than
-introducing a second format and a second parser. SPDX has ISO lineage that
+codebase already exports CycloneDX from its persisted SbomComponent rows, so
+an AIBOM extends the pipeline that exists rather than introducing a second
+format and a second parser. SPDX has ISO lineage that
 carries weight in procurement and is the obvious second target, but building
 both at once would be speculative.
 
@@ -27,7 +27,7 @@ is frequently NOT declarable from source. A repo calling
 with no accessible training-data provenance and no version to pin. Those
 facts are emitted as explicit "unknown", never omitted and never guessed. A
 compliance artifact that silently implies full provenance is a liability, not
-a feature -- the same principle as #174's never-scanned repos showing no
+a feature; the same principle as #174's never-scanned repos showing no
 verdict rather than a green one.
 """
 import re
@@ -70,7 +70,7 @@ def _revision_in_call(text: str, start: int) -> str:
         m   = AutoModel.from_pretrained('org/a')
         pin = AutoModel.from_pretrained('org/b', revision='abc123')
 
-    it reported org/a as pinned to abc123 -- inventing provenance for an
+    it reported org/a as pinned to abc123; inventing provenance for an
     unpinned model, which is the single worst thing this module could do.
     """
     close = text.find(")", start)
@@ -127,13 +127,13 @@ def _strip_comment_lines(text: str) -> str:
     The model-name regex is text-based, so without this it matches names
     mentioned in prose. Caught immediately: running the extractor over this
     codebase pulled "gpt-5" and "claude-..." out of *this module's own
-    comments*, which would have shipped an AIBOM claiming Rikugan depends on
+    comments*, which would have shipped an AIBOM claiming Toleman depends on
     models it only talks about. On a real repo the same thing happens with a
     docstring or a TODO mentioning a model name.
 
     Whole-line comments only. A trailing comment after real code is left
     alone, since the code on that line is worth matching, and stripping
-    mid-line would need a real parser rather than a heuristic -- the cost of
+    mid-line would need a real parser rather than a heuristic; the cost of
     a rare extra reference is a duplicate inventory row, not a wrong one.
 
     KNOWN LIMITATION: triple-quoted docstrings are not stripped, so a
@@ -141,7 +141,7 @@ def _strip_comment_lines(text: str) -> str:
     those would need a real AST parse per language, which is a large cost for
     a rare case. The `evidence` field on every component names the file it
     came from, so an over-inclusive row is visible and dismissible rather
-    than silent -- which is the right failure direction for an inventory: a
+    than silent; which is the right failure direction for an inventory: a
     reviewable extra beats a missing dependency.
     """
     out = []
@@ -163,7 +163,7 @@ def extract_ai_components(repo_path: str | Path) -> list[AiComponent]:
     """Scan a checkout for model and dataset references.
 
     Returns components keyed by (name, type), merging evidence across files.
-    A model referenced with no pinned revision gets version=UNKNOWN -- that
+    A model referenced with no pinned revision gets version=UNKNOWN; that
     is the finding, not a gap to paper over.
     """
     root = Path(repo_path)
@@ -209,7 +209,7 @@ def extract_ai_components(repo_path: str | Path) -> list[AiComponent]:
             name = match.group(1)
             if _looks_like_hosted_model(name):
                 # A hosted API model has no pinnable revision from the
-                # caller's side -- the provider can change what sits behind
+                # caller's side; the provider can change what sits behind
                 # the name. That is exactly the kind of thing an AIBOM
                 # exists to make visible.
                 _record(name, "machine-learning-model", "hosted-api", UNKNOWN, rel)
@@ -227,14 +227,14 @@ def _component_to_cyclonedx(component: AiComponent) -> dict:
         "name": component.name,
         "version": component.version,
         "properties": [
-            {"name": "rikugan:source", "value": component.source},
-            {"name": "rikugan:evidence", "value": ", ".join(component.evidence[:10])},
+            {"name": "toleman:source", "value": component.source},
+            {"name": "toleman:evidence", "value": ", ".join(component.evidence[:10])},
         ],
     }
 
     if component.component_type == "machine-learning-model":
         # CycloneDX 1.6 modelCard. Every field here is genuinely unknown from
-        # static analysis, and saying so explicitly is the point -- an absent
+        # static analysis, and saying so explicitly is the point; an absent
         # modelCard reads as "not applicable", which is a different and
         # wrong claim.
         entry["modelCard"] = {
@@ -255,7 +255,7 @@ def _component_to_cyclonedx(component: AiComponent) -> dict:
     if component.version == UNKNOWN:
         entry["properties"].append(
             {
-                "name": "rikugan:unpinned",
+                "name": "toleman:unpinned",
                 "value": "true",
             }
         )
@@ -280,14 +280,14 @@ def build_aibom(
             "bom-ref": f"target:{target_name}",
             "name": target_name,
         },
-        "tools": {"components": [{"type": "application", "name": "rikugan", "publisher": "rikugan"}]},
+        "tools": {"components": [{"type": "application", "name": "toleman", "publisher": "toleman"}]},
     }
     if timestamp:
         metadata["timestamp"] = timestamp
     if repo_url:
         metadata["component"]["externalReferences"] = [{"type": "vcs", "url": repo_url}]
     if branch:
-        metadata["properties"] = [{"name": "rikugan:branch", "value": branch}]
+        metadata["properties"] = [{"name": "toleman:branch", "value": branch}]
 
     return {
         "bomFormat": CYCLONEDX_BOM_FORMAT,
@@ -319,7 +319,7 @@ def upsert_aibom_components(
     """Persist extracted components, mirroring
     app.core.sbom_ingestion.upsert_components. Returns the net-new rows.
 
-    Keyed on (target, branch, name, type) -- deliberately not including
+    Keyed on (target, branch, name, type); deliberately not including
     version. An unpinned reference that later gains a revision is the *same*
     dependency, now pinned; treating it as a new component would hide exactly
     the change a reader most wants to see.

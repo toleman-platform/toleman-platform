@@ -1,4 +1,4 @@
-"""`GET /api/tools/registry` -- the full tool marketplace listing (issue #75).
+"""`GET /api/tools/registry`: the full tool marketplace listing (issue #75).
 
 Every supported OSS security tool across SAST/SCA/Secrets/Container/IaC/
 License/AI-ML, each merged with a real live health check (reusing health.py's
@@ -21,7 +21,7 @@ def tools_registry():
     """Full tool marketplace registry (issue #75): every supported OSS
     security tool across SAST/SCA/Secrets/Container/IaC/License/AI-ML, each
     merged with a real live health check (subprocess `--version`, exactly
-    like /health) and an `integrated` flag (whether Rikugan can actually
+    like /health) and an `integrated` flag (whether Toleman can actually
     dispatch a scan for it today via app.scanners.runner.TOOL_COMMANDS)."""
     entries = registry_with_integration_status()
 
@@ -32,11 +32,11 @@ def tools_registry():
     # Measured on a dev box, serial: semgrep 2061ms, trivy 111ms,
     # trivy-license 107ms, gosec 71ms, gitleaks 21ms = 2371ms total.
     # `semgrep --version` dominates because it pays full Python interpreter
-    # startup, and that is the real cost of this endpoint -- parallelising
+    # startup, and that is the real cost of this endpoint; parallelising
     # takes it to roughly max() instead of sum(), about 2.37s -> 2.06s.
     #
     # Issue #221 (senior-review pass): that 2.06s is still paid on *every*
-    # request, for information -- is this tool installed, at what version --
+    # request, for information (is this tool installed, at what version)
     # that only changes when an admin installs/removes a tool. Cached
     # per-tool for tool_health_cache.TTL_SECONDS (app.core.tool_health_cache)
     # and invalidated explicitly the moment an install through this UI
@@ -75,7 +75,7 @@ def _merge_worker_health(tool: str, local: dict) -> dict:
 
     The probe above runs `shutil.which()` in *this* process. One-click
     installs run on the worker, which in the default Compose topology is a
-    separate container -- so a successful install was invisible here and the
+    separate container; so a successful install was invisible here and the
     card read "not installed" forever, even after "Recheck all". Scans run on
     the worker, so the worker's answer is the operationally correct one.
 

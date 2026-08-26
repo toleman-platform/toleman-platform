@@ -2,7 +2,7 @@
 
 Two things are being pinned down here.
 
-The first is that `GET /api/scans/active` exists at all -- a scan dispatched
+The first is that `GET /api/scans/active` exists at all, a scan dispatched
 from one page used to be invisible on every other page, so Targets happily
 showed "last scanned 3 days ago" while a scan was in flight.
 
@@ -15,7 +15,7 @@ different repo's history must all yield null rather than a plausible guess.
 Same in-memory SQLite + TestClient + session-token-login pattern as
 tests/test_stale_jobs.py.
 """
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -73,7 +73,7 @@ def _login(client, engine, role=UserRole.ADMIN):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -149,8 +149,8 @@ def test_median_resists_a_single_outlier(engine):
 
 
 def test_failed_runs_are_not_sampled(engine):
-    # A failed run's duration measures how long the platform took to give up
-    # -- usually a clone timeout -- not how long the work takes.
+    # A failed run's duration measures how long the platform took to give up (
+    # usually a clone timeout) not how long the work takes.
     _, target_id = _make_workspace_and_target(engine)
     with Session(engine) as session:
         started = utcnow() - timedelta(seconds=900)
@@ -302,7 +302,7 @@ def test_get_scan_omits_eta_when_history_is_too_thin(engine, client):
         scan_id = running.id
 
     body = client.get(f"/api/scans/{scan_id}").json()
-    # Null, not a default -- the UI shows elapsed time instead.
+    # Null, not a default; the UI shows elapsed time instead.
     assert body["eta_seconds"] is None
     assert body["elapsed_seconds"] >= 4
 

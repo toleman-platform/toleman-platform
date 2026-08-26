@@ -29,14 +29,14 @@ function LoginForm() {
       router.refresh();
     } catch (e) {
       // A wrong password (401) is the only case that should say "Invalid
-      // email or password" -- collapsing every failure into that message
+      // email or password", collapsing every failure into that message
       // (the previous bare `catch { setError(...) }`) made a 429 rate limit,
       // a network error, or a 500 all read as a typo, which is actively
       // misleading when the real cause is something the user can't fix by
       // retyping their password.
       if (e instanceof NetworkError) {
         // The request never arrived, so the server never judged these
-        // credentials -- saying they're wrong would be a guess, and the
+        // credentials; saying they're wrong would be a guess, and the
         // wrong one (BLD-03).
         setError(e.message);
       } else if (e instanceof ApiError && e.status !== 401) {
@@ -61,7 +61,7 @@ function LoginForm() {
             <BrandMark size={30} />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Rikugan</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Toleman</h1>
             <p className="text-sm text-muted-foreground">DevSecOps Vulnerability Management</p>
           </div>
         </CardHeader>

@@ -7,8 +7,8 @@ Run this *in the image*, not on a developer's machine:
 
 Why it exists: `docker build` succeeding only proves the install commands
 exited zero at build time. It does not prove the binaries still run. The
-break that prompted this -- setuptools 82 dropping `pkg_resources` out from
-under semgrep's pinned opentelemetry -- happened to fail loudly because the
+break that prompted this (setuptools 82 dropping `pkg_resources` out from
+under semgrep's pinned opentelemetry) happened to fail loudly because the
 Dockerfile ran `semgrep --version` inline, but nothing covered the other
 scanners, and nothing at all covered the case where a tool installs fine and
 then fails on first invocation.

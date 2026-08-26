@@ -1,13 +1,13 @@
 """#271: a PR comment must say its severities have an as-of date.
 
 Every severity in a PR Guardrail comment derives from priority_score
-(app/core/scoring.py), which folds in EPSS and CISA KEV -- both of which
+(app/core/scoring.py), which folds in EPSS and CISA KEV; both of which
 move. A finding rendered Medium when the comment was posted can genuinely be
 Critical by the time someone reviews the PR two days later, because CISA
 added its CVE to KEV in between. Nothing in the comment said so.
 
-Same instinct as tools_failed/tools_skipped (#243, #253) -- a result is only
-true as of when it ran -- applied to score freshness rather than scan
+Same instinct as tools_failed/tools_skipped (#243, #253) (a result is only
+true as of when it ran) applied to score freshness rather than scan
 completeness.
 """
 
@@ -31,7 +31,7 @@ class TestStalenessFooter:
     def test_footer_appears_on_a_clean_pass_too(self):
         """Not only when something scored high. A reader cannot know whether
         a score moved without being told the number has an as-of date at
-        all -- so the disclaimer is unconditional, like the scanned-with
+        all; so the disclaimer is unconditional, like the scanned-with
         line beside it."""
         body = render_comment(
             [], [], PRGuardrailStatus.PASSED, 1, 1,
@@ -53,7 +53,7 @@ class TestStalenessFooter:
             [], [], PRGuardrailStatus.PASSED, 1, 1,
             tools_run=["semgrep"], scanned_at=SCANNED_AT,
         )
-        assert "Rikugan" in body
+        assert "Toleman" in body
 
     def test_omitted_entirely_when_no_timestamp_is_supplied(self):
         """Backwards-compatible default, matching how tools_run/scan_scope
@@ -63,7 +63,7 @@ class TestStalenessFooter:
         assert "EPSS/KEV" not in body
 
     def test_does_not_disturb_the_diff_scope_or_tools_lines(self):
-        """The footer is additive -- #243's scope note and the scanned-with
+        """The footer is additive; #243's scope note and the scanned-with
         line must both survive alongside it."""
         body = render_comment(
             [], [], PRGuardrailStatus.PASSED, 1, 1,

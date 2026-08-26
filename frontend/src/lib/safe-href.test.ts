@@ -3,15 +3,15 @@ import { safeHref } from "./utils";
 
 // (#275) Snyk Code flagged two <a href={...}> sites as DOM-based XSS; both
 // were false positives on inspection (a hardcoded prefix, a server-built
-// template), but the underlying pattern -- a dynamic value reaching href --
+// template), but the underlying pattern (a dynamic value reaching href)
 // is real across 11 sites in this app, and "safe today by local invariant"
 // is exactly the kind of thing that regresses silently. This is the shared
 // enforcement the report recommended killing the pattern with.
 
 describe("safeHref", () => {
   it("allows a plain https URL", () => {
-    expect(safeHref("https://github.com/geekshiv/rikugan-platform")).toBe(
-      "https://github.com/geekshiv/rikugan-platform",
+    expect(safeHref("https://github.com/toleman-platform/toleman-platform")).toBe(
+      "https://github.com/toleman-platform/toleman-platform",
     );
   });
 
@@ -25,7 +25,7 @@ describe("safeHref", () => {
 
   it("rejects javascript: obfuscated with embedded control characters", () => {
     // The WHATWG URL parser strips tabs/newlines before reading the scheme,
-    // same as a real browser does -- a hand-rolled regex checking for a
+    // same as a real browser does; a hand-rolled regex checking for a
     // leading "javascript:" would miss this the way the flagged code paths
     // originally could have, if their local invariants ever slipped.
     expect(safeHref("java\tscript:alert(1)")).toBeUndefined();
@@ -57,7 +57,7 @@ describe("safeHref", () => {
   it("preserves the exact input string on success, not a normalized form", () => {
     // Callers render the returned value directly; a helper that "fixes"
     // valid URLs on the way through would be a surprise no caller asked for.
-    const url = "https://github.com/geekshiv/rikugan-platform/pull/238?tab=files";
+    const url = "https://github.com/toleman-platform/toleman-platform/pull/238?tab=files";
     expect(safeHref(url)).toBe(url);
   });
 });

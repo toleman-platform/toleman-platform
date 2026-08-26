@@ -1,13 +1,13 @@
 import { cn } from "@/lib/utils";
 
-// Issue #117: a target's criticality (`Target.label` -- see
+// Issue #117: a target's criticality (`Target.label`: see
 // backend/app/models/models.py) was plain text with no visual salience, so a
 // Prod-labeled target read no differently from a Dev one. The audit found
-// three real tiers in use -- Prod, Internal, Dev -- each mapped to its own
+// three real tiers in use (Prod, Internal, Dev) each mapped to its own
 // color family (destructive/red, muted/slate, success/green) via the app's
 // existing design tokens (frontend/src/app/globals.css), not new hardcoded
 // hex. A target can also carry a free-text custom label (see the model's own
-// comment: "Prod, Dev, Internal, Public, or custom") -- anything outside the
+// comment: "Prod, Dev, Internal, Public, or custom"); anything outside the
 // three known tiers falls back to a neutral outline chip rather than
 // guessing a risk color for it.
 //

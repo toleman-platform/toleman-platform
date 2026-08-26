@@ -78,7 +78,7 @@ def _login(client, engine, role=UserRole.DEVELOPER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -145,7 +145,7 @@ def test_scans_run_creates_running_row_and_dispatches_delay_without_blocking(cli
         assert scan.status == "running"
         assert scan.tool == "semgrep"
 
-    # GET /api/scans/{id} is what the frontend polls -- prove it reflects the row.
+    # GET /api/scans/{id} is what the frontend polls, prove it reflects the row.
     poll = client.get(f"/api/scans/{body['scan_id']}")
     assert poll.status_code == 200
     assert poll.json()["status"] == "running"
@@ -174,7 +174,7 @@ def test_discovery_run_creates_running_row_and_dispatches_delay_without_blocking
     poll = client.get(f"/api/discovery/{target_id}/runs/{run_id}")
     assert poll.status_code == 200
     assert poll.json()["status"] == "running"
-    # Still running -- no endpoints payload yet (that only appears once complete).
+    # Still running, no endpoints payload yet (that only appears once complete).
     assert "endpoints" not in poll.json()
 
 
@@ -224,7 +224,7 @@ def eager_celery():
 
 
 def _fake_clone_repo(repo_url, branch, github_token="", scan_id=None):
-    # Stand-in checkout dir -- real clone_repo/git is never invoked in tests.
+    # Stand-in checkout dir; real clone_repo/git is never invoked in tests.
     return Path("/tmp")
 
 
@@ -241,7 +241,7 @@ def test_scan_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, mon
     scan_id = res.json()["scan_id"]
 
     # Eager mode means the task already ran synchronously by the time
-    # .delay() returned above -- no polling loop needed, but we still go
+    # .delay() returned above, no polling loop needed, but we still go
     # through the real GET endpoint to prove the row is genuinely updated.
     poll = client.get(f"/api/scans/{scan_id}")
     assert poll.status_code == 200
@@ -304,8 +304,8 @@ def test_sbom_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, mon
 
 
 def test_scan_dispatch_marks_row_failed_on_clone_error(client, engine, monkeypatch, eager_celery):
-    """Proves the failure path also actually runs end to end -- not just the
-    happy path -- and that the row transitions to "failed" rather than
+    """Proves the failure path also actually runs end to end (not just the
+    happy path) and that the row transitions to "failed" rather than
     hanging in "running" forever."""
     client, target_id = _dev_client_with_target(client, engine)
 

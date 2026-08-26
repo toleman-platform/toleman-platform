@@ -3,7 +3,7 @@ report permanent failure.
 
 What the external evaluation hit: Checkov installed from the Tool
 Marketplace, run status `completed`, version 3.3.13, and
-`docker exec ...-celery-worker-1 which checkov` resolving fine -- while the
+`docker exec ...-celery-worker-1 which checkov` resolving fine, while the
 marketplace card said **"not installed"**, and still said it after pressing
 "Recheck all".
 
@@ -109,7 +109,7 @@ def test_worker_health_is_scoped_per_tool():
 
 def test_worker_health_does_not_collide_with_the_short_ttl_probe_cache():
     """The two keyspaces answer different questions and must not overwrite
-    each other -- if they shared a key, the next 30s probe would clobber the
+    each other; if they shared a key, the next 30s probe would clobber the
     worker's record and the card would flip back to 'not installed'."""
     tool_health_cache.set_worker_health("checkov", _worker_health())
     tool_health_cache.set("checkov", _local_miss())

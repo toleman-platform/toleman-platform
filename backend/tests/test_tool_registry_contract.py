@@ -7,7 +7,7 @@ every PR in milliseconds, and the script catches a tool that is declared but
 not actually usable, which no amount of static checking can tell you.
 
 The thing both are guarding against is the same. A scanner that is missing or
-broken does not announce itself -- `run_scan` catches the failure, the scan
+broken does not announce itself; `run_scan` catches the failure, the scan
 completes, and the repo shows zero findings. Zero findings from a broken
 scanner looks exactly like zero findings from clean code.
 """
@@ -52,7 +52,7 @@ def test_every_entry_has_the_required_fields(entry):
 def test_version_cmd_is_an_argv_list_not_a_string(entry):
     # A string would be split by a shell somewhere down the line. Every
     # subprocess call in this codebase passes argv lists precisely so no
-    # shell ever parses these -- see runner.clone_repo's same rule.
+    # shell ever parses these; see runner.clone_repo's same rule.
     cmd = entry["version_cmd"]
     assert isinstance(cmd, list) and cmd, f"{entry['tool']}: version_cmd must be a non-empty list"
     assert all(isinstance(part, str) for part in cmd)
@@ -75,7 +75,7 @@ def test_integrated_flag_is_derived_not_hand_maintained():
 
 
 def test_every_runnable_tool_is_in_the_registry():
-    # The registry is what the marketplace shows. A tool Rikugan can dispatch
+    # The registry is what the marketplace shows. A tool Toleman can dispatch
     # but never lists is invisible to the operator who has to install it, so
     # adding a real scanner without listing it still fails here.
     missing = sorted(set(TOOL_COMMANDS) - set(ALL_TOOLS))
@@ -87,7 +87,7 @@ def test_bundled_tools_all_exist_in_the_registry():
 
 
 def test_bundled_tools_are_all_integrated():
-    # Shipping a tool in the image that Rikugan cannot dispatch is dead
+    # Shipping a tool in the image that Toleman cannot dispatch is dead
     # weight in the image and a misleading "installed" tick in the UI.
     not_runnable = sorted(t for t in BUNDLED_TOOLS if t not in TOOL_COMMANDS)
     assert not not_runnable, f"bundled but not runnable: {not_runnable}"
@@ -103,7 +103,7 @@ def test_non_integrated_tools_default_every_usage_surface_off():
     # repo-path checkout), but api_scan.py's Active API Scanning route has
     # actually executed it unconditionally since #72 shipped. Defaulting its
     # api_scan surface off here would be the opposite bug this test guards
-    # against -- a silent, retroactive removal of coverage every existing
+    # against, a silent, retroactive removal of coverage every existing
     # user already had. See default_usage_for's and
     # app.core.tool_usage.is_nuclei_enabled_for_api_scan's docstrings.
     for entry in TOOL_REGISTRY:
@@ -116,7 +116,7 @@ def test_non_integrated_tools_default_every_usage_surface_off():
                 "ci_pipeline": False,
                 "api_scan": True,
                 "pr_guardrail": False,
-            }, "nuclei must default on for api_scan only -- every other surface stays off"
+            }, "nuclei must default on for api_scan only; every other surface stays off"
             continue
         assert not any(usage[s] for s in USAGE_SURFACES), entry["tool"]
 

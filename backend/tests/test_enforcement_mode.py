@@ -2,7 +2,7 @@
 target -> group(s) -> workspace -> "block" default resolution
 (app.core.enforcement.resolve_enforcement_mode), the PATCH endpoints on
 Target/Group/Workspace that set it, and how execute_pr_guardrail_scan wires
-it in -- "disabled" skips the scan entirely, "alert" still scans/comments
+it in; "disabled" skips the scan entirely, "alert" still scans/comments
 but posts a non-blocking commit status even when real blocking findings
 exist, "block" is unchanged.
 
@@ -66,7 +66,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -161,7 +161,7 @@ def test_target_setting_wins_over_group_and_workspace(engine):
 
 def test_conflicting_multi_group_resolves_most_restrictive(engine):
     """A target with two groups, one set to 'disabled' and one set to
-    'block', must resolve to 'block' -- fail closed, not silently pick
+    'block', must resolve to 'block'; fail closed, not silently pick
     whichever group happened to be joined last."""
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
@@ -302,7 +302,7 @@ def _wire_common_scan_mocks(monkeypatch, findings):
     (GitHub API, git clone, scanner subprocess, endpoint discovery, PR
     comment/commit-status HTTP calls) so the test exercises real
     dedup/policy/enforcement logic without any real network or filesystem
-    access -- same boundary-mocking shape as tests/test_celery_offload.py."""
+    access; same boundary-mocking shape as tests/test_celery_offload.py."""
     monkeypatch.setattr(
         pr_guardrail_executor,
         "github_get",
@@ -317,7 +317,7 @@ def _wire_common_scan_mocks(monkeypatch, findings):
     # _run_guardrail_tools rather than a single GUARDRAIL_PARSER constant.
     # Each finding carries its own `tool`, which the real path sets and
     # dedup_hash depends on. It returns (findings, failed, skipped) since
-    # #243 -- "skipped" being a third state distinct from both.
+    # #243; "skipped" being a third state distinct from both.
     def _fake_run_tools(tools, repo_path, paths=None):
         return [{**f, "tool": f.get("tool", "semgrep")} for f in findings], [], {}
 

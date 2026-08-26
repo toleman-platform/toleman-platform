@@ -7,7 +7,7 @@ requirements.txt that was 34 rows versus 6 actions.
 Two ways this feature could lie, and both are what these tests are for:
 
 * Recommending a bigger upgrade than the evidence supports. The answer must
-  be the *lowest* version clearing every grouped CVE -- not the newest
+  be the *lowest* version clearing every grouped CVE, not the newest
   release, and not one CVE's fix applied to all of them.
 * Rounding up. If three of five CVEs on a package have a fix and two do not,
   "upgrade to X fixes 3 issues, 2 remain" is true; "upgrading fixes this
@@ -68,7 +68,7 @@ def _admin(client, engine):
         session.commit()
         session.refresh(u)
         token = create_session_token(u.id, u.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 
@@ -91,7 +91,7 @@ def _finding(engine, target_id, cve_id, severity=Severity.HIGH, fixes=None, osv_
             target_id=target_id, tool="trivy", rule_id=cve_id, title=f"{cve_id} in dep",
             file_path="requirements.txt", severity=severity, cve_id=cve_id,
             state=FindingState.OPEN,
-            # NOT NULL in the schema, and unique per finding -- reusing one
+            # NOT NULL in the schema, and unique per finding; reusing one
             # value here would make two findings collide rather than group.
             dedup_hash=f"hash-{cve_id}",
         ))

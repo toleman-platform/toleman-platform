@@ -22,7 +22,7 @@ import { pageSizeFromParams } from "@/lib/pagination";
 // span #61, #62, #66, #72 and #185, and were reachable from several
 // different surfaces. Splitting them into sub-pages gives each concern its
 // own URL, which is what makes a target linkable from a finding, a PR
-// comment or a Slack alert -- see target-tabs.tsx for why tab state lives in
+// comment or a Slack alert; see target-tabs.tsx for why tab state lives in
 // the query string rather than in component state.
 export default async function TargetDetailPage({
   params,
@@ -44,10 +44,10 @@ export default async function TargetDetailPage({
     // Real pagination. This used to fetch page_size: 500 and hand the whole
     // lot to FindingsList with pageSize = findings.length, which meant the
     // pager rendered "Showing 1-500 of 1137" while the rows-per-page
-    // selector said 25 -- and on a target with 1137 findings it shipped 500
+    // selector said 25; and on a target with 1137 findings it shipped 500
     // rows to the browser in one response.
     api.findings({ target_id: targetId, page, page_size: pageSize }),
-    // Degrades to {} rather than failing the page -- the overview then shows
+    // Degrades to {} rather than failing the page; the overview then shows
     // "Never" for last scan, which is honest about not knowing.
     settleOrNull(api.scanSummary()).then((s) => s ?? {}),
     // Overview counts must cover the whole target, not the fetched page.

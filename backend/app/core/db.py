@@ -8,7 +8,7 @@ from app.core.config import settings
 
 engine = create_engine(settings.database_url, echo=False)
 
-# backend/alembic.ini -- two levels up from this file (app/core/db.py ->
+# backend/alembic.ini, two levels up from this file (app/core/db.py ->
 # app/ -> backend/). Resolved absolutely so this works regardless of the
 # process's cwd (uvicorn from backend/, pytest from backend/, or the
 # Dockerfile's WORKDIR /app which holds the same layout).
@@ -19,7 +19,7 @@ def init_db() -> None:
     """Bring the DB schema up to date via Alembic (issue #58).
 
     Previously `SQLModel.metadata.create_all(engine)`, which only ever
-    creates tables that don't exist yet -- it silently no-ops on column/enum
+    creates tables that don't exist yet; it silently no-ops on column/enum
     additions to existing tables, which is exactly how this project's schema
     drifted from models.py in the first place (manual ALTER TABLE/ALTER TYPE
     run by hand against the live DB, tracked nowhere). Running

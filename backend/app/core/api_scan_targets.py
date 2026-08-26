@@ -6,7 +6,7 @@ This is the safety boundary for the whole feature: an active scan must only
 ever hit endpoints this platform already discovered and persisted for a
 target the caller already owns/has access to (via Sprint 1's static
 discovery), combined with a host the target's owner explicitly declared
-belongs to it (Target.api_base_url) -- never an arbitrary caller-supplied
+belongs to it (Target.api_base_url), never an arbitrary caller-supplied
 URL. Keeping this logic in one place (rather than inline in the API route or
 the Celery task) means both the dispatch-time validation and the actual scan
 invocation agree on exactly the same rules.
@@ -21,7 +21,7 @@ from app.models.models import ApiEndpoint, Target
 class ApiScanConfigError(Exception):
     """Raised when a target isn't set up for active scanning yet (no
     api_base_url) or the caller asked to scan endpoint ids that don't
-    belong to this target -- both are caller/config errors, not something a
+    belong to this target; both are caller/config errors, not something a
     retry fixes."""
 
 
@@ -31,8 +31,8 @@ def _join_route(base_url: str, route: str) -> str:
 
     urljoin already treats a route starting with "/" as relative to the
     host, but a route that starts with "//" (protocol-relative) or contains
-    "://" would otherwise let urljoin resolve to a *different* host entirely
-    -- routes come from static regex extraction over the target's own
+    "://" would otherwise let urljoin resolve to a *different* host entirely;
+    routes come from static regex extraction over the target's own
     source (app/scanners/discovery.py), so this should never legitimately
     happen, but a scan must never silently pivot to a third-party host, so
     it's rejected outright rather than trusted.
@@ -56,13 +56,13 @@ def build_scan_urls(
 
     endpoint_ids, when given, narrows the scan to a specific selection
     (e.g. a user picking a handful of endpoints in the UI rather than
-    scanning the whole target) -- every id must belong to this exact
+    scanning the whole target); every id must belong to this exact
     target+branch or it's silently dropped, never used to reach into
     another target's discovered routes.
     """
     if not target.api_base_url:
         raise ApiScanConfigError(
-            "target has no api_base_url configured -- set it before running an active API scan"
+            "target has no api_base_url configured; set it before running an active API scan"
         )
     parsed_base = urlparse(target.api_base_url)
     if parsed_base.scheme not in ("http", "https") or not parsed_base.netloc:
@@ -83,7 +83,7 @@ def build_scan_urls(
             urls.append(_join_route(target.api_base_url, endpoint.route))
             scanned_endpoints.append(endpoint)
         except ApiScanConfigError:
-            # One malformed discovered route shouldn't sink the whole scan --
+            # One malformed discovered route shouldn't sink the whole scan,
             # skip it, the rest of the target's endpoints still get scanned.
             continue
     return urls, scanned_endpoints

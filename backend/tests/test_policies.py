@@ -11,7 +11,7 @@ Covers:
     BLOCKING_SEVERITIES behavior, unchanged.
 
 Follows the same in-memory SQLite + dependency_override pattern used in
-tests/test_findings.py -- no shared conftest exists yet either.
+tests/test_findings.py; no shared conftest exists yet either.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -62,7 +62,7 @@ def _login(client, engine, email="user@example.com", password="whatever123"):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 

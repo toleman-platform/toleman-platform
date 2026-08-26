@@ -32,7 +32,7 @@ describe("scanProgressLabel", () => {
 
   it("falls back to elapsed time when there is no estimate", () => {
     // The core rule of #212: with too little history the UI states what it
-    // knows -- how long this has been running -- rather than inventing a
+    // knows (how long this has been running) rather than inventing a
     // number it cannot support.
     expect(scanProgressLabel(45, null)).toBe("running for 45s");
   });

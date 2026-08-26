@@ -1,7 +1,7 @@
 """Native execution: clone target repo, run CLI security tools, return raw output.
 
 MVP note: runs directly via subprocess (no container isolation yet). Architecture
-review flagged this as a blocker before mass-scale/multi-tenant rollout — fine for
+review flagged this as a blocker before mass-scale/multi-tenant rollout; fine for
 single-user local/dev use, must move to ephemeral containers (K8s Job) before
 that feature ships.
 """
@@ -36,7 +36,7 @@ TOOL_COMMANDS = {
     # --config on the semgrep entry above. Findings then carry tool
     # "semgrep-llm", so per-tool coverage reporting, usage assignment (#75)
     # and triage can all distinguish "the registry's generic rules" from
-    # "Rikugan's LLM rules" instead of merging them into one bucket. Same
+    # "Toleman's LLM rules" instead of merging them into one bucket. Same
     # reasoning as trivy vs trivy-license already being separate entries.
     "semgrep-llm": lambda path: [
         "semgrep", "scan", f"--config={LLM_RULES_DIR}", "--json", "--quiet", path
@@ -44,7 +44,7 @@ TOOL_COMMANDS = {
     # `--report-path` was /dev/stdout until #253. That is not portable: where
     # /dev/stdout isn't writable by the process, gitleaks aborts with
     # "Report path is not writable" *before scanning anything*, exits 1 and
-    # writes nothing -- which used to read as "no secrets found". The exit
+    # writes nothing; which used to read as "no secrets found". The exit
     # code is now checked, and the report goes to a real temp file so the
     # failure doesn't happen in the first place. Same treatment as modelscan.
     # noseyparker (#255). Two-step by design: `scan` writes into a datastore,
@@ -64,7 +64,7 @@ TOOL_COMMANDS = {
     "checkov": lambda path: ["checkov", "-d", path, "--output", "json", "--compact", "--quiet", "--soft-fail"],
     "tfsec": lambda path: ["tfsec", path, "--format", "json", "--soft-fail"],
     # Model-file scanning (issue #186). `-o` is filled in by run_tool below,
-    # not here -- see MODELSCAN_REPORT_PLACEHOLDER for why modelscan can't
+    # not here; see MODELSCAN_REPORT_PLACEHOLDER for why modelscan can't
     # just write JSON to stdout like every other tool.
     "modelscan": lambda path: ["modelscan", "-p", path, "-r", "json", "-o", MODELSCAN_REPORT_PLACEHOLDER],
 }
@@ -78,20 +78,20 @@ TOOL_COMMANDS = {
 #     -wraps at terminal width and corrupts the JSON mid-token.
 # So run_tool substitutes a real temp file for this placeholder and reads the
 # report back from disk.
-MODELSCAN_REPORT_PLACEHOLDER = "__RIKUGAN_MODELSCAN_REPORT__"
+MODELSCAN_REPORT_PLACEHOLDER = "__TOLEMAN_MODELSCAN_REPORT__"
 
-# (#253) Same substitution for gitleaks -- see its TOOL_COMMANDS entry.
-GITLEAKS_REPORT_PLACEHOLDER = "__RIKUGAN_GITLEAKS_REPORT__"
+# (#253) Same substitution for gitleaks; see its TOOL_COMMANDS entry.
+GITLEAKS_REPORT_PLACEHOLDER = "__TOLEMAN_GITLEAKS_REPORT__"
 
 # (#255) noseyparker scans into a datastore, then reports out of it.
-NOSEYPARKER_DATASTORE_PLACEHOLDER = "__RIKUGAN_NOSEYPARKER_DATASTORE__"
+NOSEYPARKER_DATASTORE_PLACEHOLDER = "__TOLEMAN_NOSEYPARKER_DATASTORE__"
 
 
 class ToolExecutionError(Exception):
     """A scanner failed to execute (as opposed to running fine and finding
     nothing). Raised where a tool's exit code genuinely means "I broke",
     so scan_tasks marks the Scan failed instead of recording an empty,
-    successful-looking result -- a scan that silently reports zero findings
+    successful-looking result; a scan that silently reports zero findings
     because the tool crashed is a false all-clear.
     """
 
@@ -100,13 +100,13 @@ class RepoCloneError(Exception):
     """Raised for a repo_url/branch that fails validation before ever
     reaching subprocess. Deliberately NOT a subprocess.CalledProcessError
     subclass, and deliberately not retried by Celery (see
-    app/tasks/scan_tasks.py RETRYABLE_EXCEPTIONS) -- bad input won't become
+    app/tasks/scan_tasks.py RETRYABLE_EXCEPTIONS); bad input won't become
     good input on retry.
     """
 
 
 class ToolNotApplicable(Exception):
-    """Diff-scoped scanning (#243) left this tool with nothing to examine --
+    """Diff-scoped scanning (#243) left this tool with nothing to examine,
     e.g. trivy when the PR changed no dependency manifest, or tfsec when it
     changed no Terraform.
 
@@ -133,7 +133,7 @@ def _validate_repo_url(repo_url: str) -> None:
     a positional URL) since nothing validated the value or separated
     positional args from options. Requiring a real https:// scheme plus a
     host in ALLOWED_CLONE_HOSTS means a value starting with "-" can never
-    pass validation, so it can never reach the subprocess call at all --
+    pass validation, so it can never reach the subprocess call at all;
     independent of (and in addition to) the "--" positional separator below.
     """
     parsed = urlparse(repo_url)
@@ -161,8 +161,8 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
 
     The destination is keyed by repo name AND a unique suffix (the caller's
     scan_id when available, otherwise a fresh UUID) so that two concurrent
-    scans of the same target -- or of different targets that happen to
-    share a repo name -- never resolve to the same directory. Previously
+    scans of the same target (or of different targets that happen to
+    share a repo name) never resolve to the same directory. Previously
     the dir was keyed by repo name alone and unconditionally rmtree'd +
     recloned on every call, which let one scan's rmtree delete files while
     another scan's clone/tool run was still reading them (a race that could
@@ -180,7 +180,7 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
       GIT_CONFIG_* environment variables (git >= 2.31), which git reads out
       of the environment rather than the command line. That matters because
       subprocess.CalledProcessError's str()/repr() includes the full argv
-      verbatim -- if the token were on the command line (e.g. via `git -c
+      verbatim; if the token were on the command line (e.g. via `git -c
       http.extraHeader=...` as an argv entry), it would leak into any log
       line or API response that ever surfaces str(exc) for a failed clone.
     - The header uses HTTP Basic (base64 "x-access-token:<token>"), not
@@ -223,7 +223,7 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
         # Turn a permanent failure into RepoCloneError so Celery stops
         # retrying it. A missing repo, a missing branch and absent
         # credentials are all facts about the world that three more attempts
-        # will not change -- see _classify_clone_stderr for why this matters
+        # will not change; see _classify_clone_stderr for why this matters
         # beyond tidiness.
         permanent = _classify_clone_stderr(exc.stderr or "")
         if permanent:
@@ -232,14 +232,14 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
     return dest
 
 
-# Substrings git prints for causes that are permanent -- retrying cannot fix
-# them -- paired with the message an operator can actually act on.
+# Substrings git prints for causes that are permanent (retrying cannot fix
+# them) paired with the message an operator can actually act on.
 #
 # Why this exists: clone_error_message used to reduce every failure to
 # "git clone failed (exit code 128)". That was safe (it never echoes argv or
 # a token) but it threw away the diagnosis along with the danger. A real
 # deployment sat in a retry loop against two private repos with no
-# credentials configured, and the only clue in the logs was the exit code --
+# credentials configured, and the only clue in the logs was the exit code;
 # identical to what a deleted repo or a typo'd branch produces. Matching on
 # git's own wording restores the "what do I do about it" without ever
 # echoing the raw stderr, argv or paths back to a caller.
@@ -272,7 +272,7 @@ def _classify_clone_stderr(stderr: str) -> str | None:
     cause looks transient (network blip, remote hangup) and a retry is
     worth attempting.
 
-    Returns only messages composed here -- never the raw stderr -- so a path,
+    Returns only messages composed here (never the raw stderr) so a path,
     an argv or a redacted-but-present token can't reach a log or an API
     response through this route.
     """
@@ -289,7 +289,7 @@ def clone_error_message(exc: Exception) -> str:
     Call sites that catch a broad `except Exception` around clone_repo (e.g.
     app/api/scans.py, app/core/pr_guardrail_executor.py) historically did
     `str(exc)` straight into an HTTP response / DB row. For a
-    CalledProcessError that used to mean the full argv -- including the
+    CalledProcessError that used to mean the full argv, including the
     embedded GitHub token, before this fix. The token can no longer reach
     argv (see clone_repo), but this still avoids echoing raw subprocess
     argv/paths back to callers as a matter of course.
@@ -299,7 +299,7 @@ def clone_error_message(exc: Exception) -> str:
     if isinstance(exc, subprocess.CalledProcessError):
         # Prefer a cause the reader can act on. _classify_clone_stderr only
         # ever returns strings composed in this module, so this stays free of
-        # raw argv/paths/tokens -- the exit code alone was safe but useless.
+        # raw argv/paths/tokens; the exit code alone was safe but useless.
         classified = _classify_clone_stderr(exc.stderr or "")
         if classified:
             return classified
@@ -310,12 +310,12 @@ def clone_error_message(exc: Exception) -> str:
 def normalize_file_path(file_path: str, repo_path: Path) -> str:
     """Strip the scan-scoped clone directory prefix so file_path is relative
     to the repo root, e.g. "vulnerability/idor/idor.go" not
-    "/tmp/rikugan-scans/govwa-<scan-id>/vulnerability/idor/idor.go".
+    "/tmp/toleman-scans/govwa-<scan-id>/vulnerability/idor/idor.go".
 
     This matters beyond cosmetics: compute_dedup_hash includes file_path, and
     since clone_repo (above) gives every scan its own unique directory name
     for isolation, an un-normalized absolute path made the dedup hash change
-    on every single scan -- silently defeating dedup entirely (every rescan
+    on every single scan; silently defeating dedup entirely (every rescan
     created a new Finding instead of updating last_seen on the existing one).
     Call this on every parsed finding's file_path before hashing/persisting.
     """
@@ -325,7 +325,7 @@ def normalize_file_path(file_path: str, repo_path: Path) -> str:
         return str(Path(file_path).relative_to(repo_path))
     except ValueError:
         # Already relative (some tools report paths relative to the scan
-        # root they were invoked against) -- nothing to strip.
+        # root they were invoked against); nothing to strip.
         return file_path
 
 
@@ -333,7 +333,7 @@ def _validate_scan_url(url: str) -> None:
     """Defense in depth for run_nuclei below: the caller (app.core.api_scan_targets)
     already builds these URLs from a Target's own operator-configured
     api_base_url plus its own persisted ApiEndpoint routes, and already
-    confirms every URL's host matches api_base_url's host -- so nothing
+    confirms every URL's host matches api_base_url's host; so nothing
     here should ever actually reject a well-formed call. This exists purely
     so a future caller can't accidentally hand this function (and therefore
     a real subprocess invocation against the network) something that isn't
@@ -350,14 +350,14 @@ def run_nuclei(urls: list[str]) -> list[dict]:
     """Run nuclei against an already-validated list of live URLs and return
     parsed JSONL results (one dict per finding).
 
-    Safety posture (issue #72 -- this is ACTIVE scanning against real
+    Safety posture (issue #72: this is ACTIVE scanning against real
     network endpoints, unlike every other scanner in this module which only
     reads a git checkout):
       - Every URL is re-validated here (see _validate_scan_url) even though
         the caller already built/validated them, so this function is safe
         to call directly.
       - URLs are written to a temp file and passed via `-l <file>`, never
-        joined into a shell string or passed as a single argv blob --
+        joined into a shell string or passed as a single argv blob,
         avoids any injection surface from a route/host containing shell
         metacharacters.
       - `-etags` excludes disruptive template categories by default
@@ -368,7 +368,7 @@ def run_nuclei(urls: list[str]) -> list[dict]:
         killed via subprocess.run(timeout=...) if the whole run hangs
         rather than blocking a Celery worker indefinitely.
       - `-no-interactsh` disables nuclei's out-of-band interaction server
-        (an external network dependency this platform doesn't control) --
+        (an external network dependency this platform doesn't control);
         keeps scanning self-contained to what this process directly
         observes.
     """
@@ -418,12 +418,12 @@ def _run_noseyparker(cmd: list[str], cwd: str | None) -> list:
     """Scan into a temp datastore, then report out of it (#255).
 
     Unlike every other tool here, noseyparker's scan step writes no findings
-    to stdout -- the datastore is the output, and `report` renders it. Both
+    to stdout; the datastore is the output, and `report` renders it. Both
     steps' exit codes are checked: a scan that died leaves an empty datastore,
     and an empty datastore renders as `[]`, which is the false all-clear #253
     was about arriving through a new door.
     """
-    datastore = Path(tempfile.mkdtemp(prefix="rikugan-np-")) / "datastore"
+    datastore = Path(tempfile.mkdtemp(prefix="toleman-np-")) / "datastore"
     scan_cmd = [str(datastore) if c == NOSEYPARKER_DATASTORE_PLACEHOLDER else c for c in cmd]
     try:
         proc = subprocess.run(scan_cmd, capture_output=True, text=True, cwd=cwd)
@@ -460,7 +460,7 @@ def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
     status, so any nonzero exit here is a genuine execution failure and
     becomes a ToolExecutionError rather than an empty, clean-looking result.
     """
-    report_path = Path(tempfile.mkdtemp(prefix="rikugan-gitleaks-")) / "report.json"
+    report_path = Path(tempfile.mkdtemp(prefix="toleman-gitleaks-")) / "report.json"
     resolved = [str(report_path) if c == GITLEAKS_REPORT_PLACEHOLDER else c for c in cmd]
     try:
         proc = subprocess.run(resolved, capture_output=True, text=True, cwd=cwd)
@@ -469,7 +469,7 @@ def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
             tail = detail[-1] if detail else "no stderr"
             raise ToolExecutionError(f"gitleaks exited {proc.returncode}: {tail[:300]}")
         if not report_path.exists():
-            # Exited 0 but wrote nothing. Do not assume "clean" -- gitleaks
+            # Exited 0 but wrote nothing. Do not assume "clean"; gitleaks
             # writes a report (even `[]`) on every successful run.
             raise ToolExecutionError("gitleaks exited 0 but produced no report file")
         text = report_path.read_text().strip()
@@ -494,7 +494,7 @@ def _run_modelscan(cmd: list[str]) -> dict:
         3  no supported files provided
         4  invalid CLI options
     Only 2 and 4 are real failures. Treating 1 as an error would discard
-    exactly the findings this tool exists to produce -- the same hazard
+    exactly the findings this tool exists to produce; the same hazard
     checkov/tfsec avoid above with --soft-fail, which modelscan has no
     equivalent of.
     """
@@ -509,7 +509,7 @@ def _run_modelscan(cmd: list[str]) -> dict:
         if not report_path.exists():
             # Exit 3 (nothing supported to scan) legitimately writes no
             # report. That is a clean, successful scan of a repo with no
-            # model files -- not an error, and not a silent skip.
+            # model files; not an error, and not a silent skip.
             return {"summary": {"total_issues": 0}, "issues": [], "errors": []}
 
         try:
@@ -529,7 +529,7 @@ def _run_modelscan(cmd: list[str]) -> dict:
 #                merge the reports
 #   MANIFEST     not file-oriented at all. Trivy resolves dependency
 #                manifests, so "only these files changed" is meaningless to
-#                it -- the honest scoping question is *whether a manifest
+#                it; the honest scoping question is *whether a manifest
 #                changed*, answered by manifest_changed() below, not by
 #                handing it a file list.
 #   PACKAGE      gosec walks Go packages from cwd, so changed .go files map
@@ -594,7 +594,7 @@ def manifest_changed(paths: list[str]) -> bool:
 
 def paths_for_tool(tool: str, paths: list[str]) -> list[str]:
     """Narrow a changed-file list to the files this tool can say something
-    about. An empty result means "nothing here for this tool" -- the caller
+    about. An empty result means "nothing here for this tool"; the caller
     must record that as *skipped*, never as a clean run."""
     exts = TOOL_EXTENSIONS.get(tool)
     if exts is None:
@@ -605,8 +605,8 @@ def paths_for_tool(tool: str, paths: list[str]) -> list[str]:
 def go_packages_for(paths: list[str]) -> list[str]:
     """Changed .go files -> the package directories gosec should walk.
 
-    A file at the repo root maps to "." (that package only), never "./..."
-    -- the recursive form would walk the entire module while the scan still
+    A file at the repo root maps to "." (that package only), never "./...";
+    the recursive form would walk the entire module while the scan still
     reported itself as diff-scoped, which is the one outcome this feature
     must never produce.
     """
@@ -670,7 +670,7 @@ def _run_tool_scoped(tool: str, repo_path: Path, paths: list[str]) -> dict | lis
                 f"{tool} scans dependency manifests; no manifest or lockfile changed in this diff"
             )
         # A manifest did change, so resolution may have moved anywhere in the
-        # tree -- scan the whole checkout. Scoping trivy to the manifest file
+        # tree; scan the whole checkout. Scoping trivy to the manifest file
         # alone would report only direct pins, which is precisely the blind
         # spot #239 is about.
         return _execute(tool, TOOL_COMMANDS[tool](str(repo_path)), repo_path)
@@ -720,8 +720,8 @@ def _strip_ansi(text: str) -> str:
 # (#253) Exit codes that mean "I ran". Anything else means the tool broke,
 # and a broken tool must never be reported as a clean result.
 #
-# Most entries are {0} on purpose. The flags already in TOOL_COMMANDS --
-# gitleaks' `--exit-code 0`, checkov's and tfsec's `--soft-fail` -- exist
+# Most entries are {0} on purpose. The flags already in TOOL_COMMANDS (
+# gitleaks' `--exit-code 0`, checkov's and tfsec's `--soft-fail`) exist
 # precisely so *findings* don't produce a nonzero exit. That makes nonzero
 # mean "I broke" and nothing else, which is the signal this table preserves.
 #
@@ -757,13 +757,13 @@ def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
     # (#253) Check this BEFORE falling through to the empty-stdout defaults
     # below. A tool that dies writes nothing to stdout, and "nothing on
     # stdout" was previously indistinguishable from "scanned everything,
-    # found nothing" -- so a crashed scanner reported a clean pass. Observed
+    # found nothing"; so a crashed scanner reported a clean pass. Observed
     # for real: gitleaks exiting 1 with
     #   FTL Report path is not writable: /dev/stdout
     # on a file containing a live-format AWS key, surfacing as [].
     #
     # ToolExecutionError already routes to tools_failed, which already
-    # renders as "not fully scanned" -- the signal just never reached it.
+    # renders as "not fully scanned"; the signal just never reached it.
     allowed = TOOL_SUCCESS_EXIT_CODES.get(tool)
     if allowed is not None and proc.returncode not in allowed:
         # stderr's tail, not the whole stream: enough to diagnose, bounded so
@@ -774,7 +774,7 @@ def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
 
     # checkov's JSON shape depends on how many IaC frameworks it found files
     # for in the target repo: a dict for a single framework, a list of
-    # per-framework dicts when it spans more than one -- parsers.parse_checkov
+    # per-framework dicts when it spans more than one; parsers.parse_checkov
     # normalizes both, so its empty/error default here is a dict (the more
     # common single-framework case) rather than picking one shape and being
     # wrong half the time.

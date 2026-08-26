@@ -16,3 +16,4 @@ CLAUDE.md
 .claude/worktrees/
 code-review-report.md
 market-research-report.md
+deploy.sh

@@ -6,7 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 // Short relative-time label (e.g. "2h ago", "Yesterday", "5 days ago") for
-// compact list rows -- used by the AI Analysis "recent analyses" list
+// compact list rows; used by the AI Analysis "recent analyses" list
 // (issue #122). Deliberately coarse (no seconds/minutes granularity below
 // 1h) since these are historical markers, not a live countdown.
 export function timeAgo(isoTimestamp: string): string {
@@ -26,15 +26,15 @@ export function timeAgo(isoTimestamp: string): string {
 }
 
 // (#275) Every dynamic value that reaches an <a href> in this app has been
-// individually safe so far -- a hardcoded https:// prefix, a server-built
-// URL template, our own TOOL_REGISTRY -- but each of those is a constraint
+// individually safe so far (a hardcoded https:// prefix, a server-built
+// URL template, our own TOOL_REGISTRY) but each of those is a constraint
 // that lives at the call site, invisible to the next person who copies the
 // pattern. Snyk Code flagged two of these as DOM-based XSS; both were false
 // positives on inspection, but the underlying shape (an interpolated value
 // reaching href) is real, and "safe today because of a local invariant" is
 // exactly the kind of thing that stops being true silently.
 //
-// Rejects anything that isn't http(s) -- javascript:, data:, vbscript:, and
+// Rejects anything that isn't http(s), javascript:, data:, vbscript:, and
 // a bare scheme-relative or malformed value all return undefined rather
 // than a live link. undefined (not "#") so a caller's existing
 // `{url && <a href={safeHref(url)}>}` pattern degrades to "no link

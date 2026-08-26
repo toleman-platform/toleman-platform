@@ -1,4 +1,4 @@
-"""Tests for findings GH-04 and GH-06 -- two places PR Guardrail reported
+"""Tests for findings GH-04 and GH-06; two places PR Guardrail reported
 something it had not actually established.
 
 GH-04: `set_commit_status()` was documented "best-effort: never raises" and
@@ -8,7 +8,7 @@ transport carrying that decision to GitHub was fail-open and silent. A broken
 installation token means PRs quietly stop being marked and nobody is told.
 
 GH-06: the new-endpoint diff compared against previously-*known* endpoints,
-so on a target's first PR scan -- when nothing is known -- the entire
+so on a target's first PR scan (when nothing is known) the entire
 repository looked new. An evaluator's PR touching one file was reported as
 adding four endpoints across files it never touched. First-run noise, in the
 most visible artefact the tool produces.
@@ -179,7 +179,7 @@ def test_first_scan_with_no_baseline_reports_no_new_endpoints(engine, target_id,
 
 
 def test_a_genuinely_new_endpoint_is_still_reported(engine, target_id, monkeypatch):
-    """The fix must not silence the feature -- once a baseline exists, a real
+    """The fix must not silence the feature; once a baseline exists, a real
     net-new endpoint still surfaces."""
     with Session(engine) as session:
         target = session.get(Target, target_id)
@@ -231,7 +231,7 @@ def test_a_fully_known_repo_reports_nothing_new(engine, target_id, monkeypatch):
 
 def test_another_targets_baseline_does_not_count_as_this_ones(engine, target_id, monkeypatch):
     """A baseline belonging to a different target must not make this target
-    look like it has one -- that would reintroduce the bug in reverse,
+    look like it has one; that would reintroduce the bug in reverse,
     silently suppressing real endpoints on a genuine first scan."""
     with Session(engine) as session:
         other = Target(workspace_id=1, name="other", repo_url="https://github.com/acme/other")

@@ -16,7 +16,7 @@ import { Card, CardContent } from "@/components/ui/card";
  *
  * `unknown` is a first-class variant, not an afterthought. Across this
  * codebase the distinction between "we measured zero" and "we have not
- * measured" keeps mattering -- an unscanned repository is not a clean one
+ * measured" keeps mattering; an unscanned repository is not a clean one
  * (#174), an ungenerated AIBOM is not an absence of models (#190). A stat
  * card that renders a confident `0` for missing data actively misinforms, so
  * the unknown case is built in and styled differently.

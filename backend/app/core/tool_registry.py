@@ -1,14 +1,14 @@
-"""Static registry of every OSS security tool Rikugan knows about (issue #75).
+"""Static registry of every OSS security tool Toleman knows about (issue #75).
 
 This is deliberately a hardcoded Python list, not a DB table or a
-YAML/JSON file loaded at runtime -- the set of tools Rikugan can actually run
+YAML/JSON file loaded at runtime; the set of tools Toleman can actually run
 is fixed by what `app.scanners.runner.TOOL_COMMANDS` and
 `app.scanners.parsers.PARSER_MAP` know how to invoke/parse, so the registry
 lives next to that code and stays in sync with it by construction (each
 entry's `integrated` flag is computed from whether its `runner_key` is a
 real TOOL_COMMANDS entry, not hand-maintained).
 
-On installation: `install_cmd` is display-only text, and deliberately so --
+On installation: `install_cmd` is display-only text, and deliberately so;
 it is a human-readable string, and handing a human-readable string to a
 shell is how command injection happens.
 
@@ -17,13 +17,13 @@ One-click install (#216) is therefore built on `pip_package` instead, not on
 
   * The API accepts a **registry key**, never a package name. `POST
     /api/tools/{tool}/install` looks `tool` up in this table and refuses
-    anything not found, so a caller cannot name a package to install --
+    anything not found, so a caller cannot name a package to install;
     only choose from this file. The set of installable things is fixed at
     deploy time by source code, not by request payloads.
   * The resulting command is assembled as an argv list from a constant
     (`[sys.executable, "-m", "pip", "install", ...]`) with the package
     appended as a single element. No shell, no string interpolation, no
-    `shell=True` -- same rule as `runner.clone_repo`'s allowlisted-host
+    `shell=True`; same rule as `runner.clone_repo`'s allowlisted-host
     validation and its `--` before positional args.
   * `pip_package` is absent for tools that need brew/go/docker. Those are
     not installable from the running container at all, and the UI says so
@@ -38,7 +38,7 @@ from app.scanners.runner import TOOL_COMMANDS
 # Tools int fully wired end-to-end (TOOL_COMMANDS -> parsers.PARSER_MAP ->
 # ingestion) get category/usage metadata here. `tool` is the same string
 # used as Scan.tool / Finding.tool / TOOL_COMMANDS key throughout the
-# backend -- keep them identical or every join by tool name breaks.
+# backend; keep them identical or every join by tool name breaks.
 TOOL_REGISTRY = [
     {
         "tool": "semgrep",
@@ -65,7 +65,7 @@ TOOL_REGISTRY = [
         # (#255) Second secrets scanner, benchmarked against gitleaks,
         # trufflehog and detect-secrets on a 14-secret ground-truth corpus.
         # gitleaks stays the default on precision (100% precision, zero noise
-        # on this repo); noseyparker is the recall option -- 12/12 vs 11/12,
+        # on this repo); noseyparker is the recall option, 12/12 vs 11/12,
         # and the only one of the four with a rule for credentials embedded
         # in a Postgres connection URI, which is a real gap in what we ship.
         #
@@ -76,7 +76,7 @@ TOOL_REGISTRY = [
         "display_name": "Nosey Parker",
         "category": "Secrets",
         "languages": ["language-agnostic"],
-        "description": "High-recall secrets detection, including credentials embedded in connection URIs. Higher noise than Gitleaks -- pair with FP rules.",
+        "description": "High-recall secrets detection, including credentials embedded in connection URIs. Higher noise than Gitleaks, pair with FP rules.",
         "install_cmd": "brew install noseyparker",
         "docs_url": "https://github.com/praetorian-inc/noseyparker#usage",
         "version_cmd": ["noseyparker", "--version"],
@@ -143,7 +143,7 @@ TOOL_REGISTRY = [
         "display_name": "ModelScan",
         "category": "AI/ML",
         "languages": ["python (pickle, joblib, dill)", "pytorch", "tensorflow", "keras"],
-        "description": "Scans serialized model files for unsafe deserialization. Loading a pickled model executes code, so a hostile .pkl/.pt is RCE at load time with no exploit chain -- ordinary SAST never looks at binary weights. Runs only against repos detected as AI/ML (#185).",
+        "description": "Scans serialized model files for unsafe deserialization. Loading a pickled model executes code, so a hostile .pkl/.pt is RCE at load time with no exploit chain, ordinary SAST never looks at binary weights. Runs only against repos detected as AI/ML (#185).",
         "install_cmd": "pip install 'modelscan[tensorflow,h5py]'",
         "docs_url": "https://github.com/protectai/modelscan#getting-started",
         "version_cmd": ["modelscan", "-v"],
@@ -154,7 +154,7 @@ TOOL_REGISTRY = [
         "display_name": "Semgrep (LLM rules)",
         "category": "AI/ML",
         "languages": ["python"],
-        "description": "Rikugan's curated OWASP LLM Top 10 ruleset: LLM output reaching eval/shell/SQL sinks, unsafe model deserialization, and unpinned Hugging Face model references. Runs the Semgrep engine against rules shipped in-repo, not a hosted registry, so results are reproducible offline. Only runs on repos detected as AI/ML (#185).",
+        "description": "Toleman's curated OWASP LLM Top 10 ruleset: LLM output reaching eval/shell/SQL sinks, unsafe model deserialization, and unpinned Hugging Face model references. Runs the Semgrep engine against rules shipped in-repo, not a hosted registry, so results are reproducible offline. Only runs on repos detected as AI/ML (#185).",
         "install_cmd": "pip install semgrep",
         "docs_url": "https://semgrep.dev/docs/writing-rules/rule-syntax/",
         "version_cmd": ["semgrep", "--version"],
@@ -176,7 +176,7 @@ TOOL_REGISTRY = [
         "display_name": "MEDUSA",
         "category": "AI/ML",
         "languages": ["python", "javascript", "typescript", "go", "rust", "php", "many more"],
-        "description": "AI-first SAST with rules for agentic AI, MCP servers and RAG pipelines (OWASP LLM Top 10), plus scanning of agent config files. NOTE: AGPL-3.0-or-later -- the only copyleft-with-network-clause tool in this registry, so bundling it is a deliberate licensing decision, not a default. Young project (created 2025-11) and effectively single-maintainer; evaluate before running it against user code.",
+        "description": "AI-first SAST with rules for agentic AI, MCP servers and RAG pipelines (OWASP LLM Top 10), plus scanning of agent config files. NOTE: AGPL-3.0-or-later, the only copyleft-with-network-clause tool in this registry, so bundling it is a deliberate licensing decision, not a default. Young project (created 2025-11) and effectively single-maintainer; evaluate before running it against user code.",
         "install_cmd": "pip install medusa-security",
         "docs_url": "https://github.com/Pantheon-Security/medusa#readme",
         "version_cmd": ["medusa", "--version"],
@@ -187,7 +187,7 @@ TOOL_REGISTRY = [
         "display_name": "Snyk Agent Scan",
         "category": "AI/ML",
         "languages": ["language-agnostic (MCP server + agent skill manifests)"],
-        "description": "Scans MCP servers and agent skills for prompt injection, tool poisoning and rug pulls. Formerly Invariant Labs' mcp-scan; the `mcp-scan` PyPI package is deprecated and redirects here. Directly relevant to Rikugan's own MCP server (#108).",
+        "description": "Scans MCP servers and agent skills for prompt injection, tool poisoning and rug pulls. Formerly Invariant Labs' mcp-scan; the `mcp-scan` PyPI package is deprecated and redirects here. Directly relevant to Toleman's own MCP server (#108).",
         "install_cmd": "pip install snyk-agent-scan",
         "docs_url": "https://github.com/snyk/agent-scan#readme",
         "version_cmd": ["snyk-agent-scan", "--version"],
@@ -198,7 +198,7 @@ TOOL_REGISTRY = [
         "display_name": "Cisco AIBOM",
         "category": "AI/ML",
         "languages": ["python", "language-agnostic (source-code scan)"],
-        "description": "Generates an AI Bill of Materials from source -- models, datasets and lineage, the parts a conventional SBOM is blind to. Complements the CycloneDX SBOM Trivy already produces rather than replacing it.",
+        "description": "Generates an AI Bill of Materials from source, models, datasets and lineage, the parts a conventional SBOM is blind to. Complements the CycloneDX SBOM Trivy already produces rather than replacing it.",
         "install_cmd": "pip install cisco-aibom",
         "docs_url": "https://github.com/cisco-ai-defense/aibom#readme",
         "version_cmd": ["cisco-aibom", "--version"],
@@ -209,19 +209,19 @@ TOOL_REGISTRY = [
         "display_name": "KICS",
         "category": "IaC",
         "languages": ["terraform", "kubernetes", "cloudformation", "dockerfile", "ansible", "many more"],
-        "description": "Broad IaC misconfiguration scanner (Checkmarx). Registered for visibility/health-check; native scan execution isn't wired up yet -- track as a follow-up once there's real parser coverage for its JSON output.",
+        "description": "Broad IaC misconfiguration scanner (Checkmarx). Registered for visibility/health-check; native scan execution isn't wired up yet, track as a follow-up once there's real parser coverage for its JSON output.",
         "install_cmd": "docker pull checkmarx/kics",
         "docs_url": "https://docs.kics.io/latest/getting-started/",
         "version_cmd": ["kics", "version"],
     },
-    # (#232) The mirror image of kics above: nuclei genuinely executes --
-    # Active API Scanning (#72) has run it unconditionally since it shipped
-    # -- but through app.scanners.runner.run_nuclei() and
+    # (#232) The mirror image of kics above: nuclei genuinely executes;
+    # Active API Scanning (#72) has run it unconditionally since it shipped,
+    # but through app.scanners.runner.run_nuclei() and
     # app.scanners.parsers.parse_nuclei(), a dedicated path outside
     # TOOL_COMMANDS/PARSER_MAP, because its invocation takes a list of live
     # discovered URLs rather than a repo-path checkout like every other
     # entry here. That means it can never appear in runnable_tools() or a
-    # tools_for_surface() result no matter what -- see
+    # tools_for_surface() result no matter what; see
     # app.core.tool_usage.is_nuclei_enabled_for_api_scan, the dedicated
     # single-tool check api_scan.py actually calls, and
     # default_usage_for's docstring for why api_scan defaults True here
@@ -239,7 +239,7 @@ TOOL_REGISTRY = [
         "display_name": "Nuclei",
         "category": "API/DAST",
         "languages": ["language-agnostic (live HTTP endpoints)"],
-        "description": "Active scanning against already-discovered API endpoints (#72) -- misconfigurations, default logins, known-CVE templates. The only tool this platform runs against a live target rather than a repo checkout. Controls the API scan toggle below; has no effect on the other three surfaces.",
+        "description": "Active scanning against already-discovered API endpoints (#72), misconfigurations, default logins, known-CVE templates. The only tool this platform runs against a live target rather than a repo checkout. Controls the API scan toggle below; has no effect on the other three surfaces.",
         "install_cmd": "brew install nuclei",
         "docs_url": "https://docs.projectdiscovery.io/tools/nuclei/install",
         "version_cmd": ["nuclei", "-version"],
@@ -250,7 +250,7 @@ TOOL_REGISTRY = [
 # (issue #75's "per-tool usage assignment"). Kept as a plain tuple rather
 # than an Enum so app/api/tools.py's WorkspaceToolConfig payload validation
 # and the frontend's toggle list share one literal source without an extra
-# import surface -- WorkspaceToolConfig itself declares the four columns
+# import surface, WorkspaceToolConfig itself declares the four columns
 # explicitly (see models.py), this tuple is only for validating which
 # field names a PUT may target.
 USAGE_SURFACES = ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail")
@@ -262,7 +262,7 @@ USAGE_SURFACES = ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail")
 # This is a contract, not documentation: `backend/scripts/verify_tools.py`
 # runs each of these tools' `version_cmd` *inside the built image* in CI and
 # fails if one is missing. Without that, a Dockerfile edit or a dependency
-# resolving differently can quietly ship an image whose scanner is gone --
+# resolving differently can quietly ship an image whose scanner is gone;
 # which is not a loud failure at build time, it is a scan that returns zero
 # findings at runtime and reads exactly like a clean repo.
 #
@@ -278,18 +278,18 @@ def default_usage_for(tool: str) -> dict:
     WorkspaceToolConfig row (issue #75). Mirrors WorkspaceToolConfig's own
     column defaults for an *integrated* tool (on-demand/CI/PR guardrail on)
     but forces every surface off for a registry-only tool like kics that has
-    no real TOOL_COMMANDS entry -- there is nothing to "run" for it yet, so
+    no real TOOL_COMMANDS entry; there is nothing to "run" for it yet, so
     defaulting it to enabled would be a silent no-op that misleads an admin
     into thinking it's active.
 
     (#232) api_scan defaults False for every tool except nuclei, which is
     the mirror-image special case: nuclei is genuinely not a TOOL_COMMANDS
     entry (its invocation takes a URL list from Active API Scanning's own
-    discovered-endpoints flow, app.core.api_scan_targets -- nothing like the
+    discovered-endpoints flow, app.core.api_scan_targets; nothing like the
     repo-path shape every other tool shares), so `integrated` above is False
     for it and it can never appear in tools_for_surface's runnable_tools()
     intersection. But active API scanning has run unconditionally since #72
-    shipped, gated only on api_base_url being configured -- so defaulting
+    shipped, gated only on api_base_url being configured; so defaulting
     api_scan off for nuclei the day this ships would silently turn off a
     feature every existing user already has on. See
     app.core.tool_usage.is_nuclei_enabled_for_api_scan, which resolves this
@@ -307,8 +307,8 @@ def default_usage_for(tool: str) -> dict:
 
 
 def registry_with_integration_status() -> list[dict]:
-    """Registry entries plus a computed `integrated` flag -- True only when
-    the tool has a real TOOL_COMMANDS entry (i.e. Rikugan can actually execute
+    """Registry entries plus a computed `integrated` flag; True only when
+    the tool has a real TOOL_COMMANDS entry (i.e. Toleman can actually execute
     a scan for it today), False for registry-only/health-check-only tools
     like kics above."""
     out = []
@@ -320,7 +320,7 @@ def registry_with_integration_status() -> list[dict]:
                 # (docs-drift item 6) Whether the shipped image already
                 # carries this tool. An external review pointed out the
                 # marketplace showed `brew install gitleaks` to an admin
-                # operating a Debian container -- where brew does not exist,
+                # operating a Debian container; where brew does not exist,
                 # and where gitleaks was already installed anyway. For a
                 # bundled tool the install command is not just wrong for the
                 # platform, it is answering a question that does not apply.

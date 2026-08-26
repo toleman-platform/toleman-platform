@@ -3,7 +3,7 @@ a letter grade and a per-component breakdown) for org/group/target scope, so
 a CISO/CTO gets a fast read on posture without digging through the Findings
 table.
 
-Every input is queried live from real data -- no fabricated/mocked inputs
+Every input is queried live from real data; no fabricated/mocked inputs
 ("no mock data" applies to what ships, not just to how it's verified):
 
   - findings_score  (weight FINDINGS_WEIGHT): open (Open/Reopened),
@@ -13,15 +13,15 @@ Every input is queried live from real data -- no fabricated/mocked inputs
     See `_findings_score` for the exact curve/constant.
   - sla_score       (weight SLA_WEIGHT): reuses
     app.core.sla.compute_sla_status per open/reopened default-branch finding
-    (#70's real resolution + violation logic, not recomputed) -- % of
+    (#70's real resolution + violation logic, not recomputed); % of
     SLA-tracked findings NOT in violation. If zero in-scope findings have an
     applicable SLA rule, this is treated as 100 (neutral "no evidence of SLA
     problems"), matching GET /api/dashboard/sla-compliance's own "no
-    fabricated number" philosophy -- an org that hasn't configured SLA rules
+    fabricated number" philosophy; an org that hasn't configured SLA rules
     yet shouldn't be scored as failing SLA.
   - coverage_score  (weight COVERAGE_WEIGHT): % of in-scope targets with at
     least one Scan row (any tool/branch/status) started within the last
-    COVERAGE_WINDOW_DAYS days -- "has this repo been scanned recently at
+    COVERAGE_WINDOW_DAYS days; "has this repo been scanned recently at
     all."
   - fp_rate_score   (weight FP_WEIGHT): 100 * (1 - false_positive_rate),
     where false_positive_rate = (in-scope findings currently in
@@ -29,23 +29,23 @@ Every input is queried live from real data -- no fabricated/mocked inputs
     branch/state). All-time, no window: `Finding.state` is a current
     snapshot column, not an event log, so "ever marked FP" is best
     approximated by current state (a finding briefly marked FP then
-    reclassified no longer counts -- this can undercount historical FP
+    reclassified no longer counts; this can undercount historical FP
     noise slightly, but it never fabricates a number no real row supports).
     Zero findings ever seen -> 100 (no evidence of FP noise). Deliberately
-    NOT restricted to the default branch -- this is meant to reflect
+    NOT restricted to the default branch; this is meant to reflect
     scanner/rule noisiness broadly, not branch-scoped posture.
   - trend_score     (weight TREND_WEIGHT): compares the open-finding
     weighted-severity total *right now* against the same total
     reconstructed as of TREND_WINDOW_DAYS ago, using the real
     FindingStateLog audit trail to determine whether each finding was open
-    at that past timestamp -- real week-over-week, not a guess. Stable or
+    at that past timestamp; real week-over-week, not a guess. Stable or
     improving -> 100; worsening -> penalized proportionally to the percent
     increase, capped at 0.
 
 Combined via the *_WEIGHT constants (sum to 100) into a 0-100 composite,
 then a letter grade via GRADE_THRESHOLDS (documented below).
 """
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -55,7 +55,7 @@ from app.core.time import utcnow
 from app.models.models import Finding, FindingState, FindingStateLog, Scan, SEVERITY_WEIGHT, Target, TargetGroup
 
 # ---------------------------------------------------------------------------
-# Tunable constants -- documented here, not buried in the formula.
+# Tunable constants, documented here, not buried in the formula.
 # ---------------------------------------------------------------------------
 
 # How many "average weighted-severity points per in-scope target" it takes
@@ -79,7 +79,7 @@ FP_WEIGHT = 10
 TREND_WEIGHT = 15
 assert FINDINGS_WEIGHT + SLA_WEIGHT + COVERAGE_WEIGHT + FP_WEIGHT + TREND_WEIGHT == 100
 
-# Letter grade thresholds, highest first -- first threshold the composite
+# Letter grade thresholds, highest first; first threshold the composite
 # score meets or exceeds wins.
 GRADE_THRESHOLDS: list[tuple[int, str]] = [(90, "A"), (80, "B"), (70, "C"), (60, "D"), (0, "F")]
 
@@ -135,7 +135,7 @@ def _sla_score(session: Session, open_default_branch: list[Finding]) -> dict:
         "with_sla": with_sla,
         "in_violation": in_violation,
         "compliant": with_sla - in_violation,
-        "note": "no SLA-tracked findings in scope -- treated as neutral 100" if with_sla == 0 else None,
+        "note": "no SLA-tracked findings in scope, treated as neutral 100" if with_sla == 0 else None,
     }
 
 
@@ -216,7 +216,7 @@ def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[in
         return {"score": 100.0, "weight": TREND_WEIGHT, "direction": "stable", "current_weighted_sum": 0.0, "prior_weighted_sum": 0.0, "window_days": TREND_WINDOW_DAYS}
 
     # All findings that could plausibly have been open within the trend
-    # window (created before now -- i.e. all of them; first_seen is always
+    # window (created before now, i.e. all of them; first_seen is always
     # <= now) restricted to the default branch, same posture convention as
     # the findings component.
     findings = _default_branch_findings(session, target_ids, targets_by_id)
@@ -256,7 +256,7 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     of target ids (org-wide/group/single-target scoping + workspace access
     checks happen at the API layer, same separation as the rest of
     app.core). `target_ids` may be empty (e.g. a group with no targets, or a
-    caller with no accessible workspaces) -- every component degrades to a
+    caller with no accessible workspaces); every component degrades to a
     real, documented neutral/zero value rather than raising or fabricating
     a number."""
     targets_by_id: dict[int, Target] = {}
@@ -298,13 +298,13 @@ def resolve_target_ids_for_scope(
 ) -> list[int]:
     """Resolves the org/group/target scoping shared by
     GET /api/dashboard/security-score and the `security_score` dashboard
-    widget resolver (app.core.widgets) -- same mutually-exclusive
+    widget resolver (app.core.widgets), same mutually-exclusive
     target_id/group_id filter convention as #61's findings.py group_id
     filtering, layered on top of the caller's accessible_workspace_ids
     (issue #57). Raises HTTPException(404) for a target_id the caller can't
     access; an inaccessible/empty group_id resolves to an empty list rather
     than 404 (mirrors findings.py's group_id handling, which doesn't
-    validate group ownership either -- the workspace filter alone already
+    validate group ownership either; the workspace filter alone already
     excludes it)."""
     if target_id is not None and group_id is not None:
         raise HTTPException(400, "target_id and group_id are mutually exclusive")

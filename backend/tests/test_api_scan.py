@@ -4,7 +4,7 @@ already-discovered endpoints.
 Same layering as tests/test_celery_offload.py (issue #59's dispatch tests):
 
   1. Pure-function tests for app.core.api_scan_targets.build_scan_urls (the
-     actual safety boundary -- host/route validation) and
+     actual safety boundary, host/route validation) and
      app.scanners.parsers.parse_nuclei, no DB/subprocess involved.
   2. Dispatch tests: mock run_api_scan.delay() to prove POST
      /api/api-scan/{target_id} validates api_base_url/endpoints and creates
@@ -113,7 +113,7 @@ def test_build_scan_urls_joins_route_onto_base(engine):
 def test_build_scan_urls_rejects_route_that_pivots_host(engine):
     """A route containing '://' or starting with '//' must never be allowed
     to redirect the scan to a different host than the target's configured
-    api_base_url -- this is the core SSRF-adjacent safety boundary for
+    api_base_url; this is the core SSRF-adjacent safety boundary for
     active scanning (see api_scan_targets.py docstring)."""
     target_id = _make_target(engine, api_base_url="https://api.example.com")
     _add_endpoint(engine, target_id, "//evil.example.com/steal")
@@ -139,7 +139,7 @@ def test_build_scan_urls_filters_to_selected_endpoint_ids(engine):
 
 def test_build_scan_urls_ignores_endpoint_ids_from_other_targets(engine):
     """An id belonging to a different target must never leak its route into
-    this target's scan -- build_scan_urls only ever queries this target's
+    this target's scan, build_scan_urls only ever queries this target's
     own ApiEndpoint rows, so a foreign id is just absent from the result,
     never resolved cross-target."""
     target_id = _make_target(engine)
@@ -214,7 +214,7 @@ def _login(client, engine, role=UserRole.DEVELOPER):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -266,7 +266,7 @@ def test_post_api_scan_dispatches_task_and_creates_scan_row(client, engine, monk
 def test_get_latest_api_scan_returns_full_scanrun_shape(client, engine):
     """The frontend's ScanRun type (also used by GET /api/scans/{id}) needs
     scan_id/target_id/tool/branch/status/findings_count/started_at/
-    completed_at all present -- verify the /latest payload matches, not
+    completed_at all present, verify the /latest payload matches, not
     just a status string."""
     client, uid = _login(client, engine)
     target_id = _make_target(engine)
@@ -311,7 +311,7 @@ def test_get_latest_api_scan_returns_none_when_never_run(client, engine):
 
 def test_api_scan_end_to_end_eager_creates_findings(engine, monkeypatch):
     """Full dispatch -> Celery task -> ingest_findings path, with only the
-    actual subprocess boundary (runner.run_nuclei) faked out -- everything
+    actual subprocess boundary (runner.run_nuclei) faked out; everything
     else (DB writes, dedup, Scan/Finding rows) is real."""
     celery_app.conf.task_always_eager = True
     try:

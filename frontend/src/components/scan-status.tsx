@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
  * The states are deliberately four, not three. `queued` is the window
  * between dispatching the Celery task and the worker picking it up, and
  * collapsing it into `running` would claim work had started that may not
- * have -- the same class of overclaim as showing an ungrounded ETA.
+ * have, the same class of overclaim as showing an ungrounded ETA.
  */
 export type ScanPhase = "queued" | "running" | "completed" | "failed";
 
@@ -40,7 +40,7 @@ export function formatDuration(totalSeconds: number): string {
  * The progress line under a running scan.
  *
  * With enough history behind it, this is a real countdown. Without, it is a
- * stopwatch -- "running for 45s" is always true and needs no model behind
+ * stopwatch; "running for 45s" is always true and needs no model behind
  * it, where a made-up "about 30 seconds" that turns into four minutes
  * teaches the user to distrust everything else on the page.
  *

@@ -64,7 +64,7 @@ def _login(client, engine, role=UserRole.DEVELOPER) -> tuple[TestClient, int]:
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -92,7 +92,7 @@ def _assign(engine, user_id: int, workspace_id: int, role: WorkspaceRole = Works
 
 
 # ---------------------------------------------------------------------------
-# Token management (/api/api-tokens) -- session-authenticated
+# Token management (/api/api-tokens), session-authenticated
 # ---------------------------------------------------------------------------
 
 
@@ -101,7 +101,7 @@ def test_create_token_returns_plaintext_once(client, engine):
     res = client.post("/api/api-tokens", json={"name": "ci-token"})
     assert res.status_code == 200
     body = res.json()
-    assert body["token"].startswith("rikugan_pat_")
+    assert body["token"].startswith("toleman_pat_")
     assert body["scope"] == "read"
     assert body["token_prefix"] in body["token"]
 
@@ -144,7 +144,7 @@ def test_cannot_revoke_someone_elses_token(client, engine):
 
 
 # ---------------------------------------------------------------------------
-# Public API (/api/public/v1) -- Bearer-token authenticated
+# Public API (/api/public/v1), Bearer-token authenticated
 # ---------------------------------------------------------------------------
 
 

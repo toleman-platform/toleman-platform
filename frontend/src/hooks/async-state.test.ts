@@ -3,7 +3,7 @@ import { asyncReducer, initialAsyncState, toError } from "./async-state";
 
 /**
  * These cover the transitions that were actually getting hand-rolled wrong
- * across the sixteen files this reducer replaces -- out-of-order responses,
+ * across the sixteen files this reducer replaces, out-of-order responses,
  * data blanking on refetch, and loading left stuck after a failure.
  */
 describe("asyncReducer", () => {

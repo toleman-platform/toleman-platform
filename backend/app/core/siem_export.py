@@ -1,8 +1,8 @@
-"""SIEM export (issue #114): a generic outbound webhook -- one JSON POST per
+"""SIEM export (issue #114): a generic outbound webhook; one JSON POST per
 qualifying finding, the same shape virtually every SIEM/log pipeline can
 ingest directly (Splunk HTTP Event Collector, Elastic/Datadog generic
 webhook input) or relay through a small middleware. Deliberately not one
-specific vendor's proprietary wire format for this first version -- see
+specific vendor's proprietary wire format for this first version; see
 PlatformConfig.siem_webhook_url's docstring for why.
 
 Same "shared low-level sender + test function call it" shape as
@@ -21,7 +21,7 @@ def finding_to_siem_event(finding: Finding, target: Target) -> dict:
     syntax) so a receiving webhook/Splunk HEC/Elastic ingest pipeline can
     map fields without needing to parse a specialized encoding first."""
     return {
-        "source": "rikugan",
+        "source": "toleman",
         "event_type": "finding",
         "finding_id": finding.id,
         "dedup_hash": finding.dedup_hash,
@@ -59,12 +59,12 @@ def send_finding_to_siem(webhook_url: str, finding: Finding, target: Target) -> 
 
 
 def test_siem_webhook(webhook_url: str) -> tuple[bool, str]:
-    """POST a real test event to `webhook_url`. Returns (success, message)
-    -- message is the real HTTP response either way."""
+    """POST a real test event to `webhook_url`. Returns (success, message);
+    message is the real HTTP response either way."""
     test_event = {
-        "source": "rikugan",
+        "source": "toleman",
         "event_type": "test_connection",
-        "message": "Rikugan test connection: this SIEM webhook is configured correctly.",
+        "message": "Toleman test connection: this SIEM webhook is configured correctly.",
     }
     try:
         response = httpx.post(webhook_url, json=test_event, timeout=SIEM_TIMEOUT_SECONDS)

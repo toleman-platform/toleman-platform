@@ -2,16 +2,16 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login"];
-const SESSION_COOKIE = "rikugan_session";
+const SESSION_COOKIE = "toleman_session";
 
-// See the matching comment in src/lib/api.ts / (dashboard)/layout.tsx --
+// See the matching comment in src/lib/api.ts / (dashboard)/layout.tsx;
 // API_INTERNAL_URL lets the Next.js server reach the backend over the
 // docker-compose network; falls back to the browser-facing URL, which also
 // works for local `npm run dev` where both resolve the same way.
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // Issue #128: a cookie merely being *present* doesn't mean the session is
-// still good -- it may be expired, or revoked server-side (token_version
+// still good; it may be expired, or revoked server-side (token_version
 // bumped by logout/password-change, possibly from another device). Treating
 // presence as validity meant a stale cookie both (a) tripped the "already
 // logged in, skip /login" redirect below and landed the user back on / with
@@ -31,7 +31,7 @@ async function hasValidSession(request: NextRequest): Promise<boolean> {
     });
     return res.ok;
   } catch {
-    // Backend unreachable -- fail closed (treat as unauthenticated) rather
+    // Backend unreachable; fail closed (treat as unauthenticated) rather
     // than risk rendering the authenticated shell on a guess.
     return false;
   }

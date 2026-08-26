@@ -157,7 +157,7 @@ def update_config(payload: UpdateConfigRequest, session: Session = Depends(get_s
 @router.post("/test-slack")
 def test_slack(payload: TestSlackRequest, session: Session = Depends(get_session)):
     """Real test message sent to the configured (or supplied) Slack incoming
-    webhook. Never fabricates success -- returns the real HTTP outcome."""
+    webhook. Never fabricates success, returns the real HTTP outcome."""
     webhook_url = payload.webhook_url
     if not webhook_url:
         config = get_platform_config(session)
@@ -199,7 +199,7 @@ def test_jira(payload: TestJiraRequest, session: Session = Depends(get_session))
 @router.post("/test-siem")
 def test_siem(payload: TestSiemRequest, session: Session = Depends(get_session)):
     """Real test event POSTed to the configured (or supplied) SIEM webhook.
-    Never fabricates success -- returns the real HTTP outcome."""
+    Never fabricates success, returns the real HTTP outcome."""
     webhook_url = payload.webhook_url
     if not webhook_url:
         config = get_platform_config(session)
@@ -218,7 +218,7 @@ def test_siem(payload: TestSiemRequest, session: Session = Depends(get_session))
 @router.post("/encryption-key/reseed")
 def reseed_encryption_key(session: Session = Depends(get_session)):
     """Explicit 'I've reconnected everything' reset for the PLATFORM_ENCRYPTION_KEY
-    mismatch banner. Marks the *current* key as the new source of truth -- only
+    mismatch banner. Marks the *current* key as the new source of truth, only
     call this after every affected integration (GitHub App, Slack, Jira, SIEM,
     AI key) has actually been reconnected under the current key, since this
     clears the warning but does not itself fix any still-undecryptable secret."""

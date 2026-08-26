@@ -4,7 +4,7 @@ import { GithubOrgLogsList } from "@/components/github-org-logs-list";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
 import { settleOrNull } from "@/lib/settle";
-// Plain module, not the "use client" component -- a Server Component
+// Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.
 import { pageSizeFromParams } from "@/lib/pagination";
 
@@ -41,7 +41,7 @@ export default async function GithubOrgLogsPage({
         <h1 className="text-2xl font-bold text-foreground">GitHub Org Logs</h1>
         <p className="text-sm text-muted-foreground">
           A true organization-level audit trail is a GitHub Enterprise feature not available on personal accounts. In
-          its place, this page shows real commit activity pulled live from every repository you&apos;ve connected —
+          its place, this page shows real commit activity pulled live from every repository you&apos;ve connected;
           nothing here is simulated or backfilled.
         </p>
       </div>

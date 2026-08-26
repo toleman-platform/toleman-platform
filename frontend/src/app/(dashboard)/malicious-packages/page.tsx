@@ -16,7 +16,7 @@ import { TargetPicker } from "@/components/target-picker";
 // Issue #177/#181: malicious dependencies detected via OSV.dev. Hits are
 // persisted as ordinary Critical `Finding` rows (tool="osv-malware"), so this
 // page is a focused view over the findings the SBOM-generation pipeline
-// already produces -- the same rows the Findings list shows, just filtered
+// already produces; the same rows the Findings list shows, just filtered
 // and re-assertable without regenerating an SBOM.
 
 function severityVariant(severity: string): "destructive" | "warning" | "outline" {
@@ -48,7 +48,7 @@ export default function MaliciousPackagesPage() {
   }
 
   // The dependency-graph API 403s when it's disabled for the repo, or 404s
-  // when the repo/graph has never been built -- both surface from the
+  // when the repo/graph has never been built; both surface from the
   // backend as a 502 whose detail names the real HTTP status GitHub gave.
   // Matched on wording rather than a structured code because
   // DependencyGraphUnavailable's message is the only signal the API
@@ -63,7 +63,7 @@ export default function MaliciousPackagesPage() {
     setImportWarning((w) => ({ ...w, [targetId]: "" }));
     try {
       // Pull the latest GitHub dependency-graph inventory first (issue #226
-      // follow-up) -- a manual scan that only re-checked whatever was
+      // follow-up); a manual scan that only re-checked whatever was
       // already persisted could still miss a package OSV just flagged if
       // that package was never in the last SBOM generation's Trivy scan to
       // begin with. import_github_sbom's own /github-sync endpoint already
@@ -72,11 +72,11 @@ export default function MaliciousPackagesPage() {
       //
       // Falls back to a plain re-check over whatever's already persisted
       // when the import can't run at all (no GitHub App/token configured
-      // for this workspace, or the dependency graph is disabled/unavailable
-      // -- a 502) -- the repo may still have a Trivy-sourced SBOM worth
+      // for this workspace, or the dependency graph is disabled/unavailable;
+      // a 502); the repo may still have a Trivy-sourced SBOM worth
       // re-checking even without GitHub access. The fallback is silent for
       // any *other* import failure (network blip, unexpected GitHub
-      // response) -- only "the graph isn't enabled for this repo" is
+      // response); only "the graph isn't enabled for this repo" is
       // specific and actionable enough to call out on its own.
       let status: "clean" | "found" | "failed";
       let count: number;
@@ -88,7 +88,7 @@ export default function MaliciousPackagesPage() {
         if (isDependencyGraphDisabled(err)) {
           setImportWarning((w) => ({
             ...w,
-            [targetId]: "GitHub dependency graph isn't enabled for this repo — checked existing inventory only.",
+            [targetId]: "GitHub dependency graph isn't enabled for this repo, checked existing inventory only.",
           }));
         }
         const res = await api.malwareCheck(targetId);
@@ -213,7 +213,7 @@ export default function MaliciousPackagesPage() {
               SBOM &amp; OSS Vulns
             </Link>{" "}
             generation) if GitHub import isn&apos;t available for this repo. Worth re-running on a repo already
-            checked, too -- OSV adds malicious-package records continuously, so a package clean at scan time can be
+            checked, too; OSV adds malicious-package records continuously, so a package clean at scan time can be
             flagged later.
           </p>
           <Card className="border-border bg-card">

@@ -9,7 +9,7 @@ import { api } from "@/lib/api";
 // is not free: a change in one file can make pre-existing code in another
 // vulnerable, and a diff-scoped scan will not see it. An operator flipping
 // this should understand they are narrowing what the PR gate checks, so the
-// consequence is stated next to the switch rather than left to the docs --
+// consequence is stated next to the switch rather than left to the docs;
 // the same reasoning as the policy/enforcement note in TargetEnforcement.
 export function TargetDiffScope({
   targetId,

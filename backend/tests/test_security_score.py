@@ -5,7 +5,7 @@ GET /api/dashboard/security-score endpoint's org/group/target scoping.
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
 used in tests/test_sla_rules.py.
 """
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -69,7 +69,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -429,7 +429,7 @@ def test_endpoint_404_for_inaccessible_target(client, engine):
 
 def test_endpoint_workspace_scoped_org_wide(client, engine):
     """A non-admin viewer only sees their own workspace's targets in the
-    org-wide (no filter) score -- another workspace's Critical findings
+    org-wide (no filter) score; another workspace's Critical findings
     must not drag their score down."""
     client, uid = _login(client, engine, role=UserRole.USER)
     my_ws = _make_workspace(engine, name="mine")

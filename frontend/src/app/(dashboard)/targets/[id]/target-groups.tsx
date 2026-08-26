@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 // Issue #61: assign/remove this target's groups from its detail page. Only
 // offers groups that already exist in this target's workspace (created via
-// Admin > Repo Groups) -- matches the backend's same-workspace check on
+// Admin > Repo Groups), matches the backend's same-workspace check on
 // POST /api/targets/{id}/groups/{group_id}.
 export function TargetGroups({ targetId, workspaceId }: { targetId: number; workspaceId: number }) {
   const [assigned, setAssigned] = useState<GroupBadgeType[] | null>(null);
@@ -94,7 +94,7 @@ export function TargetGroups({ targetId, workspaceId }: { targetId: number; work
 
       {available !== null && available.length === 0 && (
         <span className="text-xs text-muted-foreground">
-          No groups exist for this workspace yet — create one in Admin &gt; Repo Groups.
+          No groups exist for this workspace yet, create one in Admin &gt; Repo Groups.
         </span>
       )}
 

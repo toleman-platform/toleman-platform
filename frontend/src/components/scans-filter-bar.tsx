@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 const CRITICALITY_OPTIONS = ["Prod", "Internal", "Dev"];
 
 // "Last scanned" buckets computed client-side against each target's real
-// scan-summary timestamp (GET /api/scans/summary) -- see scans-list.tsx.
+// scan-summary timestamp (GET /api/scans/summary); see scans-list.tsx.
 export const LAST_SCANNED_OPTIONS = [
   { value: "24h", label: "Last 24h" },
   { value: "7d", label: "Last 7 days" },
@@ -21,10 +21,10 @@ const SELECT_CLASS =
   "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
 // Issue #120: same filter-bar convention as Findings
-// (components/findings-filter-bar.tsx) -- search + a row of `<select>`
+// (components/findings-filter-bar.tsx), search + a row of `<select>`
 // facets driving URL search params, not a bespoke widget for this one page.
 // Scans additionally filters by criticality (the whole point of this
-// rebuild -- surfacing Prod vs Internal vs Dev) and last-scanned, instead of
+// rebuild, surfacing Prod vs Internal vs Dev) and last-scanned, instead of
 // Findings' severity/state.
 export function ScansFilterBar({ tools }: { tools: string[] }) {
   const router = useRouter();

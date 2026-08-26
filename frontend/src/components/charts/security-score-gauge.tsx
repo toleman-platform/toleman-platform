@@ -28,7 +28,7 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
 
   // Recharts derives its <clipPath> ids from a module-global counter, so the
   // ids in the server-rendered HTML never line up with the ones the client
-  // generates on hydration ("recharts15-clip" vs "recharts2-clip") -- React
+  // generates on hydration ("recharts15-clip" vs "recharts2-clip"); React
   // reported a hydration mismatch and regenerated this whole subtree on
   // every dashboard load. The chart carries no content a crawler or a
   // no-JS reader needs (the score, grade and full component breakdown are
@@ -51,19 +51,19 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
     // next to the score-breakdown list. The chart box below has a *fixed*
     // pixel width via inline style (CHART_WIDTH), but flexbox's default
     // flex-shrink: 1 still shrinks a fixed-width child when the row runs out
-    // of room -- the outer div would shrink while the SVG inside it kept its
+    // of room; the outer div would shrink while the SVG inside it kept its
     // hardcoded width={280} attribute, so the arc silently overflowed past
     // its now-narrower parent and the centered text overlay (which centers
     // against the *shrunk* parent) drifted out of alignment with it. This is
     // exactly the "arc on the left, number/badge floating off to the right"
-    // bug reported against this gauge -- shrink-0 keeps the box at its real
+    // bug reported against this gauge; shrink-0 keeps the box at its real
     // size always; the flex row wraps to a new line instead (see the parent's
     // flex-wrap) rather than distorting the gauge to fit.
     <div className="flex shrink-0 flex-col items-center">
       {/* The number overlay is positioned against the chart box alone. It
           used to be `absolute bottom-0` of a wrapper that also contained the
           grade badge, which put the "/ 100" line directly on top of the
-          badge -- both were unreadable. */}
+          badge; both were unreadable. */}
       <div className="relative" style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}>
         {mounted && (
           <RadialBarChart

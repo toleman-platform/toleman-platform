@@ -10,7 +10,7 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Ban, Building2, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 
-// Issue #76: false-positive learning engine -- rules here are learned
+// Issue #76: false-positive learning engine; rules here are learned
 // automatically the moment a finding is triaged "False Positive" (see
 // app.core.fp_learning), not created from this page. This is the "an
 // auto-suppress engine a user can't inspect or undo is a real product bug"
@@ -63,7 +63,7 @@ export function FpRules() {
             <div>
               <div className="font-medium text-foreground">False Positive Rules</div>
               <div className="text-xs text-muted-foreground">
-                Learned automatically when a finding is marked &quot;False Positive&quot; -- matches (same rule +
+                Learned automatically when a finding is marked &quot;False Positive&quot;; matches (same rule +
                 tool, same filename) are auto-suppressed on future scans anywhere in this workspace, including a
                 different repo. Expire a rule to stop it firing, widen it to match any file, or delete it entirely.
               </div>
@@ -119,7 +119,7 @@ export function FpRules() {
                 <EmptyState
                   icon={ShieldOff}
                   title="No false-positive rules learned yet"
-                  description={'For this workspace -- triage a finding as "False Positive" to teach one.'}
+                  description={'For this workspace, triage a finding as "False Positive" to teach one.'}
                   bare
                 />
               ) : (

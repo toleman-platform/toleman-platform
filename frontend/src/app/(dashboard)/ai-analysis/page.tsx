@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn, timeAgo } from "@/lib/utils";
 
 // Issue #122: the page previously said "select a finding" with no control
-// anywhere on the page to do so -- a dead end when landed on directly
+// anywhere on the page to do so, a dead end when landed on directly
 // rather than deep-linked from Findings. This adds a real entry point: a
 // typeahead finding search (by title/CVE/target, reusing GET
 // /api/findings?search=...) and a "recent analyses" list backed by
@@ -163,7 +163,7 @@ export default function AiAnalysisPage() {
           <CardContent className="px-4 py-3 text-sm text-muted-foreground">
             Not configured. Set an AI provider in <code className="text-foreground">Admin &gt; Global Integrations</code>{" "}
             (Anthropic API key, or a self-hosted/OpenAI-compatible endpoint like Ollama or Kimi) to enable this
-            feature. Search and the recent-analyses list below still work once a finding is selected — analysis
+            feature. Search and the recent-analyses list below still work once a finding is selected, analysis
             itself returns a clear &quot;not configured&quot; message rather than erroring.
           </CardContent>
         </Card>

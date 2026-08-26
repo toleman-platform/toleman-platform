@@ -3,7 +3,7 @@
  *
  * Deliberately separated from the React hook in use-async-data.ts. Sixteen
  * files in this codebase hand-rolled `loading`/`error`/`data` triples, and the
- * bugs were always in the *transitions* -- a stale response overwriting a
+ * bugs were always in the *transitions*, a stale response overwriting a
  * newer one, `loading` left true after an error, a refetch blanking the
  * screen instead of showing the previous data. Those are reducer bugs, and a
  * reducer can be tested exhaustively in Node without a DOM.
@@ -31,7 +31,7 @@ export type AsyncState<T> = {
   /** True while a request is in flight *and* previous data is still shown. */
   isRefreshing: boolean;
   /** Monotonic id of the most recently *started* request. Used to discard
-   * out-of-order responses -- the classic bug where a slow first request
+   * out-of-order responses, the classic bug where a slow first request
    * lands after a fast second and overwrites it. */
   requestId: number;
 };
@@ -84,7 +84,7 @@ export function asyncReducer<T>(state: AsyncState<T>, action: AsyncAction<T>): A
       if (action.requestId !== state.requestId) return state;
       return {
         status: "error",
-        // Previous data survives an error on purpose -- stale rows beside an
+        // Previous data survives an error on purpose, stale rows beside an
         // error banner beat an empty screen, and the caller can tell which
         // is which.
         data: state.data,

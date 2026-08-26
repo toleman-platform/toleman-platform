@@ -12,7 +12,7 @@ export type ConfirmDialogProps = {
   description: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
-  /** "destructive" (red, delete/remove-type actions) vs "default" (e.g. role escalation -- consequential but not a delete). */
+  /** "destructive" (red, delete/remove-type actions) vs "default" (e.g. role escalation, consequential but not a delete). */
   tone?: "destructive" | "default";
   loading?: boolean;
   onConfirm: () => void;
@@ -20,7 +20,7 @@ export type ConfirmDialogProps = {
 };
 
 // Reusable confirmation dialog for destructive actions (delete) and other
-// consequential-but-reversible changes (e.g. admin-role escalation) --
+// consequential-but-reversible changes (e.g. admin-role escalation),
 // issue #118. No radix-dialog dependency in this repo yet, so this is a
 // small self-contained modal: overlay + centered card, Escape/backdrop-click
 // to cancel, focus moved to the confirm button on open. Render at the call

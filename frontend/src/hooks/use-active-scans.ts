@@ -25,7 +25,7 @@ export type UseActiveScansResult = {
   activeScans: ActiveScans;
   /** Convenience for the common "is this repo busy?" question. */
   isTargetScanning: (targetId: number) => boolean;
-  /** Poll immediately -- call right after dispatching so the row flips to
+  /** Poll immediately, call right after dispatching so the row flips to
    * running without waiting out the interval. */
   refresh: () => void;
 };

@@ -7,7 +7,7 @@ sla_violated fields on the findings endpoints + GET /api/dashboard/sla-complianc
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
 used across tests/test_enforcement_mode.py and tests/test_groups.py.
 """
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -69,7 +69,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -205,7 +205,7 @@ def test_severity_specific_rules_are_independent(engine):
 
 def test_conflicting_multi_group_resolves_most_restrictive(engine):
     """A target in two groups with different Critical SLAs must resolve to
-    the fewest days -- most-restrictive-wins, same fail-closed philosophy as
+    the fewest days; most-restrictive-wins, same fail-closed philosophy as
     #62's conflicting-groups enforcement_mode resolution."""
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)

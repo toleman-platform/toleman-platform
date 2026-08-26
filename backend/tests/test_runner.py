@@ -9,8 +9,8 @@ from app.scanners.runner import RepoCloneError, clone_error_message, clone_repo,
 
 
 def test_strips_scan_scoped_clone_dir_prefix():
-    repo_path = Path("/tmp/rikugan-scans/govwa-abc123")
-    absolute = "/tmp/rikugan-scans/govwa-abc123/vulnerability/idor/idor.go"
+    repo_path = Path("/tmp/toleman-scans/govwa-abc123")
+    absolute = "/tmp/toleman-scans/govwa-abc123/vulnerability/idor/idor.go"
     assert normalize_file_path(absolute, repo_path) == "vulnerability/idor/idor.go"
 
 
@@ -18,24 +18,24 @@ def test_same_relative_file_normalizes_identically_across_different_scan_dirs():
     """The actual bug: two scans of the same file, in two different
     scan-scoped clone dirs, must normalize to the same relative path -
     otherwise their dedup_hash never matches and dedup silently breaks."""
-    file_a = "/tmp/rikugan-scans/govwa-scan1/util/database/database.go"
-    file_b = "/tmp/rikugan-scans/govwa-scan2/util/database/database.go"
-    normalized_a = normalize_file_path(file_a, Path("/tmp/rikugan-scans/govwa-scan1"))
-    normalized_b = normalize_file_path(file_b, Path("/tmp/rikugan-scans/govwa-scan2"))
+    file_a = "/tmp/toleman-scans/govwa-scan1/util/database/database.go"
+    file_b = "/tmp/toleman-scans/govwa-scan2/util/database/database.go"
+    normalized_a = normalize_file_path(file_a, Path("/tmp/toleman-scans/govwa-scan1"))
+    normalized_b = normalize_file_path(file_b, Path("/tmp/toleman-scans/govwa-scan2"))
     assert normalized_a == normalized_b == "util/database/database.go"
 
 
 def test_already_relative_path_passed_through():
-    assert normalize_file_path("go.mod", Path("/tmp/rikugan-scans/govwa-abc123")) == "go.mod"
+    assert normalize_file_path("go.mod", Path("/tmp/toleman-scans/govwa-abc123")) == "go.mod"
 
 
 def test_empty_path_passed_through():
-    assert normalize_file_path("", Path("/tmp/rikugan-scans/govwa-abc123")) == ""
+    assert normalize_file_path("", Path("/tmp/toleman-scans/govwa-abc123")) == ""
 
 
 def test_path_outside_repo_root_passed_through_unchanged():
     outside = "/etc/passwd"
-    assert normalize_file_path(outside, Path("/tmp/rikugan-scans/govwa-abc123")) == outside
+    assert normalize_file_path(outside, Path("/tmp/toleman-scans/govwa-abc123")) == outside
 
 
 # --- Issue #54: git-clone argument injection + GitHub token leakage -------
@@ -48,7 +48,7 @@ def test_path_outside_repo_root_passed_through_unchanged():
 # embedded directly in clone_url, so a failed clone's CalledProcessError
 # (whose str()/repr() includes the full argv) could leak the token into any
 # log line or API response that surfaced it. These tests cover both fixes.
-# (No real network access is used -- subprocess.run is monkeypatched, same
+# (No real network access is used, subprocess.run is monkeypatched, same
 # style as tests/test_scan_isolation.py.)
 
 
@@ -107,7 +107,7 @@ def test_branch_starting_with_dash_rejected_before_subprocess(recorded_calls):
 
 def test_clone_argv_has_double_dash_separator_before_positional_url(recorded_calls):
     """Even a validated, well-formed URL must be positionally separated from
-    flags -- defense in depth alongside the validation above."""
+    flags; defense in depth alongside the validation above."""
     clone_repo("https://github.com/acme/widgets.git", "main")
 
     assert len(recorded_calls) == 1
@@ -117,7 +117,7 @@ def test_clone_argv_has_double_dash_separator_before_positional_url(recorded_cal
     assert "--" in cmd
     sep_index = cmd.index("--")
     url_index = cmd.index("https://github.com/acme/widgets.git")
-    assert sep_index == url_index - 1, "URL must immediately follow the -- separator"
+    assert sep_index == url_index - 1, "URL must immediately follow the; separator"
     assert cmd[url_index + 1] == cmd[-1], "dest dir must immediately follow the URL"
 
 
@@ -142,7 +142,7 @@ def test_token_delivered_via_env_header_not_url(recorded_calls):
     assert "@" not in url_arg
 
     env = recorded_calls[0]["env"]
-    # HTTP Basic, not Bearer -- git's http backend rejects gho_ OAuth tokens
+    # HTTP Basic, not Bearer; git's http backend rejects gho_ OAuth tokens
     # under Bearer (see clone_repo's docstring). The token must still never
     # appear in the header verbatim as a bare Bearer credential, and must
     # never reach the URL, which the assertions above cover.
@@ -150,7 +150,7 @@ def test_token_delivered_via_env_header_not_url(recorded_calls):
     assert env["GIT_CONFIG_VALUE_0"] == f"Authorization: Basic {expected}"
     assert env["GIT_CONFIG_KEY_0"] == "http.extraheader"
     # The decoded header still carries the token, so it must be confined to
-    # the environment -- never argv, where it would leak into str(exc) on a
+    # the environment; never argv, where it would leak into str(exc) on a
     # failed clone. That is the property this test exists to protect.
     assert not any(token in part for part in cmd)
 
@@ -162,13 +162,13 @@ def test_no_token_env_vars_set_when_no_token_given(recorded_calls):
 
 
 def test_called_process_error_never_carries_token(tmp_path, monkeypatch):
-    """A failed clone's CalledProcessError -- str(), .cmd, and .stderr -- must
+    """A failed clone's CalledProcessError, str(), .cmd, and .stderr; must
     never contain the token, since callers have historically surfaced these
     directly in API responses (app/api/scans.py, pr_guardrail_executor.py).
 
     Uses a transient failure (unresolvable host) deliberately. A *permanent*
     cause now raises RepoCloneError instead of CalledProcessError so Celery
-    stops retrying it -- that path's scrubbing is covered by
+    stops retrying it; that path's scrubbing is covered by
     test_clone_failure_diagnosis.py::test_token_is_scrubbed_before_classification.
     Git really does echo the credential-bearing URL in this message, which is
     why the scrub has to run before anything else touches stderr.

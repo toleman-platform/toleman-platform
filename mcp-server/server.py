@@ -1,28 +1,28 @@
-"""Rikugan MCP server (issue #108).
+"""Toleman MCP server (issue #108).
 
-A thin translation layer between MCP tool calls and Rikugan's public API
-(/api/public/v1/*, issue #109) -- deliberately NOT embedded in the main
+A thin translation layer between MCP tool calls and Toleman's public API
+(/api/public/v1/*, issue #109); deliberately NOT embedded in the main
 FastAPI backend. The official `mcp` PyPI package requires
 starlette>=0.39/pydantic>=2.8 across every released version (checked
 0.9.1 through 2.0.0), which is incompatible with this project's pinned
 fastapi==0.115.0 (needs starlette<0.39.0) and sqlmodel==0.0.22 (breaks on
-pydantic>=2.10) -- see backend/requirements.txt and backend/Dockerfile
+pydantic>=2.10); see backend/requirements.txt and backend/Dockerfile
 for why those pins exist. Running as a standalone process with its own
 venv sidesteps that conflict entirely rather than forcing a much larger,
 riskier upgrade of the backend's core web/ORM stack just to satisfy one
 optional integration.
 
 Runs over stdio (the standard transport for MCP servers launched by a
-client like Claude Desktop/Code, not a long-running network service) --
-authenticates to Rikugan using a personal access token (see
-rikugan-docs Public API Reference), exactly like any other public-API
+client like Claude Desktop/Code, not a long-running network service);
+authenticates to Toleman using a personal access token (see
+toleman-docs Public API Reference), exactly like any other public-API
 client.
 
 A note on `mcp`'s own CVEs (checked at pin time, mcp==1.23.0): every
 currently-known advisory against this package (GHSA-9h52-p55h-vw2f fixed
 in 1.23.0; GHSA-jpw9-pfvf-9f58, GHSA-vj7q-gjh5-988w still open as of
 1.23.0/latest 1.x) is scoped to the HTTP/SSE/WebSocket transport code
-paths and the experimental task-handler feature -- none of which this
+paths and the experimental task-handler feature; none of which this
 server invokes, since `mcp.run(transport="stdio")` below is the only
 entry point exercised. `2.0.0` has none of these open, but requires
 starlette/pydantic versions incompatible with this project (see above),
@@ -35,23 +35,23 @@ import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-RIKUGAN_API_URL = os.environ.get("RIKUGAN_API_URL", "http://localhost:8000").rstrip("/")
-RIKUGAN_API_TOKEN = os.environ.get("RIKUGAN_API_TOKEN")
+TOLEMAN_API_URL = os.environ.get("TOLEMAN_API_URL", "http://localhost:8000").rstrip("/")
+TOLEMAN_API_TOKEN = os.environ.get("TOLEMAN_API_TOKEN")
 
-if not RIKUGAN_API_TOKEN:
+if not TOLEMAN_API_TOKEN:
     raise RuntimeError(
-        "RIKUGAN_API_TOKEN is required -- create a personal access token at "
-        "Settings > Workspace > API Tokens in your Rikugan instance and set it "
+        "TOLEMAN_API_TOKEN is required, create a personal access token at "
+        "Settings > Workspace > API Tokens in your Toleman instance and set it "
         "as an env var for this server."
     )
 
-mcp = FastMCP("rikugan")
+mcp = FastMCP("toleman")
 
 
 def _client() -> httpx.Client:
     return httpx.Client(
-        base_url=f"{RIKUGAN_API_URL}/api/public/v1",
-        headers={"Authorization": f"Bearer {RIKUGAN_API_TOKEN}"},
+        base_url=f"{TOLEMAN_API_URL}/api/public/v1",
+        headers={"Authorization": f"Bearer {TOLEMAN_API_TOKEN}"},
         timeout=30.0,
     )
 
@@ -111,7 +111,7 @@ def get_scan_status(scan_id: int) -> dict:
 @mcp.tool()
 def trigger_scan(target_id: int, tool: str) -> dict:
     """Trigger a native scan (semgrep/trivy/gitleaks/gosec) against a
-    target. Requires a read_write-scoped token -- a read-only token gets
+    target. Requires a read_write-scoped token; a read-only token gets
     a clear permission error, not a silent no-op. Returns immediately with
     a scan_id; poll get_scan_status(scan_id) for the result."""
     with _client() as c:

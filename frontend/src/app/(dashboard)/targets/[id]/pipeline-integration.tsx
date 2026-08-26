@@ -7,7 +7,7 @@ import { safeHref } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-// Issue #66: "Add Pipeline" flow -- preview the generated per-target
+// Issue #66: "Add Pipeline" flow, preview the generated per-target
 // GitHub Actions workflow, then open a real PR against the target's repo
 // adding it, via the GitHub App. Integration status (pipeline_integrated /
 // pipeline_pr_url) is read straight off the Target row so a page reload
@@ -86,7 +86,7 @@ export function PipelineIntegration({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Generates a GitHub Actions workflow that runs Semgrep, Gitleaks, Trivy (and gosec for
-            Go repos) natively in your CI and pushes results back into Rikugan, then opens a PR adding
+            Go repos) natively in your CI and pushes results back into Toleman, then opens a PR adding
             it to this repo.
           </p>
           {prUrl && (
@@ -123,9 +123,9 @@ export function PipelineIntegration({
                 {workflow.languages.length > 0 && ` (detected: ${workflow.languages.join(", ")})`}
               </p>
               <p className="text-xs text-chart-3">
-                Requires the <code>RIKUGAN_API_URL</code> / <code>RIKUGAN_API_KEY</code> Actions secrets on
-                the target repo. <code>RIKUGAN_API_URL</code> must be a publicly reachable Rikugan
-                deployment -- GitHub&apos;s cloud runners cannot reach localhost.
+                Requires the <code>TOLEMAN_API_URL</code> / <code>TOLEMAN_API_KEY</code> Actions secrets on
+                the target repo. <code>TOLEMAN_API_URL</code> must be a publicly reachable Toleman
+                deployment, GitHub&apos;s cloud runners cannot reach localhost.
               </p>
               <pre className="max-h-96 overflow-auto rounded-md bg-secondary p-3 text-[11px] leading-relaxed text-foreground">
                 {workflow.yaml}

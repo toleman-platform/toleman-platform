@@ -59,7 +59,7 @@ def _login(client, engine, role=UserRole.USER, email=None):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 
@@ -93,7 +93,7 @@ def _assign(engine, user_id: int, workspace_id: int, role: WorkspaceRole):
 
 
 # ---------------------------------------------------------------------------
-# Two real workspaces, a developer scoped to only one of them -- the
+# Two real workspaces, a developer scoped to only one of them; the
 # workspace boundary must be enforced through a real workspace-scoped route
 # (PATCH /api/targets/{id}), not just in an isolated unit test of the
 # dependency function.
@@ -153,7 +153,7 @@ def test_security_engineer_role_satisfies_developer_minimum(client, engine):
 
 
 def test_global_admin_bypasses_workspace_membership_entirely(client, engine):
-    """Admin should still be able to manage everything -- the workspace role
+    """Admin should still be able to manage everything, the workspace role
     model layers on top of the global role, it doesn't replace it."""
     ws_a = _make_workspace(engine, "ws-a")
     target_a = _make_target(engine, ws_a)
@@ -165,7 +165,7 @@ def test_global_admin_bypasses_workspace_membership_entirely(client, engine):
 
 def test_create_target_checks_workspace_id_from_request_body(client, engine):
     """workspace_id lives inside the JSON body for POST /api/targets, not a
-    path/query param -- exercises the enforce_workspace_role() direct-call
+    path/query param; exercises the enforce_workspace_role() direct-call
     path rather than the require_workspace_role Depends() path."""
     ws_a = _make_workspace(engine, "ws-a")
     ws_b = _make_workspace(engine, "ws-b")
@@ -279,10 +279,10 @@ def test_admin_can_assign_and_list_and_remove_workspace_role(client, engine):
 
 def test_list_workspaces_returns_multiple_real_workspaces(client, engine):
     """Guards against the design silently assuming a single seeded
-    workspace -- the whole point of #32 is real multi-workspace support.
+    workspace; the whole point of #32 is real multi-workspace support.
 
     Logs in as a global admin (issue #224: GET /api/workspaces used to be
-    unscoped -- any authenticated user, including a plain UserRole.USER
+    unscoped, any authenticated user, including a plain UserRole.USER
     with zero WorkspaceMembership rows, saw every workspace platform-wide.
     accessible_workspace_ids() now filters it the same way every other
     workspace-owned list route is filtered, so this asserts the
@@ -299,7 +299,7 @@ def test_list_workspaces_returns_multiple_real_workspaces(client, engine):
 
 
 def test_list_workspaces_excludes_workspaces_without_membership(client, engine):
-    """Issue #224: the regression this scoping fix actually targets -- a
+    """Issue #224: the regression this scoping fix actually targets; a
     non-admin, non-member user must not see a workspace's name/id/api_key
     just by being logged in."""
     ws_a = _make_workspace(engine, "ws-a")

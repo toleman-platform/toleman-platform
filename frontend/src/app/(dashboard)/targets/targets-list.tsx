@@ -64,13 +64,13 @@ function itemBadgeClass(status: string): string {
 // Issue #117 / backend/app/core/scoring.py: criticality_weight is the 1-5
 // multiplier a target contributes to every finding's risk score. The Repo
 // Sync card used to render it as a bare "weight 2" with no label, no units
-// and no tooltip, on every row -- unreadable as anything but a constant.
+// and no tooltip, on every row; unreadable as anything but a constant.
 const CRITICALITY_WEIGHT_EXPLANATION =
   "How much this repo amplifies the risk score of its findings: severity × this weight × 40. " +
   "Set per target (1-5) alongside its criticality label.";
 
 // Issue #185: AI/ML repo marker. The tooltip carries the detection signals
-// because a bare badge isn't contestable -- someone who thinks the platform
+// because a bare badge isn't contestable; someone who thinks the platform
 // is wrong needs to see what it matched on. A manual override is labelled as
 // such so "the platform detected this" and "a human forced this" stay
 // distinguishable.
@@ -92,10 +92,10 @@ function AiRepoBadge({ target }: { target: Target }) {
 }
 
 // Open findings on the target's default branch (#174). Renders nothing at
-// all when the summary is missing rather than a fabricated "0" -- a failed
+// all when the summary is missing rather than a fabricated "0", a failed
 // /api/targets/summary and a genuinely clean repo are different facts.
 // github.com/org/repo.git -> org/repo. The full URL was the widest element
-// on the card and the least informative -- it is kept as a title tooltip.
+// on the card and the least informative; it is kept as a title tooltip.
 function repoSlug(repoUrl: string): string {
   return repoUrl
     .replace(/^https?:\/\/(www\.)?github\.com\//, "")
@@ -135,7 +135,7 @@ function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
 // across rows, which is what makes 35 of them scannable instead of readable.
 function FindingsColumn({ entry, scanned }: { entry?: TargetSummaryEntry; scanned: boolean }) {
   // Missing summary and never-scanned are different from clean, and neither
-  // may render as a reassuring zero -- a repo nobody looked at is unknown,
+  // may render as a reassuring zero; a repo nobody looked at is unknown,
   // not safe (#174).
   if (!entry || (entry.open === 0 && !scanned)) {
     return (
@@ -187,7 +187,7 @@ export function TargetsList({
 }: {
   targets: Target[];
   // Issue #174: real per-target scan history and open-finding counts. Both
-  // optional and defaulted -- callers without them (and a failed fetch on
+  // optional and defaulted, callers without them (and a failed fetch on
   // the page, which degrades to {}) just render the card without that line.
   scanSummary?: ScanSummary;
   targetSummary?: TargetSummary;
@@ -205,21 +205,21 @@ export function TargetsList({
   const [batch, setBatch] = useState<PipelineIntegrationBatch | null>(null);
   const [batchError, setBatchError] = useState<string | null>(null);
 
-  // Issue #212: a scan running anywhere -- triggered from Scans, the target
-  // page, or by another user -- shows up on this list, which previously had
+  // Issue #212: a scan running anywhere (triggered from Scans, the target
+  // page, or by another user) shows up on this list, which previously had
   // no notion of in-flight work at all.
   const { activeScans } = useActiveScans();
 
   // Issue #125: search/criticality applied client-side over the already
   // -fetched target list, same as targets-filter-bar.tsx's URL-param
-  // convention -- group_id stays a separate server-refetching filter
+  // convention; group_id stays a separate server-refetching filter
   // (components/group-filter.tsx).
   const search = (searchParams.get("search") ?? "").trim().toLowerCase();
   const criticality = searchParams.get("criticality") ?? "";
   const sort = (searchParams.get("sort") ?? "findings") as TargetSort;
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
   const pageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
-  // Issue #224: quick-glance status tabs -- Wiz/Snyk-style presets over
+  // Issue #224: quick-glance status tabs; Wiz/Snyk-style presets over
   // "which of my repos need looking at" rather than making the reader
   // reconstruct that from the criticality/sort dropdowns every visit.
   // Client-side like search/criticality above (targetSummary/scanSummary are
@@ -237,7 +237,7 @@ export function TargetsList({
 
   // Counted against the full (search/criticality-filtered but not
   // quick-filtered) set so a tab's own count doesn't change when it's the
-  // active one -- "Needs attention (6)" should mean the same 6 regardless of
+  // active one; "Needs attention (6)" should mean the same 6 regardless of
   // which tab is currently selected.
   const quickCounts = useMemo(() => {
     const base = targets.filter((t) => {
@@ -370,7 +370,7 @@ export function TargetsList({
   }
 
   // ---------------------------------------------------------------------
-  // Issue #35: Mass CI/CD Rollout Engine -- scope-based sibling to the
+  // Issue #35: Mass CI/CD Rollout Engine, scope-based sibling to the
   // manual multi-select bulk flow above. Instead of checking boxes, the
   // caller picks a whole workspace / repo Group / "every repo I can see"
   // and optionally a Custom Workflow Builder template (workflow-templates
@@ -464,7 +464,7 @@ export function TargetsList({
   // The list rendered every target with no pagination: 35 rows is ~3000px of
   // scroll today, and this page is the inventory for an org that may onboard
   // hundreds. Paged client-side rather than server-side because search,
-  // criticality and sort already filter the already-fetched list here --
+  // criticality and sort already filter the already-fetched list here;
   // adding a server round-trip just for slicing would make those three
   // interactions slower for no gain.
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -476,7 +476,7 @@ export function TargetsList({
   return (
     <div className="flex flex-col gap-2">
       {/* Issue #224: quick-glance status tabs above the list, same idea as
-          Snyk's target-list status filters -- "which of my repos need
+          Snyk's target-list status filters; "which of my repos need
           looking at" answered in one click instead of reconstructing it
           from the criticality/sort dropdowns. */}
       <div className="flex flex-wrap gap-1 border-b border-border pb-2">
@@ -516,18 +516,18 @@ export function TargetsList({
           <span />
         )}
         {/* Issue #35: fleet-wide alternative to the checkbox-driven bulk bar
-            below -- rolls out to an entire workspace/group/every accessible
+            below, rolls out to an entire workspace/group/every accessible
             repo without paging through a manual selection. */}
         {/* The name implies something irreversible across many repositories,
             and an external review found nothing on hover or nearby saying
-            what it rolls out. It opens a scope picker -- it does not fire on
-            click -- and what it ultimately does is open a PR per repo, which
+            what it rolls out. It opens a scope picker (it does not fire on
+            click) and what it ultimately does is open a PR per repo, which
             someone still has to merge. Both worth stating. */}
         <Button
           variant="outline"
           size="sm"
           onClick={() => setMassOpen((v) => !v)}
-          title="Open a PR adding the Rikugan scan workflow to every repo in a workspace or group. Opens a scope picker first; nothing is changed until you confirm, and each PR still needs merging."
+          title="Open a PR adding the Toleman scan workflow to every repo in a workspace or group. Opens a scope picker first; nothing is changed until you confirm, and each PR still needs merging."
           className="h-7 text-xs"
         >
           <Rocket className="mr-1 h-3.5 w-3.5" />
@@ -544,7 +544,7 @@ export function TargetsList({
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Add the Rikugan pipeline scan workflow to every repo in a scope at once, instead of selecting them one
+            Add the Toleman pipeline scan workflow to every repo in a scope at once, instead of selecting them one
             by one.
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -697,12 +697,12 @@ export function TargetsList({
       <ActivityPagination total={filtered.length} page={clampedPage} pageSize={pageSize} position="top" />
 
       {/* Issue #224: one bordered container with thin dividers between rows,
-          replacing a bordered `Card` per row -- 35+ nested boxes each with
+          replacing a bordered `Card` per row, 35+ nested boxes each with
           their own border/radius/shadow was the single biggest visual-noise
           contributor on this page next to Findings; a single outer border
           plus a hairline between rows (Snyk/Wiz's own target-list pattern)
           reads as one inventory instead of a stack of separate cards, with
-          zero loss of information -- every column, badge and link below is
+          zero loss of information; every column, badge and link below is
           unchanged. */}
       {visible.length > 0 && (
       <div className="divide-y divide-border rounded-lg border border-border bg-card">
@@ -738,7 +738,7 @@ export function TargetsList({
                   ))}
                 </div>
                 {/* One metadata line instead of two. The clone URL was the
-                    widest thing on the card and the least useful -- the repo
+                    widest thing on the card and the least useful, the repo
                     name above already identifies it, and the card links
                     through. Owner/name is kept so forks stay distinguishable;
                     the full URL is on hover and on the detail page. */}
@@ -781,7 +781,7 @@ export function TargetsList({
                 scanned={Boolean(scanSummary[String(t.id)]?.last_scan_at)}
               />
               {/* Labelled like the findings column beside it. A bare "2/5"
-                  floating at the row end is unreadable as anything -- the
+                  floating at the row end is unreadable as anything, the
                   same complaint #174 fixed for the old bare "weight 2". */}
               <div className="w-12 shrink-0 text-right" title={CRITICALITY_WEIGHT_EXPLANATION}>
                 <div className="text-sm text-muted-foreground">{t.criticality_weight}/5</div>

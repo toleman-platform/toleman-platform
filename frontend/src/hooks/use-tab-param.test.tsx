@@ -32,7 +32,7 @@ describe("useTabParam", () => {
 
   it("falls back to the default for an unrecognised tab value", () => {
     // A stale/hand-edited/malicious ?tab= must not crash the page or select
-    // nothing -- it silently resolves to the same safe default as if the
+    // nothing; it silently resolves to the same safe default as if the
     // param were absent.
     currentSearch = "tab=not-a-real-tab";
     const { result } = renderHook(() => useTabParam(TABS, "users"));
@@ -63,7 +63,7 @@ describe("useTabParam", () => {
     expect(url).toContain("tab=tools");
   });
 
-  it("never pushes scroll-to-top -- a tab switch should not jump the page", () => {
+  it("never pushes scroll-to-top; a tab switch should not jump the page", () => {
     const { result } = renderHook(() => useTabParam(TABS, "users"));
     act(() => result.current[1]("tools"));
     const [, options] = push.mock.calls[0];

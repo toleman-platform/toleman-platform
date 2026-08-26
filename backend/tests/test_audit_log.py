@@ -53,7 +53,7 @@ def _login(client, engine, email="user@example.com", password="whatever123"):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 
@@ -148,7 +148,7 @@ def test_single_triage_is_not_grouped(client, engine):
 
 
 def test_bulk_triage_of_single_finding_is_not_grouped(client, engine):
-    """A 'batch' of exactly one finding is just a normal triage -- it
+    """A 'batch' of exactly one finding is just a normal triage; it
     shouldn't render as a collapsible group of one."""
     _login(client, engine)
     target_id = _make_target(engine)

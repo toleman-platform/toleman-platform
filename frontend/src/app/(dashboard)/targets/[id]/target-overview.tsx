@@ -9,7 +9,7 @@ import { timeAgo } from "@/lib/utils";
 
 // Issue #197: current posture for one target, so a repo owner can answer
 // "is my repo OK?" without reading the findings list. Everything here is
-// derived from data the page already fetched -- no extra round-trips.
+// derived from data the page already fetched, no extra round-trips.
 // Counts come from GET /api/targets/summary, never from the findings array
 // the page fetched. That array is one *page* of findings, so deriving the
 // breakdown from it reported "3 Medium" for a target with 1137 open findings
@@ -51,7 +51,7 @@ export function TargetOverview({
           // shared card's `unknown` variant renders an em dash instead of a
           // confident 0, which would read as "clean" (#174).
           unknown={!lastScan}
-          unknownHint="never scanned — posture unknown"
+          unknownHint="never scanned, posture unknown"
           tone={openCount > 0 ? "attention" : "positive"}
           hint={openCount === 0 && lastScan ? "scanned, nothing open" : undefined}
         />

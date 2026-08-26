@@ -1,7 +1,7 @@
 """Admin management of per-workspace role assignments (issue #32).
 
 Mounted under admin_required in app/main.py, same gate as
-app/api/admin.py's user management -- assigning who can do what inside a
+app/api/admin.py's user management; assigning who can do what inside a
 workspace is itself an admin-only action, consistent with the rest of the
 admin surface.
 """

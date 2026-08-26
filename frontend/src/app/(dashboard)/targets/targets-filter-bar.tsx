@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 const CRITICALITY_OPTIONS = ["Prod", "Internal", "Dev"];
 
 // Sort options. "Most findings" is the default because it answers the
-// question this page exists to answer -- which repo needs attention -- and
+// question this page exists to answer (which repo needs attention) and
 // an alphabetical inventory buries the one repo with 1137 open findings
 // somewhere in the middle of 35 rows.
 export const SORT_OPTIONS = [
@@ -24,7 +24,7 @@ const SELECT_CLASS =
   "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
 // Issue #125: same search + facet-select convention as Scans'
-// scans-filter-bar.tsx -- driving URL search params rather than a bespoke
+// scans-filter-bar.tsx, driving URL search params rather than a bespoke
 // widget for this page. `search` filters client-side in targets-list.tsx
 // (name/repo_url), `criticality` filters on Target.label. `group_id`
 // (repo-group filter) stays a separate server-refetching control

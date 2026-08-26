@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
  *
  * Pairs with `useAsyncData`: debounce the input, then declare the debounced
  * value as a dependency, and the request fires once the user stops typing
- * instead of on every keystroke. Keeping the two apart matters -- a fetch
+ * instead of on every keystroke. Keeping the two apart matters, a fetch
  * hook that also owned debouncing would have to re-implement the request-id
  * and abort handling for the timer case.
  *

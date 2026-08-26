@@ -2,102 +2,102 @@
 
 Synthesized from a 4-lens review (Principal Architect, Lead PM, Security, Design) of the codebase as of 2026-08-12. Goal per product direction: not a literal Snyk clone, but comprehensive OSS DevSecOps management covering most of Snyk's feature surface. 2-week sprints, each independently shippable.
 
-## Sprint 1 — Trust & Safety Foundation (in progress)
+## Sprint 1: Trust & Safety Foundation (in progress)
 
 The platform is a security tool; it has to hold itself to a high bar before anything else matters.
 
-- **Scan execution isolation & concurrency safety** (`backend/app/scanners/runner.py`) — workdir is keyed only by repo name and gets `rmtree`'d/recloned; concurrent scans of the same target race and corrupt each other's checkout. Move to per-scan random workdir.
-- **Secrets encryption at rest** — `GitHubAppConfig.private_key_pem`/`client_secret`/`webhook_secret` are plaintext columns in Postgres. Encrypt with a Fernet key sourced from an env secret.
-- **Session hardening** — cookie has no `secure` flag path and no revocation (logout only clears the client cookie; a leaked token stays valid 7 days). Add a `token_version` column bumped on logout/password change.
-- **DB indices** — `Finding.target_id`/`state`/`branch`/`priority_score` (sorted on every list call) and `Scan.target_id` are unindexed; findings/dashboard queries degenerate past tens of thousands of rows.
-- **Celery retry policy** — `scan_tasks.run_scan` has no `autoretry_for`/backoff; transient clone/network failures become permanent failures.
-- **Rate limiting** — auth/scan-trigger/ingest endpoints are unthrottled.
+- **Scan execution isolation & concurrency safety** (`backend/app/scanners/runner.py`); workdir is keyed only by repo name and gets `rmtree`'d/recloned; concurrent scans of the same target race and corrupt each other's checkout. Move to per-scan random workdir.
+- **Secrets encryption at rest**: `GitHubAppConfig.private_key_pem`/`client_secret`/`webhook_secret` are plaintext columns in Postgres. Encrypt with a Fernet key sourced from an env secret.
+- **Session hardening**: cookie has no `secure` flag path and no revocation (logout only clears the client cookie; a leaked token stays valid 7 days). Add a `token_version` column bumped on logout/password change.
+- **DB indices**: `Finding.target_id`/`state`/`branch`/`priority_score` (sorted on every list call) and `Scan.target_id` are unindexed; findings/dashboard queries degenerate past tens of thousands of rows.
+- **Celery retry policy**: `scan_tasks.run_scan` has no `autoretry_for`/backoff; transient clone/network failures become permanent failures.
+- **Rate limiting**: auth/scan-trigger/ingest endpoints are unthrottled.
 
-## Sprint 2 — PR Guardrail (the actual product wedge)
+## Sprint 2: PR Guardrail (the actual product wedge)
 
-Per the architecture doc, this was always meant to be the core differentiator ("severity × context × exploitability, enforced at PR time") but Flow C was never built — PR History currently just lists PRs with `scan_status: "not scanned"`. Per PM review, this is the single highest-leverage feature: it's what makes a developer see the tool without opening a dashboard.
+Per the architecture doc, this was always meant to be the core differentiator ("severity × context × exploitability, enforced at PR time") but Flow C was never built; PR History currently just lists PRs with `scan_status: "not scanned"`. Per PM review, this is the single highest-leverage feature: it's what makes a developer see the tool without opening a dashboard.
 
 - Diff-only scan: on a PR event (or on-demand trigger), scan the feature branch, diff against default-branch findings, surface only net-new vulnerabilities.
 - Post a PR comment (via installed GitHub App) summarizing new findings.
 - Set a commit status (pass/fail) to block/allow merge.
 - PR Audit & Discovery Log view: AppSec override/accept-risk action, wired to the existing triage state machine.
 
-## Sprint 3 — Findings UX (currently the weakest surface for daily use)
+## Sprint 3: Findings UX (currently the weakest surface for daily use)
 
-- Filter/search/sort bar on Findings and Vulnerabilities (severity, tool, state, target) — currently an unfiltered `.map()`.
+- Filter/search/sort bar on Findings and Vulnerabilities (severity, tool, state, target); currently an unfiltered `.map()`.
 - Bulk triage (select multiple findings → one triage action).
 - Severity-first visual hierarchy (color-coded left border/icon, not a same-weight badge).
 - Pagination on Findings/Audit Log/GitHub Org Logs/PR History (currently unbounded).
 - Skeleton loading states instead of bare "Loading..." text.
 - Global search across findings/targets from the sidebar.
 
-## Sprint 4 — Coverage breadth (closing the gap to Snyk's feature surface)
+## Sprint 4: Coverage breadth (closing the gap to Snyk's feature surface)
 
-- SBOM + license scanning — Trivy is only invoked in `fs` vuln mode; its native SBOM/license output is unused.
-- Policy-as-code — severity/CVSS/license thresholds for PR blocking, org-level suppression rules (today triage is per-finding only).
+- SBOM + license scanning; Trivy is only invoked in `fs` vuln mode; its native SBOM/license output is unused.
+- Policy-as-code, severity/CVSS/license thresholds for PR blocking, org-level suppression rules (today triage is per-finding only).
 - Guided onboarding wizard (replace curl-based bootstrap with connect-repo → first-scan → first-finding flow).
 - EPSS/KEV exploitability surfaced in the UI (backend already computes it in `scoring.py`, verify it's actually rendered).
 
-## Sprint 5 — Scale & enterprise readiness
+## Sprint 5: Scale & enterprise readiness
 
 - **#32** RBAC with workspace/project-scoped roles (today it's global admin/user/viewer only).
 - **#33** Compliance/report export (PDF/CSV posture reports).
-- **#34** Full GitHub App OAuth polish (multi-install support — `GitHubAppConfig` is explicitly single-row/single-tenant today).
-- ~~Mass CI/CD Rollout Engine + Custom Workflow Builder~~ — **#35 moved to after Sprint 8**: it naturally builds on the single-repo pipeline-integration mechanism (#66), which doesn't exist until Sprint 8. Building the "mass rollout" wrapper before the thing it rolls out would be speculative.
+- **#34** Full GitHub App OAuth polish (multi-install support: `GitHubAppConfig` is explicitly single-row/single-tenant today).
+- ~~Mass CI/CD Rollout Engine + Custom Workflow Builder~~, **#35 moved to after Sprint 8**: it naturally builds on the single-repo pipeline-integration mechanism (#66), which doesn't exist until Sprint 8. Building the "mass rollout" wrapper before the thing it rolls out would be speculative.
 
-## Sprint 6 — Security & Platform Hardening (#54–60)
+## Sprint 6: Security & Platform Hardening (#54–60)
 
-Surfaced by a code-review pass against the live codebase (verified against actual source, not assumed — several other claims from the same review turned out to be false and were discarded). This is foundational: must land before Sprint 8's pipeline integration adds more surface area to secure.
+Surfaced by a code-review pass against the live codebase (verified against actual source, not assumed; several other claims from the same review turned out to be false and were discarded). This is foundational: must land before Sprint 8's pipeline integration adds more surface area to secure.
 
 - **#54** Git-clone argument injection + GitHub token leakage in `runner.py` (missing `--` separator/host allowlist; token embedded in clone URL leaks via exception messages).
-- **#55** Enforce non-default `SESSION_SECRET`/`ADMIN_PASSWORD` — fail-fast or loud warning outside local dev.
+- **#55** Enforce non-default `SESSION_SECRET`/`ADMIN_PASSWORD`; fail-fast or loud warning outside local dev.
 - **#56** Gate `POST /api/workspaces/bootstrap` to admin (currently any logged-in user).
-- **#57** Workspace-scoped filtering on findings/targets queries (IDOR) — ties into Sprint 5's RBAC work (#32).
-- **#58** Adopt Alembic for schema migrations (replace `create_all()` — every schema change so far has required a manual `ALTER TABLE`/`ALTER TYPE` against the live DB).
+- **#57** Workspace-scoped filtering on findings/targets queries (IDOR); ties into Sprint 5's RBAC work (#32).
+- **#58** Adopt Alembic for schema migrations (replace `create_all()`; every schema change so far has required a manual `ALTER TABLE`/`ALTER TYPE` against the live DB).
 - **#59** Offload scan/discovery/SBOM execution to Celery (currently synchronous in the request handler; threadpool exhaustion risk under concurrent scans).
-- **#60** Docker Compose deployment (backend, frontend, Postgres, Redis, Celery worker) — biggest adoption blocker per both reviews.
+- **#60** Docker Compose deployment (backend, frontend, Postgres, Redis, Celery worker); biggest adoption blocker per both reviews.
 
-## Sprint 7 — Org Structure & Developer Trust (#61, #64, #65, #71)
+## Sprint 7: Org Structure & Developer Trust (#61, #64, #65, #71)
 
 Low-effort, high-value items plus the repo-grouping foundation Sprint 8/9 build on.
 
-- **#61** Custom repo groups/tags (many-to-many `Group`/`TargetGroup`) — prerequisite for #62 and #70.
+- **#61** Custom repo groups/tags (many-to-many `Group`/`TargetGroup`), prerequisite for #62 and #70.
 - **#64** PR History: "All repos" aggregate view (reuse the `ALL_TARGETS` dropdown pattern already shipped for SBOM).
 - **#65** PR Guardrail scan log: link back to the originating GitHub PR.
-- **#71** Detailed vulnerability descriptions from CWE/NVD/OWASP/OSV.dev — explicitly no AI required, for developer trust when no AI provider is configured.
+- **#71** Detailed vulnerability descriptions from CWE/NVD/OWASP/OSV.dev, explicitly no AI required, for developer trust when no AI provider is configured.
 
-## Sprint 8 — Pipeline Integration & Enforcement (#66, #68, #62, #70)
+## Sprint 8: Pipeline Integration & Enforcement (#66, #68, #62, #70)
 
-The "operational, not just a dashboard" story — founder's highest-priority manual-review finding.
+The "operational, not just a dashboard" story; founder's highest-priority manual-review finding.
 
 - **#66** Pipeline integration button (generate CI YAML, open a PR to the target repo, track integration status).
-- **#68** Bulk pipeline onboarding — multi-select in Repo Sync, depends on #66.
+- **#68** Bulk pipeline onboarding; multi-select in Repo Sync, depends on #66.
 - **#62** Block mode vs alert mode per repo/group/org with inheritance (workspace → group → target).
 - **#70** SLA configuration by severity × group, depends on #61.
 
-## Sprint 9 — Executive & Ops Surfaces (#63, #69, #73, #74)
+## Sprint 9: Executive & Ops Surfaces (#63, #69, #73, #74)
 
-- **#63** Security score (org/group/repo composite, gauge chart) — the metric a CISO buys into.
+- **#63** Security score (org/group/repo composite, gauge chart); the metric a CISO buys into.
 - **#69** Configurable dashboard (widget library, per-user layout, CVE timeline).
 - **#73** User profile (password/name) + notification preferences (email/Slack on critical/KEV/SLA-breach).
-- **#74** Slack & Jira integration in Admin settings, encrypted config + test-connection — delivery channel for #73.
+- **#74** Slack & Jira integration in Admin settings, encrypted config + test-connection; delivery channel for #73.
 
-## Sprint 10 — Platform Differentiation (#75, #72, #76, #35)
+## Sprint 10: Platform Differentiation (#75, #72, #76, #35)
 
-The largest, highest-effort items — the features that make Rikugan more than a free Snyk clone.
+The largest, highest-effort items; the features that make Toleman more than a free Snyk clone.
 
 - **#75** Tool marketplace / health page (registry, install-from-UI, per-tool usage assignment, IaC tools).
 - **#72** Active API scanning against discovered endpoints (Nuclei/ZAP integration).
 - **#76** False positive learning engine (cross-repo suppression rules, auto-suppress on ingestion).
-- **#35** Mass CI/CD Rollout Engine + Custom Workflow Builder (moved from Sprint 5 — depends on #66's single-repo pipeline mechanism from Sprint 8).
+- **#35** Mass CI/CD Rollout Engine + Custom Workflow Builder (moved from Sprint 5; depends on #66's single-repo pipeline mechanism from Sprint 8).
 
-## Sprint 11 — Design System Foundation (#115)
+## Sprint 11: Design System Foundation (#115)
 
-Blocker for every sprint below — the light/dark token system every other redesign issue builds against. Land and merge alone before dispatching Sprint 12+; every other frontend issue building against the old hardcoded colors first just means redoing it once this lands.
+Blocker for every sprint below, the light/dark token system every other redesign issue builds against. Land and merge alone before dispatching Sprint 12+; every other frontend issue building against the old hardcoded colors first just means redoing it once this lands.
 
-- **#115** Light/dark theme tokens + toggle. Real values (not auto-inverted) from the published design board: https://claude.ai/code/artifact/48eb6411-7e34-4a7d-83f0-024000bdcef4 — see issue comment for a concrete pitfall already found in the design artifact itself (partially-themed components: one CSS property tokenized, a sibling property still hardcoded — invisible until you actually toggle themes).
+- **#115** Light/dark theme tokens + toggle. Real values (not auto-inverted) from the published design board: https://claude.ai/code/artifact/48eb6411-7e34-4a7d-83f0-024000bdcef4; see issue comment for a concrete pitfall already found in the design artifact itself (partially-themed components: one CSS property tokenized, a sibling property still hardcoded; invisible until you actually toggle themes).
 
-## Sprint 12 — Shell & Shared Components (depends on #115)
+## Sprint 12: Shell & Shared Components (depends on #115)
 
 Establishes the components other sprints consume: #117's criticality-chip/tooltip/risk-score pattern (needed by #119, #120, #125) and #116's branding wordmark (needed by #124, #131).
 
@@ -105,7 +105,7 @@ Establishes the components other sprints consume: #117's criticality-chip/toolti
 - **#117** Findings page polish: truncation tooltips, labeled risk score, Prod/Internal/Dev criticality chips.
 - **#118** Admin: grouped sub-navigation (fixes a real tab-strip scroll-clip bug), destructive-action confirmation dialogs, duplicate-workspace disambiguation.
 
-## Sprint 13 — Consumers of Sprint 12's components (depends on #116 + #117)
+## Sprint 13: Consumers of Sprint 12's components (depends on #116 + #117)
 
 - **#119** Dashboard: fix the duplicate-row bug, reuse #117's tooltip fix.
 - **#120** Scans page rebuild: search/filter/multi-select, reuses #117's criticality chips, Prod-aware confirmation modal.
@@ -114,100 +114,100 @@ Establishes the components other sprints consume: #117's criticality-chip/toolti
 - **#131** Onboarding: light-touch pass applying #116's wordmark.
 - **#130** Settings: grouped section-nav matching #118's pattern.
 
-## Sprint 14 — Reporting & Activity Surfaces (depends on #115 only — can run parallel to Sprint 12/13)
+## Sprint 14: Reporting & Activity Surfaces (depends on #115 only; can run parallel to Sprint 12/13)
 
-- **#121** Shared "generate a document" pattern across SBOM, API Discovery, PR History, Reports — plus export-format parity and a real PR History error state.
-- **#122** AI Analysis: real entry point (finding selector / recent-analyses list) — currently a dead end.
+- **#121** Shared "generate a document" pattern across SBOM, API Discovery, PR History, Reports; plus export-format parity and a real PR History error state.
+- **#122** AI Analysis: real entry point (finding selector / recent-analyses list), currently a dead end.
 - **#123** Audit Log + GitHub Org Logs: shared filter/pagination pattern, bulk-action grouping (a real data-layer fix, not just visual), QA-disclaimer copy rewrite.
 
-## Sprint 15 — Independent fixes (no dependency on #115 or any other sprint — can run anytime, good parallel filler)
+## Sprint 15: Independent fixes (no dependency on #115 or any other sprint; can run anytime, good parallel filler)
 
 - **#126** Branded 404 page.
-- **#127** GitHub PR comment redesign (markdown/GFM, not component-library — severity table, collapsible sections) + a real functional bug fix: `post_pr_comment()` always posts a new comment instead of updating in place, spamming PR threads on every rescan.
+- **#127** GitHub PR comment redesign (markdown/GFM, not component-library; severity table, collapsible sections) + a real functional bug fix: `post_pr_comment()` always posts a new comment instead of updating in place, spamming PR threads on every rescan.
 - **#128** Fix: expired/revoked session renders a broken authenticated shell instead of redirecting to login.
 - **#129** Fix: workspace API key shown in cleartext with no mask/reveal/rotate UX.
 
-## Sprint 16 — Public surfaces (#109, #108, #114)
+## Sprint 16: Public surfaces (#109, #108, #114)
 
-Logged 2026-08-15, not yet started. All three need real scoping (auth model, tool surface, export destinations) before implementation — this entry tracks them as a sprint, it isn't a green light to build blind.
+Logged 2026-08-15, not yet started. All three need real scoping (auth model, tool surface, export destinations) before implementation; this entry tracks them as a sprint, it isn't a green light to build blind.
 
-- **#109** Public API with API token support — the rikugan-docs Reference page's "coming soon" placeholder. Needs: token scope/permission model (distinct from the existing workspace API key, which is CI-ingest-only today), rate limiting, versioning strategy, and real OpenAPI docs generation.
-- **#108** Add a Rikugan MCP server — exposing findings/targets/scans as tools an AI agent can call. Needs: which operations to expose as MCP tools (read-only triage assistant vs. write-capable scan trigger), auth (reuse workspace API key vs. new token type), and whether it ships as a separate package/process or a mode of the existing backend.
-- **#114** SIEM export support. Needs: which format/destination first (Splunk HEC, generic syslog, S3/webhook) — no format chosen yet, this is a real product decision, not an engineering default.
+- **#109** Public API with API token support, the toleman-docs Reference page's "coming soon" placeholder. Needs: token scope/permission model (distinct from the existing workspace API key, which is CI-ingest-only today), rate limiting, versioning strategy, and real OpenAPI docs generation.
+- **#108** Add a Toleman MCP server; exposing findings/targets/scans as tools an AI agent can call. Needs: which operations to expose as MCP tools (read-only triage assistant vs. write-capable scan trigger), auth (reuse workspace API key vs. new token type), and whether it ships as a separate package/process or a mode of the existing backend.
+- **#114** SIEM export support. Needs: which format/destination first (Splunk HEC, generic syslog, S3/webhook); no format chosen yet, this is a real product decision, not an engineering default.
 
-## Sprint 17 — UI polish follow-ups from the manual review (#171, #172, #173, #174)
+## Sprint 17: UI polish follow-ups from the manual review (#171, #172, #173, #174)
 
-**Complete** — logged and shipped 2026-08-15 (PR #175). All four came out of a manual UI review pass over every route at 1440x900 and 390x844 in both themes. The unambiguous **defects** from that review (server-side theme cookie never read, security-score gauge label printed over the grade badge, Recharts hydration error, nav items hidden below the fold with no affordance, admin rows overflowing on mobile, 20 unlabeled form controls) shipped separately in PR #170; these four were the leftovers that were design calls rather than bugs, so each needed a decision before implementation.
+**Complete**, logged and shipped 2026-08-15 (PR #175). All four came out of a manual UI review pass over every route at 1440x900 and 390x844 in both themes. The unambiguous **defects** from that review (server-side theme cookie never read, security-score gauge label printed over the grade badge, Recharts hydration error, nav items hidden below the fold with no affordance, admin rows overflowing on mobile, 20 unlabeled form controls) shipped separately in PR #170; these four were the leftovers that were design calls rather than bugs, so each needed a decision before implementation.
 
-- **#171** On-Demand Scan rendered roughly half its rows with solid destructive-red Scan buttons, bound to target criticality. Decided: the colour goes. Every row is now `outline`; the red PROD chip and the Prod-aware ConfirmDialog from #117/#118 are untouched, so the safety gate is unchanged. The bulk-action button keeps `destructive` — one click there fires N scans.
-- **#172** "Compact" density reclaimed only 7%. Decided: make it a real layout change. Root cause was not the density tokens but the base `Card`'s `py-6` — 48px no token could reach, on top of `CardContent`'s own `--density-row-py`. List rows cancel it with `py-0`; Compact additionally collapses the secondary lines onto one row and moves the Triage trigger inline. Findings card 175px -> 127px comfortable, 163px -> 75px compact (4 -> 9 rows visible).
+- **#171** On-Demand Scan rendered roughly half its rows with solid destructive-red Scan buttons, bound to target criticality. Decided: the colour goes. Every row is now `outline`; the red PROD chip and the Prod-aware ConfirmDialog from #117/#118 are untouched, so the safety gate is unchanged. The bulk-action button keeps `destructive`; one click there fires N scans.
+- **#172** "Compact" density reclaimed only 7%. Decided: make it a real layout change. Root cause was not the density tokens but the base `Card`'s `py-6`; 48px no token could reach, on top of `CardContent`'s own `--density-row-py`. List rows cancel it with `py-0`; Compact additionally collapses the secondary lines onto one row and moves the Triage trigger inline. Findings card 175px -> 127px comfortable, 163px -> 75px compact (4 -> 9 rows visible).
 - **#173** Security Score widget stranded a 220px gauge in a full-width card. Now a centred row with an explicit gap, gauge at 280x160, breakdown list allowed to grow to `max-w-md`.
 - **#174** Repo Sync cards now show default branch, last-scan time and open findings with a critical/high breakdown; `weight` is labelled "Risk weight N/5" with the real scoring formula in a tooltip. Backed by a new `GET /api/targets/summary` reusing the same default-branch + `OPEN_STATES` scoping as the Posture dashboard and the security score, so the counts can't disagree across surfaces.
 
-## Sprint 18 — Supply-chain malware + SAST engine (contributor-filed: #177, #182, #183)
+## Sprint 18: Supply-chain malware + SAST engine (contributor-filed: #177, #182, #183)
 
-Logged 2026-08-16 from three issues filed by @r0075h3ll. Each was scoped against the live API and this codebase before being written up, and each carries acceptance criteria — these are open for contributor pickup.
+Logged 2026-08-16 from three issues filed by @r0075h3ll. Each was scoped against the live API and this codebase before being written up, and each carries acceptance criteria; these are open for contributor pickup.
 
-**#177 — OSV malicious-package tracking & blocking.** The strongest of the three and the recommended starting point: OSV is already a dependency (`app/core/osv.py`, #71) but only for CVE enrichment, `SbomComponent` already holds the package inventory the check needs, and `pr_guardrail.should_block()` decides on severity alone — so emitting malicious packages as Critical gets PR blocking with no guardrail changes. Split into #180 (pure OSV client, good first issue), #181 (SBOM integration + Finding persistence), #179 (notification event).
+**#177, OSV malicious-package tracking & blocking.** The strongest of the three and the recommended starting point: OSV is already a dependency (`app/core/osv.py`, #71) but only for CVE enrichment, `SbomComponent` already holds the package inventory the check needs, and `pr_guardrail.should_block()` decides on severity alone; so emitting malicious packages as Critical gets PR blocking with no guardrail changes. Split into #180 (pure OSV client, good first issue), #181 (SBOM integration + Finding persistence), #179 (notification event).
 
-**#182 — Evaluate opengrep.** More urgent than it first looked, and not primarily a licensing matter: `runner.py` runs `semgrep scan --config=auto`, which fetches rules from Semgrep's hosted registry at scan time — outbound calls on every scan, broken air-gapped installs, and non-reproducible scan results. Opengrep is LGPL-2.1 and restores taint analysis and inter-procedural scanning that Semgrep dropped from CE. Scoped as an evaluation producing evidence; changing the default engine stays a maintainer decision.
+**#182 (Evaluate opengrep.** More urgent than it first looked, and not primarily a licensing matter: `runner.py` runs `semgrep scan --config=auto`, which fetches rules from Semgrep's hosted registry at scan time) outbound calls on every scan, broken air-gapped installs, and non-reproducible scan results. Opengrep is LGPL-2.1 and restores taint analysis and inter-procedural scanning that Semgrep dropped from CE. Scoped as an evaluation producing evidence; changing the default engine stays a maintainer decision.
 
-**#183 — Reachability analysis (trailmark).** Design spike, lowest priority. Valuable in principle — 1382 open findings on a live instance, mostly transitive dependency CVEs — but unresolved on schema, scan cost, and interaction with #76's auto-suppression. Filed as a proposal-first issue rather than an implementation one.
+**#183, Reachability analysis (trailmark).** Design spike, lowest priority. Valuable in principle (1382 open findings on a live instance, mostly transitive dependency CVEs) but unresolved on schema, scan cost, and interaction with #76's auto-suppression. Filed as a proposal-first issue rather than an implementation one.
 
 A constraint shared by all of these: **a failed or absent check must never render as "clean."** Same reasoning as #174's never-scanned repos, and it is the difference between a security feature and a false all-clear.
 
-## Sprint 19 — AI/LLM repo security coverage (epic #192)
+## Sprint 19: AI/LLM repo security coverage (epic #192)
 
-Logged 2026-08-16. Scanning repos that **are** AI products or carry AI features — a surface conventional SAST/SCA is blind to. Every tool named was verified against PyPI and GitHub (licence, maintenance, current package name) before being written up.
+Logged 2026-08-16. Scanning repos that **are** AI products or carry AI features; a surface conventional SAST/SCA is blind to. Every tool named was verified against PyPI and GitHub (licence, maintenance, current package name) before being written up.
 
-The gap, concretely: `pickle.load()` on a hostile model file is RCE at load time and nothing currently inspects binary weights; a package SBOM says `transformers==4.44.0` but nothing about which model is pulled at runtime or from where; model output reaching `eval`/SQL/shell is classic injection that registry rules don't cover; and agent/MCP surfaces (tool poisoning, rug pulls) matter directly since Rikugan ships its own MCP server (#108).
+The gap, concretely: `pickle.load()` on a hostile model file is RCE at load time and nothing currently inspects binary weights; a package SBOM says `transformers==4.44.0` but nothing about which model is pulled at runtime or from where; model output reaching `eval`/SQL/shell is classic injection that registry rules don't cover; and agent/MCP surfaces (tool poisoning, rug pulls) matter directly since Toleman ships its own MCP server (#108).
 
-- **#187** Tool marketplace AI/ML category — **shipped**. Five catalog-only entries (ModelScan, garak, MEDUSA, Snyk Agent Scan, Cisco AIBOM), none wired for execution, same status as `kics`. Flags MEDUSA's AGPL-3.0 as a deliberate licensing decision rather than something arriving silently via a registry entry.
-- **#185** Auto-detect AI/ML repos — foundation, everything gates on it. Detects from model artifacts in the checkout or AI/ML dependencies already in `SbomComponent`, so it costs a path check and a DB query. Rejected an explicit per-target flag: an unflagged AI repo silently getting zero coverage is the exact failure this feature exists to prevent.
-- **#186** Model-file scanning (ModelScan) — highest signal-to-noise. Emitting unsafe-deserialization at `Critical` means `should_block()` blocks it with no guardrail changes.
-- **#189** LLM-usage SAST rules — cheapest of the set: curated Semgrep rules, no new binary and no parser work. Note AI provider **secret** detection was descoped after verification — gitleaks v8.30.1 already ships seven AI-provider key rules.
-- **#190** AIBOM (CycloneDX 1.6 ML components) — extends the CycloneDX SBOM pipeline that already exists. EU AI Act Art. 11 / Annex IV duties took effect 2 August 2026, so this is current rather than anticipatory.
-- **#191** garak LLM red-teaming — largest and riskiest; needs a live endpoint and produces non-deterministic results that break dedup, triage and SLA assumptions. Follows #72's active-API-scan precedent, not the scanner pattern, and is deliberately **not** wired into PR blocking. Sequenced last.
+- **#187** Tool marketplace AI/ML category, **shipped**. Five catalog-only entries (ModelScan, garak, MEDUSA, Snyk Agent Scan, Cisco AIBOM), none wired for execution, same status as `kics`. Flags MEDUSA's AGPL-3.0 as a deliberate licensing decision rather than something arriving silently via a registry entry.
+- **#185** Auto-detect AI/ML repos, foundation, everything gates on it. Detects from model artifacts in the checkout or AI/ML dependencies already in `SbomComponent`, so it costs a path check and a DB query. Rejected an explicit per-target flag: an unflagged AI repo silently getting zero coverage is the exact failure this feature exists to prevent.
+- **#186** Model-file scanning (ModelScan), highest signal-to-noise. Emitting unsafe-deserialization at `Critical` means `should_block()` blocks it with no guardrail changes.
+- **#189** LLM-usage SAST rules, cheapest of the set: curated Semgrep rules, no new binary and no parser work. Note AI provider **secret** detection was descoped after verification, gitleaks v8.30.1 already ships seven AI-provider key rules.
+- **#190** AIBOM (CycloneDX 1.6 ML components); extends the CycloneDX SBOM pipeline that already exists. EU AI Act Art. 11 / Annex IV duties took effect 2 August 2026, so this is current rather than anticipatory.
+- **#191** garak LLM red-teaming; largest and riskiest; needs a live endpoint and produces non-deterministic results that break dedup, triage and SLA assumptions. Follows #72's active-API-scan precedent, not the scanner pattern, and is deliberately **not** wired into PR blocking. Sequenced last.
 
 Constraint running through all of them: **a failed, skipped or unknown check must never render as "clean."** An unscanned repo is not a safe repo, an unpinned model revision is unknown rather than fine, and a probe that didn't reproduce is not a fixed vulnerability. Same principle as #174's never-scanned repos.
 
-## Sprint 20 — Scan feedback (#212)
+## Sprint 20: Scan feedback (#212)
 
-Logged 2026-08-17, from live use: triggering a scan told you almost nothing. The button said "Scanning..." for a moment, then silence -- no indication of whether the work had started, how long it might take, or (on failure) why it stopped. A scan dispatched from one page was invisible on every other, so Targets cheerfully showed "last scanned 3 days ago" while a scan was in flight.
+Logged 2026-08-17, from live use: triggering a scan told you almost nothing. The button said "Scanning..." for a moment, then silence; no indication of whether the work had started, how long it might take, or (on failure) why it stopped. A scan dispatched from one page was invisible on every other, so Targets cheerfully showed "last scanned 3 days ago" while a scan was in flight.
 
 - **#212** Scan status, elapsed time and a grounded ETA. `Scan.status`/`started_at`/`completed_at`/`error` already existed and were already returned by the API; almost nothing surfaced them. Adds `GET /api/scans/active` (running scans keyed by target, so any surface can show in-flight work without having triggered it), a shared status component used by SAST, DAST and the Targets list alike, and poll-until-settled progress reusing `lib/poll.ts` rather than a third bespoke loop.
 
-The ETA is deliberately narrow: median duration of that repo's own recent completed runs of that same tool, and **null** when there is not enough history, in which case the UI counts elapsed time instead. A fixed "about 30 seconds" or a cross-repo average was rejected -- scan duration is dominated by repo size, and an estimate that is routinely wrong costs more trust than no estimate. Failed runs are never sampled: their duration measures how long the platform took to give up, not how long the work takes.
+The ETA is deliberately narrow: median duration of that repo's own recent completed runs of that same tool, and **null** when there is not enough history, in which case the UI counts elapsed time instead. A fixed "about 30 seconds" or a cross-repo average was rejected; scan duration is dominated by repo size, and an estimate that is routinely wrong costs more trust than no estimate. Failed runs are never sampled: their duration measures how long the platform took to give up, not how long the work takes.
 
 Same constraint as Sprint 19 and #174, applied to time rather than findings: **a run whose state is unknown must never render as progress.** A stale row swept by `mark_stale_if_needed` shows as stale, not as an eternal spinner, because an indefinite spinner is indistinguishable from a hung platform.
 
-## Sprint 21 — Deployability & tool lifecycle (#215, #216)
+## Sprint 21: Deployability & tool lifecycle (#215, #216)
 
 Logged 2026-08-17, both from a real failure rather than a plan.
 
-- **#215** A clean `docker compose up` broke: setuptools 82 removed `pkg_resources`, which semgrep's pinned opentelemetry imports. `requirements.txt` had not changed — a transitive resolve drifted, and every CI check stayed green because nothing in CI built the shipped images. Fixed with a pin, then covered: image builds post-merge/weekly, and `verify_tools.py` executes every bundled scanner inside the built image, because "the build succeeded" does not mean "the binary runs".
+- **#215** A clean `docker compose up` broke: setuptools 82 removed `pkg_resources`, which semgrep's pinned opentelemetry imports. `requirements.txt` had not changed, a transitive resolve drifted, and every CI check stayed green because nothing in CI built the shipped images. Fixed with a pin, then covered: image builds post-merge/weekly, and `verify_tools.py` executes every bundled scanner inside the built image, because "the build succeeded" does not mean "the binary runs".
 - **#216** Tool marketplace one-click install, replacing the copy-this-command reference text for pip-installable tools. #75 declined this as an RCE surface; the difference now is that the endpoint accepts a **registry key**, not a package name, so the installable set is fixed in source and no request can name what gets installed.
 
 Both are the same principle this roadmap keeps returning to, applied to the platform itself rather than to findings: **a check that did not really run must never look like a check that passed.** A missing scanner produces zero findings, and zero findings from a broken tool is indistinguishable from a clean repo. Hence verifying tools actually execute, and refusing to call an install successful until the tool answers its own version command.
 
-## Sprint 22 — PR-scan economics, scanner honesty, triage (2026-08-21)
+## Sprint 22: PR-scan economics, scanner honesty, triage (2026-08-21)
 
 Logged 2026-08-21. Three of these came out of a competitive teardown against Snyk; two came out of running our own scanners against real binaries and not liking what came back.
 
-- **#243** Diff-scoped PR scans. `execute_pr_guardrail_scan`'s docstring said "diff-only", but that described the *findings* being diffed — every PR ran every tool over the whole repository. Now scoped per tool (`runner.TOOL_SCOPING`), measured at 4x on a 402-file tree. The coverage cost is real and is disclosed rather than hidden: default off, scope stated above the verdict in the PR comment, and no green tick on a partial scan.
-- **#253** A scanner that dies no longer reports a clean pass. `run_tool` checked no tool's exit code but modelscan's, so a crashed scanner returned `[]` — identical to "scanned everything, found nothing". Found by running gitleaks for real: `--report-path /dev/stdout` aborted before scanning and surfaced as clean.
+- **#243** Diff-scoped PR scans. `execute_pr_guardrail_scan`'s docstring said "diff-only", but that described the *findings* being diffed; every PR ran every tool over the whole repository. Now scoped per tool (`runner.TOOL_SCOPING`), measured at 4x on a 402-file tree. The coverage cost is real and is disclosed rather than hidden: default off, scope stated above the verdict in the PR comment, and no green tick on a partial scan.
+- **#253** A scanner that dies no longer reports a clean pass. `run_tool` checked no tool's exit code but modelscan's, so a crashed scanner returned `[]`; identical to "scanned everything, found nothing". Found by running gitleaks for real: `--report-path /dev/stdout` aborted before scanning and surfaced as clean.
 - **#246** Fixability verdict and filter. Severity says which finding is worst; this says which can be closed today. Derived from `CveEnrichment`, so it cannot drift.
 - **#250** Dashboard counts link to the findings they count.
-- **#245** Server-side PR scanning documented as the default. Two mechanisms existed and nothing said which to use -- establishing that server-side already worked took a code read, which is itself the bug. The Actions path keeps its real niche: it reports into the job summary whether or not ingest succeeds, so it covers deployments GitHub cannot reach.
+- **#245** Server-side PR scanning documented as the default. Two mechanisms existed and nothing said which to use, establishing that server-side already worked took a code read, which is itself the bug. The Actions path keeps its real niche: it reports into the job summary whether or not ingest succeeds, so it covers deployments GitHub cannot reach.
 - **#251** Owner, environment and lifecycle on targets, making `criticality_weight` explainable rather than asserted.
 - **#247** Remediation grouping: "upgrade starlette to 0.40.0, fixes 3 issues, 1 remaining" instead of N rows the reader has to collapse by hand.
-- **#255** Secrets-scanner benchmark. gitleaks stays default on precision; noseyparker is the candidate second tool, and the one that closes a real gap — gitleaks has no rule for credentials in a Postgres connection URI.
+- **#255** Secrets-scanner benchmark. gitleaks stays default on precision; noseyparker is the candidate second tool, and the one that closes a real gap; gitleaks has no rule for credentials in a Postgres connection URI.
 
-The constraint from Sprints 19–21 held and did most of the design work here. Diff scoping introduced a third tool outcome — **skipped** — and the whole of #243's care went into keeping it distinct from *ran clean*. #253 was the same rule violated in the oldest code path in the repo. **A check that did not really run must never look like a check that passed**, and "we did not establish X" is never the same claim as "X is absent" — which is also why #246's `unknown` is a first-class verdict rather than a shade of `no_known_fix`.
+The constraint from Sprints 19–21 held and did most of the design work here. Diff scoping introduced a third tool outcome (**skipped**) and the whole of #243's care went into keeping it distinct from *ran clean*. #253 was the same rule violated in the oldest code path in the repo. **A check that did not really run must never look like a check that passed**, and "we did not establish X" is never the same claim as "X is absent"; which is also why #246's `unknown` is a first-class verdict rather than a shade of `no_known_fix`.
 
 ## Explicitly not planned
 
-- Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages) — out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.
-- **#113** SSO integration (SAML/OIDC) — directly conflicts with the line above. Flagged 2026-08-15: recommend closing #113 as won't-fix per this roadmap's own stated product direction, or explicitly revising this "not planned" line first if the direction has actually changed. Not implementing until that conflict is resolved by the maintainer.
-- **#252** IDE plugins, one per editor. Snyk ships 13; we ship none, and the recommendation is that this stays an explicit non-goal rather than an accidental absence. The MCP server (Sprint 16) already gives editor-adjacent access from any MCP-capable client — one integration instead of thirteen, and arguably the modern answer to the question Snyk answered in 2019 with plugins. Rikugan's enforcement story lives at the PR boundary, and that is where the investment belongs. Recorded 2026-08-21 as a recommendation; a maintainer wanting the editor loop should say so and reopen #252, since the counter-argument ("found in CI is always later and more expensive than found while typing") is real.
-- **#248** Interprocedural SAST. Semgrep OSS matches patterns within a single file; cross-file dataflow is not a setting we have wrong, it is absent from the engine, and no amount of rule-writing closes it. Snyk Code found a genuine taint path through a helper in another module that we structurally cannot see (it also produced two false positives — this is a different question, not a strictly better answer). Recommendation, recorded 2026-08-21: **accept single-file SAST and say so plainly in the docs**, rather than keep implying a depth we do not have. #182's opengrep evaluation stays open as the cheap way to revisit; CodeQL remains the only realistic dataflow candidate and its licence terms are the blocker to check before any engineering. What is not acceptable is the status quo of implying parity.
+- Feature-parity chase with Snyk's paid/enterprise tiers (SSO/SAML, sales-led compliance packages); out of scope per product direction; this stays a comprehensive **open-source** DevSecOps management UI, not a SaaS competitor.
+- **#113** SSO integration (SAML/OIDC), directly conflicts with the line above. Flagged 2026-08-15: recommend closing #113 as won't-fix per this roadmap's own stated product direction, or explicitly revising this "not planned" line first if the direction has actually changed. Not implementing until that conflict is resolved by the maintainer.
+- **#252** IDE plugins, one per editor. Snyk ships 13; we ship none, and the recommendation is that this stays an explicit non-goal rather than an accidental absence. The MCP server (Sprint 16) already gives editor-adjacent access from any MCP-capable client; one integration instead of thirteen, and arguably the modern answer to the question Snyk answered in 2019 with plugins. Toleman's enforcement story lives at the PR boundary, and that is where the investment belongs. Recorded 2026-08-21 as a recommendation; a maintainer wanting the editor loop should say so and reopen #252, since the counter-argument ("found in CI is always later and more expensive than found while typing") is real.
+- **#248** Interprocedural SAST. Semgrep OSS matches patterns within a single file; cross-file dataflow is not a setting we have wrong, it is absent from the engine, and no amount of rule-writing closes it. Snyk Code found a genuine taint path through a helper in another module that we structurally cannot see (it also produced two false positives; this is a different question, not a strictly better answer). Recommendation, recorded 2026-08-21: **accept single-file SAST and say so plainly in the docs**, rather than keep implying a depth we do not have. #182's opengrep evaluation stays open as the cheap way to revisit; CodeQL remains the only realistic dataflow candidate and its licence terms are the blocker to check before any engineering. What is not acceptable is the status quo of implying parity.

@@ -46,11 +46,15 @@ ARG GITLEAKS_VERSION=8.21.2
 ARG TRIVY_VERSION=0.73.0
 ARG GOSEC_VERSION=2.28.0
 
-# (BLD-04) Checksums of the *installer scripts* fetched below, at the tags
-# pinned above -- independently re-derived, not copied. Pinning the tool
-# version never covered these: the scripts came from a mutable branch tip.
-ARG TRIVY_INSTALLER_SHA256=e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
-ARG GOSEC_INSTALLER_SHA256=2aafc038c170fb6141727d247ad5a17ded5bf195ad0fb8ed1b8e0aed326ac78f
+# (BLD-04, revised) Checksums of the release *assets* downloaded below, per
+# architecture, from each project's published checksums file for the tag
+# pinned above. These replace the former installer-script checksums, which
+# verified a program that no longer runs; the tarball sum covers the binary
+# that actually lands in the image.
+ARG TRIVY_SHA256_AMD64=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+ARG TRIVY_SHA256_ARM64=13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
+ARG GOSEC_SHA256_AMD64=d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff
+ARG GOSEC_SHA256_ARM64=63259681b6e4b9e7a24d4e187b485e75d3844d28d512b0c97dc831e51d374720
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -89,26 +93,37 @@ RUN set -eux; \
 #
 # To bump: change the ARG, re-fetch, and record the new sum with
 #   curl -sSL <url> | sha256sum
-RUN curl -sSL -o /tmp/trivy-install.sh \
-        "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh" \
-    && echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c - \
-    && sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}" \
-    && rm -f /tmp/trivy-install.sh \
-    && trivy --version
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) TRIVY_ASSET="Linux-64bit"; TRIVY_SHA256="${TRIVY_SHA256_AMD64}" ;; \
+        arm64) TRIVY_ASSET="Linux-ARM64"; TRIVY_SHA256="${TRIVY_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -sSL -o /tmp/trivy.tar.gz \
+        "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_ASSET}.tar.gz"; \
+    echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -; \
+    tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy; \
+    rm -f /tmp/trivy.tar.gz; \
+    trivy --version
 
-# gosec's installer resolves the release through GitHub's API, which is rate
-# limited for unauthenticated callers. When that limit is hit it reports
-# "unable to find 'vX.Y.Z'" -- indistinguishable from a genuinely missing
-# tag, and the reason this build failed confusingly during the CI migration
-# while v2.28.0 was in fact the latest release. Nothing here can raise the
-# limit, but pinning the script at least removes one moving part from the
-# diagnosis.
-RUN curl -sSL -o /tmp/gosec-install.sh \
-        "https://raw.githubusercontent.com/securego/gosec/v${GOSEC_VERSION}/install.sh" \
-    && echo "${GOSEC_INSTALLER_SHA256}  /tmp/gosec-install.sh" | sha256sum -c - \
-    && sh /tmp/gosec-install.sh -b /usr/local/bin "v${GOSEC_VERSION}" \
-    && rm -f /tmp/gosec-install.sh \
-    && gosec --version
+# This comment used to say the rate-limited api.github.com lookup in gosec's
+# installer was unavoidable -- "nothing here can raise the limit". True, but
+# the limit only applies because the script asks the API to resolve a
+# release we already know the exact URL of. The first GHCR publish run hit
+# it again and failed the build; downloading the asset directly removes the
+# call, and with it the whole failure mode.
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) GOSEC_ARCH=amd64; GOSEC_SHA256="${GOSEC_SHA256_AMD64}" ;; \
+        arm64) GOSEC_ARCH=arm64; GOSEC_SHA256="${GOSEC_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -sSL -o /tmp/gosec.tar.gz \
+        "https://github.com/securego/gosec/releases/download/v${GOSEC_VERSION}/gosec_${GOSEC_VERSION}_linux_${GOSEC_ARCH}.tar.gz"; \
+    echo "${GOSEC_SHA256}  /tmp/gosec.tar.gz" | sha256sum -c -; \
+    tar xz -C /usr/local/bin -f /tmp/gosec.tar.gz gosec; \
+    rm -f /tmp/gosec.tar.gz; \
+    gosec --version
 
 #
 # `setuptools<81` is load-bearing, not hygiene. Nothing here asks for

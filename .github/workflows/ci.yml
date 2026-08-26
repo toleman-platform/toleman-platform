@@ -164,3 +164,23 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate docker-compose.yml
         run: docker compose -f docker-compose.yml config --quiet
+
+      # The GHCR override is a separate file nothing else exercises, so
+      # without this a service renamed in the base compose file would leave
+      # it silently overriding a service that no longer exists.
+      - name: Validate the GHCR override composes onto it
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.ghcr.yml config --quiet
+          # Every service this override names must actually resolve to a
+          # GHCR image; a typo'd service key is otherwise a no-op that only
+          # shows up as an unexpected local build at someone else's `up`.
+          for svc in backend celery-worker frontend; do
+            image=$(docker compose -f docker-compose.yml -f docker-compose.ghcr.yml \
+                      config --format json | python3 -c "
+          import json,sys
+          print(json.load(sys.stdin)['services']['$svc']['image'])")
+            case "$image" in
+              ghcr.io/*) echo "ok  $svc -> $image" ;;
+              *) echo "FAIL $svc resolved to '$image', expected a ghcr.io image" >&2; exit 1 ;;
+            esac
+          done

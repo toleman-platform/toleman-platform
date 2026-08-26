@@ -13,14 +13,32 @@ cp .env.example .env   # optional — every var has a working local-dev default
 docker compose up --build
 ```
 
-Prefer not to build from source? Prebuilt images are published to GHCR on tagged releases (`.github/workflows/publish-images.yml`) — private, same access as this repo. Pull instead of building:
+### Prefer not to build from source?
+
+Prebuilt images are published to GHCR by [`publish-images.yml`](.github/workflows/publish-images.yml). Use the override file instead of editing `docker-compose.yml`:
 
 ```bash
-docker pull ghcr.io/toleman-platform/toleman-platform-backend:latest
-docker pull ghcr.io/toleman-platform/toleman-platform-frontend:latest
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up
 ```
 
-then swap `build:` for `image: ghcr.io/toleman-platform/toleman-platform-backend:latest` (and `-frontend` for the frontend service) in `docker-compose.yml`.
+Available tags, for both `…-backend` and `…-frontend`:
+
+| Tag | Moves | Use it for |
+|---|---|---|
+| `edge` | every merge to `main` | trying the current state of the project |
+| `latest` | every tagged release | tracking releases without pinning |
+| `1.2.3`, `1.2` | fixed at release | pinning to a release |
+| `sha-abc1234` | never | reproducing an exact build |
+
+`edge` and `latest` are moving tags — pin to a version or a `sha-` tag for anything you need to reproduce. Every image carries [build provenance](https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) attesting the workflow run and commit it came from:
+
+```bash
+gh attestation verify oci://ghcr.io/toleman-platform/toleman-platform-backend:latest \
+  --owner toleman-platform
+```
+
+Releases build for `linux/amd64` and `linux/arm64`; `edge` is amd64 only, since emulated arm64 builds are slow enough to be disproportionate on every merge. On Apple Silicon, either use a released tag or build from source with `docker compose up --build`.
 
 This builds and starts five containers:
 

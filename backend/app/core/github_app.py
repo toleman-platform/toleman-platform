@@ -38,7 +38,8 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
     installation belongs to without needing to guess or brute-force it.
     """
     return {
-        # (GH-05) "Rikugan", not the pre-rename "OSP DevSecOps". This string
+        # (GH-05) "Toleman" -- not "Rikugan", and not the older "OSP
+        # DevSecOps" that one replaced in turn. This string
         # is the product's signature on every pull request in an adopting
         # org: GitHub derives the bot login from it, so the old name shipped
         # as `osp-devsecops-*[bot]` on every PR comment. Cosmetic internally,
@@ -47,7 +48,7 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         # Only affects Apps created from here on -- an App's name is fixed at
         # creation, so an existing installation keeps its old bot login until
         # its owner renames it in GitHub's own App settings.
-        "name": f"Rikugan DevSecOps {name_suffix}",
+        "name": f"Toleman DevSecOps {name_suffix}",
         "url": app_url,
         "redirect_url": f"{backend_url}/api/github-app/callback",
         "setup_url": f"{backend_url}/api/github-app/setup-callback?cfg={setup_token}",

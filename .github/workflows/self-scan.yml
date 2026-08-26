@@ -1,0 +1,232 @@
+name: Self Scan
+
+# The dogfooding pass: Toleman wraps these open-source scanners, so the
+# platform runs them against its own source.
+#
+# Results go to artifacts and the job summary rather than GitHub code
+# scanning -- SARIF upload to the Security tab needs GitHub Advanced
+# Security. gosec stays excluded: it is Go-specific and this repo has no Go
+# source.
+#
+# Each `|| true` is intentional. These jobs report what the scanners found;
+# they are not a merge gate. A findings count that grows is a signal to
+# read, not a red check that blocks an unrelated PR.
+#
+# Deliberately NOT on every pull request, unlike ci.yml and
+# docker-images.yml. That is not a cost decision -- standard runners are
+# unmetered on a public repository -- but a signal one: these jobs gate
+# nothing, so attaching four non-blocking reports to every PR trains people
+# to ignore them. On main they record the trend; the Monday schedule is what
+# stops a newly-published CVE in an unchanged dependency from sitting unseen
+# until someone happens to push. Use the manual trigger to scan a branch
+# before merging when a PR moves dependencies.
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mon 06:00 UTC. This is the trigger that catches a CVE published
+    # against a dependency nobody has touched -- without it the scan only
+    # ever runs when someone happens to push.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: self-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Release asset + checksum, matching backend/Dockerfile. Upstream's
+  # install.sh resolves the release through an unauthenticated
+  # api.github.com call, which is rate limited per runner IP and reports a
+  # throttle as "unable to find 'vX.Y.Z'" -- that is what failed the first
+  # GHCR publish. The asset URL at a pinned tag needs no API call.
+  #
+  # Pinning the binary freezes the scanner engine, not its vulnerability
+  # knowledge: trivy downloads its vulnerability database separately at scan
+  # time.
+  #
+  # To bump: change TRIVY_VERSION and take the new sum from
+  #   https://github.com/aquasecurity/trivy/releases/download/vX.Y.Z/trivy_X.Y.Z_checksums.txt
+  TRIVY_VERSION: 0.73.0
+  TRIVY_SHA256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        # `setuptools<81` for the same reason as backend/Dockerfile:
+        # semgrep's pinned opentelemetry-instrumentation imports
+        # `pkg_resources`, which setuptools removed in 82.0.0 and deprecated
+        # in 81. A silently broken security scan is worse than a loud one.
+        run: pip install semgrep "setuptools<81"
+
+      - name: Run Semgrep
+        run: semgrep scan --config=auto --json --output=semgrep.json || true
+
+      - name: Summarize
+        run: |
+          python3 -c "
+          import json
+          d = json.load(open('semgrep.json'))
+          results = d.get('results', [])
+          print(f'## Semgrep: {len(results)} findings')
+          for r in results[:20]:
+              print(f\"- {r['extra']['severity']} {r['check_id']}: {r['path']}:{r['start']['line']}\")
+          " | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-results
+          path: semgrep.json
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Gitleaks
+        run: curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+
+      - name: Run Gitleaks
+        # --no-git scans the working tree rather than history, so this needs
+        # no full-depth clone.
+        run: |
+          ./gitleaks detect --report-format json --report-path gitleaks.json --no-git --exit-code 0
+          python3 -c "
+          import json
+          d = json.load(open('gitleaks.json'))
+          print(f'## Gitleaks: {len(d)} findings')
+          for r in d[:20]:
+              print(f\"- {r['RuleID']}: {r['File']}:{r['StartLine']}\")
+          " | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gitleaks-results
+          path: gitleaks.json
+
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Trivy
+        run: |
+          curl -sSL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy
+          rm -f /tmp/trivy.tar.gz
+          trivy --version
+
+      - name: Run Trivy (filesystem scan)
+        run: trivy fs --format json --output trivy.json . || true
+
+      - name: Summarize
+        run: |
+          python3 -c "
+          import json
+          d = json.load(open('trivy.json'))
+          count = sum(len(r.get('Vulnerabilities') or []) + len(r.get('Misconfigurations') or []) for r in d.get('Results', []))
+          print(f'## Trivy: {count} findings across {len(d.get(\"Results\", []))} targets')
+          " | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results
+          path: trivy.json
+
+  trivy-transitive-deps:
+    # (#239) Trivy against requirements.txt only sees direct pins. 22 direct
+    # pins in this repo resolve to ~98 actually-installed packages -- roughly
+    # 78% of what we ship was invisible to the job above. That is how
+    # starlette@0.38.6 (7 CVEs including an SSRF, CVE-2026-48818) sat
+    # unnoticed on main: it arrived transitively through fastapi and was
+    # never a direct pin.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Trivy
+        run: |
+          curl -sSL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy
+          rm -f /tmp/trivy.tar.gz
+
+      - name: Resolve backend/requirements.txt into a real venv
+        # Mirrors backend/Dockerfile's actual install line -- same packages
+        # (incl. semgrep) and the same setuptools floor/ceiling. Without
+        # semgrep and its setuptools constraint in the mix, pip's resolver is
+        # free to land setuptools anywhere, and did land somewhere different
+        # across two otherwise identical resolves minutes apart. This job
+        # exists to report what actually ships; scanning a different,
+        # unconstrained resolve would make its findings nondeterministic.
+        run: |
+          python -m venv /tmp/resolved-backend
+          /tmp/resolved-backend/bin/pip install --upgrade pip -q
+          /tmp/resolved-backend/bin/pip install -q -r backend/requirements.txt semgrep "setuptools>=78.1.1,<81"
+
+      - name: Resolve mcp-server/requirements.txt into a real venv
+        run: |
+          python -m venv /tmp/resolved-mcp
+          /tmp/resolved-mcp/bin/pip install --upgrade pip -q
+          /tmp/resolved-mcp/bin/pip install -q -r mcp-server/requirements.txt
+
+      - name: Scan resolved backend dependencies
+        # --skip-files excludes pip's own vendored CycloneDX SBOM
+        # (pip/_vendor/bom.cdx.json). Without it, this job reports
+        # setuptools@70.3.0 and msgpack@1.1.2 as installed High-severity
+        # findings -- neither is actually installed anywhere in
+        # site-packages. Both come from pip's internal build-provenance
+        # manifest for pip's OWN vendored copies, which trivy's SBOM
+        # analyzer reads as if it were a real dependency of the environment.
+        run: |
+          SITE_PACKAGES=$(/tmp/resolved-backend/bin/python -c "import site; print(site.getsitepackages()[0])")
+          trivy rootfs --format json --output backend-transitive.json \
+            --skip-files "**/pip/_vendor/bom.cdx.json" "$SITE_PACKAGES" || true
+
+      - name: Scan resolved mcp-server dependencies
+        run: |
+          SITE_PACKAGES=$(/tmp/resolved-mcp/bin/python -c "import site; print(site.getsitepackages()[0])")
+          trivy rootfs --format json --output mcp-transitive.json \
+            --skip-files "**/pip/_vendor/bom.cdx.json" "$SITE_PACKAGES" || true
+
+      - name: Summarize
+        run: |
+          python3 -c "
+          import json
+          for name in ('backend-transitive.json', 'mcp-transitive.json'):
+              d = json.load(open(name))
+              results = d.get('Results', [])
+              pkgs = sum(len(r.get('Packages') or []) for r in results)
+              vulns = sum(len(r.get('Vulnerabilities') or []) for r in results)
+              high_or_worse = sum(
+                  1 for r in results for v in (r.get('Vulnerabilities') or [])
+                  if v.get('Severity') in ('HIGH', 'CRITICAL')
+              )
+              print(f'## {name}: {pkgs} resolved packages, {vulns} vulnerabilities ({high_or_worse} High/Critical)')
+          " | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-transitive-results
+          path: |
+            backend-transitive.json
+            mcp-transitive.json

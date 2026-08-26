@@ -66,21 +66,21 @@ class TestNoLeak:
     def test_message_never_echoes_stderr_contents(self):
         stderr = (
             "fatal: could not read Username for 'https://github.com'\n"
-            "/tmp/rikugan-scans/secret-path-9f2\n"
+            "/tmp/toleman-scans/secret-path-9f2\n"
             "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
         )
         msg = _classify_clone_stderr(stderr) or ""
         assert "ghp_" not in msg
-        assert "/tmp/rikugan-scans" not in msg
+        assert "/tmp/toleman-scans" not in msg
         assert "secret-path" not in msg
 
     def test_clone_error_message_never_echoes_argv(self):
         exc = subprocess.CalledProcessError(
-            128, ["git", "clone", "--depth", "1", "--", "https://github.com/x/y.git", "/tmp/rikugan-scans/y-1"]
+            128, ["git", "clone", "--depth", "1", "--", "https://github.com/x/y.git", "/tmp/toleman-scans/y-1"]
         )
         exc.stderr = AUTH
         msg = clone_error_message(exc)
-        assert "/tmp/rikugan-scans" not in msg
+        assert "/tmp/toleman-scans" not in msg
         assert "git clone --depth" not in msg
 
 

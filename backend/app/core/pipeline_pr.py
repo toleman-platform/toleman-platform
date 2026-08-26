@@ -1,5 +1,5 @@
 """Pipeline integration (issue #66): open a real PR against a target's
-GitHub repo adding the generated `.github/workflows/rikugan-scan.yml` (see
+GitHub repo adding the generated `.github/workflows/toleman-scan.yml` (see
 `app.core.pipeline_workflow`). Uses the GitHub App's installation token via
 the same resolution helpers PR Guardrail's comment/commit-status posting
 already relies on (`app.core.github_app`), rather than the plain
@@ -16,7 +16,7 @@ from sqlmodel import Session
 
 from app.core.github import repo_slug_from_url
 from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
-from app.core.pipeline_workflow import WORKFLOW_PATH, generate_workflow_yaml
+from app.core.pipeline_workflow import LEGACY_WORKFLOW_PATH, WORKFLOW_PATH, generate_workflow_yaml
 from app.models.models import Target
 
 logger = logging.getLogger(__name__)
@@ -25,6 +25,49 @@ logger = logging.getLogger(__name__)
 class PipelinePrError(Exception):
     """Raised for any failure opening the pipeline-integration PR -- callers
     turn this into an HTTP 4xx/502 with the message as detail."""
+
+
+def _delete_legacy_workflow(slug: str, headers: dict, branch_name: str, default_branch: str) -> bool:
+    """Remove the pre-rename `rikugan-scan.yml` on the PR branch, if the repo
+    still has one. Returns True if it was deleted.
+
+    Best-effort by design: this runs *after* the new workflow file has already
+    been written to the branch, so raising here would throw away a PR that is
+    otherwise complete. A repo that was never integrated before the rename --
+    every new integration -- simply 404s on the lookup and returns False.
+    """
+    try:
+        res = httpx.get(
+            f"https://api.github.com/repos/{slug}/contents/{LEGACY_WORKFLOW_PATH}",
+            headers=headers,
+            params={"ref": default_branch},
+            timeout=15,
+        )
+        if res.status_code != 200:
+            return False
+        legacy_sha = res.json().get("sha")
+        if not legacy_sha:
+            return False
+        del_res = httpx.delete(
+            f"https://api.github.com/repos/{slug}/contents/{LEGACY_WORKFLOW_PATH}",
+            headers=headers,
+            json={
+                "message": "Remove pre-rename Rikugan scan workflow (replaced by toleman-scan.yml)",
+                "sha": legacy_sha,
+                "branch": branch_name,
+            },
+            timeout=15,
+        )
+        if del_res.status_code not in (200, 201):
+            logger.warning(
+                "pipeline PR: failed to delete %s on %s: %s %s",
+                LEGACY_WORKFLOW_PATH, slug, del_res.status_code, del_res.text[:200],
+            )
+            return False
+        return True
+    except httpx.HTTPError:
+        logger.warning("pipeline PR: error deleting %s on %s", LEGACY_WORKFLOW_PATH, slug, exc_info=True)
+        return False
 
 
 def _get_installation_token(session: Session, target: Target) -> str:
@@ -43,7 +86,7 @@ def _get_installation_token(session: Session, target: Target) -> str:
 
 def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None = None) -> dict:
     """Opens a real PR on the target's GitHub repo adding
-    .github/workflows/rikugan-scan.yml on a new branch off the default branch.
+    .github/workflows/toleman-scan.yml on a new branch off the default branch.
     Returns {"pr_url": str, "pr_number": int, "branch": str}. Raises
     PipelinePrError (never a bare httpx exception) on any failure so the API
     layer can return a clean error message instead of a stack trace.
@@ -71,7 +114,7 @@ def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None =
     # 2. Create a new branch off that sha. Suffix with a timestamp so a
     # repeat "Integrate Pipeline" click after an earlier PR was merged/closed
     # doesn't collide with a stale branch of the same name.
-    branch_name = f"rikugan/add-pipeline-scan-{int(time.time())}"
+    branch_name = f"toleman/add-pipeline-scan-{int(time.time())}"
     create_ref_res = httpx.post(
         f"https://api.github.com/repos/{slug}/git/refs",
         headers=headers,
@@ -99,7 +142,7 @@ def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None =
 
     content_b64 = base64.b64encode(generated["yaml"].encode("utf-8")).decode("ascii")
     put_body = {
-        "message": "Add Rikugan DevSecOps pipeline scan workflow",
+        "message": "Add Toleman DevSecOps pipeline scan workflow",
         "content": content_b64,
         "branch": branch_name,
     }
@@ -113,24 +156,39 @@ def open_pipeline_pr(session: Session, target: Target, steps: list[str] | None =
             f"failed to write {WORKFLOW_PATH} on GitHub: {put_res.status_code} {put_res.text[:200]}"
         )
 
+    # 3b. Rename, don't duplicate: a repo integrated before the Rikugan ->
+    # Toleman rename already has the workflow under LEGACY_WORKFLOW_PATH.
+    # Leaving it would run two near-identical scan workflows on every PR
+    # forever. Best-effort -- a repo that never had the old file (the common
+    # case) 404s here, and failing to remove it is not worth losing the PR
+    # that just wrote the new one over.
+    legacy_removed = _delete_legacy_workflow(slug, headers, branch_name, target.default_branch)
+
     # 4. Open the PR.
     pr_body = (
-        "Adds a Rikugan DevSecOps Platform CI/CD scan workflow "
+        "Adds a Toleman DevSecOps Platform CI/CD scan workflow "
         f"(`{WORKFLOW_PATH}`), opened automatically via **Integrate Pipeline** "
-        "in Rikugan.\n\n"
+        "in Toleman.\n\n"
         "Runs Semgrep, Gitleaks, and Trivy (plus gosec for Go repos) natively "
-        "in the GitHub Actions runner and, when the `RIKUGAN_API_URL`/`RIKUGAN_API_KEY` "
-        "repo secrets are configured, pushes results back into Rikugan via "
+        "in the GitHub Actions runner and, when the `TOLEMAN_API_URL`/`TOLEMAN_API_KEY` "
+        "repo secrets are configured, pushes results back into Toleman via "
         "`POST /api/ingest`.\n\n"
-        "**Note:** `RIKUGAN_API_URL` must point to a publicly reachable Rikugan "
+        "**Note:** `TOLEMAN_API_URL` must point to a publicly reachable Toleman "
         "deployment -- GitHub's cloud runners cannot reach `localhost`. See "
         "the comments at the top of the workflow file for setup details."
     )
+    if legacy_removed:
+        pr_body += (
+            f"\n\n**Also removes** the previous `{LEGACY_WORKFLOW_PATH}` — this product was "
+            "renamed from Rikugan to Toleman, so this PR is a rename of the existing scan "
+            "workflow, not a second one. Update the repo secrets to `TOLEMAN_API_URL`/"
+            "`TOLEMAN_API_KEY` (the old `RIKUGAN_*` names are no longer read) before merging."
+        )
     pr_res = httpx.post(
         f"https://api.github.com/repos/{slug}/pulls",
         headers=headers,
         json={
-            "title": "Add Rikugan DevSecOps pipeline scan workflow",
+            "title": "Add Toleman DevSecOps pipeline scan workflow",
             "head": branch_name,
             "base": target.default_branch,
             "body": pr_body,

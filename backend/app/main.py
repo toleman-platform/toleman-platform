@@ -56,7 +56,7 @@ async def lifespan(app: FastAPI):
     # requires explicit teardown beyond process exit.
 
 
-app = FastAPI(title="Rikugan - DevSecOps Vulnerability Management Platform", lifespan=lifespan)
+app = FastAPI(title="Toleman - DevSecOps Vulnerability Management Platform", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

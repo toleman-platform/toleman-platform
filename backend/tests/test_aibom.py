@@ -175,13 +175,13 @@ def test_unknown_provenance_is_stated_not_omitted():
 def test_unpinned_components_are_flagged_as_such():
     comps = [AiComponent("org/m", "machine-learning-model", UNKNOWN, "huggingface", ["a.py"])]
     props = build_aibom(comps, target_name="demo")["components"][0]["properties"]
-    assert {"name": "rikugan:unpinned", "value": "true"} in props
+    assert {"name": "toleman:unpinned", "value": "true"} in props
 
 
 def test_pinned_components_are_not_flagged_as_unpinned():
     comps = [AiComponent("org/m", "machine-learning-model", "abc123", "huggingface", ["a.py"])]
     props = build_aibom(comps, target_name="demo")["components"][0]["properties"]
-    assert all(p["name"] != "rikugan:unpinned" for p in props)
+    assert all(p["name"] != "toleman:unpinned" for p in props)
 
 
 def test_datasets_do_not_get_a_model_card():

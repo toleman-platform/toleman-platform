@@ -136,7 +136,7 @@ class Target(SQLModel, table=True):
     lifecycle: Optional[str] = None      # active / maintenance / deprecated / ...
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # Pipeline integration (issue #66): whether a real PR opening
-    # .github/workflows/rikugan-scan.yml against this target's default GitHub
+    # .github/workflows/toleman-scan.yml against this target's default GitHub
     # repo has been opened via the GitHub App. pipeline_pr_url is the actual
     # PR that was opened (kept even after merge/close, as a record of what
     # happened -- not re-checked live against GitHub's PR state).
@@ -1116,7 +1116,7 @@ class ApiToken(SQLModel, table=True):
     creation time and never again, same "never echo a secret back"
     philosophy as `PlatformConfig`'s `*_set: bool` pattern.
     `token_prefix` (first 12 chars of the plaintext) is stored only so the
-    UI can show "which token is this" (e.g. `rikugan_pat_a1b2c3...`)
+    UI can show "which token is this" (e.g. `toleman_pat_a1b2c3...`)
     without ever re-deriving or displaying the full value.
 
     `scope` is a single flat read/read_write flag -- deliberately not a

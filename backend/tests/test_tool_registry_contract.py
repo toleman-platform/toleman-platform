@@ -76,7 +76,7 @@ def test_integrated_flag_is_derived_not_hand_maintained():
 
 
 def test_every_runnable_tool_is_in_the_registry_or_declared_internal():
-    # The registry is what the marketplace shows. A tool Rikugan can dispatch
+    # The registry is what the marketplace shows. A tool Toleman can dispatch
     # but never lists is invisible to the operator who has to install it.
     # Internal invocation modes (trivy-sbom) must opt out by name, so adding
     # a real scanner without listing it still fails here.
@@ -95,7 +95,7 @@ def test_bundled_tools_all_exist_in_the_registry():
 
 
 def test_bundled_tools_are_all_integrated():
-    # Shipping a tool in the image that Rikugan cannot dispatch is dead
+    # Shipping a tool in the image that Toleman cannot dispatch is dead
     # weight in the image and a misleading "installed" tick in the UI.
     not_runnable = sorted(t for t in BUNDLED_TOOLS if t not in TOOL_COMMANDS)
     assert not not_runnable, f"bundled but not runnable: {not_runnable}"

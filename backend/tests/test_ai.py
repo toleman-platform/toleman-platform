@@ -72,7 +72,7 @@ def _login(client, engine, email="user@example.com", password="whatever123"):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 
@@ -554,7 +554,7 @@ def test_analyze_returns_404_for_finding_outside_non_admin_callers_workspace(cli
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
 
     resp = client.post(f"/api/ai/analyze/{finding_id}")
     assert resp.status_code == 404
@@ -588,7 +588,7 @@ def test_analyze_succeeds_for_finding_in_non_admin_callers_own_workspace(client,
         session.add(WorkspaceMembership(user_id=user.id, workspace_id=ws_id, role=WorkspaceRole.DEVELOPER))
         session.commit()
         token = create_session_token(user.id)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
 
     resp = client.post(f"/api/ai/analyze/{finding_id}")
     assert resp.status_code == 200

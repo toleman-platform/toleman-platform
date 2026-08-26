@@ -381,7 +381,7 @@ def _build_cyclonedx_document(target: Target, components: list[SbomComponent]) -
                 "name": c.name,
                 "version": c.version,
                 "purl": c.purl,
-                "properties": [{"name": "rikugan:packageType", "value": c.package_type}],
+                "properties": [{"name": "toleman:packageType", "value": c.package_type}],
             }
             for c in components
         ],
@@ -403,10 +403,10 @@ def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dic
     DESCRIBES relationship from the document root, same shape a real SPDX
     consumer (e.g. an org's compliance tooling) expects to parse."""
     now = datetime.utcnow().isoformat() + "Z"
-    # rikugan.local, not rikugan.io -- the project doesn't own that domain;
+    # toleman.local, not toleman.io -- the project doesn't own that domain;
     # SPDX only requires this namespace be a unique URI, not a resolvable
     # one, so a non-registrable domain is safe here (#154).
-    doc_namespace = f"https://rikugan.local/spdx/{target.name}-{uuid.uuid4()}"
+    doc_namespace = f"https://toleman.local/spdx/{target.name}-{uuid.uuid4()}"
     root_id = "SPDXRef-DOCUMENT"
     packages = [
         {
@@ -441,7 +441,7 @@ def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dic
         "documentNamespace": doc_namespace,
         "creationInfo": {
             "created": now,
-            "creators": ["Tool: rikugan-sbom"],
+            "creators": ["Tool: toleman-sbom"],
         },
         "packages": packages,
         "relationships": relationships,
@@ -469,10 +469,10 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, title=f"Rikugan SBOM - {target.name}")
+    doc = SimpleDocTemplate(buf, pagesize=letter, title=f"Toleman SBOM - {target.name}")
     styles = getSampleStyleSheet()
     story = [
-        Paragraph(f"Rikugan SBOM Summary — {target.name}", styles["Title"]),
+        Paragraph(f"Toleman SBOM Summary — {target.name}", styles["Title"]),
         Paragraph(f"Branch: {target.default_branch}", styles["Normal"]),
         Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", styles["Normal"]),
         Paragraph(f"Components: {len(components)}", styles["Normal"]),

@@ -21,7 +21,7 @@ def tools_registry():
     """Full tool marketplace registry (issue #75): every supported OSS
     security tool across SAST/SCA/Secrets/Container/IaC/License/AI-ML, each
     merged with a real live health check (subprocess `--version`, exactly
-    like /health) and an `integrated` flag (whether Rikugan can actually
+    like /health) and an `integrated` flag (whether Toleman can actually
     dispatch a scan for it today via app.scanners.runner.TOOL_COMMANDS)."""
     entries = registry_with_integration_status()
 

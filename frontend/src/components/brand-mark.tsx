@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Rikugan wordmark/branding lockup (#116) -- a hex-aperture mark ("an eye on
+ * Toleman wordmark/branding lockup (#116) -- a hex-aperture mark ("an eye on
  * terrain") replacing the generic Lucide shield-in-tile icon previously used
  * on both the sidebar and login screen. Exported as a real reusable
  * component (not inline SVG copy-pasted per screen) specifically so future
@@ -28,22 +28,22 @@ export function BrandMark({
       fill="none"
       className={cn("shrink-0 text-primary", className)}
       role="img"
-      aria-label="Rikugan"
+      aria-label="Toleman"
     >
       <defs>
-        <linearGradient id="rikugan-brand-mark-gradient" x1="0" y1="0" x2="40" y2="40">
+        <linearGradient id="toleman-brand-mark-gradient" x1="0" y1="0" x2="40" y2="40">
           <stop offset="0" stopColor="currentColor" stopOpacity="0.85" />
           <stop offset="1" stopColor="currentColor" stopOpacity="0.55" />
         </linearGradient>
       </defs>
       <path
         d="M20 2 L36 11 V29 L20 38 L4 29 V11 Z"
-        stroke="url(#rikugan-brand-mark-gradient)"
+        stroke="url(#toleman-brand-mark-gradient)"
         strokeWidth="2.4"
         fill="currentColor"
         fillOpacity="0.08"
       />
-      <path d="M20 13 L28 20 L20 27 L12 20 Z" fill="url(#rikugan-brand-mark-gradient)" />
+      <path d="M20 13 L28 20 L20 27 L12 20 Z" fill="url(#toleman-brand-mark-gradient)" />
       <circle cx="20" cy="20" r="3" className="fill-background" />
     </svg>
   );
@@ -69,7 +69,7 @@ export function BrandLockup({
           2px gap separates the lines without loosening either. */}
       <div className="flex flex-col gap-[2px]">
         <span className="text-[16px] font-extrabold leading-none tracking-tight text-sidebar-foreground">
-          Rikugan
+          Toleman
         </span>
         <span className="-mr-[0.13em] font-mono text-[9px] font-medium uppercase leading-none tracking-[0.13em] text-accent-strong">
           Security Terrain

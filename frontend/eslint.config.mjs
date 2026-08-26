@@ -11,9 +11,9 @@ const eslintConfig = defineConfig([
   // a different thing. Twice now a Server Component has imported a value out
   // of a "use client" module -- once silently (#196), once loudly (#204).
   {
-    plugins: { rikugan: { rules: { "no-client-value-import-in-server": noClientValueImportInServer } } },
+    plugins: { toleman: { rules: { "no-client-value-import-in-server": noClientValueImportInServer } } },
     rules: {
-      "rikugan/no-client-value-import-in-server": [
+      "toleman/no-client-value-import-in-server": [
         "error",
         { srcRoot: path.join(import.meta.dirname, "src") },
       ],

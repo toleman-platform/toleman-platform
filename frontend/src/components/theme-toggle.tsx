@@ -24,7 +24,7 @@ const STORAGE_KEY = THEME_STORAGE_KEY;
  * dark<->light color flip is much more jarring, and the raw server HTML
  * paints before React ever hydrates -- a client-only fix can't prevent that
  * first paint from being wrong. Instead, the root layout (a Server
- * Component, see src/app/layout.tsx) reads a `rikugan-theme` cookie via
+ * Component, see src/app/layout.tsx) reads a `toleman-theme` cookie via
  * `next/headers` and renders `<html data-theme="...">` directly in the
  * initial HTML, so there's nothing to flash. ThemeToggle keeps both
  * localStorage (read here, client-side) and that cookie (read server-side)

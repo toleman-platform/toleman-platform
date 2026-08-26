@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login"];
-const SESSION_COOKIE = "rikugan_session";
+const SESSION_COOKIE = "toleman_session";
 
 // See the matching comment in src/lib/api.ts / (dashboard)/layout.tsx --
 // API_INTERNAL_URL lets the Next.js server reach the backend over the

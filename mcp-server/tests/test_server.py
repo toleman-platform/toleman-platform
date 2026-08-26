@@ -1,7 +1,7 @@
-"""Tests for the Rikugan MCP server (#108) -- mocked HTTP, no live backend
+"""Tests for the Toleman MCP server (#108) -- mocked HTTP, no live backend
 needed. Verifies each tool builds the right request against the public API
 (auth header, path, params) and returns the parsed response, plus that
-RIKUGAN_API_TOKEN is actually required at import time.
+TOLEMAN_API_TOKEN is actually required at import time.
 """
 import os
 import subprocess
@@ -11,8 +11,8 @@ import httpx
 import pytest
 import respx
 
-os.environ["RIKUGAN_API_TOKEN"] = "rikugan_pat_test"
-os.environ["RIKUGAN_API_URL"] = "http://localhost:8000"
+os.environ["TOLEMAN_API_TOKEN"] = "toleman_pat_test"
+os.environ["TOLEMAN_API_URL"] = "http://localhost:8000"
 
 import server  # noqa: E402
 
@@ -24,7 +24,7 @@ def test_list_targets_hits_correct_endpoint_with_bearer_auth():
     )
     result = server.list_targets()
     assert result == [{"id": 1, "name": "repo"}]
-    assert route.calls.last.request.headers["authorization"] == "Bearer rikugan_pat_test"
+    assert route.calls.last.request.headers["authorization"] == "Bearer toleman_pat_test"
 
 
 @respx.mock
@@ -81,7 +81,7 @@ def test_write_scope_rejection_propagates_as_http_error():
 
 
 def test_server_refuses_to_start_without_token():
-    env = {k: v for k, v in os.environ.items() if k != "RIKUGAN_API_TOKEN"}
+    env = {k: v for k, v in os.environ.items() if k != "TOLEMAN_API_TOKEN"}
     result = subprocess.run(
         [sys.executable, "-c", "import server"],
         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -90,4 +90,4 @@ def test_server_refuses_to_start_without_token():
         text=True,
     )
     assert result.returncode != 0
-    assert "RIKUGAN_API_TOKEN is required" in result.stderr
+    assert "TOLEMAN_API_TOKEN is required" in result.stderr

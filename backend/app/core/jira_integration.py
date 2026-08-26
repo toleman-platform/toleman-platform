@@ -77,7 +77,7 @@ def create_jira_ticket_for_finding(config: PlatformConfig, finding: Finding) -> 
     severity_str = finding.severity.value if hasattr(finding.severity, "value") else str(finding.severity)
     summary = f"[{severity_str}] {finding.title or finding.rule_id}"[:255]
     description = (
-        f"Auto-created by Rikugan for finding #{finding.id}.\n\n"
+        f"Auto-created by Toleman for finding #{finding.id}.\n\n"
         f"Tool: {finding.tool}\n"
         f"Rule: {finding.rule_id}\n"
         f"Severity: {severity_str}\n"

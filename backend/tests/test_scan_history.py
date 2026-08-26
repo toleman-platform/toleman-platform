@@ -50,7 +50,7 @@ def _admin(client, engine):
         u = User(email="a@e.com", name="A", password_hash=hash_password("whatever123"), role=UserRole.ADMIN)
         session.add(u); session.commit(); session.refresh(u)
         token = create_session_token(u.id, u.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 

@@ -5,7 +5,7 @@
 ## fetched from the network, which never appear in the checkout at all and so
 ## are invisible to a file scanner.
 rules:
-  - id: rikugan-torch-load-without-weights-only
+  - id: toleman-torch-load-without-weights-only
     languages: [python]
     severity: ERROR
     message: >-
@@ -25,7 +25,7 @@ rules:
       - pattern-not: torch.load(..., weights_only=True, ...)
       - pattern-not: torch.jit.load(..., weights_only=True, ...)
 
-  - id: rikugan-pickle-load-of-model-artifact
+  - id: toleman-pickle-load-of-model-artifact
     languages: [python]
     severity: ERROR
     message: >-
@@ -45,7 +45,7 @@ rules:
       - pattern: dill.load(...)
       - pattern: dill.loads(...)
 
-  - id: rikugan-unpinned-huggingface-model
+  - id: toleman-unpinned-huggingface-model
     languages: [python]
     severity: WARNING
     message: >-

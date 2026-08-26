@@ -11,7 +11,7 @@
  */
 import { ESLint } from "eslint";
 
-const RULE_ID = "rikugan/no-client-value-import-in-server";
+const RULE_ID = "toleman/no-client-value-import-in-server";
 
 const results = await new ESLint().lintFiles(["src"]);
 const violations = results.flatMap((result) =>

@@ -1,7 +1,7 @@
-"""Static registry of every OSS security tool Rikugan knows about (issue #75).
+"""Static registry of every OSS security tool Toleman knows about (issue #75).
 
 This is deliberately a hardcoded Python list, not a DB table or a
-YAML/JSON file loaded at runtime -- the set of tools Rikugan can actually run
+YAML/JSON file loaded at runtime -- the set of tools Toleman can actually run
 is fixed by what `app.scanners.runner.TOOL_COMMANDS` and
 `app.scanners.parsers.PARSER_MAP` know how to invoke/parse, so the registry
 lives next to that code and stays in sync with it by construction (each
@@ -154,7 +154,7 @@ TOOL_REGISTRY = [
         "display_name": "Semgrep (LLM rules)",
         "category": "AI/ML",
         "languages": ["python"],
-        "description": "Rikugan's curated OWASP LLM Top 10 ruleset: LLM output reaching eval/shell/SQL sinks, unsafe model deserialization, and unpinned Hugging Face model references. Runs the Semgrep engine against rules shipped in-repo, not a hosted registry, so results are reproducible offline. Only runs on repos detected as AI/ML (#185).",
+        "description": "Toleman's curated OWASP LLM Top 10 ruleset: LLM output reaching eval/shell/SQL sinks, unsafe model deserialization, and unpinned Hugging Face model references. Runs the Semgrep engine against rules shipped in-repo, not a hosted registry, so results are reproducible offline. Only runs on repos detected as AI/ML (#185).",
         "install_cmd": "pip install semgrep",
         "docs_url": "https://semgrep.dev/docs/writing-rules/rule-syntax/",
         "version_cmd": ["semgrep", "--version"],
@@ -187,7 +187,7 @@ TOOL_REGISTRY = [
         "display_name": "Snyk Agent Scan",
         "category": "AI/ML",
         "languages": ["language-agnostic (MCP server + agent skill manifests)"],
-        "description": "Scans MCP servers and agent skills for prompt injection, tool poisoning and rug pulls. Formerly Invariant Labs' mcp-scan; the `mcp-scan` PyPI package is deprecated and redirects here. Directly relevant to Rikugan's own MCP server (#108).",
+        "description": "Scans MCP servers and agent skills for prompt injection, tool poisoning and rug pulls. Formerly Invariant Labs' mcp-scan; the `mcp-scan` PyPI package is deprecated and redirects here. Directly relevant to Toleman's own MCP server (#108).",
         "install_cmd": "pip install snyk-agent-scan",
         "docs_url": "https://github.com/snyk/agent-scan#readme",
         "version_cmd": ["snyk-agent-scan", "--version"],
@@ -324,7 +324,7 @@ def default_usage_for(tool: str) -> dict:
 
 def registry_with_integration_status() -> list[dict]:
     """Registry entries plus a computed `integrated` flag -- True only when
-    the tool has a real TOOL_COMMANDS entry (i.e. Rikugan can actually execute
+    the tool has a real TOOL_COMMANDS entry (i.e. Toleman can actually execute
     a scan for it today), False for registry-only/health-check-only tools
     like kics above."""
     out = []

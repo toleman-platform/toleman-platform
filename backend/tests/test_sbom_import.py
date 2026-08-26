@@ -105,7 +105,7 @@ def _dev_client_with_target(client, engine) -> tuple[TestClient, int]:
         session.commit()
         token = create_session_token(user.id, user.token_version)
 
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, target_id
 
 

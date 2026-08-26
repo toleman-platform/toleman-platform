@@ -13,7 +13,7 @@
 //                                       backend on the compose network
 //                                       (e.g. http://backend:8000); a plain
 //                                       runtime var, never bundled.
-//   browser       window.__RIKUGAN_API_URL__
+//   browser       window.__TOLEMAN_API_URL__
 //                                    -- injected per request by the root
 //                                       layout from PUBLIC_API_URL, so it is
 //                                       a *runtime* value: change the env and
@@ -27,7 +27,7 @@ export const DEFAULT_API_URL = "http://localhost:8000";
 
 declare global {
   interface Window {
-    __RIKUGAN_API_URL__?: string;
+    __TOLEMAN_API_URL__?: string;
   }
 }
 
@@ -38,7 +38,7 @@ export function apiBaseUrl(): string {
     // ("localhost" resolves to this container, not the backend one).
     return process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
   }
-  return window.__RIKUGAN_API_URL__ || process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
+  return window.__TOLEMAN_API_URL__ || process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL;
 }
 
 // A group/tag badge embedded on a Target (issue #61) -- e.g. "production",
@@ -69,7 +69,7 @@ export type Target = {
   criticality_weight: number;
   groups: GroupBadge[];
   // Pipeline integration (issue #66): whether a PR adding
-  // .github/workflows/rikugan-scan.yml has been opened against this target's repo.
+  // .github/workflows/toleman-scan.yml has been opened against this target's repo.
   pipeline_integrated: boolean;
   pipeline_pr_url: string | null;
   // AI/ML repo detection (issue #185). `is_ai_repo_effective` is the one to
@@ -220,10 +220,10 @@ export type Finding = {
 };
 
 // Issue #75: one entry from GET /api/tools/registry -- every OSS scanner
-// Rikugan knows about (app.core.tool_registry.TOOL_REGISTRY), merged with a
+// Toleman knows about (app.core.tool_registry.TOOL_REGISTRY), merged with a
 // real live health check the same way the original 4-tool /health always
 // worked. `integrated` is false for a registry-only tool (e.g. kics) with
-// no real TOOL_COMMANDS entry -- Rikugan can show it and check for the binary,
+// no real TOOL_COMMANDS entry -- Toleman can show it and check for the binary,
 // but can't actually dispatch a scan for it yet.
 export type ToolRegistryEntry = {
   tool: string;
@@ -856,7 +856,7 @@ export type PrGuardrailLogEntry = {
   files_scanned?: number;
   // (GH-04) Non-empty when the commit status never reached GitHub. The scan
   // itself is still valid -- this says the *decision* was not delivered, so
-  // the PR is unmarked on GitHub even though Rikugan reached a verdict.
+  // the PR is unmarked on GitHub even though Toleman reached a verdict.
   status_delivery_error: string;
   override_reason: string;
   created_at: string;
@@ -1085,9 +1085,9 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   if (typeof window === "undefined") {
     const { cookies } = await import("next/headers");
     const cookieStore = await cookies();
-    const session = cookieStore.get("rikugan_session");
+    const session = cookieStore.get("toleman_session");
     if (session) {
-      headers["Cookie"] = `rikugan_session=${session.value}`;
+      headers["Cookie"] = `toleman_session=${session.value}`;
     }
   }
 

@@ -93,7 +93,7 @@ def _admin_client(client, engine, role=UserRole.ADMIN):
             session.add(WorkspaceMembership(user_id=user.id, workspace_id=workspace_id, role=WorkspaceRole.DEVELOPER))
             session.commit()
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return workspace_id
 
 

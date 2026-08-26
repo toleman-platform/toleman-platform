@@ -19,7 +19,7 @@ every PR comment in every adopting org.
 from app.core.github_app import build_manifest
 
 
-def _manifest(app_url="https://rikugan.example.com", backend_url="https://api.rikugan.example.com"):
+def _manifest(app_url="https://toleman.example.com", backend_url="https://api.toleman.example.com"):
     return build_manifest(app_url, backend_url, "abc123", setup_token="tok")
 
 
@@ -31,7 +31,7 @@ def test_hook_attributes_point_at_the_real_webhook_route():
     hook = _manifest()["hook_attributes"]
     # Must match app/api/webhooks.py's router prefix + route, or GitHub
     # delivers to a 404 and automatic scanning silently never fires.
-    assert hook["url"] == "https://api.rikugan.example.com/api/webhooks/github"
+    assert hook["url"] == "https://api.toleman.example.com/api/webhooks/github"
     assert hook["active"] is True
 
 
@@ -42,12 +42,15 @@ def test_webhook_url_is_built_from_the_backend_url_not_the_frontend_url():
     assert m["hook_attributes"]["url"].startswith("https://api.example.com")
 
 
-def test_app_is_named_rikugan_not_the_pre_rename_product():
+def test_app_is_named_toleman_not_the_pre_rename_product():
     """GH-05: this string is what GitHub derives the bot login from, so it is
     the product's signature on every PR comment in an adopting org."""
     name = _manifest()["name"]
-    assert name.startswith("Rikugan")
+    assert name.startswith("Toleman")
+    # Both superseded product names -- "OSP DevSecOps" (GH-05) and "Rikugan",
+    # which this one replaced in turn.
     assert "OSP" not in name
+    assert "Rikugan" not in name
 
 
 def test_permissions_still_cover_what_pr_guardrail_needs():
@@ -77,11 +80,11 @@ def test_manifest_data_flags_an_unreachable_webhook_host(monkeypatch):
 def test_manifest_data_accepts_a_real_public_host(monkeypatch):
     import app.api.github_app as github_app
 
-    monkeypatch.setattr(github_app, "BACKEND_URL", "https://api.rikugan.example.com")
+    monkeypatch.setattr(github_app, "BACKEND_URL", "https://api.toleman.example.com")
     result = github_app.manifest_data()
 
     assert result["webhook_reachable"] is True
-    assert result["webhook_url"] == "https://api.rikugan.example.com/api/webhooks/github"
+    assert result["webhook_url"] == "https://api.toleman.example.com/api/webhooks/github"
 
 
 def test_manifest_data_still_returns_a_usable_manifest_when_unreachable(monkeypatch):

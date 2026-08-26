@@ -7,7 +7,7 @@
  * "use client" directive -- and a Server Component importing a value from a
  * client module doesn't get the value, it gets a client *reference* stub.
  * `cookies().get(THEME_COOKIE_KEY)` was therefore looking up a cookie whose
- * name was that stub rather than the string "rikugan-theme", so the
+ * name was that stub rather than the string "toleman-theme", so the
  * server-side read silently returned undefined on every request. That
  * defeated the whole point of the cookie (server-rendered `data-theme`, no
  * flash of the wrong theme) and left the toggle's own label/tooltip stuck
@@ -17,5 +17,5 @@
  */
 export type Theme = "dark" | "light";
 
-export const THEME_STORAGE_KEY = "rikugan-theme";
-export const THEME_COOKIE_KEY = "rikugan-theme";
+export const THEME_STORAGE_KEY = "toleman-theme";
+export const THEME_COOKIE_KEY = "toleman-theme";

@@ -15,7 +15,7 @@
 ## this platform already carries a false-positive learning engine (#76) and
 ## noise is a known problem here. Precision over coverage, deliberately.
 rules:
-  - id: rikugan-llm-output-to-code-execution
+  - id: toleman-llm-output-to-code-execution
     mode: taint
     languages: [python]
     severity: ERROR
@@ -58,7 +58,7 @@ rules:
           - pattern: exec(...)
           - pattern: compile(...)
 
-  - id: rikugan-llm-output-to-shell
+  - id: toleman-llm-output-to-shell
     mode: taint
     languages: [python]
     severity: ERROR
@@ -104,7 +104,7 @@ rules:
           - pattern: subprocess.Popen(...)
           - pattern: subprocess.check_output(...)
 
-  - id: rikugan-llm-output-to-sql
+  - id: toleman-llm-output-to-sql
     mode: taint
     languages: [python]
     severity: ERROR

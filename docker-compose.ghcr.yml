@@ -1,0 +1,33 @@
+# Run Toleman from prebuilt GHCR images instead of building from source.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up
+#
+# Everything else -- Postgres, Redis, env vars, healthchecks, volumes --
+# comes from docker-compose.yml unchanged; this override only redirects the
+# three services built from this repo.
+#
+# `build:` is deliberately left in place rather than removed. Compose only
+# builds when the image is absent, so pulling first means these are used as
+# published; keeping `build:` means a plain `docker compose up --build`
+# still works from a fresh clone, and avoids depending on the `!reset`
+# override syntax that needs Compose 2.24+.
+#
+# Pinning: `latest` moves on every tagged release and `edge` moves on every
+# merge to main. For anything you need to reproduce, replace the tag with an
+# immutable one -- either a released version (`:1.2.3`) or the exact build
+# (`:sha-abc1234`). Both are published by
+# .github/workflows/publish-images.yml.
+
+services:
+  backend:
+    image: ghcr.io/toleman-platform/toleman-platform-backend:edge
+
+  celery-worker:
+    # Must match `backend` exactly: the worker and the API are the same
+    # image with a different command, and a worker running different code
+    # from the API is a genuinely confusing failure mode.
+    image: ghcr.io/toleman-platform/toleman-platform-backend:edge
+
+  frontend:
+    image: ghcr.io/toleman-platform/toleman-platform-frontend:edge

@@ -209,7 +209,7 @@ that cannot be linked to.
 **Shared values used by Server Components go in a plain module.** Never export a constant or
 function from a `"use client"` file and import it server-side — it becomes a client reference
 stub, and for a constant it fails *silently*. This bit twice (#196, #204) and is now enforced
-by a lint rule (`rikugan/no-client-value-import-in-server`).
+by a lint rule (`toleman/no-client-value-import-in-server`).
 
 ### When not to reach for L2
 

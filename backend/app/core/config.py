@@ -8,18 +8,18 @@ DEFAULT_ADMIN_PASSWORD = "changeme123"
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql+psycopg://rikugan:rikugan@localhost:5432/rikugan"
+    database_url: str = "postgresql+psycopg://toleman:toleman@localhost:5432/toleman"
     redis_url: str = "redis://localhost:6379/0"
     workspace_api_key: str = "dev-local-key"
-    scan_workdir: str = "/tmp/rikugan-scans"
+    scan_workdir: str = "/tmp/toleman-scans"
     session_secret: str = DEFAULT_SESSION_SECRET
     # Set True in any production/HTTPS deployment so the session cookie is
     # only ever sent over TLS. Defaults to False so local http:// dev works.
     cookie_secure: bool = False
-    # rikugan.local, not rikugan.io -- the project doesn't own that domain
+    # toleman.local, not toleman.io -- the project doesn't own that domain
     # and shipping it as a public-repo default could mislead someone into
     # thinking it's a real, owned address (#154).
-    admin_email: str = "admin@rikugan.local"
+    admin_email: str = "admin@toleman.local"
     admin_password: str = DEFAULT_ADMIN_PASSWORD
     admin_name: str = "Admin"
     anthropic_api_key: str = ""
@@ -61,8 +61,8 @@ class Settings(BaseSettings):
     #
     # Finding GH-02: these were five hardcoded "http://localhost:3000" /
     # ":8000" literals spread across main.py, api/github_app.py and
-    # core/pr_guardrail_executor.py. Every link Rikugan posted to GitHub --
-    # the PR comment's "review in Rikugan", the commit status target_url,
+    # core/pr_guardrail_executor.py. Every link Toleman posted to GitHub --
+    # the PR comment's "review in Toleman", the commit status target_url,
     # the "request ignore" link -- pointed at the developer's own laptop, so
     # no teammate on a shared repository could follow any of them. The same
     # constant pinned CORS to a single origin, which made running on any

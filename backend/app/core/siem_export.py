@@ -21,7 +21,7 @@ def finding_to_siem_event(finding: Finding, target: Target) -> dict:
     syntax) so a receiving webhook/Splunk HEC/Elastic ingest pipeline can
     map fields without needing to parse a specialized encoding first."""
     return {
-        "source": "rikugan",
+        "source": "toleman",
         "event_type": "finding",
         "finding_id": finding.id,
         "dedup_hash": finding.dedup_hash,
@@ -62,9 +62,9 @@ def test_siem_webhook(webhook_url: str) -> tuple[bool, str]:
     """POST a real test event to `webhook_url`. Returns (success, message)
     -- message is the real HTTP response either way."""
     test_event = {
-        "source": "rikugan",
+        "source": "toleman",
         "event_type": "test_connection",
-        "message": "Rikugan test connection: this SIEM webhook is configured correctly.",
+        "message": "Toleman test connection: this SIEM webhook is configured correctly.",
     }
     try:
         response = httpx.post(webhook_url, json=test_event, timeout=SIEM_TIMEOUT_SECONDS)

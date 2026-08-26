@@ -1,10 +1,27 @@
 # Toleman — Open-Source DevSecOps Vulnerability Management Platform
 
+> **Status: active development.** No tagged release yet — `main` is the only
+> line to track. APIs, schema, and config vars can change without notice.
+> Expect rough edges; file issues for what you hit.
+
 See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, OSV.dev malicious-package detection on SBOM inventory (surfaced as `osv-malware` Critical findings), dedup engine, two-tier priority scoring, triage state machine.
 
 **Documentation:** [geekshiv.github.io/toleman](https://geekshiv.github.io/toleman) (source: [geekshiv/toleman](https://github.com/geekshiv/toleman)).
 
-## Quickstart (Docker Compose)
+## Contents
+
+- [Getting Started](#getting-started)
+  - [Quickstart (Docker Compose)](#quickstart-docker-compose)
+  - [Manual setup (macOS/Linux/Windows)](#manual-setup-macoslinuxwindows)
+- [Development](#development)
+  - [Database migrations (Alembic)](#database-migrations-alembic)
+  - [Pre-commit hooks](#pre-commit-hooks)
+- [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
+- [License & Security](#license--security)
+
+## Getting Started
+
+### Quickstart (Docker Compose)
 
 The fastest way to try Toleman — no Homebrew, no manually installing Postgres/Redis/scanner CLIs. Requires only [Docker](https://docs.docker.com/get-docker/) with Compose v2 (`docker compose`, bundled with Docker Desktop and recent Docker Engine installs).
 
@@ -13,7 +30,7 @@ cp .env.example .env   # optional — every var has a working local-dev default
 docker compose up --build
 ```
 
-### Prefer not to build from source?
+#### Prefer not to build from source?
 
 Prebuilt images are published to GHCR by [`publish-images.yml`](.github/workflows/publish-images.yml). Use the override file instead of editing `docker-compose.yml`:
 
@@ -31,14 +48,14 @@ Available tags, for both `…-backend` and `…-frontend`:
 | `1.2.3`, `1.2` | fixed at release | pinning to a release |
 | `sha-abc1234` | never | reproducing an exact build |
 
-`edge` and `latest` are moving tags — pin to a version or a `sha-` tag for anything you need to reproduce. Every image carries [build provenance](https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) attesting the workflow run and commit it came from:
+No version has been tagged yet, so only `edge` and `sha-` tags exist today; `latest`/`1.2.3`-style tags will appear once the first release ships. `edge` and `latest` are moving tags — pin to a version or a `sha-` tag for anything you need to reproduce. Every image carries [build provenance](https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) attesting the workflow run and commit it came from:
 
 ```bash
 gh attestation verify oci://ghcr.io/toleman-platform/toleman-platform-backend:latest \
   --owner toleman-platform
 ```
 
-Releases build for `linux/amd64` and `linux/arm64`; `edge` is amd64 only, since emulated arm64 builds are slow enough to be disproportionate on every merge. On Apple Silicon, either use a released tag or build from source with `docker compose up --build`.
+Releases build for `linux/amd64` and `linux/arm64`; `edge` is amd64 only, since emulated arm64 builds are too slow to justify on every merge. On Apple Silicon, either use a released tag or build from source with `docker compose up --build`.
 
 This builds and starts five containers:
 
@@ -65,11 +82,11 @@ See `.env.example` for every variable Compose reads (Postgres credentials, backe
 
 To stop everything: `docker compose down` (add `-v` to also drop the Postgres volume and start fully fresh next time).
 
-## Manual setup (macOS/Linux/Windows)
+### Manual setup (macOS/Linux/Windows)
 
 Prefer running the backend/frontend directly on your machine instead of in containers — e.g. for faster iteration with hot reload, or to attach a debugger. Skip this section if you used Docker Compose above.
 
-### Prerequisites
+#### Prerequisites
 
 **macOS (Homebrew)**
 
@@ -109,7 +126,7 @@ psql postgres -c "CREATE USER toleman WITH PASSWORD 'toleman' CREATEDB;"
 psql postgres -c "CREATE DATABASE toleman OWNER toleman;"
 ```
 
-### Backend
+#### Backend
 
 ```bash
 cd backend
@@ -143,20 +160,7 @@ curl -X POST "http://localhost:8000/api/scans/run?target_id=1&tool=semgrep"
 
 Private repos are cloned using whatever git credential helper is already configured locally (e.g. `gh auth setup-git`) — set `GITHUB_TOKEN` in `.env` as an alternative.
 
-### Database migrations (Alembic)
-
-The backend's startup hook (`app/core/db.py:init_db`, called from `app/main.py`) runs `alembic upgrade head` automatically against `DATABASE_URL` every time it starts — both `uvicorn app.main:app` above and the Docker Compose `backend` service. There's no separate manual migration step for the common case of running the app.
-
-You only need to touch Alembic directly when you change `app/models/models.py`:
-
-```bash
-cd backend
-alembic revision --autogenerate -m "describe the schema change"
-```
-
-Review the generated file under `alembic/versions/` before committing — autogenerate is a starting point, not a guarantee (it can miss things like column renames, which it sees as a drop+add). `alembic upgrade head` (or just starting the app) applies it. See `alembic/env.py` for how migrations read `DATABASE_URL` from `app.core.config.settings`, the same source the app itself uses, so they can never disagree about which DB they're pointed at.
-
-### Frontend
+#### Frontend
 
 ```bash
 cd frontend
@@ -168,7 +172,22 @@ Open http://localhost:3000 — redirects to `/login`. Sign in with the seeded ad
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
 
-## Pre-commit hooks
+## Development
+
+### Database migrations (Alembic)
+
+The backend's startup hook (`app/core/db.py:init_db`, called from `app/main.py`) runs `alembic upgrade head` automatically against `DATABASE_URL` every time it starts — both `uvicorn app.main:app` and the Docker Compose `backend` service. There's no separate manual migration step for the common case of running the app.
+
+You only need to touch Alembic directly when you change `app/models/models.py`:
+
+```bash
+cd backend
+alembic revision --autogenerate -m "describe the schema change"
+```
+
+Review the generated file under `alembic/versions/` before committing — autogenerate is a starting point, not a guarantee (it can miss things like column renames, which it sees as a drop+add). `alembic upgrade head` (or just starting the app) applies it. See `alembic/env.py` for how migrations read `DATABASE_URL` from `app.core.config.settings`, the same source the app itself uses, so they can never disagree about which DB they're pointed at.
+
+### Pre-commit hooks
 
 The repo ships a `.pre-commit-config.yaml` that runs gitleaks v8.21.2 against staged changes before every commit, mirroring the CI self-scan job. Install once per checkout with:
 
@@ -184,7 +203,7 @@ A gitleaks failure blocks the commit; run `git commit` with `SKIP=gitleaks` only
 - **pydantic pinned to 2.9.x** — `sqlmodel==0.0.22` breaks on pydantic ≥2.10 (`Field 'id' requires a type annotation`), a known upstream incompatibility.
 - **Scan execution runs as a direct subprocess** for this MVP (no container isolation yet) — matches the architecture review's noted blocker; must move to ephemeral containers before multi-tenant/mass-rollout use.
 
-## License
+## License & Security
 
 Apache License 2.0 — see [LICENSE](LICENSE). Attribution for the bundled
 third-party scanners is in [NOTICE](NOTICE).

@@ -115,10 +115,10 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 logger.exception("GitHub dependency graph fetch failed for target %s", target_id)
                 sources_failed.append("github (unexpected error)")
 
-            # Issue #190: extract the AIBOM from the same checkout. Free --
-            # the clone above already happened, and extraction is regexes
-            # over source, no extra tooling. Best-effort: an AIBOM failure
-            # must not fail an otherwise-successful SBOM run.
+            # Issue #190: extract the AIBOM from the same checkout. The clone
+            # above happens for AIBOM extraction (regexes over source, no extra
+            # tooling). Best-effort: an AIBOM failure must not fail an
+            # otherwise-successful SBOM run.
             try:
                 ai_components = extract_ai_components(repo_path)
                 upsert_aibom_components(session, target_id, target.default_branch, ai_components)

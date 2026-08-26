@@ -13,7 +13,7 @@ const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL 
 
 async function getCurrentUser(): Promise<AuthUser | null> {
   const cookieStore = await cookies();
-  const session = cookieStore.get("rikugan_session");
+  const session = cookieStore.get("toleman_session");
   if (!session) return null;
   // (#235, UI-03) This layout wraps every dashboard page, so an uncaught
   // failure here used to blank the entire app -- a routine backend restart
@@ -30,7 +30,7 @@ async function getCurrentUser(): Promise<AuthUser | null> {
   let res: Response;
   try {
     res = await fetchWithConnectionRetry(`${API_URL}/api/auth/me`, {
-      headers: { Cookie: `rikugan_session=${session.value}` },
+      headers: { Cookie: `toleman_session=${session.value}` },
       cache: "no-store",
     });
   } catch {

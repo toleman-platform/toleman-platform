@@ -61,7 +61,7 @@ function LoginForm() {
             <BrandMark size={30} />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Rikugan</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Toleman</h1>
             <p className="text-sm text-muted-foreground">DevSecOps Vulnerability Management</p>
           </div>
         </CardHeader>

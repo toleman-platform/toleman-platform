@@ -67,7 +67,7 @@ def _login(client, engine, role=UserRole.DEVELOPER):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid
 
 

@@ -198,7 +198,7 @@ def test_find_existing_comment_id_finds_marker_tagged_comment():
             200,
             [
                 {"id": 111, "body": "unrelated comment"},
-                {"id": 222, "body": f"{COMMENT_MARKER}\n**Rikugan PR Guardrail**"},
+                {"id": 222, "body": f"{COMMENT_MARKER}\n**Toleman PR Guardrail**"},
             ],
         )
         assert _find_existing_comment_id("acme/repo", 7, "tok") == 222

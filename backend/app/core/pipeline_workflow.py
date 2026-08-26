@@ -11,16 +11,16 @@ GitHub's cloud runners cannot reach a backend running at localhost:8000, so
 the generated workflow's ingest step depends on two GitHub Actions secrets
 the *target repo's* owner must configure themselves:
 
-  - ``RIKUGAN_API_URL``: a **publicly reachable** deployment of this platform
+  - ``TOLEMAN_API_URL``: a **publicly reachable** deployment of this platform
     (e.g. `docker-compose.yml` from #60, exposed via a real domain/tunnel).
     Pointing this at localhost:8000 will simply fail from GitHub's runners,
     the same problem self-scan.yml's own comment documents.
-  - ``RIKUGAN_API_KEY``: the target's workspace API key (`GET
+  - ``TOLEMAN_API_KEY``: the target's workspace API key (`GET
     /api/targets/{id}/workspace-key`).
 
 Scanning still happens (and is reported in the job summary/artifacts)
 regardless of whether the ingest step succeeds -- so this degrades to
-"exactly self-scan.yml" rather than failing outright when Rikugan isn't
+"exactly self-scan.yml" rather than failing outright when Toleman isn't
 publicly reachable yet.
 """
 import logging
@@ -35,8 +35,15 @@ from app.models.models import Finding, Target
 
 logger = logging.getLogger(__name__)
 
-WORKFLOW_PATH = ".github/workflows/rikugan-scan.yml"
-WORKFLOW_FILENAME = "rikugan-scan.yml"
+WORKFLOW_PATH = ".github/workflows/toleman-scan.yml"
+WORKFLOW_FILENAME = "toleman-scan.yml"
+
+# Pre-rename path. Repos integrated before the Rikugan -> Toleman rename
+# carry the workflow under this name; `app.core.pipeline_pr` deletes it in
+# the same PR that adds WORKFLOW_PATH, so the change lands as a rename
+# rather than leaving both files in place scanning every PR twice (and
+# burning double the customer's Actions minutes).
+LEGACY_WORKFLOW_PATH = ".github/workflows/rikugan-scan.yml"
 
 # Custom Workflow Builder (issue #35): the fixed catalog of scanners a
 # PipelineWorkflowTemplate's step list may reference -- the same four jobs
@@ -103,19 +110,19 @@ _SEMGREP_JOB = """
         with:
           name: semgrep-results
           path: semgrep.sarif
-      - name: Push results to Rikugan
+      - name: Push results to Toleman
         if: always()
         env:
-          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
-          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
+          TOLEMAN_API_URL: ${{ secrets.TOLEMAN_API_URL }}
+          TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
-          if [ -n "$RIKUGAN_API_URL" ] && [ -f semgrep.sarif ]; then
-            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$TOLEMAN_API_URL" ] && [ -f semgrep.sarif ]; then
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @semgrep.sarif \\
-              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
+              || echo "Toleman ingest push failed -- TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"
           else
-            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
+            echo "Skipping Toleman push: set the TOLEMAN_API_URL/TOLEMAN_API_KEY repo secrets to enable it."
           fi
 """
 
@@ -136,19 +143,19 @@ _GITLEAKS_JOB = """
         with:
           name: gitleaks-results
           path: gitleaks.sarif
-      - name: Push results to Rikugan
+      - name: Push results to Toleman
         if: always()
         env:
-          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
-          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
+          TOLEMAN_API_URL: ${{ secrets.TOLEMAN_API_URL }}
+          TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
-          if [ -n "$RIKUGAN_API_URL" ] && [ -f gitleaks.sarif ]; then
-            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$TOLEMAN_API_URL" ] && [ -f gitleaks.sarif ]; then
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @gitleaks.sarif \\
-              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
+              || echo "Toleman ingest push failed -- TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"
           else
-            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
+            echo "Skipping Toleman push: set the TOLEMAN_API_URL/TOLEMAN_API_KEY repo secrets to enable it."
           fi
 """
 
@@ -168,19 +175,19 @@ _TRIVY_JOB = """
         with:
           name: trivy-results
           path: trivy.sarif
-      - name: Push results to Rikugan
+      - name: Push results to Toleman
         if: always()
         env:
-          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
-          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
+          TOLEMAN_API_URL: ${{ secrets.TOLEMAN_API_URL }}
+          TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
-          if [ -n "$RIKUGAN_API_URL" ] && [ -f trivy.sarif ]; then
-            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$TOLEMAN_API_URL" ] && [ -f trivy.sarif ]; then
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @trivy.sarif \\
-              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
+              || echo "Toleman ingest push failed -- TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"
           else
-            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
+            echo "Skipping Toleman push: set the TOLEMAN_API_URL/TOLEMAN_API_KEY repo secrets to enable it."
           fi
 """
 
@@ -210,45 +217,45 @@ _GOSEC_JOB = """
         with:
           name: gosec-results
           path: gosec.sarif
-      - name: Push results to Rikugan
+      - name: Push results to Toleman
         if: always()
         env:
-          RIKUGAN_API_URL: ${{ secrets.RIKUGAN_API_URL }}
-          RIKUGAN_API_KEY: ${{ secrets.RIKUGAN_API_KEY }}
+          TOLEMAN_API_URL: ${{ secrets.TOLEMAN_API_URL }}
+          TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
-          if [ -n "$RIKUGAN_API_URL" ] && [ -f gosec.sarif ]; then
-            curl -sS -X POST "$RIKUGAN_API_URL/api/ingest/__TARGET_ID__?tool=gosec&branch=${{ github.ref_name }}" \\
-              -H "X-API-Key: $RIKUGAN_API_KEY" -H "Content-Type: application/json" \\
+          if [ -n "$TOLEMAN_API_URL" ] && [ -f gosec.sarif ]; then
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=gosec&branch=${{ github.ref_name }}" \\
+              -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @gosec.sarif \\
-              || echo "Rikugan ingest push failed -- RIKUGAN_API_URL must be a publicly reachable Rikugan deployment, not localhost"
+              || echo "Toleman ingest push failed -- TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"
           else
-            echo "Skipping Rikugan push: set the RIKUGAN_API_URL/RIKUGAN_API_KEY repo secrets to enable it."
+            echo "Skipping Toleman push: set the TOLEMAN_API_URL/TOLEMAN_API_KEY repo secrets to enable it."
           fi
 """
 
 _TEMPLATE = """name: __WORKFLOW_NAME__
 
-# Generated by Rikugan DevSecOps Platform (issue #66) for target "__TARGET_NAME__"
-# (id __TARGET_ID__). Runs the same open-source scanners Rikugan wraps natively
+# Generated by Toleman DevSecOps Platform (issue #66) for target "__TARGET_NAME__"
+# (id __TARGET_ID__). Runs the same open-source scanners Toleman wraps natively
 # in this job -- mirrors this platform's own dogfooding workflow
 # (.github/workflows/self-scan.yml) -- then pushes each tool's SARIF output
-# back into Rikugan via POST /api/ingest/__TARGET_ID__.
+# back into Toleman via POST /api/ingest/__TARGET_ID__.
 #
-# IMPORTANT: GitHub's cloud runners cannot reach a Rikugan backend running on
-# localhost. For the "push results to Rikugan" steps below to actually succeed,
+# IMPORTANT: GitHub's cloud runners cannot reach a Toleman backend running on
+# localhost. For the "push results to Toleman" steps below to actually succeed,
 # configure these secrets in this repo's Settings > Secrets and variables >
 # Actions:
 #
-#   RIKUGAN_API_URL  - a PUBLICLY REACHABLE deployment of the Rikugan platform
+#   TOLEMAN_API_URL  - a PUBLICLY REACHABLE deployment of the Toleman platform
 #                  (e.g. behind docker-compose.yml exposed via a real
 #                  domain/tunnel). Do NOT set this to http://localhost:8000
 #                  -- that only works from your own machine, not from
 #                  GitHub's runners.
-#   RIKUGAN_API_KEY  - this target's workspace API key
-#                  (GET /api/targets/__TARGET_ID__/workspace-key in Rikugan).
+#   TOLEMAN_API_KEY  - this target's workspace API key
+#                  (GET /api/targets/__TARGET_ID__/workspace-key in Toleman).
 #
 # Scanning and the job summary/artifacts work regardless of whether these
-# secrets are set -- only the "push results to Rikugan" step is skipped/fails
+# secrets are set -- only the "push results to Toleman" step is skipped/fails
 # without them, same degrade-gracefully behavior as self-scan.yml.
 
 on:
@@ -328,7 +335,7 @@ def generate_workflow_yaml(session: Session, target: Target, steps: list[str] | 
     safe_name = target.name.replace("\\", "\\\\").replace('"', '\\"')
     yaml_text = _TEMPLATE.replace("__JOBS__", jobs_yaml)
     yaml_text = (
-        yaml_text.replace("__WORKFLOW_NAME__", f'"Rikugan Scan ({safe_name})"')
+        yaml_text.replace("__WORKFLOW_NAME__", f'"Toleman Scan ({safe_name})"')
         .replace("__TARGET_ID__", str(target.id))
         .replace("__TARGET_NAME__", target.name)
         .replace("__DEFAULT_BRANCH__", target.default_branch)

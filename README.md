@@ -1,12 +1,12 @@
-# Rikugan — Open-Source DevSecOps Vulnerability Management Platform
+# Toleman — Open-Source DevSecOps Vulnerability Management Platform
 
 See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, OSV.dev malicious-package detection on SBOM inventory (surfaced as `osv-malware` Critical findings), dedup engine, two-tier priority scoring, triage state machine.
 
-**Documentation:** [geekshiv.github.io/rikugan-docs](https://geekshiv.github.io/rikugan-docs) (source: [geekshiv/rikugan-docs](https://github.com/geekshiv/rikugan-docs)).
+**Documentation:** [geekshiv.github.io/toleman](https://geekshiv.github.io/toleman) (source: [geekshiv/toleman](https://github.com/geekshiv/toleman)).
 
 ## Quickstart (Docker Compose)
 
-The fastest way to try Rikugan — no Homebrew, no manually installing Postgres/Redis/scanner CLIs. Requires only [Docker](https://docs.docker.com/get-docker/) with Compose v2 (`docker compose`, bundled with Docker Desktop and recent Docker Engine installs).
+The fastest way to try Toleman — no Homebrew, no manually installing Postgres/Redis/scanner CLIs. Requires only [Docker](https://docs.docker.com/get-docker/) with Compose v2 (`docker compose`, bundled with Docker Desktop and recent Docker Engine installs).
 
 ```bash
 cp .env.example .env   # optional — every var has a working local-dev default
@@ -16,11 +16,11 @@ docker compose up --build
 Prefer not to build from source? Prebuilt images are published to GHCR on tagged releases (`.github/workflows/publish-images.yml`) — private, same access as this repo. Pull instead of building:
 
 ```bash
-docker pull ghcr.io/geekshiv/rikugan-platform-backend:latest
-docker pull ghcr.io/geekshiv/rikugan-platform-frontend:latest
+docker pull ghcr.io/toleman-platform/toleman-platform-backend:latest
+docker pull ghcr.io/toleman-platform/toleman-platform-frontend:latest
 ```
 
-then swap `build:` for `image: ghcr.io/geekshiv/rikugan-platform-backend:latest` (and `-frontend` for the frontend service) in `docker-compose.yml`.
+then swap `build:` for `image: ghcr.io/toleman-platform/toleman-platform-backend:latest` (and `-frontend` for the frontend service) in `docker-compose.yml`.
 
 This builds and starts five containers:
 
@@ -31,7 +31,7 @@ This builds and starts five containers:
 
 Once it's up:
 
-- Frontend: http://localhost:3000 — sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in `.env`, defaults to `admin@rikugan.local` / `changeme123`)
+- Frontend: http://localhost:3000 — sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in `.env`, defaults to `admin@toleman.local` / `changeme123`)
 - Backend: http://localhost:8000 (`/docs` for the OpenAPI UI, `/health` for a liveness check)
 - Scanner install sanity check: **Control Plane → Tooling → Tool Marketplace** reports real installed versions for every scanner, checked live inside the containers that run scans.
 
@@ -87,8 +87,8 @@ The scanner CLIs (Semgrep/Trivy/Gitleaks/gosec) are Linux/macOS-first tools with
 Create the database:
 
 ```bash
-psql postgres -c "CREATE USER rikugan WITH PASSWORD 'rikugan' CREATEDB;"
-psql postgres -c "CREATE DATABASE rikugan OWNER rikugan;"
+psql postgres -c "CREATE USER toleman WITH PASSWORD 'toleman' CREATEDB;"
+psql postgres -c "CREATE DATABASE toleman OWNER toleman;"
 ```
 
 ### Backend
@@ -146,7 +146,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000 — redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@rikugan.local` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API — no mock data.
+Open http://localhost:3000 — redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@toleman.local` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API — no mock data.
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
 

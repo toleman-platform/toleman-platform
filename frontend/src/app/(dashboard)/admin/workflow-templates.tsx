@@ -170,7 +170,7 @@ export function WorkflowTemplates() {
             <div>
               <div className="font-medium text-foreground">Custom Workflow Builder</div>
               <div className="text-xs text-muted-foreground">
-                Named, ordered scanner step lists for CI/CD pipeline rollout -- pick which of Rikugan&apos;s
+                Named, ordered scanner step lists for CI/CD pipeline rollout -- pick which of Toleman&apos;s
                 scanners run (and in what order) instead of the default full set. Used by Mass Rollout on
                 the Targets page.
               </div>

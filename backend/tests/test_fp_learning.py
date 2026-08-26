@@ -75,7 +75,7 @@ def _login(client, engine, role=UserRole.ADMIN, email="user@example.com", passwo
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id)
-        client.cookies.set("rikugan_session", token)
+        client.cookies.set("toleman_session", token)
         return user
 
 

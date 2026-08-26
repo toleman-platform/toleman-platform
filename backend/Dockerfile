@@ -1,4 +1,4 @@
-# OSP backend image: FastAPI API server AND Celery worker share this image
+# Toleman backend image: FastAPI API server AND Celery worker share this image
 # (docker-compose.yml runs the same image with a different command for the
 # celery-worker service). Bundles the 4 scanner CLIs the platform wraps
 # (Semgrep, Trivy, Gitleaks, gosec) so native scans work out of the box --
@@ -174,14 +174,14 @@ ENV BUILD_VERSION=${BUILD_VERSION} \
 # ownership is explicit and does not depend on the umask of whoever created
 # it first. A deployment that overrides SCAN_WORKDIR to somewhere outside
 # /tmp must chown that path itself.
-RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin rikugan \
-    && mkdir -p /tmp/rikugan-scans /home/rikugan/.cache \
-    && chown -R rikugan:rikugan /app /tmp/rikugan-scans /home/rikugan
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin toleman \
+    && mkdir -p /tmp/toleman-scans /home/toleman/.cache \
+    && chown -R toleman:toleman /app /tmp/toleman-scans /home/toleman
 
-ENV HOME=/home/rikugan \
-    XDG_CACHE_HOME=/home/rikugan/.cache
+ENV HOME=/home/toleman \
+    XDG_CACHE_HOME=/home/toleman/.cache
 
-USER rikugan
+USER toleman
 
 EXPOSE 8000
 

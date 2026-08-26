@@ -1,4 +1,4 @@
-# OSP frontend image: Next.js 16 app, built for production and served with
+# Toleman frontend image: Next.js 16 app, built for production and served with
 # the standalone Node server (see next.config.ts `output: "standalone"`) so
 # the runtime image doesn't need the full node_modules tree.
 #

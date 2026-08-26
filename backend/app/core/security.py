@@ -10,7 +10,7 @@ from app.core.config import DEFAULT_SESSION_SECRET, settings
 
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
 
-API_TOKEN_PREFIX = "rikugan_pat_"
+API_TOKEN_PREFIX = "toleman_pat_"
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:

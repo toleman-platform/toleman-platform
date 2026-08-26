@@ -118,7 +118,7 @@ export function ConnectGithubCard() {
           <div>
             <div className="font-medium text-foreground">GitHub</div>
             <div className="text-xs text-muted-foreground">
-              Install one or more Rikugan GitHub Apps to sync and auto-discover repos
+              Install one or more Toleman GitHub Apps to sync and auto-discover repos
             </div>
           </div>
         </div>

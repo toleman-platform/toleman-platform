@@ -10,8 +10,8 @@ import { safeHref } from "./utils";
 
 describe("safeHref", () => {
   it("allows a plain https URL", () => {
-    expect(safeHref("https://github.com/geekshiv/rikugan-platform")).toBe(
-      "https://github.com/geekshiv/rikugan-platform",
+    expect(safeHref("https://github.com/toleman-platform/toleman-platform")).toBe(
+      "https://github.com/toleman-platform/toleman-platform",
     );
   });
 
@@ -57,7 +57,7 @@ describe("safeHref", () => {
   it("preserves the exact input string on success, not a normalized form", () => {
     // Callers render the returned value directly; a helper that "fixes"
     // valid URLs on the way through would be a surprise no caller asked for.
-    const url = "https://github.com/geekshiv/rikugan-platform/pull/238?tab=files";
+    const url = "https://github.com/toleman-platform/toleman-platform/pull/238?tab=files";
     expect(safeHref(url)).toBe(url);
   });
 });

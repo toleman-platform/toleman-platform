@@ -527,7 +527,7 @@ export function TargetsList({
           variant="outline"
           size="sm"
           onClick={() => setMassOpen((v) => !v)}
-          title="Open a PR adding the Rikugan scan workflow to every repo in a workspace or group. Opens a scope picker first; nothing is changed until you confirm, and each PR still needs merging."
+          title="Open a PR adding the Toleman scan workflow to every repo in a workspace or group. Opens a scope picker first; nothing is changed until you confirm, and each PR still needs merging."
           className="h-7 text-xs"
         >
           <Rocket className="mr-1 h-3.5 w-3.5" />
@@ -544,7 +544,7 @@ export function TargetsList({
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Add the Rikugan pipeline scan workflow to every repo in a scope at once, instead of selecting them one
+            Add the Toleman pipeline scan workflow to every repo in a scope at once, instead of selecting them one
             by one.
           </p>
           <div className="flex flex-wrap items-center gap-2">

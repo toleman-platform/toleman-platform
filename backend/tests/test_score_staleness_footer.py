@@ -53,7 +53,7 @@ class TestStalenessFooter:
             [], [], PRGuardrailStatus.PASSED, 1, 1,
             tools_run=["semgrep"], scanned_at=SCANNED_AT,
         )
-        assert "Rikugan" in body
+        assert "Toleman" in body
 
     def test_omitted_entirely_when_no_timestamp_is_supplied(self):
         """Backwards-compatible default, matching how tools_run/scan_scope

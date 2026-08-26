@@ -25,7 +25,7 @@ LOGIN_RATE_WINDOW_SECONDS = 60
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-SESSION_COOKIE = "rikugan_session"
+SESSION_COOKIE = "toleman_session"
 
 
 class LoginRequest(BaseModel):
@@ -42,11 +42,11 @@ class UserOut(BaseModel):
 
 def current_user(
     session: Session = Depends(get_session),
-    rikugan_session: str | None = Cookie(default=None),
+    toleman_session: str | None = Cookie(default=None),
 ) -> User:
-    if not rikugan_session:
+    if not toleman_session:
         raise HTTPException(status_code=401, detail="not authenticated")
-    payload = decode_session_token(rikugan_session)
+    payload = decode_session_token(toleman_session)
     if not payload:
         raise HTTPException(status_code=401, detail="invalid or expired session")
     user = session.get(User, payload["uid"])
@@ -79,7 +79,7 @@ api_token_scheme = HTTPBearer(
     scheme_name="ApiToken",
     description=(
         "Personal access token from Settings -> Workspace. Send as "
-        "`Authorization: Bearer rikugan_pat_...`."
+        "`Authorization: Bearer toleman_pat_...`."
     ),
     auto_error=False,
 )

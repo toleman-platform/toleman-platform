@@ -8,7 +8,7 @@ from app.core.config import settings
 # registered on the worker, and every .delay() from the API process would
 # fail with "Received unregistered task" once it actually reached a worker.
 celery_app = Celery(
-    "rikugan",
+    "toleman",
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=[

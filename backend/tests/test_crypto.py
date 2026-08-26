@@ -129,3 +129,39 @@ def select_canary():
     from sqlmodel import select
 
     return select(EncryptionKeyCanary)
+
+
+def test_pre_rename_canary_still_reports_healthy(session):
+    """Rikugan -> Toleman rename: a database seeded before the rename holds a
+    canary encrypting the *old* plaintext. The key itself has not changed, so
+    the health check must not report a mismatch -- otherwise the rename alone
+    would fire the CRITICAL "PLATFORM_ENCRYPTION_KEY MISMATCH" alert on every
+    existing deployment and send operators to reconnect working integrations.
+    """
+    import app.core.crypto as crypto_module
+
+    legacy = crypto_module._LEGACY_CANARY_PLAINTEXTS[0]
+    assert legacy != crypto_module._CANARY_PLAINTEXT
+    session.add(EncryptionKeyCanary(ciphertext=encrypt_secret(legacy)))
+    session.commit()
+
+    assert check_encryption_key_health(session) is True
+
+
+def test_pre_rename_canary_still_detects_a_real_key_swap(session):
+    """The legacy-plaintext allowance must not swallow an actual mismatch:
+    a pre-rename canary under a *different* key still has to report unhealthy.
+    """
+    import app.core.crypto as crypto_module
+
+    legacy = crypto_module._LEGACY_CANARY_PLAINTEXTS[0]
+    session.add(EncryptionKeyCanary(ciphertext=encrypt_secret(legacy)))
+    session.commit()
+
+    original_fernet = crypto_module._get_fernet
+    _swap_fernet_key(crypto_module)
+    try:
+        assert check_encryption_key_health(session) is False
+    finally:
+        crypto_module._get_fernet = original_fernet
+        crypto_module._get_fernet.cache_clear()

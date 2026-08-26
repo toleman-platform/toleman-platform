@@ -68,7 +68,7 @@ def _admin(client, engine):
         session.commit()
         session.refresh(u)
         token = create_session_token(u.id, u.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 

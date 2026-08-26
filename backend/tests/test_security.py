@@ -162,21 +162,21 @@ def test_token_issued_before_logout_is_rejected_after_logout(logout_test_user):
 
     login_resp = client.post("/api/auth/login", json={"email": email, "password": password})
     assert login_resp.status_code == 200
-    old_cookie = login_resp.cookies.get("rikugan_session")
+    old_cookie = login_resp.cookies.get("toleman_session")
     assert old_cookie
 
     # The token works before logout.
-    me_resp = client.get("/api/auth/me", cookies={"rikugan_session": old_cookie})
+    me_resp = client.get("/api/auth/me", cookies={"toleman_session": old_cookie})
     assert me_resp.status_code == 200
 
     # Logging out bumps the user's token_version server-side.
-    logout_resp = client.post("/api/auth/logout", cookies={"rikugan_session": old_cookie})
+    logout_resp = client.post("/api/auth/logout", cookies={"toleman_session": old_cookie})
     assert logout_resp.status_code == 200
 
     # The pre-logout token is now rejected, even though its signature and
     # expiry are still valid, because its embedded token_version no longer
     # matches the (bumped) DB value.
-    stale_resp = client.get("/api/auth/me", cookies={"rikugan_session": old_cookie})
+    stale_resp = client.get("/api/auth/me", cookies={"toleman_session": old_cookie})
     assert stale_resp.status_code == 401
 
 
@@ -187,15 +187,15 @@ def test_fresh_login_after_logout_still_works(logout_test_user):
     client = TestClient(app)
 
     first_login = client.post("/api/auth/login", json={"email": email, "password": password})
-    old_cookie = first_login.cookies.get("rikugan_session")
-    client.post("/api/auth/logout", cookies={"rikugan_session": old_cookie})
+    old_cookie = first_login.cookies.get("toleman_session")
+    client.post("/api/auth/logout", cookies={"toleman_session": old_cookie})
 
     # A brand new login issues a token stamped with the post-logout version.
     second_login = client.post("/api/auth/login", json={"email": email, "password": password})
     assert second_login.status_code == 200
-    new_cookie = second_login.cookies.get("rikugan_session")
+    new_cookie = second_login.cookies.get("toleman_session")
     assert new_cookie
 
-    me_resp = client.get("/api/auth/me", cookies={"rikugan_session": new_cookie})
+    me_resp = client.get("/api/auth/me", cookies={"toleman_session": new_cookie})
     assert me_resp.status_code == 200
     assert me_resp.json()["email"] == email

@@ -55,7 +55,7 @@ def test_llm_output_into_eval_is_flagged(tmp_path):
         "    r = client.chat.completions.create(model='m', messages=[{'role':'user','content':q}])\n"
         "    eval(r.choices[0].message.content)\n"
     )
-    assert "rikugan-llm-output-to-code-execution" in _rule_ids(_scan(tmp_path))
+    assert "toleman-llm-output-to-code-execution" in _rule_ids(_scan(tmp_path))
 
 
 def test_llm_output_into_shell_is_flagged(tmp_path):
@@ -66,7 +66,7 @@ def test_llm_output_into_shell_is_flagged(tmp_path):
         "    r = client.chat.completions.create(model='m', messages=[{'role':'user','content':q}])\n"
         "    os.system(r.choices[0].message.content)\n"
     )
-    assert "rikugan-llm-output-to-shell" in _rule_ids(_scan(tmp_path))
+    assert "toleman-llm-output-to-shell" in _rule_ids(_scan(tmp_path))
 
 
 def test_literal_shell_command_is_not_flagged_even_beside_an_llm_call(tmp_path):
@@ -104,7 +104,7 @@ def test_langchain_style_call_is_flagged_when_receiver_is_named_like_an_llm(tmp_
         "    out = llm_chain.run(q)\n"
         "    os.system(out)\n"
     )
-    assert "rikugan-llm-output-to-shell" in _rule_ids(_scan(tmp_path))
+    assert "toleman-llm-output-to-shell" in _rule_ids(_scan(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -114,24 +114,24 @@ def test_langchain_style_call_is_flagged_when_receiver_is_named_like_an_llm(tmp_
 
 def test_torch_load_without_weights_only_is_flagged(tmp_path):
     (tmp_path / "a.py").write_text("import torch\nm = torch.load('ckpt.pt')\n")
-    assert "rikugan-torch-load-without-weights-only" in _rule_ids(_scan(tmp_path))
+    assert "toleman-torch-load-without-weights-only" in _rule_ids(_scan(tmp_path))
 
 
 def test_torch_load_with_weights_only_is_clean(tmp_path):
     (tmp_path / "a.py").write_text("import torch\nm = torch.load('ckpt.pt', weights_only=True)\n")
-    assert "rikugan-torch-load-without-weights-only" not in _rule_ids(_scan(tmp_path))
+    assert "toleman-torch-load-without-weights-only" not in _rule_ids(_scan(tmp_path))
 
 
 def test_pickle_load_is_flagged(tmp_path):
     (tmp_path / "a.py").write_text("import pickle\nm = pickle.load(open('m.pkl','rb'))\n")
-    assert "rikugan-pickle-load-of-model-artifact" in _rule_ids(_scan(tmp_path))
+    assert "toleman-pickle-load-of-model-artifact" in _rule_ids(_scan(tmp_path))
 
 
 def test_unpinned_hub_model_is_flagged(tmp_path):
     (tmp_path / "a.py").write_text(
         "from transformers import AutoModel\nm = AutoModel.from_pretrained('bert-base-uncased')\n"
     )
-    assert "rikugan-unpinned-huggingface-model" in _rule_ids(_scan(tmp_path))
+    assert "toleman-unpinned-huggingface-model" in _rule_ids(_scan(tmp_path))
 
 
 def test_pinned_hub_model_is_clean(tmp_path):
@@ -139,14 +139,14 @@ def test_pinned_hub_model_is_clean(tmp_path):
         "from transformers import AutoModel\n"
         "m = AutoModel.from_pretrained('org/model', revision='abc123def456')\n"
     )
-    assert "rikugan-unpinned-huggingface-model" not in _rule_ids(_scan(tmp_path))
+    assert "toleman-unpinned-huggingface-model" not in _rule_ids(_scan(tmp_path))
 
 
 def test_local_model_directory_is_not_treated_as_a_hub_reference(tmp_path):
     (tmp_path / "a.py").write_text(
         "from transformers import AutoModel\nm = AutoModel.from_pretrained('./local-model-dir')\n"
     )
-    assert "rikugan-unpinned-huggingface-model" not in _rule_ids(_scan(tmp_path))
+    assert "toleman-unpinned-huggingface-model" not in _rule_ids(_scan(tmp_path))
 
 
 # ---------------------------------------------------------------------------

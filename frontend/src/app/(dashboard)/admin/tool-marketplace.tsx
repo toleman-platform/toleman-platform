@@ -302,7 +302,7 @@ export function ToolMarketplace() {
                           a checked box for a tool that never runs. */}
                       {!t.integrated && (
                         <p className="text-[11px] text-muted-foreground">
-                          Catalogued for visibility only — Rikugan cannot execute this tool yet, so these have no effect.
+                          Catalogued for visibility only — Toleman cannot execute this tool yet, so these have no effect.
                         </p>
                       )}
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1">

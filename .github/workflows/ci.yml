@@ -1,28 +1,31 @@
 name: CI
 
-# TEMPORARY: restores PR gating on GitHub-hosted runners while the CircleCI
-# project is re-linked to this repository. CI moved to CircleCI in #236
-# because Actions minutes ran out; the org move to `toleman-platform` left
-# the CircleCI project bound to the old `geekshiv/rikugan-platform` path, so
-# no job reported on the rename PR and main merged unverified.
+# The gating jobs: what has to pass before a change is trustworthy.
 #
-# .circleci/config.yml is deliberately left in place and unmodified -- it is
-# the intended home for these jobs. Once the CircleCI project is re-linked,
-# delete this file rather than maintaining two copies that can drift.
+# History worth keeping: these lived here, moved to CircleCI in #236 because
+# Actions minutes ran out twice, and came back in #333 when the move to the
+# toleman-platform org left the CircleCI project bound to the old
+# geekshiv/rikugan-platform path and nothing reported on #332 at all. They
+# stay here for good now -- GitHub Actions has no minute limit on standard
+# runners for public repositories, which is what made CircleCI necessary in
+# the first place.
 #
-# Only the gating jobs live here. The dogfooding scans and image builds are
-# in self-scan.yml and docker-images.yml, off the per-PR path, because they
-# are what consumed the Actions budget the first two times (measured in
-# .circleci/config.yml: self-scan 76 min/run against backend+frontend tests
-# at 70 min combined).
-
+# The heavier jobs are split out by cost of a different kind -- run duration
+# rather than billed minutes -- into self-scan.yml and docker-images.yml.
+#
+# Note for outside contributions: GitHub does not expose repository secrets
+# to workflows triggered by a pull request from a fork, and `pull_request`
+# (rather than `pull_request_target`) runs the workflow from the fork's own
+# ref with a read-only token. Neither is a setting to maintain; both are the
+# default and both matter for a security product accepting public PRs. Do
+# not switch this to pull_request_target to "fix" a permissions error.
 on:
   pull_request:
   push:
     branches: [main]
 
-# (#233) A force-push during review should not keep paying for a run whose
-# result can no longer matter.
+# (#233) A force-push during review should not leave a superseded run
+# occupying a runner and reporting a result nobody will act on.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -34,8 +37,8 @@ jobs:
       run:
         working-directory: backend
     services:
-      # Same images and credentials as the CircleCI job, so a failure here
-      # means what it means there.
+      # Throwaway per-run services. The credentials are fixed only so the
+      # DATABASE_URL below matches; nothing persists past the job.
       postgres:
         image: postgres:16
         env:

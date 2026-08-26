@@ -1,0 +1,139 @@
+name: Docker Images Build
+
+# TEMPORARY: see the header in ci.yml. Restores the image builds on
+# GitHub-hosted runners while the CircleCI project is re-linked.
+#
+# Why these exist: every other job runs Python and Node directly against
+# whatever the runner already has. None of them build the images
+# docker-compose.yml actually ships, so a broken image could -- and did --
+# reach main with every check green. The break: nothing asks for setuptools
+# directly, but semgrep's pinned opentelemetry-instrumentation declares
+# setuptools>=16.0, pip resolved 82.0.0, which removed pkg_resources, which
+# that same module imports. requirements.txt had not changed; a transitive
+# resolve drifted underneath it.
+#
+# On main plus manual dispatch rather than every PR: --no-cache builds of
+# three images are slow by construction, and this is a budget the repo has
+# already exhausted twice. Dispatch this manually on a branch that touches a
+# Dockerfile or requirements.txt before merging.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: docker-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+    strategy:
+      # fail-fast off by construction: independent images, so a broken
+      # frontend build does not cancel the backend one. When both are
+      # broken, one run reports both.
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: backend
+            dockerfile: backend/Dockerfile
+          - name: backend-hardened
+            context: backend
+            dockerfile: backend/Dockerfile.hardened
+          - name: frontend
+            context: frontend
+            dockerfile: frontend/Dockerfile
+    name: build-${{ matrix.name }}
+    env:
+      TRIVY_VERSION: 0.73.0
+      TRIVY_INSTALLER_SHA256: e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.name }} image
+        # Never pushed: this proves the image builds, it does not publish.
+        # Publishing is publish-images.yml, on version tags.
+        #
+        # Deliberately --no-cache. A cached layer is exactly what would hide
+        # a dependency resolving differently, which is the whole failure
+        # mode this job exists to catch.
+        run: |
+          docker build \
+            --no-cache \
+            --build-arg NEXT_PUBLIC_API_URL=http://localhost:8000 \
+            -f ${{ matrix.dockerfile }} \
+            -t toleman-ci-image:latest \
+            ${{ matrix.context }}
+
+      - name: Verify bundled scanners actually run
+        # "docker build succeeded" only proves the install commands exited
+        # zero. It does not prove the binaries still run -- and a scanner
+        # that is missing or broken fails silently at runtime, producing
+        # zero findings that look exactly like a clean repo.
+        #
+        # Skipped for the distroless hardened image, which has no shell and
+        # no Python entrypoint to drive this with; its scanners come from the
+        # same install steps as the standard image, verified here.
+        run: |
+          case "${{ matrix.dockerfile }}" in
+            backend/Dockerfile)
+              docker run --rm toleman-ci-image:latest python scripts/verify_tools.py
+              ;;
+            *)
+              echo "skipped for ${{ matrix.dockerfile }} (distroless has no shell; frontend ships no scanners)"
+              ;;
+          esac
+
+      # (#269) The third and last "we scan what is written down, not what is
+      # shipped" gap. #239 closed it for the resolved Python dependency tree;
+      # this closes it for the image itself -- base-image OS packages, and
+      # the scanner binaries we vendor in, none of which appear in any
+      # manifest we parse. Notably it also covers
+      # /usr/local/bin/{gitleaks,gosec,trivy}, the Go binaries we bundle,
+      # which nothing else in this pipeline looks at at all.
+      #
+      # Scanned right here rather than in a separate job specifically to
+      # avoid rebuilding: the image is already in this runner's daemon, and a
+      # second job would either rebuild it (slow, and --no-cache means
+      # genuinely from scratch) or need a registry to hand it over.
+      - name: Install Trivy
+        run: |
+          curl -sSL -o /tmp/trivy-install.sh \
+            "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh"
+          echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c -
+          sudo sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}"
+          rm -f /tmp/trivy-install.sh
+
+      - name: Scan the built image
+        # Non-blocking (|| true), matching the other scan jobs' posture.
+        # Turning ~200 pre-existing findings into a hard build failure on the
+        # day it merges would just get the job disabled. The count is
+        # reported on every run so the number is visible and can be driven
+        # down deliberately.
+        run: trivy image --format json --output image-scan.json toleman-ci-image:latest || true
+
+      - name: Summarize image findings
+        run: |
+          python3 -c "
+          import json
+          d = json.load(open('image-scan.json'))
+          results = d.get('Results', [])
+          total = sum(len(r.get('Vulnerabilities') or []) for r in results)
+          high = sum(
+              1 for r in results for v in (r.get('Vulnerabilities') or [])
+              if v.get('Severity') in ('HIGH', 'CRITICAL')
+          )
+          print(f'## ${{ matrix.dockerfile }}: {total} vulnerabilities ({high} High/Critical)')
+          for r in results:
+              n = len(r.get('Vulnerabilities') or [])
+              if n:
+                  print(f'   {r.get(\"Target\")}: {n} ({r.get(\"Type\")})')
+          " | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: image-scan-${{ matrix.name }}
+          path: image-scan.json

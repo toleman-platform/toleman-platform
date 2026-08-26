@@ -10,11 +10,11 @@ import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 
 type Health = { tool: string; installed: boolean; version: string | null; response_ms: number | null };
 
-// Mirrors VERSION_COMMANDS in backend/app/api/tools/health.py. The tab's scope
-// is fixed to these four originally-integrated scanners, so cards are rendered
-// from this list rather than learned from the response — which is what lets
-// each tool's name (and a "checking" state) show immediately instead of
-// anonymous skeletons until the sequential --version probes return (#326).
+// Mirrors VERSION_COMMANDS in backend/app/api/tools/health.py. Used for the
+// loading state so each tool's name (and a "checking" state) show immediately
+// instead of anonymous skeletons until the sequential --version probes return
+// (#326). Once the response lands, cards render for TOOLS union'd with
+// whatever the backend actually reported (see allTools below).
 const TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"] as const;
 
 export function ToolsHealth() {

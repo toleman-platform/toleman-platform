@@ -151,6 +151,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             if not sources_run:
                 run.status = "failed"
                 run.error = f"No SBOM sources succeeded: {'; '.join(sources_failed)}"
+                run.sources_failed = "; ".join(sources_failed)
                 run.completed_at = utcnow()
                 session.add(run)
                 session.commit()

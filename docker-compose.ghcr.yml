@@ -21,13 +21,13 @@
 
 services:
   backend:
-    image: ghcr.io/toleman-platform/toleman-platform-backend:latest
+    image: ghcr.io/toleman-platform/toleman-platform-backend:edge
 
   celery-worker:
     # Must match `backend` exactly: the worker and the API are the same
     # image with a different command, and a worker running different code
     # from the API is a genuinely confusing failure mode.
-    image: ghcr.io/toleman-platform/toleman-platform-backend:latest
+    image: ghcr.io/toleman-platform/toleman-platform-backend:edge
 
   frontend:
-    image: ghcr.io/toleman-platform/toleman-platform-frontend:latest
+    image: ghcr.io/toleman-platform/toleman-platform-frontend:edge

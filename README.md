@@ -51,7 +51,7 @@ Available tags, for both `…-backend` and `…-frontend`:
 No version has been tagged yet, so only `edge` and `sha-` tags exist today; `latest`/`1.2.3`-style tags will appear once the first release ships. `edge` and `latest` are moving tags — pin to a version or a `sha-` tag for anything you need to reproduce. Every image carries [build provenance](https://docs.github.com/actions/security-guides/using-artifact-attestations-to-establish-provenance-for-builds) attesting the workflow run and commit it came from:
 
 ```bash
-gh attestation verify oci://ghcr.io/toleman-platform/toleman-platform-backend:latest \
+gh attestation verify oci://ghcr.io/toleman-platform/toleman-platform-backend:edge \
   --owner toleman-platform
 ```
 

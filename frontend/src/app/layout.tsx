@@ -26,7 +26,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rikugan - DevSecOps Vulnerability Management",
+  title: "Toleman - DevSecOps Vulnerability Management",
   description: "Open-source vulnerability management platform",
 };
 
@@ -69,7 +69,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             one refactor away from not being safe. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `window.__RIKUGAN_API_URL__=${JSON.stringify(publicApiUrl).replace(/</g, "\\u003c")};`,
+            __html: `window.__TOLEMAN_API_URL__=${JSON.stringify(publicApiUrl).replace(/</g, "\\u003c")};`,
           }}
         />
         <DensityInit />

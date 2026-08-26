@@ -79,7 +79,7 @@ def _login(client, engine, role=UserRole.USER, password="whatever123"):
         session.refresh(user)
         uid = user.id
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client, uid, email
 
 
@@ -134,7 +134,7 @@ def test_change_password_rejects_short_new_password(client, engine):
 def test_change_password_invalidates_old_session_and_new_password_works(client, engine):
     client, uid, email = _login(client, engine, password="old-password-123")
 
-    old_token = client.cookies.get("rikugan_session")
+    old_token = client.cookies.get("toleman_session")
 
     res = client.post(
         "/api/auth/change-password",
@@ -145,7 +145,7 @@ def test_change_password_invalidates_old_session_and_new_password_works(client, 
     # The OLD token (captured before the change) is now revoked -- real
     # token_version bump, same mechanism as logout.
     stale_client = TestClient(app)
-    stale_client.cookies.set("rikugan_session", old_token)
+    stale_client.cookies.set("toleman_session", old_token)
     res = stale_client.get("/api/auth/me")
     assert res.status_code == 401
 
@@ -349,7 +349,7 @@ def test_sla_breach_notification_fires_once_not_on_every_read(client, engine):
         session.commit()
         session.refresh(admin)
         token = create_session_token(admin.id, admin.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
 
     with patch("app.core.notifications.send_slack_message") as mock_send:
         mock_send.return_value = (True, "ok")
@@ -413,7 +413,7 @@ def test_sla_breach_marker_resets_when_no_longer_violated(client, engine):
         finding.state = FindingState.MITIGATED
         session.add(finding)
         session.commit()
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
 
     res = client.get(f"/api/findings/{finding_id}")
     assert res.status_code == 200

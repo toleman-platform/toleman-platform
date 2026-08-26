@@ -36,7 +36,7 @@ TOOL_COMMANDS = {
     # --config on the semgrep entry above. Findings then carry tool
     # "semgrep-llm", so per-tool coverage reporting, usage assignment (#75)
     # and triage can all distinguish "the registry's generic rules" from
-    # "Rikugan's LLM rules" instead of merging them into one bucket. Same
+    # "Toleman's LLM rules" instead of merging them into one bucket. Same
     # reasoning as trivy vs trivy-license already being separate entries.
     "semgrep-llm": lambda path: [
         "semgrep", "scan", f"--config={LLM_RULES_DIR}", "--json", "--quiet", path
@@ -79,13 +79,13 @@ TOOL_COMMANDS = {
 #     -wraps at terminal width and corrupts the JSON mid-token.
 # So run_tool substitutes a real temp file for this placeholder and reads the
 # report back from disk.
-MODELSCAN_REPORT_PLACEHOLDER = "__RIKUGAN_MODELSCAN_REPORT__"
+MODELSCAN_REPORT_PLACEHOLDER = "__TOLEMAN_MODELSCAN_REPORT__"
 
 # (#253) Same substitution for gitleaks -- see its TOOL_COMMANDS entry.
-GITLEAKS_REPORT_PLACEHOLDER = "__RIKUGAN_GITLEAKS_REPORT__"
+GITLEAKS_REPORT_PLACEHOLDER = "__TOLEMAN_GITLEAKS_REPORT__"
 
 # (#255) noseyparker scans into a datastore, then reports out of it.
-NOSEYPARKER_DATASTORE_PLACEHOLDER = "__RIKUGAN_NOSEYPARKER_DATASTORE__"
+NOSEYPARKER_DATASTORE_PLACEHOLDER = "__TOLEMAN_NOSEYPARKER_DATASTORE__"
 
 
 class ToolExecutionError(Exception):
@@ -311,7 +311,7 @@ def clone_error_message(exc: Exception) -> str:
 def normalize_file_path(file_path: str, repo_path: Path) -> str:
     """Strip the scan-scoped clone directory prefix so file_path is relative
     to the repo root, e.g. "vulnerability/idor/idor.go" not
-    "/tmp/rikugan-scans/govwa-<scan-id>/vulnerability/idor/idor.go".
+    "/tmp/toleman-scans/govwa-<scan-id>/vulnerability/idor/idor.go".
 
     This matters beyond cosmetics: compute_dedup_hash includes file_path, and
     since clone_repo (above) gives every scan its own unique directory name
@@ -424,7 +424,7 @@ def _run_noseyparker(cmd: list[str], cwd: str | None) -> list:
     and an empty datastore renders as `[]`, which is the false all-clear #253
     was about arriving through a new door.
     """
-    datastore = Path(tempfile.mkdtemp(prefix="rikugan-np-")) / "datastore"
+    datastore = Path(tempfile.mkdtemp(prefix="toleman-np-")) / "datastore"
     scan_cmd = [str(datastore) if c == NOSEYPARKER_DATASTORE_PLACEHOLDER else c for c in cmd]
     try:
         proc = subprocess.run(scan_cmd, capture_output=True, text=True, cwd=cwd)
@@ -461,7 +461,7 @@ def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
     status, so any nonzero exit here is a genuine execution failure and
     becomes a ToolExecutionError rather than an empty, clean-looking result.
     """
-    report_path = Path(tempfile.mkdtemp(prefix="rikugan-gitleaks-")) / "report.json"
+    report_path = Path(tempfile.mkdtemp(prefix="toleman-gitleaks-")) / "report.json"
     resolved = [str(report_path) if c == GITLEAKS_REPORT_PLACEHOLDER else c for c in cmd]
     try:
         proc = subprocess.run(resolved, capture_output=True, text=True, cwd=cwd)

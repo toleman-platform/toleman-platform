@@ -1,4 +1,4 @@
-# Full Rikugan stack: Postgres, Redis, the FastAPI backend, a Celery worker
+# Full Toleman stack: Postgres, Redis, the FastAPI backend, a Celery worker
 # (same image as the backend, different command), and the Next.js frontend.
 #
 # Quickstart:
@@ -51,7 +51,7 @@ services:
       context: ./backend
     # Named so celery-worker can reuse this exact image instead of building
     # the identical Dockerfile a second time (finding BLD-05).
-    image: rikugan-backend:local
+    image: toleman-backend:local
     restart: unless-stopped
     depends_on:
       postgres:
@@ -67,7 +67,7 @@ services:
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.local}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@toleman.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -98,7 +98,7 @@ services:
     # and the worker always has something to build from.
     build:
       context: ./backend
-    image: rikugan-backend:local
+    image: toleman-backend:local
     restart: unless-stopped
     command: celery -A app.tasks.celery_app worker -Q scans --loglevel=info
     depends_on:
@@ -119,7 +119,7 @@ services:
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@rikugan.local}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@toleman.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

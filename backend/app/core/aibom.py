@@ -126,7 +126,7 @@ def _strip_comment_lines(text: str) -> str:
     The model-name regex is text-based, so without this it matches names
     mentioned in prose. Caught immediately: running the extractor over this
     codebase pulled "gpt-5" and "claude-..." out of *this module's own
-    comments*, which would have shipped an AIBOM claiming Rikugan depends on
+    comments*, which would have shipped an AIBOM claiming Toleman depends on
     models it only talks about. On a real repo the same thing happens with a
     docstring or a TODO mentioning a model name.
 
@@ -226,8 +226,8 @@ def _component_to_cyclonedx(component: AiComponent) -> dict:
         "name": component.name,
         "version": component.version,
         "properties": [
-            {"name": "rikugan:source", "value": component.source},
-            {"name": "rikugan:evidence", "value": ", ".join(component.evidence[:10])},
+            {"name": "toleman:source", "value": component.source},
+            {"name": "toleman:evidence", "value": ", ".join(component.evidence[:10])},
         ],
     }
 
@@ -254,7 +254,7 @@ def _component_to_cyclonedx(component: AiComponent) -> dict:
     if component.version == UNKNOWN:
         entry["properties"].append(
             {
-                "name": "rikugan:unpinned",
+                "name": "toleman:unpinned",
                 "value": "true",
             }
         )
@@ -279,14 +279,14 @@ def build_aibom(
             "bom-ref": f"target:{target_name}",
             "name": target_name,
         },
-        "tools": {"components": [{"type": "application", "name": "rikugan", "publisher": "rikugan"}]},
+        "tools": {"components": [{"type": "application", "name": "toleman", "publisher": "toleman"}]},
     }
     if timestamp:
         metadata["timestamp"] = timestamp
     if repo_url:
         metadata["component"]["externalReferences"] = [{"type": "vcs", "url": repo_url}]
     if branch:
-        metadata["properties"] = [{"name": "rikugan:branch", "value": branch}]
+        metadata["properties"] = [{"name": "toleman:branch", "value": branch}]
 
     return {
         "bomFormat": CYCLONEDX_BOM_FORMAT,

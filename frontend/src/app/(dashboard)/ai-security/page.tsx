@@ -49,7 +49,7 @@ export default function AiSecurityPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">AI Security</h1>
         <p className="text-sm text-muted-foreground">
-          Repos detected as using AI/ML, and what ModelScan and Rikugan&apos;s LLM ruleset found in them.
+          Repos detected as using AI/ML, and what ModelScan and Toleman&apos;s LLM ruleset found in them.
         </p>
       </div>
 

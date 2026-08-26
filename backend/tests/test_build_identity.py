@@ -47,14 +47,14 @@ def test_database_identity_never_leaks_credentials(monkeypatch):
     monkeypatch.setattr(
         main_module.settings,
         "database_url",
-        "postgresql+psycopg://rikugan_user:sup3r-s3cret@db.internal:5432/rikugan",
+        "postgresql+psycopg://toleman_user:sup3r-s3cret@db.internal:5432/toleman",
     )
 
     identity = _database_identity()
 
-    assert identity == "db.internal:5432/rikugan"
+    assert identity == "db.internal:5432/toleman"
     assert "sup3r-s3cret" not in identity
-    assert "rikugan_user" not in identity
+    assert "toleman_user" not in identity
 
 
 def test_database_identity_distinguishes_two_instances(monkeypatch):

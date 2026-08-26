@@ -31,7 +31,17 @@ logger = logging.getLogger(__name__)
 
 # Arbitrary fixed plaintext -- its content doesn't matter, only that the same
 # constant is used to seed the canary and to verify it later.
-_CANARY_PLAINTEXT = "rikugan-encryption-key-canary-v1"
+_CANARY_PLAINTEXT = "toleman-encryption-key-canary-v1"
+
+# Pre-rename value of _CANARY_PLAINTEXT. Any database seeded before the
+# Rikugan -> Toleman rename holds a canary row encrypting *this* string, so
+# verification has to accept it too. Without this, the rename alone -- with
+# the encryption key completely unchanged -- would make every existing
+# deployment fail its boot-time key-health check and log the CRITICAL
+# "PLATFORM_ENCRYPTION_KEY MISMATCH" alert, sending operators to reconnect
+# integrations that were never broken. Seeding always uses the current
+# constant, so this is only ever read, never written.
+_LEGACY_CANARY_PLAINTEXTS = ("rikugan-encryption-key-canary-v1",)
 
 
 class SecretDecryptionError(ValueError):
@@ -121,9 +131,10 @@ def check_encryption_key_health(session: Session) -> bool:
         return True
 
     try:
-        return decrypt_secret(canary.ciphertext) == _CANARY_PLAINTEXT
+        plaintext = decrypt_secret(canary.ciphertext)
     except SecretDecryptionError:
         return False
+    return plaintext == _CANARY_PLAINTEXT or plaintext in _LEGACY_CANARY_PLAINTEXTS
 
 
 def reseed_encryption_key_canary(session: Session) -> None:

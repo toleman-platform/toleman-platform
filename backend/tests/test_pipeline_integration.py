@@ -49,7 +49,7 @@ def _login(client, engine, role=UserRole.ADMIN):
         session.commit()
         session.refresh(user)
         token = create_session_token(user.id, user.token_version)
-    client.cookies.set("rikugan_session", token)
+    client.cookies.set("toleman_session", token)
     return client
 
 
@@ -99,7 +99,7 @@ def test_generated_workflow_is_valid_yaml_and_target_specific(engine):
     assert "jobs" in parsed
     assert {"semgrep", "gitleaks", "trivy"}.issubset(parsed["jobs"].keys())
     assert f"/api/ingest/{target.id}" in result["yaml"]
-    assert result["path"] == ".github/workflows/rikugan-scan.yml"
+    assert result["path"] == ".github/workflows/toleman-scan.yml"
 
 
 def test_no_gosec_job_without_go_evidence(engine, monkeypatch):
@@ -142,7 +142,7 @@ def test_workflow_yaml_documents_localhost_reachability_constraint(engine):
     with Session(engine) as session:
         target = _make_target(session)
         result = generate_workflow_yaml(session, target)
-    assert "RIKUGAN_API_URL" in result["yaml"]
+    assert "TOLEMAN_API_URL" in result["yaml"]
     assert "localhost" in result["yaml"].lower()
 
 
@@ -166,7 +166,7 @@ def test_get_pipeline_workflow_endpoint(client, engine):
     assert res.status_code == 200
     body = res.json()
     assert "jobs:" in body["yaml"]
-    assert body["path"] == ".github/workflows/rikugan-scan.yml"
+    assert body["path"] == ".github/workflows/toleman-scan.yml"
 
 
 def test_get_pipeline_workflow_404_for_missing_target(client, engine):

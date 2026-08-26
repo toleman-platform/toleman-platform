@@ -1,4 +1,4 @@
-"""Fixed-window rate limiting for Rikugan API endpoints.
+"""Fixed-window rate limiting for Toleman API endpoints.
 
 Backend: Redis-first, in-memory fallback.
 

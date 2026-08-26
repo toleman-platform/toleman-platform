@@ -17,7 +17,7 @@ Resolution order for a (workspace, tool, surface) triple:
   2. otherwise ``tool_registry.default_usage_for(tool)``, the built-in
      default (mirrors the "None = inherit" pattern used by enforcement mode).
 
-On top of that, ``tools_for_surface`` only ever returns tools Rikugan can
+On top of that, ``tools_for_surface`` only ever returns tools Toleman can
 genuinely execute -- a key in ``runner.TOOL_COMMANDS`` *with* a parser in
 ``parsers.PARSER_MAP``. A registry-only entry like ``kics`` has nothing to
 run; returning it would hand the caller a tool name that raises

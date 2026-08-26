@@ -11,7 +11,7 @@ import { proxy } from "./proxy";
 // session must still get both the protected-route pass-through and the
 // /login -> / shortcut, so the legitimate case isn't collateral damage.
 
-const SESSION_COOKIE = "rikugan_session";
+const SESSION_COOKIE = "toleman_session";
 
 function makeRequest(path: string, cookieValue?: string): NextRequest {
   const headers: Record<string, string> = {};
@@ -65,14 +65,14 @@ describe("proxy (session-aware routing)", () => {
   });
 
   it("redirects /login -> / for a genuinely VALID session (must not break the legitimate shortcut)", async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 1, email: "admin@rikugan.local" }), { status: 200 }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 1, email: "admin@toleman.local" }), { status: 200 }));
     const res = await proxy(makeRequest("/login", "good-token"));
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toBe("http://localhost:3000/");
   });
 
   it("passes a valid session through on a protected route without redirecting", async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 1, email: "admin@rikugan.local" }), { status: 200 }));
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: 1, email: "admin@toleman.local" }), { status: 200 }));
     const res = await proxy(makeRequest("/", "good-token"));
     expect(res.status).not.toBe(307);
     expect(res.headers.get("location")).toBeNull();

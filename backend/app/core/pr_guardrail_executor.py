@@ -38,7 +38,7 @@ from app.scanners.discovery import discover_endpoints
 logger = logging.getLogger(__name__)
 
 # GH-02: every link this module posts to GitHub (PR comment "review in
-# Rikugan", "request ignore", and the commit status target_url below) used
+# Toleman", "request ignore", and the commit status target_url below) used
 # to be a hardcoded localhost:3000, unfollowable by anyone but the author.
 FRONTEND_URL = settings.public_base_url.rstrip("/")
 
@@ -253,11 +253,19 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
 
 
 # Hidden HTML marker embedded in every comment `render_comment()` produces,
-# used by `post_pr_comment()` to find a prior Rikugan comment on the PR and
+# used by `post_pr_comment()` to find a prior Toleman comment on the PR and
 # PATCH it in place instead of posting a new one on every rescan (#127).
 # GitHub strips HTML comments from the rendered view, so this is invisible
 # to a human reading the PR but trivially greppable via the Issue Comments API.
-COMMENT_MARKER = "<!-- rikugan-pr-guardrail -->"
+COMMENT_MARKER = "<!-- toleman-pr-guardrail -->"
+
+# Pre-rename marker. Comments posted before the Rikugan -> Toleman rename
+# carry this one, so the lookup below has to match either -- otherwise the
+# first rescan after upgrading would fail to find its own prior comment and
+# post a second one alongside it on every PR the guardrail has ever touched.
+# Only ever matched, never emitted: new comments always carry COMMENT_MARKER,
+# so a PR migrates to the new marker the first time it is rescanned.
+LEGACY_COMMENT_MARKERS = ("<!-- rikugan-pr-guardrail -->",)
 
 # Severities whose per-finding <details> block is expanded by default -- the
 # ones a reviewer needs to see without an extra click. Medium/Low collapse
@@ -337,7 +345,7 @@ def _staleness_footer(scanned_at: datetime | None) -> str | None:
     stamp = scanned_at.strftime("%Y-%m-%d %H:%M UTC")
     return (
         f"<sub>Severity reflects EPSS/KEV data as of {stamp} and may have changed since. "
-        "Open the finding in Rikugan for the current score.</sub>"
+        "Open the finding in Toleman for the current score.</sub>"
     )
 
 
@@ -364,7 +372,7 @@ def render_comment(
 
     `scanned_at` (#271) is when this scan ran. None omits the staleness
     footer entirely, same backwards-compatible default as everything above."""
-    lines = [COMMENT_MARKER, "**Rikugan PR Guardrail**", "", _severity_badge(status), ""]
+    lines = [COMMENT_MARKER, "**Toleman PR Guardrail**", "", _severity_badge(status), ""]
 
     if scan_scope == "diff":
         # Stated up front, above the result. A reader who takes "no findings"
@@ -460,7 +468,7 @@ def render_comment(
         lines.append("")
 
     if status == PRGuardrailStatus.BLOCKED:
-        lines.append("This PR is **blocked** pending fix or AppSec override — [review in Rikugan]"
+        lines.append("This PR is **blocked** pending fix or AppSec override — [review in Toleman]"
                       f"({FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}).")
 
     if tools_run:
@@ -493,10 +501,10 @@ def _get_installation_token_or_none(session: Session, target: Target) -> str | N
 
 def _find_existing_comment_id(slug: str, pr_number: int, token: str) -> int | None:
     """List issue comments on the PR and return the id of the first one
-    carrying COMMENT_MARKER, or None if this is the first Rikugan comment on
+    carrying COMMENT_MARKER, or None if this is the first Toleman comment on
     this PR. GitHub's issue-comments API is paginated (100/page default);
     walk pages since a long-lived PR can accumulate comments from humans and
-    other bots ahead of Rikugan's own."""
+    other bots ahead of Toleman's own."""
     page = 1
     while True:
         res = httpx.get(
@@ -510,7 +518,8 @@ def _find_existing_comment_id(slug: str, pr_number: int, token: str) -> int | No
             return None
         comments = res.json()
         for comment in comments:
-            if COMMENT_MARKER in (comment.get("body") or ""):
+            body = comment.get("body") or ""
+            if COMMENT_MARKER in body or any(m in body for m in LEGACY_COMMENT_MARKERS):
                 return comment["id"]
         if len(comments) < 100:
             return None
@@ -521,7 +530,7 @@ def post_pr_comment(session: Session, target: Target, pr_number: int, body: str)
     """Best-effort: never raises -- a scan result that fails to post a comment
     is still useful.
 
-    Update-in-place (#127): look for a prior Rikugan comment on this PR via
+    Update-in-place (#127): look for a prior Toleman comment on this PR via
     COMMENT_MARKER (embedded by render_comment) and PATCH it instead of
     always POSTing a new one, so an actively-iterated PR gets one comment
     that stays current across rescans rather than a growing stack of
@@ -585,7 +594,7 @@ def set_commit_status(session: Session, target: Target, sha: str, state: str, de
             headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
             json={
                 "state": state,
-                "context": "rikugan/pr-guardrail",
+                "context": "toleman/pr-guardrail",
                 "description": description[:140],
                 "target_url": f"{FRONTEND_URL}/pr-history",
             },

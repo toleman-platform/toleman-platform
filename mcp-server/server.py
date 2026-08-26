@@ -1,6 +1,6 @@
-"""Rikugan MCP server (issue #108).
+"""Toleman MCP server (issue #108).
 
-A thin translation layer between MCP tool calls and Rikugan's public API
+A thin translation layer between MCP tool calls and Toleman's public API
 (/api/public/v1/*, issue #109) -- deliberately NOT embedded in the main
 FastAPI backend. The official `mcp` PyPI package requires
 starlette>=0.39/pydantic>=2.8 across every released version (checked
@@ -14,8 +14,8 @@ optional integration.
 
 Runs over stdio (the standard transport for MCP servers launched by a
 client like Claude Desktop/Code, not a long-running network service) --
-authenticates to Rikugan using a personal access token (see
-rikugan-docs Public API Reference), exactly like any other public-API
+authenticates to Toleman using a personal access token (see
+toleman-docs Public API Reference), exactly like any other public-API
 client.
 
 A note on `mcp`'s own CVEs (checked at pin time, mcp==1.23.0): every
@@ -35,23 +35,23 @@ import os
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-RIKUGAN_API_URL = os.environ.get("RIKUGAN_API_URL", "http://localhost:8000").rstrip("/")
-RIKUGAN_API_TOKEN = os.environ.get("RIKUGAN_API_TOKEN")
+TOLEMAN_API_URL = os.environ.get("TOLEMAN_API_URL", "http://localhost:8000").rstrip("/")
+TOLEMAN_API_TOKEN = os.environ.get("TOLEMAN_API_TOKEN")
 
-if not RIKUGAN_API_TOKEN:
+if not TOLEMAN_API_TOKEN:
     raise RuntimeError(
-        "RIKUGAN_API_TOKEN is required -- create a personal access token at "
-        "Settings > Workspace > API Tokens in your Rikugan instance and set it "
+        "TOLEMAN_API_TOKEN is required -- create a personal access token at "
+        "Settings > Workspace > API Tokens in your Toleman instance and set it "
         "as an env var for this server."
     )
 
-mcp = FastMCP("rikugan")
+mcp = FastMCP("toleman")
 
 
 def _client() -> httpx.Client:
     return httpx.Client(
-        base_url=f"{RIKUGAN_API_URL}/api/public/v1",
-        headers={"Authorization": f"Bearer {RIKUGAN_API_TOKEN}"},
+        base_url=f"{TOLEMAN_API_URL}/api/public/v1",
+        headers={"Authorization": f"Bearer {TOLEMAN_API_TOKEN}"},
         timeout=30.0,
     )
 

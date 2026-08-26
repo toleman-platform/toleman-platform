@@ -369,7 +369,7 @@ def get_pipeline_workflow(target_id: int, session: Session = Depends(get_session
     """Issue #66: real, target-specific GitHub Actions workflow YAML that
     runs Semgrep/Gitleaks/Trivy (+ gosec for Go repos, detected from this
     target's own scan history or, failing that, GitHub's languages API)
-    natively in the runner and pushes results back to Rikugan via
+    natively in the runner and pushes results back to Toleman via
     POST /api/ingest. Generation only -- doesn't write anything to GitHub;
     see POST .../pipeline-integrate for that."""
     target = _get_target_scoped(target_id, session, user)
@@ -384,7 +384,7 @@ def integrate_pipeline(
 ):
     """Issue #66: opens a real PR on the target's GitHub repo (via the
     GitHub App's installation token) adding the generated
-    .github/workflows/rikugan-scan.yml, and records the outcome on the Target
+    .github/workflows/toleman-scan.yml, and records the outcome on the Target
     row so the frontend can show integration status without re-hitting
     GitHub every page load."""
     target = _get_target_scoped(target_id, session, user)

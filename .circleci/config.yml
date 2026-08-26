@@ -64,13 +64,13 @@ jobs:
       - image: cimg/python:3.12
       - image: postgres:16
         environment:
-          POSTGRES_USER: rikugan
-          POSTGRES_PASSWORD: rikugan
-          POSTGRES_DB: rikugan
+          POSTGRES_USER: toleman
+          POSTGRES_PASSWORD: toleman
+          POSTGRES_DB: toleman
       - image: redis:7
     working_directory: ~/project/backend
     environment:
-      DATABASE_URL: postgresql+psycopg://rikugan:rikugan@localhost:5432/rikugan
+      DATABASE_URL: postgresql+psycopg://toleman:toleman@localhost:5432/toleman
       REDIS_URL: redis://localhost:6379/0
     steps:
       - checkout:
@@ -165,8 +165,8 @@ jobs:
       - image: cimg/python:3.12
     working_directory: ~/project/mcp-server
     environment:
-      RIKUGAN_API_TOKEN: rikugan_pat_test
-      RIKUGAN_API_URL: http://localhost:8000
+      TOLEMAN_API_TOKEN: toleman_pat_test
+      TOLEMAN_API_URL: http://localhost:8000
     steps:
       - checkout:
           path: ~/project
@@ -189,7 +189,7 @@ jobs:
       - store_test_results:
           path: test-results
 
-  # The three scan jobs below are the dogfooding pass: Rikugan wraps these same
+  # The three scan jobs below are the dogfooding pass: Toleman wraps these same
   # open-source tools, so the platform runs them against its own source. As on
   # GitHub, results go to artifacts and the job log rather than GitHub code
   # scanning -- SARIF upload to the Security tab needs GitHub Advanced
@@ -416,7 +416,7 @@ jobs:
               --no-cache \
               --build-arg NEXT_PUBLIC_API_URL=http://localhost:8000 \
               -f << parameters.dockerfile >> \
-              -t rikugan-ci-image:latest \
+              -t toleman-ci-image:latest \
               << parameters.context_name >>
       - run:
           name: Verify bundled scanners actually run
@@ -431,7 +431,7 @@ jobs:
           command: |
             case "<< parameters.dockerfile >>" in
               backend/Dockerfile)
-                docker run --rm rikugan-ci-image:latest python scripts/verify_tools.py
+                docker run --rm toleman-ci-image:latest python scripts/verify_tools.py
                 ;;
               *)
                 echo "skipped for << parameters.dockerfile >> (distroless has no shell; frontend ships no scanners)"
@@ -466,7 +466,7 @@ jobs:
           # visible and can be driven down deliberately; tightening this to
           # blocking is a follow-up once a baseline exists.
           command: |
-            trivy image --format json --output image-scan.json rikugan-ci-image:latest || true
+            trivy image --format json --output image-scan.json toleman-ci-image:latest || true
       - run:
           name: Summarize image findings
           command: |

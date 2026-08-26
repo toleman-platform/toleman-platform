@@ -35,7 +35,7 @@ def send_slack_message(webhook_url: str, text: str) -> tuple[bool, str]:
     return False, f"Slack returned {response.status_code}: {response.text[:500]}"
 
 
-def test_slack_webhook(webhook_url: str, text: str = "Rikugan test connection: this webhook is configured correctly.") -> tuple[bool, str]:
+def test_slack_webhook(webhook_url: str, text: str = "Toleman test connection: this webhook is configured correctly.") -> tuple[bool, str]:
     """POST a real test message to `webhook_url`. Returns (success, message)
     -- message is Slack's real response body either way."""
     return send_slack_message(webhook_url, text)

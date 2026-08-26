@@ -165,3 +165,11 @@ A gitleaks failure blocks the commit; run `git commit` with `SKIP=gitleaks` only
 - **Python driver**: `psycopg[binary]` (v3) instead of `psycopg2-binary` — no prebuilt wheel for `psycopg2` on Python 3.13+/3.14 yet.
 - **pydantic pinned to 2.9.x** — `sqlmodel==0.0.22` breaks on pydantic ≥2.10 (`Field 'id' requires a type annotation`), a known upstream incompatibility.
 - **Scan execution runs as a direct subprocess** for this MVP (no container isolation yet) — matches the architecture review's noted blocker; must move to ephemeral containers before multi-tenant/mass-rollout use.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE). Attribution for the bundled
+third-party scanners is in [NOTICE](NOTICE).
+
+To report a security vulnerability, see [SECURITY.md](SECURITY.md) — please
+don't open a public issue for one.

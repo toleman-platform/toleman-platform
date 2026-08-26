@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from app.core.time import utcnow
 
 from sqlmodel import Session, select
 
@@ -10,7 +11,7 @@ def upsert_components(
     target_id: int,
     branch: str,
     discovered: list[dict],
-    source: str = "github",
+    source: str,
 ) -> list[SbomComponent]:
     """Persist SBOM components (upsert on target+branch+name+version+purl),
     returning the subset that are new since the last run -- same net-new
@@ -30,7 +31,7 @@ def upsert_components(
         ).all()
     }
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = utcnow()
     new_components: list[SbomComponent] = []
     for item in discovered:
         key = (item["name"], item["version"], item["purl"])

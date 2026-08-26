@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
 from app.api.deps import get_session
 from app.core.tool_registry import TOOL_REGISTRY, USAGE_SURFACES, default_usage_for
+from app.core.time import utcnow
 from app.models.models import User, WorkspaceRole, WorkspaceToolConfig
 
 router = APIRouter()
@@ -105,7 +106,7 @@ def upsert_assignment(
 
     for surface in USAGE_SURFACES:
         setattr(cfg, surface, getattr(payload, surface))
-    cfg.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    cfg.updated_at = utcnow()
 
     session.add(cfg)
     session.commit()

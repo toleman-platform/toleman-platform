@@ -24,6 +24,7 @@ from app.core import tool_install
 from app.core.config import settings
 from app.core.security import create_session_token, hash_password
 from app.core.tool_registry import TOOL_REGISTRY
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import ToolInstallRun, User, UserRole
 
@@ -207,7 +208,7 @@ def test_a_stuck_install_is_reported_failed_not_running(client, engine):
             tool="semgrep",
             package="semgrep",
             status="running",
-            started_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
+            started_at=utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
         )
         session.add(run)
         session.commit()

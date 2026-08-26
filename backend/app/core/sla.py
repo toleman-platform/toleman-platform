@@ -26,6 +26,7 @@ explicit scope. A finding is only "in violation" while it's still open
 SLA rule actually applies to it.
 """
 from datetime import UTC, datetime, timedelta
+from app.core.time import utcnow
 from typing import Literal
 
 from sqlmodel import Session, select
@@ -110,5 +111,5 @@ def compute_sla_status(session: Session, finding: Finding) -> tuple[int | None, 
         return None, False
     if finding.state in CLOSED_STATES:
         return sla_days, False
-    days_open = datetime.now(UTC).replace(tzinfo=None) - finding.first_seen
+    days_open = utcnow() - finding.first_seen
     return sla_days, days_open > timedelta(days=sla_days)

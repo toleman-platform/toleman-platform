@@ -51,6 +51,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.sla import CLOSED_STATES, compute_sla_status
+from app.core.time import utcnow
 from app.models.models import Finding, FindingState, FindingStateLog, Scan, SEVERITY_WEIGHT, Target, TargetGroup
 
 # ---------------------------------------------------------------------------
@@ -142,7 +143,7 @@ def _coverage_score(session: Session, target_ids: list[int]) -> dict:
     if not target_ids:
         return {"score": 0.0, "weight": COVERAGE_WEIGHT, "scanned_targets": 0, "total_targets": 0, "window_days": COVERAGE_WINDOW_DAYS}
 
-    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=COVERAGE_WINDOW_DAYS)
+    cutoff = utcnow() - timedelta(days=COVERAGE_WINDOW_DAYS)
     scanned_target_ids = set(
         session.exec(
             select(Scan.target_id).where(Scan.target_id.in_(target_ids), Scan.started_at >= cutoff).distinct()
@@ -226,7 +227,7 @@ def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[in
         for log in logs:
             logs_by_finding.setdefault(log.finding_id, []).append(log)
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = utcnow()
     prior_as_of = now - timedelta(days=TREND_WINDOW_DAYS)
 
     current_sum = _weighted_open_sum_at(now, findings, logs_by_finding)

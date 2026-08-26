@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from app.core.time import utcnow
 
 from sqlmodel import Session, select
 
@@ -24,7 +25,7 @@ def upsert_endpoints(session: Session, target_id: int, branch: str, discovered: 
         ).all()
     }
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = utcnow()
     new_endpoints: list[ApiEndpoint] = []
     for item in discovered:
         key = (item["method"], item["route"], item["file"])

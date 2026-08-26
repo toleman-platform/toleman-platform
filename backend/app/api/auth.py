@@ -9,6 +9,7 @@ from app.api.deps import get_session
 from app.core.config import settings
 from app.core.rate_limit import enforce_rate_limit
 from app.core.security import create_session_token, decode_session_token, hash_api_token, hash_password, verify_password
+from app.core.time import utcnow
 from app.models.models import (
     WORKSPACE_ROLE_RANK,
     ApiToken,
@@ -107,7 +108,7 @@ def current_api_token_user(
     if not user:
         raise HTTPException(status_code=401, detail="user not found")
 
-    token.last_used_at = datetime.now(UTC).replace(tzinfo=None)
+    token.last_used_at = utcnow()
     session.add(token)
     session.commit()
     return user

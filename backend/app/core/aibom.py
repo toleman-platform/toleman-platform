@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.ai_repo_detection import SKIP_DIRECTORIES
+from app.core.time import utcnow
 
 CYCLONEDX_SPEC_VERSION = "1.6"
 CYCLONEDX_BOM_FORMAT = "CycloneDX"
@@ -338,7 +339,7 @@ def upsert_aibom_components(
         ).all()
     }
 
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = utcnow()
     new_rows = []
     for component in components:
         key = (component.name, component.component_type)

@@ -16,6 +16,7 @@ import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
 from app.core.security_score import compute_security_score
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import (
     Finding,
@@ -137,7 +138,7 @@ def _make_finding(
             severity=severity,
             state=state,
             branch=branch,
-            first_seen=first_seen or datetime.now(UTC).replace(tzinfo=None),
+            first_seen=first_seen or utcnow(),
         )
         session.add(f)
         session.commit()
@@ -147,7 +148,7 @@ def _make_finding(
 
 def _make_scan(engine, target_id, started_at=None) -> int:
     with Session(engine) as session:
-        s = Scan(target_id=target_id, tool="semgrep", branch="main", status="completed", started_at=started_at or datetime.now(UTC).replace(tzinfo=None))
+        s = Scan(target_id=target_id, tool="semgrep", branch="main", status="completed", started_at=started_at or utcnow())
         session.add(s)
         session.commit()
         session.refresh(s)
@@ -239,8 +240,8 @@ def test_sla_component_hand_calculated(engine):
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
     _make_rule(engine, ws_id, None, Severity.CRITICAL, 1)
-    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=5))
-    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=datetime.now(UTC).replace(tzinfo=None))
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=5))
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow())
 
     with Session(engine) as session:
         result = compute_security_score(session, [target_id])
@@ -270,7 +271,7 @@ def test_coverage_component_hand_calculated(engine):
 def test_coverage_component_ignores_stale_scan(engine):
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
-    _make_scan(engine, target_id, started_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=60))
+    _make_scan(engine, target_id, started_at=utcnow() - timedelta(days=60))
 
     with Session(engine) as session:
         result = compute_security_score(session, [target_id])
@@ -305,7 +306,7 @@ def test_trend_component_worsening_from_new_finding(engine):
     direction 'worsening'."""
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
-    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2))
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=2))
 
     with Session(engine) as session:
         result = compute_security_score(session, [target_id])
@@ -329,10 +330,10 @@ def test_trend_component_improving_after_mitigation(engine):
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
     finding_id = _make_finding(
-        engine, target_id, severity=Severity.CRITICAL, first_seen=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=10), state=FindingState.MITIGATED
+        engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=10), state=FindingState.MITIGATED
     )
     _log_transition(
-        engine, finding_id, "Open", "Mitigated", created_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3)
+        engine, finding_id, "Open", "Mitigated", created_at=utcnow() - timedelta(days=3)
     )
 
     with Session(engine) as session:

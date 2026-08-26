@@ -21,6 +21,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import current_user, require_admin
 from app.api.deps import get_session
+from app.core.time import utcnow
 from app.core.github_token import (
     delete_github_token,
     purge_expired_tokens,
@@ -101,7 +102,7 @@ def save_github_token(
     if payload.expires_in_hours is not None:
         if payload.expires_in_hours < 1:
             raise HTTPException(status_code=400, detail="expires_in_hours must be at least 1")
-        expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=payload.expires_in_hours)
+        expires_at = utcnow() + timedelta(hours=payload.expires_in_hours)
 
     wid = _resolve_workspace_id(session, payload.workspace_id)
     row = upsert_github_token(session, wid, token, expires_at, created_by=user.id)

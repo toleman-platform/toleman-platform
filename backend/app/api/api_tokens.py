@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from app.api.auth import current_user
 from app.api.deps import get_session
 from app.core.security import generate_api_token
+from app.core.time import utcnow
 from app.models.models import ApiToken, ApiTokenScope, User
 
 router = APIRouter(prefix="/api/api-tokens", tags=["api-tokens"])
@@ -77,7 +78,7 @@ def revoke_api_token(token_id: int, session: Session = Depends(get_session), use
     if not token or token.user_id != user.id:
         raise HTTPException(status_code=404, detail="token not found")
     if token.revoked_at is None:
-        token.revoked_at = datetime.now(UTC).replace(tzinfo=None)
+        token.revoked_at = utcnow()
         session.add(token)
         session.commit()
         session.refresh(token)

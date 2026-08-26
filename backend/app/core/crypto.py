@@ -26,6 +26,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,6 @@ def reseed_encryption_key_canary(session: Session) -> None:
         session.add(EncryptionKeyCanary(ciphertext=ciphertext))
     else:
         canary.ciphertext = ciphertext
-        canary.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        canary.updated_at = utcnow()
         session.add(canary)
     session.commit()

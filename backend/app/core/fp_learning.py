@@ -21,6 +21,7 @@ signature is (rule_id, tool, file_path basename) and not a snippet hash.
 import logging
 import os
 from datetime import UTC, datetime
+from app.core.time import utcnow
 
 from sqlmodel import Session, select
 
@@ -88,7 +89,7 @@ def learn_suppression_rule(session: Session, finding: Finding, actor: str = "sys
         existing.active = True
         existing.source_finding_id = finding.id
         existing.created_by = actor
-        existing.created_at = datetime.now(UTC).replace(tzinfo=None)
+        existing.created_at = utcnow()
         session.add(existing)
         return existing
 
@@ -150,5 +151,5 @@ def apply_auto_suppression(session: Session, rule: FalsePositiveRule, finding: F
     session.add(log)
 
     rule.match_count += 1
-    rule.last_matched_at = datetime.now(UTC).replace(tzinfo=None)
+    rule.last_matched_at = utcnow()
     session.add(rule)

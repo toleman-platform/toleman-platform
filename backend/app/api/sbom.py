@@ -22,6 +22,7 @@ from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
 from app.scanners.parsers import parse_sbom_upload
 from app.core.staleness import mark_stale_if_needed
+from app.core.time import utcnow
 from app.models.models import AiBomComponent, SbomComponent, SbomRun, Target, User, WorkspaceRole
 from app.tasks.sbom_tasks import run_sbom_generation
 
@@ -162,7 +163,7 @@ def export_org_sbom(session: Session = Depends(get_session)):
     repos; a custom schema is reasonable here."""
     ordered, summary, targets, _targets_by_id = _aggregate_org_components(session)
     document = {
-        "generated_at": datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z",
+        "generated_at": utcnow().isoformat() + "Z",
         "targets": [{"id": t.id, "name": t.name} for t in targets],
         "components": [
             {
@@ -373,7 +374,7 @@ def _build_cyclonedx_document(target: Target, components: list[SbomComponent]) -
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
         "version": 1,
         "metadata": {
-            "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z",
+            "timestamp": utcnow().isoformat() + "Z",
             "component": {"type": "application", "name": target.name},
         },
         "components": [
@@ -403,7 +404,7 @@ def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dic
     persisted component becomes one `packages[]` entry plus a
     DESCRIBES relationship from the document root, same shape a real SPDX
     consumer (e.g. an org's compliance tooling) expects to parse."""
-    now = datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"
+    now = utcnow().isoformat() + "Z"
     # rikugan.local, not rikugan.io -- the project doesn't own that domain;
     # SPDX only requires this namespace be a unique URI, not a resolvable
     # one, so a non-registrable domain is safe here (#154).
@@ -454,7 +455,7 @@ def _render_sbom_csv(target: Target, components: list[SbomComponent]) -> str:
     writer = csv.writer(buf)
     writer.writerow(["Target", target.name])
     writer.writerow(["Branch", target.default_branch])
-    writer.writerow(["Generated At", datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z"])
+    writer.writerow(["Generated At", utcnow().isoformat() + "Z"])
     writer.writerow([])
     writer.writerow(["Name", "Version", "Package Type", "PURL"])
     for c in components:
@@ -475,7 +476,7 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
     story = [
         Paragraph(f"Rikugan SBOM Summary — {target.name}", styles["Title"]),
         Paragraph(f"Branch: {target.default_branch}", styles["Normal"]),
-        Paragraph(f"Generated: {datetime.now(UTC).replace(tzinfo=None).isoformat()}Z", styles["Normal"]),
+        Paragraph(f"Generated: {utcnow().isoformat()}Z", styles["Normal"]),
         Paragraph(f"Components: {len(components)}", styles["Normal"]),
         Spacer(1, 0.25 * inch),
     ]
@@ -588,7 +589,7 @@ def export_aibom(target_id: int, session: Session = Depends(get_session)):
         target_name=target.name,
         repo_url=target.repo_url,
         branch=target.default_branch,
-        timestamp=datetime.now(UTC).replace(tzinfo=None).isoformat() + "Z",
+        timestamp=utcnow().isoformat() + "Z",
     )
     base = f"aibom-{target.name}-{target.default_branch}"
     return JSONResponse(

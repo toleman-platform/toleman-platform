@@ -20,6 +20,7 @@ from app.api.deps import get_session
 from app.core.config import settings
 from app.core.security import create_session_token, hash_password
 from app.core.staleness import mark_stale_if_needed
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import (
     DiscoveryRun,
@@ -89,7 +90,7 @@ def _make_workspace_and_target(engine) -> tuple[int, int]:
 
 
 def STALE_STARTED_AT() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=settings.stale_job_timeout_seconds + 60)
+    return utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60)
 
 
 # ---------------------------------------------------------------------------

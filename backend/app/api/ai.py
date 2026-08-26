@@ -9,6 +9,7 @@ from app.api.config import get_platform_config
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.crypto import decrypt_secret
+from app.core.time import utcnow
 from app.models.models import AiAnalysisRun, Finding, PlatformConfig, Target, User
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
@@ -132,7 +133,7 @@ def _record_analysis_run(session: Session, user: User, finding_id: int) -> None:
         existing = session.exec(
             select(AiAnalysisRun).where(AiAnalysisRun.user_id == user.id, AiAnalysisRun.finding_id == finding_id)
         ).first()
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = utcnow()
         if existing:
             existing.last_analyzed_at = now
             existing.analysis_count += 1

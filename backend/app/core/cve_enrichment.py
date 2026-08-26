@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 
 from app.core.nvd import fetch_nvd_cve
 from app.core.osv import fetch_osv_vuln
+from app.core.time import utcnow
 from app.models.models import CveEnrichment
 
 
@@ -38,7 +39,7 @@ def get_cve_enrichment(session: Session, cve_id: str) -> CveEnrichment:
         cve_id=cve_id,
         nvd_found=nvd_data is not None,
         osv_found=osv_data is not None,
-        fetched_at=datetime.now(UTC).replace(tzinfo=None),
+        fetched_at=utcnow(),
     )
     if nvd_data:
         row.nvd_description = nvd_data["description"] or None

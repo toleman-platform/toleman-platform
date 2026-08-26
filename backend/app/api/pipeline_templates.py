@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
 from app.api.deps import get_session
 from app.core.pipeline_workflow import SUPPORTED_TOOLS
+from app.core.time import utcnow
 from app.models.models import PipelineWorkflowTemplate, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/pipeline-templates", tags=["pipeline-templates"])
@@ -134,7 +135,7 @@ def update_template(
         template.name = payload.name
     if payload.steps is not None:
         template.steps = _validate_steps(payload.steps)
-    template.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    template.updated_at = utcnow()
     session.add(template)
     session.commit()
     session.refresh(template)

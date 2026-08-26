@@ -10,6 +10,7 @@ from app.core.rate_limit import enforce_rate_limit
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User
 from app.core.tool_usage import tools_for_surface
+from app.core.time import utcnow
 from app.scanners import parsers
 from app.tasks.scan_tasks import run_scan
 
@@ -80,7 +81,7 @@ def scans_summary(
 
     return {
         str(target_id): {
-            # started_at/completed_at are naive UTC datetimes (datetime.now(UTC).replace(tzinfo=None),
+            # started_at/completed_at are naive UTC datetimes (utcnow(),
             # see the Scan model) -- append "Z" explicitly so the frontend's
             # `new Date(...)` (lib/utils.ts's timeAgo) parses this as UTC
             # instead of local time, which would silently skew "last scanned"

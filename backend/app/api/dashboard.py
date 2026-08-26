@@ -9,6 +9,7 @@ from app.api.deps import get_session
 from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
 from app.core.widgets import WIDGET_CATALOG, build_default_layout
+from app.core.time import utcnow
 from app.models.models import DashboardLayout, Finding, FindingState, Target, User
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -198,7 +199,7 @@ def put_layout(
     row = session.exec(select(DashboardLayout).where(DashboardLayout.user_id == user.id)).first()
     if row:
         row.widgets = widgets_data
-        row.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        row.updated_at = utcnow()
     else:
         row = DashboardLayout(user_id=user.id, widgets=widgets_data)
     session.add(row)

@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from app.core.crypto import encrypt_secret
 from app.core.notifications import dispatch_notification
 from app.core.security import create_session_token, hash_password, verify_password
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import (
     Finding,
@@ -336,7 +337,7 @@ def test_sla_breach_notification_fires_once_not_on_every_read(client, engine):
             file_path="go.mod",
             severity=Severity.CRITICAL,
             state=FindingState.OPEN,
-            first_seen=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=5),  # well past the 1-day SLA
+            first_seen=utcnow() - timedelta(days=5),  # well past the 1-day SLA
         )
         session.add(finding)
         session.commit()
@@ -392,13 +393,13 @@ def test_sla_breach_marker_resets_when_no_longer_violated(client, engine):
             file_path="go.mod",
             severity=Severity.CRITICAL,
             state=FindingState.OPEN,
-            first_seen=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=5),
+            first_seen=utcnow() - timedelta(days=5),
         )
         session.add(finding)
         session.commit()
         session.refresh(finding)
         finding_id = finding.id
-        finding.sla_breach_notified_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=4)
+        finding.sla_breach_notified_at = utcnow() - timedelta(days=4)
         session.add(finding)
         session.commit()
 

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from app.core.time import utcnow
 from enum import Enum
 from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
@@ -9,7 +10,7 @@ def _utcnow() -> datetime:
     """Naive UTC timestamp, matching the semantics of the deprecated
     ``datetime.utcnow`` so values stay interchangeable with the naive
     ``datetime`` columns used throughout the schema."""
-    return datetime.now(UTC).replace(tzinfo=None)
+    return utcnow()
 
 
 class Severity(str, Enum):

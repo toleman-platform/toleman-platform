@@ -12,6 +12,7 @@ from app.core.aibom import extract_ai_components, upsert_aibom_components
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components
+from app.core.time import utcnow
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
 from app.tasks.celery_app import celery_app
@@ -69,7 +70,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
         if not target:
             run.status = "failed"
             run.error = "target not found"
-            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             return {"error": "target not found", "run_id": run.id}
@@ -142,13 +143,21 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 ).all()
             )
 
+            if not sources_run:
+                run.status = "failed"
+                run.error = f"No SBOM sources succeeded: {'; '.join(sources_failed)}"
+                run.completed_at = utcnow()
+                session.add(run)
+                session.commit()
+                return {"error": run.error, "run_id": run.id}
+
             run.status = "completed"
             run.count = all_count
             run.new_count = len(new_components)
             run.new_ids = ",".join(str(c.id) for c in new_components)
             run.sources_run = ",".join(sources_run)
             run.sources_failed = "; ".join(sources_failed)
-            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             return {"run_id": run.id, "count": all_count, "new_count": len(new_components)}
@@ -159,7 +168,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             if self.request.retries >= self.max_retries:
                 run.status = "failed"
                 run.error = "git clone failed after retries"
-                run.completed_at = datetime.now(UTC).replace(tzinfo=None)
+                run.completed_at = utcnow()
                 session.add(run)
                 session.commit()
             raise
@@ -168,7 +177,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             # runner.clone_error_message avoids echoing raw subprocess argv/paths
             # (and, historically, an embedded GitHub token) back into run state.
             run.error = runner.clone_error_message(exc)
-            run.completed_at = datetime.now(UTC).replace(tzinfo=None)
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             return {"error": run.error, "run_id": run.id}

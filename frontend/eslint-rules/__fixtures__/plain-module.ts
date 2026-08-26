@@ -1,4 +1,4 @@
-// No "use client" -- the shape both fixes moved to (@/lib/theme,
+// No "use client": the shape both fixes moved to (@/lib/theme,
 // @/lib/pagination). A Server Component may import freely from here.
 export const THEME_COOKIE_KEY = "toleman-theme";
 

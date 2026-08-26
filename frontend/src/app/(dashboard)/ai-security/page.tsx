@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";
 
 // Issue #224: AI/ML repo detection (#185), ModelScan (#186) and the LLM
-// SAST ruleset (#189) shipped with zero dedicated frontend surface -- the
+// SAST ruleset (#189) shipped with zero dedicated frontend surface; the
 // only way to see any of it was to already know to look at a target's
 // Vulnerabilities tab and filter by tool by hand. This page is the missing
 // entry point: which repos got flagged, what those two AI-specific scanners
@@ -25,7 +25,7 @@ export default function AiSecurityPage() {
   );
 
   // Two org-wide queries, one per AI-specific tool, then grouped by target
-  // client-side -- the same shape sbom/page.tsx already uses for its OSS
+  // client-side; the same shape sbom/page.tsx already uses for its OSS
   // Vulnerabilities tab (api.findings({ tool, page_size: 500 })). No
   // dedicated aggregate endpoint exists yet, and these two tools only ever
   // run against the handful of AI-flagged repos, so this stays cheap.
@@ -90,7 +90,7 @@ export default function AiSecurityPage() {
           <EmptyState
             icon={Bot}
             title="No AI/ML repos detected yet"
-            description="A target is flagged automatically when its dependency manifests reference AI/ML packages (PyTorch, transformers, langchain, and similar) -- or set manually from its Settings tab."
+            description="A target is flagged automatically when its dependency manifests reference AI/ML packages (PyTorch, transformers, langchain, and similar); or set manually from its Settings tab."
           />
         )}
 
@@ -158,7 +158,7 @@ export default function AiSecurityPage() {
       </div>
 
       {/* Issue #191: garak needs a live model endpoint to probe rather than a
-          repo checkout, so it never got a TOOL_COMMANDS entry -- it's
+          repo checkout, so it never got a TOOL_COMMANDS entry; it's
           catalog-only (visible in Tool Marketplace for install/health, not
           runnable). Rendering nothing here would silently claim LLM
           red-teaming exists; this says plainly that it doesn't yet. */}
@@ -167,7 +167,7 @@ export default function AiSecurityPage() {
         <EmptyState
           icon={ShieldOff}
           title="Not yet available"
-          description="garak (prompt injection, jailbreaks, data leakage probes) needs a live model endpoint to run against, not a repo checkout -- it's registered in the Tool Marketplace for visibility, but isn't wired into scanning yet."
+          description="garak (prompt injection, jailbreaks, data leakage probes) needs a live model endpoint to run against, not a repo checkout; it's registered in the Tool Marketplace for visibility, but isn't wired into scanning yet."
         />
       </div>
     </div>

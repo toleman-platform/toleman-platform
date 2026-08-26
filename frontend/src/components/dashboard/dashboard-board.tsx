@@ -15,7 +15,7 @@ function makeInstanceId() {
 }
 
 // Issue #69: the "Edit Dashboard" mode. Widget composition lives entirely
-// client-side until Save -- PUT /api/dashboard/layout persists the whole
+// client-side until Save; PUT /api/dashboard/layout persists the whole
 // ordered list at once (add/remove/reorder all collapse to "save this
 // list"), then a fresh GET /api/dashboard/widget-data pulls real data for
 // whatever's now in the layout.
@@ -148,13 +148,13 @@ export function DashboardBoard({
           the widest child's max-content instead of clamping it to the
           container's actual width. A grid item that can genuinely shrink at
           layout time (a flex row that would happily wrap) still contributes
-          its un-shrunk max-content to that track-sizing pass -- so one
+          its un-shrunk max-content to that track-sizing pass, so one
           widget with a wide-but-shrinkable row (Security Score's gauge +
           score list) silently pushed the ENTIRE dashboard grid, and with it
           `<main>`, to ~1490px wide, horizontally overflowing every phone-
           width viewport, while every other widget rendered as if nothing
           were wrong. Tailwind's `grid-cols-1` compiles to
-          `repeat(1, minmax(0, 1fr))` -- the `minmax(0, ...)` is what forces
+          `repeat(1, minmax(0, 1fr))`; the `minmax(0, ...)` is what forces
           the track to the container's real width and lets children shrink
           and wrap inside it normally, instead of `auto` sizing to content. */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

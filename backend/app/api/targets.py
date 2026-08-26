@@ -67,32 +67,32 @@ class UpdateTargetRequest(BaseModel):
     criticality_weight: int | None = None
     # PR Guardrail enforcement mode override (issue #62). Explicit null
     # clears the override (falls back to inheriting from the target's
-    # group(s)/workspace) -- exclude_unset in update_target below means
+    # group(s)/workspace); exclude_unset in update_target below means
     # simply omitting the field leaves the existing value untouched.
     enforcement_mode: str | None = None
 
     # Issue #72: the live base URL active API scanning combines with
-    # already-discovered routes -- see Target.api_base_url's docstring in
+    # already-discovered routes; see Target.api_base_url's docstring in
     # app/models/models.py for why this is the only allowed source of a
     # scan target host. Explicit null clears it (same exclude_unset
     # semantics as enforcement_mode above).
     api_base_url: str | None = None
 
     # Issue #185: human override of AI-repo detection. Explicit null clears
-    # it (back to following detection) -- same exclude_unset semantics as
+    # it (back to following detection), same exclude_unset semantics as
     # enforcement_mode above, so omitting the field leaves it untouched.
     is_ai_repo_override: bool | None = None
 
     # (#251) Ownership metadata. Free text: every org names its environments
     # differently, and an enum here would force a vocabulary on people. Null
-    # clears the field, which is meaningful -- "not recorded" is a real state,
+    # clears the field, which is meaningful; "not recorded" is a real state,
     # distinct from any value someone might set.
     owner: str | None = None
     environment: str | None = None
     lifecycle: str | None = None
 
     # Issue #243: scan only the PR's changed files rather than the whole
-    # checkout. Not nullable-to-inherit like enforcement_mode -- this is a
+    # checkout. Not nullable-to-inherit like enforcement_mode; this is a
     # plain per-target on/off, because it trades coverage for speed and an
     # inherited default would make it easy to narrow many targets' PR gate
     # without anyone deciding to.
@@ -102,7 +102,7 @@ class UpdateTargetRequest(BaseModel):
     @classmethod
     def _check_diff_scoped(cls, v: bool | None) -> bool | None:
         # Unlike enforcement_mode, null has no "inherit" meaning here and the
-        # column is NOT NULL -- an explicit null would be a 500 rather than a
+        # column is NOT NULL; an explicit null would be a 500 rather than a
         # 422. Omit the field to leave it alone.
         if v is None:
             raise ValueError("diff_scoped_pr_scans must be true or false; omit the field to leave it unchanged")
@@ -144,7 +144,7 @@ def _groups_by_target(session: Session, target_ids: list[int]) -> dict[int, list
 
 
 def _with_groups(target: Target, groups_by_target: dict[int, list[dict]]) -> dict:
-    # `is_ai_repo_effective` (issue #185) is what callers should gate on --
+    # `is_ai_repo_effective` (issue #185) is what callers should gate on;
     # it folds the human override over detection, so a client never has to
     # reimplement that precedence and get it subtly wrong. The raw
     # is_ai_repo / is_ai_repo_override fields ride along via model_dump()
@@ -171,7 +171,7 @@ def list_targets(
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
     if group_id is not None:
-        # Issue #61: filter to targets carrying this group -- storage with no
+        # Issue #61: filter to targets carrying this group, storage with no
         # way to actually query by it would be a foundation nobody can use.
         query = query.join(TargetGroup, TargetGroup.target_id == Target.id).where(TargetGroup.group_id == group_id)
     targets = session.exec(query).all()
@@ -190,7 +190,7 @@ def targets_summary(
 
     Repo Sync previously showed only a name, a clone URL and a bare
     `weight N`, so the page couldn't answer the one question it exists to
-    answer -- which of these repos actually needs attention. This is the
+    answer; which of these repos actually needs attention. This is the
     same default-branch + open-state scoping the Posture dashboard and the
     security score already use (app.core.security_score.OPEN_STATES), so the
     number here can't disagree with those surfaces.
@@ -252,7 +252,7 @@ def create_target(
     user: User = Depends(current_user),
 ):
     # workspace_id lives inside the JSON body here, not a path/query param,
-    # so require_workspace_role's name-binding trick can't see it -- check
+    # so require_workspace_role's name-binding trick can't see it; check
     # explicitly instead (see enforce_workspace_role's docstring).
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
     target = Target(**payload.model_dump())
@@ -309,7 +309,7 @@ def get_workspace_key(target_id: int, session: Session = Depends(get_session), u
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     # Issue #57: this returns the workspace's api_key, so an unscoped check
-    # here is worse than the plain read IDOR on the other routes -- it leaks
+    # here is worse than the plain read IDOR on the other routes; it leaks
     # another workspace's secret, not just its data.
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and target.workspace_id not in ws_ids:
@@ -325,17 +325,17 @@ def regenerate_workspace_key(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Issue #129: the workspace API key (X-API-Key, used for CI push
-    ingestion via /api/ingest/{target_id} -- see app.api.deps.require_workspace)
+    ingestion via /api/ingest/{target_id}; see app.api.deps.require_workspace)
     had no rotation path at all. Rotating a CI-push-capable credential is at
     least as sensitive as the other workspace-settings writes gated at
     DEVELOPER (PATCH /api/targets/{id}, PATCH /api/workspaces/{id}) via
     require_workspace_role, so this matches that bar rather than inventing a
-    new one -- require_workspace_role's dependency already resolves the
+    new one; require_workspace_role's dependency already resolves the
     workspace from this route's target_id path param.
 
     The old key is overwritten in place (not soft-revoked/kept around), so
     it stops authenticating against require_workspace (app/api/deps.py)
-    immediately on commit -- no grace period, since none of the existing
+    immediately on commit, no grace period, since none of the existing
     secret-rotation patterns in this codebase (e.g. session token_version
     bump on password change) leave a stale credential valid.
     """
@@ -370,7 +370,7 @@ def get_pipeline_workflow(target_id: int, session: Session = Depends(get_session
     runs Semgrep/Gitleaks/Trivy (+ gosec for Go repos, detected from this
     target's own scan history or, failing that, GitHub's languages API)
     natively in the runner and pushes results back to Toleman via
-    POST /api/ingest. Generation only -- doesn't write anything to GitHub;
+    POST /api/ingest. Generation only; doesn't write anything to GitHub;
     see POST .../pipeline-integrate for that."""
     target = _get_target_scoped(target_id, session, user)
     return generate_workflow_yaml(session, target)
@@ -434,7 +434,7 @@ def bulk_pipeline_integrate(
     """Issue #68: multi-select wrapper around #66's per-target pipeline
     integration. Accepts a list of target_ids, silently drops any the
     caller can't see or doesn't hold at least DEVELOPER on (same
-    404-shaped hiding this file uses everywhere else -- see
+    404-shaped hiding this file uses everywhere else; see
     _get_target_scoped), and dispatches the rest as one Celery batch
     instead of blocking the request thread on N sequential real GitHub API
     calls (branch create + contents write + PR open per target, same
@@ -489,7 +489,7 @@ def get_bulk_pipeline_integrate_batch(
 ):
     """Poll target for the async batch dispatched by POST above. Item
     detail is workspace-scoped the same way as everything else in this
-    file -- items for targets outside the caller's accessible workspaces
+    file, items for targets outside the caller's accessible workspaces
     (relevant if role/membership changed after the batch was created) are
     left out of the returned items list."""
     batch = session.get(PipelineIntegrationBatch, batch_id)
@@ -543,7 +543,7 @@ class MassPipelineRolloutRequest(BaseModel):
     """Issue #35 (Mass CI/CD Rollout Engine): resolve an entire *scope*
     (a workspace, a repo Group, or every repo the caller can see) into a
     target set instead of requiring an explicit checkbox selection like
-    #68's bulk_pipeline_integrate above -- the "fleet-wide" part of the
+    #68's bulk_pipeline_integrate above, the "fleet-wide" part of the
     issue. `workflow_template_id` is the Custom Workflow Builder half:
     optionally use a saved PipelineWorkflowTemplate's step list instead of
     #66's fixed default scanner set for every item in this rollout."""
@@ -570,10 +570,10 @@ def mass_pipeline_rollout(
     """Issue #35: scope-based sibling to #68's bulk_pipeline_integrate.
     Resolves `payload.scope` into a target_id set fleet-wide (instead of an
     explicit target_ids list), applies the exact same per-target
-    eligibility bar as the manual bulk flow (_caller_can_integrate --
+    eligibility bar as the manual bulk flow (_caller_can_integrate:
     DEVELOPER+ on the target's workspace), then reuses #68's
     PipelineIntegrationBatch/BatchItem tracking rows and
-    run_pipeline_integration_batch Celery task verbatim -- the only new
+    run_pipeline_integration_batch Celery task verbatim; the only new
     pieces are scope resolution and an optional workflow_template_id
     (Custom Workflow Builder) recorded on the batch so the task generates
     each item's YAML from that template's step list (see
@@ -606,7 +606,7 @@ def mass_pipeline_rollout(
             session.exec(select(Target).where(Target.id.in_(member_ids))).all() if member_ids else []
         )
         scope_label = f"Group: {group.name}"
-    else:  # "all" -- every target across every accessible workspace (or literally all, for an admin)
+    else:  # "all", every target across every accessible workspace (or literally all, for an admin)
         query = select(Target)
         if ws_ids is not None:
             candidates = session.exec(query.where(Target.workspace_id.in_(ws_ids))).all() if ws_ids else []
@@ -680,7 +680,7 @@ def assign_target_group(
         raise HTTPException(status_code=404, detail="group not found")
     if group.workspace_id != target.workspace_id:
         # A group only makes sense scoped to the same workspace its targets
-        # live in -- otherwise a caller with developer access to workspace A
+        # live in, otherwise a caller with developer access to workspace A
         # could tag a workspace-B target with a workspace-A group, leaking
         # naming/existence across the workspace boundary #57 exists to draw.
         raise HTTPException(status_code=400, detail="group and target must belong to the same workspace")

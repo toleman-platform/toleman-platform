@@ -27,7 +27,7 @@ is frequently NOT declarable from source. A repo calling
 with no accessible training-data provenance and no version to pin. Those
 facts are emitted as explicit "unknown", never omitted and never guessed. A
 compliance artifact that silently implies full provenance is a liability, not
-a feature -- the same principle as #174's never-scanned repos showing no
+a feature; the same principle as #174's never-scanned repos showing no
 verdict rather than a green one.
 """
 import re
@@ -69,7 +69,7 @@ def _revision_in_call(text: str, start: int) -> str:
         m   = AutoModel.from_pretrained('org/a')
         pin = AutoModel.from_pretrained('org/b', revision='abc123')
 
-    it reported org/a as pinned to abc123 -- inventing provenance for an
+    it reported org/a as pinned to abc123; inventing provenance for an
     unpinned model, which is the single worst thing this module could do.
     """
     close = text.find(")", start)
@@ -132,7 +132,7 @@ def _strip_comment_lines(text: str) -> str:
 
     Whole-line comments only. A trailing comment after real code is left
     alone, since the code on that line is worth matching, and stripping
-    mid-line would need a real parser rather than a heuristic -- the cost of
+    mid-line would need a real parser rather than a heuristic; the cost of
     a rare extra reference is a duplicate inventory row, not a wrong one.
 
     KNOWN LIMITATION: triple-quoted docstrings are not stripped, so a
@@ -140,7 +140,7 @@ def _strip_comment_lines(text: str) -> str:
     those would need a real AST parse per language, which is a large cost for
     a rare case. The `evidence` field on every component names the file it
     came from, so an over-inclusive row is visible and dismissible rather
-    than silent -- which is the right failure direction for an inventory: a
+    than silent; which is the right failure direction for an inventory: a
     reviewable extra beats a missing dependency.
     """
     out = []
@@ -162,7 +162,7 @@ def extract_ai_components(repo_path: str | Path) -> list[AiComponent]:
     """Scan a checkout for model and dataset references.
 
     Returns components keyed by (name, type), merging evidence across files.
-    A model referenced with no pinned revision gets version=UNKNOWN -- that
+    A model referenced with no pinned revision gets version=UNKNOWN; that
     is the finding, not a gap to paper over.
     """
     root = Path(repo_path)
@@ -208,7 +208,7 @@ def extract_ai_components(repo_path: str | Path) -> list[AiComponent]:
             name = match.group(1)
             if _looks_like_hosted_model(name):
                 # A hosted API model has no pinnable revision from the
-                # caller's side -- the provider can change what sits behind
+                # caller's side; the provider can change what sits behind
                 # the name. That is exactly the kind of thing an AIBOM
                 # exists to make visible.
                 _record(name, "machine-learning-model", "hosted-api", UNKNOWN, rel)
@@ -233,7 +233,7 @@ def _component_to_cyclonedx(component: AiComponent) -> dict:
 
     if component.component_type == "machine-learning-model":
         # CycloneDX 1.6 modelCard. Every field here is genuinely unknown from
-        # static analysis, and saying so explicitly is the point -- an absent
+        # static analysis, and saying so explicitly is the point; an absent
         # modelCard reads as "not applicable", which is a different and
         # wrong claim.
         entry["modelCard"] = {
@@ -318,7 +318,7 @@ def upsert_aibom_components(
     """Persist extracted components, mirroring
     app.core.sbom_ingestion.upsert_components. Returns the net-new rows.
 
-    Keyed on (target, branch, name, type) -- deliberately not including
+    Keyed on (target, branch, name, type); deliberately not including
     version. An unpinned reference that later gains a revision is the *same*
     dependency, now pinned; treating it as a new component would hide exactly
     the change a reader most wants to see.

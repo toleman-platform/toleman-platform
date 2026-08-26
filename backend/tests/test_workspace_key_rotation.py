@@ -1,15 +1,15 @@
 """Tests for issue #129: the workspace API key (X-API-Key, used for CI push
-ingestion via POST /api/ingest/{target_id} -- see app.api.deps.require_workspace)
+ingestion via POST /api/ingest/{target_id}; see app.api.deps.require_workspace)
 had no rotation path. POST /api/targets/{target_id}/workspace-key/regenerate
 now mints a new key, gated at WorkspaceRole.DEVELOPER (the same bar as the
 other workspace-settings writes, PATCH /api/targets/{id} and PATCH
-/api/workspaces/{id} -- see test_workspace_roles.py).
+/api/workspaces/{id}; see test_workspace_roles.py).
 
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
 used in tests/test_workspace_roles.py and tests/test_rate_limit.py. The real
 proof that rotation matters: after regenerating, the *old* key must stop
 authenticating against the real ingest endpoint (401), and the *new* key
-must work -- not just that the DB row changed.
+must work; not just that the DB row changed.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -39,7 +39,7 @@ def client(engine):
     app.dependency_overrides[get_session] = override_get_session
     # require_workspace() (the ingest auth dependency) opens its own Session
     # against the module-level `engine` name it imported directly, not via
-    # get_session -- swap that too or ingest calls would hit real Postgres.
+    # get_session; swap that too or ingest calls would hit real Postgres.
     original_deps_engine = deps_module.engine
     deps_module.engine = engine
 
@@ -110,7 +110,7 @@ def test_regenerate_rotates_key_and_old_key_stops_working(client, engine):
     assert new_key != old_key
     assert len(new_key) > 16
 
-    # Old key is dead immediately -- real 401 against the real ingest route.
+    # Old key is dead immediately, real 401 against the real ingest route.
     stale = client.post(f"/api/ingest/{target_id}", json=SARIF_PAYLOAD, headers={"x-api-key": old_key})
     assert stale.status_code == 401
 
@@ -157,7 +157,7 @@ def test_regenerate_allowed_for_developer_in_own_workspace_not_other(client, eng
     forbidden = client.post(f"/api/targets/{target_b}/workspace-key/regenerate")
     assert forbidden.status_code == 403
 
-    # workspace B's key untouched by the forbidden attempt -- read directly
+    # workspace B's key untouched by the forbidden attempt; read directly
     # from the DB rather than via the API, since this user (no membership in
     # B) correctly can't read B's key either (same 404-not-403 IDOR guard as
     # the regenerate route).

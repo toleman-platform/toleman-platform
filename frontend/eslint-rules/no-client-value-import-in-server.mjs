@@ -72,7 +72,7 @@ function resolveImport(specifier, fromFile, srcRoot) {
   } else if (specifier.startsWith(".")) {
     base = path.resolve(path.dirname(fromFile), specifier);
   } else {
-    return null; // bare package import -- not ours to police
+    return null; // bare package import, not ours to police
   }
 
   for (const ext of RESOLVE_EXTENSIONS) {
@@ -118,7 +118,7 @@ const rule = {
     messages: {
       clientValueInServer:
         "'{{name}}' is imported from '{{source}}', which is a \"use client\" module. A Server " +
-        "Component does not receive the real value here -- it gets a client reference stub, so a " +
+        "Component does not receive the real value here; it gets a client reference stub, so a " +
         "function throws at request time and a constant fails silently (see #196, #204). Move the " +
         "shared value into a plain module (e.g. @/lib/...) and re-export it from the client " +
         "component for client importers.",
@@ -129,7 +129,7 @@ const rule = {
     const filename = context.filename ?? context.getFilename();
     if (!filename || filename === "<input>") return {};
 
-    // Test files are not Server Components -- they run in vitest under jsdom,
+    // Test files are not Server Components; they run in vitest under jsdom,
     // where importing a hook out of a "use client" module is exactly what a
     // test is supposed to do. Caught by dogfooding: the rule flagged this
     // project's own use-selection.test.tsx on the first run.
@@ -155,7 +155,7 @@ const rule = {
           if (specifier?.importKind === "type") continue;
 
           // A binding used only as a JSX element name is a component being
-          // rendered -- the supported, intended pattern.
+          // rendered, the supported, intended pattern.
           const references = variable.references;
           if (references.length > 0 && references.every(isJsxUsage)) continue;
 

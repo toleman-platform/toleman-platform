@@ -4,7 +4,7 @@ import { AuditLogList } from "@/components/audit-log-list";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
 import { settleOrNull } from "@/lib/settle";
-// Plain module, not the "use client" component -- a Server Component
+// Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.
 import { pageSizeFromParams } from "@/lib/pagination";
 
@@ -40,7 +40,7 @@ export default async function AuditLogPage({
       <div>
         <h1 className="text-2xl font-bold text-foreground">Audit Log</h1>
         <p className="text-sm text-muted-foreground">
-          Every triage decision and scan run recorded against your data — {result.total} events, most recent first. A
+          Every triage decision and scan run recorded against your data, {result.total} events, most recent first. A
           bulk triage action shows up as one grouped entry you can expand, not one card per finding.
         </p>
       </div>

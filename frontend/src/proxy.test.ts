@@ -37,7 +37,7 @@ describe("proxy (session-aware routing)", () => {
     const res = await proxy(makeRequest("/"));
     expect(res.status).toBe(307);
     expect(res.headers.get("location")).toBe("http://localhost:3000/login?next=%2F");
-    expect(fetchMock).not.toHaveBeenCalled(); // no cookie at all -- no need to hit the backend
+    expect(fetchMock).not.toHaveBeenCalled(); // no cookie at all; no need to hit the backend
   });
 
   it("does not redirect a request with no cookie on /login itself", async () => {

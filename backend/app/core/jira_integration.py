@@ -9,7 +9,7 @@ Two entry points:
     auto-create-on-ingestion hook in app.core.ingestion.
 
 No mock data: every call here is a real HTTP request to the caller-supplied
-Jira instance. There is deliberately no fallback/simulated response -- a
+Jira instance. There is deliberately no fallback/simulated response, a
 misconfigured or unreachable Jira surfaces as a real error, not a fabricated
 success.
 """
@@ -29,7 +29,7 @@ def _auth_header(api_token: str) -> dict:
     # PAT-style auth (Jira Server/Data Center) as well as Jira Cloud API
     # tokens paired with an email via Basic auth. This integration uses
     # Bearer-token auth, which both Jira Server PATs and Jira Cloud tokens
-    # created for API-token-only automation support -- avoids requiring a
+    # created for API-token-only automation support; avoids requiring a
     # separate "account email" field in PlatformConfig for a v1.
     return {"Authorization": f"Bearer {api_token}", "Accept": "application/json"}
 
@@ -41,7 +41,7 @@ def jira_configured(config: PlatformConfig | None) -> bool:
 def test_jira_connection(jira_url: str, api_token: str) -> tuple[bool, str]:
     """Real authenticated call to GET {jira_url}/rest/api/2/myself.
 
-    Returns (success, message) -- message is either the resolved account
+    Returns (success, message); message is either the resolved account
     display name on success, or the real error text on failure. Never
     fabricates a success.
     """
@@ -66,7 +66,7 @@ def test_jira_connection(jira_url: str, api_token: str) -> tuple[bool, str]:
 def create_jira_ticket_for_finding(config: PlatformConfig, finding: Finding) -> tuple[bool, str]:
     """Real POST to {jira_url}/rest/api/2/issue creating a ticket for
     `finding`, using the configured project key/issue type. Returns
-    (success, issue_key_or_error) -- on success the second element is the
+    (success, issue_key_or_error); on success the second element is the
     real Jira issue key (e.g. "SEC-123"), on failure it's the real error
     text from Jira (or the transport error).
     """

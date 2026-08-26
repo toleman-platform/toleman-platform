@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 /**
- * Shared "failed to load" state (#77) — friendly message + a real retry
+ * Shared "failed to load" state (#77), friendly message + a real retry
  * action, in place of the app-wide `.catch(() => [])` pattern that quietly
  * turned every fetch failure into an indistinguishable empty state. Callers
  * pass `onRetry` (typically a router.refresh() or a re-fetch of the same

@@ -15,7 +15,7 @@ import { Building2, FolderTree, Tag, Trash2 } from "lucide-react";
 const SWATCHES = ["#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563eb", "#7c3aed", "#c026d3"];
 
 // Issue #61: workspace-scoped tags/groups ("production", "PCI-scope",
-// "internal-tool", ...) for organizing Targets at scale -- foundation for
+// "internal-tool", ...) for organizing Targets at scale, foundation for
 // group-level policy (#62) and group-level SLA (#70). Mirrors the
 // Policies tab's workspace-picker-then-CRUD-list shape.
 export function Groups() {

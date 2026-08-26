@@ -91,14 +91,14 @@ def current_api_token_user(
 ) -> User:
     """Issue #109: resolves the caller of `/api/public/v1/*` from an
     `Authorization: Bearer <token>` header instead of the session cookie
-    `current_user` uses -- the public API is meant for scripts/CI/third-
+    `current_user` uses; the public API is meant for scripts/CI/third-
     party integrations, not browser sessions.
 
     Returns the token's owning `User` (so downstream handlers can reuse
     `accessible_workspace_ids(session, user)` unchanged) and bumps
     `last_used_at` so a token's dashboard entry shows real recency instead
     of only creation time. Write-scope checking lives in the separate
-    `require_api_token_write_scope` dependency below, not here -- most
+    `require_api_token_write_scope` dependency below, not here; most
     public-API endpoints only need read access.
     """
     authorization = f"{credentials.scheme} {credentials.credentials}" if credentials else None
@@ -118,7 +118,7 @@ def require_api_token_write_scope(
     credentials: HTTPAuthorizationCredentials | None = Depends(api_token_scheme),
 ) -> None:
     """Gate for public-API endpoints that mutate state (e.g. triggering a
-    scan) -- a `read`-scoped token must not be able to do this even though
+    scan); a `read`-scoped token must not be able to do this even though
     it authenticates fine for GETs."""
     authorization = f"{credentials.scheme} {credentials.credentials}" if credentials else None
     token = _resolve_api_token(session, authorization)
@@ -128,7 +128,7 @@ def require_api_token_write_scope(
 
 @router.post("/login", response_model=UserOut)
 def login(payload: LoginRequest, request: Request, response: Response, session: Session = Depends(get_session)):
-    # Pre-auth endpoint -- rate-limit by client IP to blunt password
+    # Pre-auth endpoint, rate-limit by client IP to blunt password
     # brute-forcing. This is the most important limit in the app since it's
     # the only unauthenticated attack surface for credential guessing.
     client_ip = request.client.host if request.client else "unknown"
@@ -283,7 +283,7 @@ def enforce_workspace_role(
 ) -> None:
     """Issue #32: gate a workspace-scoped action on the caller holding at
     least `min_role` for that workspace via WorkspaceMembership. A global
-    admin always passes -- the workspace role model layers on top of the
+    admin always passes, the workspace role model layers on top of the
     existing global admin/user/viewer role, it doesn't replace it. Callers
     that already resolved a User/Target upstream can reuse it directly;
     otherwise pass whichever of workspace_id/target_id/finding_id the route
@@ -317,7 +317,7 @@ def enforce_workspace_role(
 
 def accessible_workspace_ids(session: Session, user: User) -> list[int] | None:
     """Issue #57: the set of workspace ids a caller's GET/list requests may
-    return rows from. `None` means "no filter, sees everything" -- reserved
+    return rows from. `None` means "no filter, sees everything"; reserved
     for global admins, mirroring the existing admin bypass in
     enforce_workspace_role. Non-admins get the (possibly empty) list of
     workspaces they hold a WorkspaceMembership in; a user with zero
@@ -327,7 +327,7 @@ def accessible_workspace_ids(session: Session, user: User) -> list[int] | None:
     #32 already gated the write paths (targets/findings mutations) via
     enforce_workspace_role/require_workspace_role. This is the read-path
     counterpart: GET/list routes on findings and targets never filtered by
-    workspace at all, so any authenticated user -- including a viewer --
+    workspace at all, so any authenticated user (including a viewer)
     could see every workspace's findings and targets.
     """
     if user.role == "admin":
@@ -344,13 +344,13 @@ def require_workspace_role(min_role: WorkspaceRole):
     resources. FastAPI binds sub-dependency parameters to the request's
     path/query params by name, so this works unmodified on any route that
     takes target_id, workspace_id, or finding_id as a plain (non-body)
-    parameter -- e.g.:
+    parameter; e.g.:
 
         @router.post("/{target_id}")
         def generate_sbom(target_id: int, user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)), ...):
 
     Routes where the resolving id is nested in a JSON body instead (e.g.
-    CreateTargetRequest.workspace_id) can't use this form -- call
+    CreateTargetRequest.workspace_id) can't use this form, call
     enforce_workspace_role directly in the handler body instead.
     """
 

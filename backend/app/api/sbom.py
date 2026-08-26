@@ -19,7 +19,7 @@ from app.core.github import repo_slug_from_url
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.github_token import resolve_github_token
 from app.core.osv_malware_ingestion import check_and_ingest_malware
-from app.core.sbom_ingestion import upsert_components  # noqa: F401 -- re-exported, see note below
+from app.core.sbom_ingestion import upsert_components  # noqa: F401, re-exported, see note below
 from app.scanners.parsers import parse_sbom_upload
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import AiBomComponent, SbomComponent, SbomRun, Target, User, WorkspaceRole
@@ -29,14 +29,14 @@ router = APIRouter(prefix="/api/sbom", tags=["sbom"])
 
 logger = logging.getLogger(__name__)
 
-# Generous for a real CycloneDX/SPDX document (issue #227 review) -- the
+# Generous for a real CycloneDX/SPDX document (issue #227 review), the
 # first cap on any request body in this codebase, set here because this is
 # also the first multipart-upload endpoint.
 MAX_SBOM_UPLOAD_BYTES = 25 * 1024 * 1024
 
 # upsert_components used to be defined in this module; it now lives in
-# app.core.sbom_ingestion (#59) so app.tasks.sbom_tasks -- which does the
-# actual clone+scan work on a Celery worker -- can import it without an
+# app.core.sbom_ingestion (#59) so app.tasks.sbom_tasks (which does the
+# actual clone+scan work on a Celery worker) can import it without an
 # app.api.sbom <-> app.tasks.sbom_tasks import cycle. Re-imported above (not
 # re-implemented) so `from app.api.sbom import upsert_components` (used by
 # tests) keeps working unchanged.
@@ -51,7 +51,7 @@ def _get_target(target_id: int, session: Session) -> Target:
 
 def _run_malware_check_best_effort(session: Session, target: Target) -> dict:
     """Issue #181: flag any newly-persisted packages that OSV marks malicious.
-    Best-effort -- a malware-check crash must never fail an otherwise-successful
+    Best-effort; a malware-check crash must never fail an otherwise-successful
     import/upload, and its own "failed" status is never reported as clean."""
     try:
         return check_and_ingest_malware(session, target)
@@ -69,7 +69,7 @@ def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]
             "package_type": c.package_type,
             "purl": c.purl,
             # (#227) Which source reported this. "github" alone is the
-            # signal that a package is transitive -- trivy reads manifests,
+            # signal that a package is transitive; trivy reads manifests,
             # so anything only GitHub's resolved graph knows about is by
             # definition not pinned in one.
             "source": c.source,
@@ -83,7 +83,7 @@ def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]
 
 def _aggregate_org_components(session: Session) -> tuple[list[dict], dict, list[Target], dict[int, Target]]:
     """Group every persisted SbomComponent (default branch, per target) by
-    (name, version, purl) across all targets -- read-only, no scans triggered.
+    (name, version, purl) across all targets; read-only, no scans triggered.
     Mirrors the per-target GET's persisted-state-only pattern, just widened to
     every Target row (this app has no workspace-scoping on list_targets() yet,
     so 'org-wide' here means every Target in the DB, matching that)."""
@@ -91,7 +91,7 @@ def _aggregate_org_components(session: Session) -> tuple[list[dict], dict, list[
     targets_by_id = {t.id: t for t in targets}
 
     # Only the target's own default branch counts as "current" SBOM state,
-    # same as the per-target GET/export -- fetch per target rather than one
+    # same as the per-target GET/export; fetch per target rather than one
     # unscoped query so a stale non-default-branch row never leaks in.
     groups: dict[tuple[str, str, str], dict] = {}
     targets_with_sbom: set[int] = set()
@@ -130,13 +130,13 @@ def _aggregate_org_components(session: Session) -> tuple[list[dict], dict, list[
 # NOTE: these two literal routes ("/org", "/org/export") MUST be registered
 # before the "/{target_id}" routes below. The path is declared as a bare
 # "/{target_id}" (no ":int" converter in the path itself), so Starlette's
-# routing matches it against ANY string first -- "org" would otherwise match
+# routing matches it against ANY string first; "org" would otherwise match
 # "/{target_id}" and only fail afterwards, at FastAPI's int-parsing
 # validation step, returning a 422 instead of ever reaching this handler.
 @router.get("/org")
 def get_org_sbom(session: Session = Depends(get_session)):
     """Aggregate ALREADY-PERSISTED SbomComponent rows across every target's
-    default branch -- read-only, does not trigger any scan. Lets a security
+    default branch; read-only, does not trigger any scan. Lets a security
     engineer answer 'which of my repos still use package X@version' across
     the whole account at once."""
     ordered, summary, _targets, targets_by_id = _aggregate_org_components(session)
@@ -157,7 +157,7 @@ def get_org_sbom(session: Session = Depends(get_session)):
 
 @router.get("/org/export")
 def export_org_sbom(session: Session = Depends(get_session)):
-    """Downloadable JSON of the org-wide aggregation -- same persisted data as
+    """Downloadable JSON of the org-wide aggregation; same persisted data as
     GET /api/sbom/org, just as a file. Not CycloneDX since it spans multiple
     repos; a custom schema is reasonable here."""
     ordered, summary, targets, _targets_by_id = _aggregate_org_components(session)
@@ -189,7 +189,7 @@ def generate_sbom(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Dispatch an async SBOM generation run (#59) instead of cloning+
-    running trivy synchronously inside the request handler -- a handful of
+    running trivy synchronously inside the request handler, a handful of
     concurrent requests here used to be enough to exhaust FastAPI's
     threadpool. Creates a SbomRun row (status="running"), hands the actual
     clone+scan work to app.tasks.sbom_tasks.run_sbom_generation via
@@ -219,7 +219,7 @@ def malware_check(
 ):
     """Issue #181: re-check a target's existing SBOM inventory for malicious
     packages (via OSV.dev) without regenerating the SBOM, since OSV adds
-    MAL- records continuously -- a package clean at scan time can be flagged
+    MAL- records continuously; a package clean at scan time can be flagged
     a week later. Runs synchronously (a handful of OSV HTTP calls, no clone/
     subprocess) and persists hits as Critical `Finding` rows (tool=
     "osv-malware"). Returns a distinct "failed" status when OSV is
@@ -236,15 +236,15 @@ def import_github_sbom(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Issue #227: import the target's dependency inventory from GitHub's
-    Dependency Graph (see app.core.github_dependency_graph -- the same
+    Dependency Graph (see app.core.github_dependency_graph: the same
     source app.tasks.sbom_tasks.run_sbom_generation already unions in
     automatically) independent of a full trivy scan. Runs synchronously (a
     single GitHub API call, no clone/subprocess), merges the components into
     the target's persisted SBOM via upsert_components (source="github", so
     it's tracked the same way as the automatic union), and returns the
     new_count so the UI can show what changed. A 502 means the dependency
-    graph is unavailable (no token, disabled, or the request was rejected)
-    -- distinct from an empty import, which is a legitimate "repo has no
+    graph is unavailable (no token, disabled, or the request was rejected);
+    distinct from an empty import, which is a legitimate "repo has no
     dependencies" result and is reported as count 0."""
     target = _get_target(target_id, session)
     slug = repo_slug_from_url(target.repo_url)
@@ -281,7 +281,7 @@ async def upload_sbom(
     exceeded MAX_SBOM_UPLOAD_BYTES.
 
     This is the first multipart-upload surface in the codebase, and the
-    first to cap a request body -- `await file.read()` with no limit would
+    first to cap a request body; `await file.read()` with no limit would
     materialise the whole upload in memory (json.loads on top roughly
     doubles that), so a large or concurrent upload could exhaust a worker.
     """
@@ -350,7 +350,7 @@ def get_sbom_run(target_id: int, run_id: int, session: Session = Depends(get_ses
 
 @router.get("/{target_id}")
 def list_sbom_components(target_id: int, session: Session = Depends(get_session)):
-    """Persisted results without re-running a scan -- same GET-reads-persisted-
+    """Persisted results without re-running a scan; same GET-reads-persisted-
     state pattern as GET /api/discovery/{target_id}."""
     target = _get_target(target_id, session)
     components = session.exec(
@@ -389,21 +389,21 @@ def _build_cyclonedx_document(target: Target, components: list[SbomComponent]) -
 
 
 def _spdx_package_id(component: SbomComponent) -> str:
-    # SPDXID must be a valid SPDX reference identifier -- [A-Za-z0-9.-] only
-    # (SPDX spec sec 11.1) -- so package name/version (which can contain
+    # SPDXID must be a valid SPDX reference identifier, [A-Za-z0-9.-] only
+    # (SPDX spec sec 11.1); so package name/version (which can contain
     # slashes, @, etc. for scoped npm packages) can't be used directly.
     slug = re.sub(r"[^A-Za-z0-9.-]", "-", f"{component.name}-{component.version}")
     return f"SPDXRef-Package-{slug}-{component.id}"
 
 
 def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dict:
-    """Minimal, valid SPDX 2.3 JSON document -- the other widely-used SBOM
+    """Minimal, valid SPDX 2.3 JSON document, the other widely-used SBOM
     standard alongside CycloneDX (issue #121's export-parity ask). Each
     persisted component becomes one `packages[]` entry plus a
     DESCRIBES relationship from the document root, same shape a real SPDX
     consumer (e.g. an org's compliance tooling) expects to parse."""
     now = datetime.utcnow().isoformat() + "Z"
-    # toleman.local, not toleman.io -- the project doesn't own that domain;
+    # toleman.local, not toleman.io, the project doesn't own that domain;
     # SPDX only requires this namespace be a unique URI, not a resolvable
     # one, so a non-registrable domain is safe here (#154).
     doc_namespace = f"https://toleman.local/spdx/{target.name}-{uuid.uuid4()}"
@@ -472,7 +472,7 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
     doc = SimpleDocTemplate(buf, pagesize=letter, title=f"Toleman SBOM - {target.name}")
     styles = getSampleStyleSheet()
     story = [
-        Paragraph(f"Toleman SBOM Summary — {target.name}", styles["Title"]),
+        Paragraph(f"Toleman SBOM Summary, {target.name}", styles["Title"]),
         Paragraph(f"Branch: {target.default_branch}", styles["Normal"]),
         Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", styles["Normal"]),
         Paragraph(f"Components: {len(components)}", styles["Normal"]),
@@ -503,7 +503,7 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
 
 @router.get("/{target_id}/aibom")
 def get_aibom(target_id: int, session: Session = Depends(get_session)):
-    """AI Bill of Materials for a target (issue #190) -- models and datasets,
+    """AI Bill of Materials for a target (issue #190), models and datasets,
     the parts a package SBOM is blind to.
 
     Populated during SBOM generation (app/tasks/sbom_tasks.py), so this reads
@@ -563,7 +563,7 @@ def get_aibom(target_id: int, session: Session = Depends(get_session)):
 @router.get("/{target_id}/aibom/export")
 def export_aibom(target_id: int, session: Session = Depends(get_session)):
     """Downloadable CycloneDX 1.6 AIBOM. Validated against the published
-    schema in tests -- a malformed BOM offered as a compliance artifact is
+    schema in tests, a malformed BOM offered as a compliance artifact is
     worse than none."""
     target = _get_target(target_id, session)
     rows = session.exec(
@@ -602,7 +602,7 @@ def export_sbom(
     format: str = Query(default="cyclonedx-json", pattern="^(cyclonedx-json|spdx-json|csv|pdf)$"),
     session: Session = Depends(get_session),
 ):
-    """Downloadable SBOM built from persisted components -- the same real
+    """Downloadable SBOM built from persisted components, the same real
     data shown on the page, not a re-fetch or re-scan. Issue #121: export-
     format parity with Reports (CSV/PDF) plus the two real SBOM standards
     (CycloneDX was already produced by `trivy fs --format cyclonedx`; SPDX

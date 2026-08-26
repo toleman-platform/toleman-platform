@@ -4,7 +4,7 @@ name: Self Scan
 # platform runs them against its own source.
 #
 # Results go to artifacts and the job summary rather than GitHub code
-# scanning -- SARIF upload to the Security tab needs GitHub Advanced
+# scanning; SARIF upload to the Security tab needs GitHub Advanced
 # Security. gosec stays excluded: it is Go-specific and this repo has no Go
 # source.
 #
@@ -13,8 +13,8 @@ name: Self Scan
 # read, not a red check that blocks an unrelated PR.
 #
 # Deliberately NOT on every pull request, unlike ci.yml and
-# docker-images.yml. That is not a cost decision -- standard runners are
-# unmetered on a public repository -- but a signal one: these jobs gate
+# docker-images.yml. That is not a cost decision (standard runners are
+# unmetered on a public repository) but a signal one: these jobs gate
 # nothing, so attaching four non-blocking reports to every PR trains people
 # to ignore them. On main they record the trend; the Monday schedule is what
 # stops a newly-published CVE in an unchanged dependency from sitting unseen
@@ -25,7 +25,7 @@ on:
     branches: [main]
   schedule:
     # Mon 06:00 UTC. This is the trigger that catches a CVE published
-    # against a dependency nobody has touched -- without it the scan only
+    # against a dependency nobody has touched; without it the scan only
     # ever runs when someone happens to push.
     - cron: "0 6 * * 1"
   workflow_dispatch:
@@ -38,7 +38,7 @@ env:
   # Release asset + checksum, matching backend/Dockerfile. Upstream's
   # install.sh resolves the release through an unauthenticated
   # api.github.com call, which is rate limited per runner IP and reports a
-  # throttle as "unable to find 'vX.Y.Z'" -- that is what failed the first
+  # throttle as "unable to find 'vX.Y.Z'"; that is what failed the first
   # GHCR publish. The asset URL at a pinned tag needs no API call.
   #
   # Pinning the binary freezes the scanner engine, not its vulnerability
@@ -148,7 +148,7 @@ jobs:
 
   trivy-transitive-deps:
     # (#239) Trivy against requirements.txt only sees direct pins. 22 direct
-    # pins in this repo resolve to ~98 actually-installed packages -- roughly
+    # pins in this repo resolve to ~98 actually-installed packages; roughly
     # 78% of what we ship was invisible to the job above. That is how
     # starlette@0.38.6 (7 CVEs including an SSRF, CVE-2026-48818) sat
     # unnoticed on main: it arrived transitively through fastapi and was
@@ -170,7 +170,7 @@ jobs:
           rm -f /tmp/trivy.tar.gz
 
       - name: Resolve backend/requirements.txt into a real venv
-        # Mirrors backend/Dockerfile's actual install line -- same packages
+        # Mirrors backend/Dockerfile's actual install line, same packages
         # (incl. semgrep) and the same setuptools floor/ceiling. Without
         # semgrep and its setuptools constraint in the mix, pip's resolver is
         # free to land setuptools anywhere, and did land somewhere different
@@ -192,7 +192,7 @@ jobs:
         # --skip-files excludes pip's own vendored CycloneDX SBOM
         # (pip/_vendor/bom.cdx.json). Without it, this job reports
         # setuptools@70.3.0 and msgpack@1.1.2 as installed High-severity
-        # findings -- neither is actually installed anywhere in
+        # findings; neither is actually installed anywhere in
         # site-packages. Both come from pip's internal build-provenance
         # manifest for pip's OWN vendored copies, which trivy's SBOM
         # analyzer reads as if it were a real dependency of the environment.

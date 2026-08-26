@@ -525,7 +525,7 @@ export function GlobalIntegrations() {
               </div>
               <div className="flex flex-col gap-1">
                 <Label htmlFor="oc-api-key" className="text-xs text-muted-foreground">
-                  API Key (optional -- self-hosted backends like Ollama usually don&apos;t need one)
+                  API Key (optional: self-hosted backends like Ollama usually don&apos;t need one)
                 </Label>
                 <Input
                   id="oc-api-key"
@@ -765,7 +765,7 @@ export function GlobalIntegrations() {
             </div>
             <div>
               <div className="font-medium text-foreground">SIEM Export</div>
-              <div className="text-xs text-muted-foreground">Generic webhook -- one JSON event per qualifying finding</div>
+              <div className="text-xs text-muted-foreground">Generic webhook; one JSON event per qualifying finding</div>
             </div>
           </div>
 

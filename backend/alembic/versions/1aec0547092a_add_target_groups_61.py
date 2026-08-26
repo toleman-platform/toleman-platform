@@ -22,8 +22,8 @@ depends_on: Union[str, Sequence[str], None] = None
 # schema drift that pre-dates this change (a stale `discoveredendpoint`
 # table left over from a model that no longer exists, missing indexes on
 # finding/scan, and NOT NULL tightening on platformconfig columns). None of
-# that is part of issue #61, so it's deliberately left out of this migration
-# -- only the two new tables below are issue #61's actual change. That drift
+# that is part of issue #61, so it's deliberately left out of this migration;
+# only the two new tables below are issue #61's actual change. That drift
 # should be swept up in its own migration separately.
 
 

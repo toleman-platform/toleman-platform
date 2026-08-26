@@ -1,17 +1,17 @@
 """#232: wiring on_demand_scan and ci_pipeline to the same tools_for_surface
 resolver PR Guardrail already used (#231). Until this, both were write-only
-checkboxes -- persisted, served back, rendered ticked, never consulted.
+checkboxes; persisted, served back, rendered ticked, never consulted.
 
 on_demand_scan is a gate, not a default: the request always names one tool
 explicitly (each UI button dispatches a specific tool), so there is no
 "tools omitted" case to default. An explicitly requested but disabled tool
-is refused loudly -- never silently run (that repeats GH-01) and never
+is refused loudly; never silently run (that repeats GH-01) and never
 silently swapped for something else (that drops what was actually asked
 for, which is its own version of the same bug).
 
 ci_pipeline is a generation-time default: it decides what a *newly
 generated* workflow file contains. It has no effect on a workflow already
-committed to a target's repo -- that file is a durable artifact on disk in
+committed to a target's repo; that file is a durable artifact on disk in
 someone else's repository, and no assignment change can retroactively
 rewrite it.
 """
@@ -121,7 +121,7 @@ class TestOnDemandScanGate:
         assert dispatched == [], "a disabled tool must never actually reach Celery"
 
     def test_disabled_tool_is_not_silently_swapped_for_another(self, client, engine, monkeypatch):
-        """Refusing must not quietly substitute a different tool -- that
+        """Refusing must not quietly substitute a different tool; that
         would drop exactly what the caller asked for, the issue's second
         named failure mode."""
         import app.api.scans as scans_module
@@ -138,7 +138,7 @@ class TestOnDemandScanGate:
     def test_public_api_module_imports_the_same_gate(self):
         """A second call site (app/api/public_api.py) exists specifically so
         a public-API token can't route around the same assignment as the
-        internal endpoint -- verified by presence of the same guard rather
+        internal endpoint, verified by presence of the same guard rather
         than a full bearer-token round trip (exercised elsewhere, in
         test_public_api.py, and unrelated to what #232 changed)."""
         import inspect
@@ -154,7 +154,7 @@ class TestOnDemandScanGate:
 class TestCiPipelineDefault:
     def test_default_tool_set_is_unchanged_when_nothing_is_disabled(self, engine):
         """Byte-for-byte compatible with pre-#232 behavior when every
-        default-enabled tool stays assigned on -- the common case."""
+        default-enabled tool stays assigned on, the common case."""
         tid, _ = _target(engine)
         with Session(engine) as session:
             target = session.get(Target, tid)
@@ -174,7 +174,7 @@ class TestCiPipelineDefault:
 
     def test_gosec_still_requires_both_go_detection_and_assignment(self, engine):
         """Disabling gosec for ci_pipeline must exclude it even on a
-        detected-Go target -- the assignment and the detection are both
+        detected-Go target; the assignment and the detection are both
         gates, neither overrides the other."""
         tid, wsid = _target(engine)
         with Session(engine) as session:
@@ -193,7 +193,7 @@ class TestCiPipelineDefault:
     def test_custom_steps_still_bypass_the_assignment_as_before(self, engine):
         """#35's explicit `steps` param is a different, more specific
         override (a saved PipelineWorkflowTemplate) and is unchanged by
-        #232 -- verifies the two features don't fight each other."""
+        #232, verifies the two features don't fight each other."""
         tid, wsid = _target(engine)
         _disable(engine, wsid, "trivy", ci_pipeline=False)
         with Session(engine) as session:
@@ -202,7 +202,7 @@ class TestCiPipelineDefault:
         assert "trivy:" in result["yaml"]
 
 class TestApiScanGate:
-    """Active API Scanning's dedicated check -- it cannot use
+    """Active API Scanning's dedicated check; it cannot use
     tools_for_surface (see is_nuclei_enabled_for_api_scan's docstring), so
     it gets its own tests rather than piggybacking on TestOnDemandScanGate's."""
 

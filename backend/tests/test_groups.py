@@ -1,6 +1,6 @@
 """Tests for issue #61 (target groups/tags): the Group/TargetGroup models,
 the group CRUD API, target<->group assignment, and that GET /api/targets and
-GET /api/findings actually filter by group_id end to end -- not just storage
+GET /api/findings actually filter by group_id end to end; not just storage
 with no way to use it.
 
 Follows the same in-memory SQLite + TestClient + session-token-login pattern

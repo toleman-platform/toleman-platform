@@ -23,7 +23,7 @@ export function GlobalSearch({ collapsed }: { collapsed?: boolean }) {
 
   // Debounce the query, then declare it as the fetch dependency: the request
   // fires once typing settles, and useAsyncData's abort/request-id handling
-  // covers the case where an earlier search resolves after a later one -- the
+  // covers the case where an earlier search resolves after a later one; the
   // hand-rolled version had no such guard, so a slow "sq" could land after a
   // fast "sqli" and show the wrong results.
   const debouncedQuery = useDebouncedValue(query.trim(), 200);
@@ -52,7 +52,7 @@ export function GlobalSearch({ collapsed }: { collapsed?: boolean }) {
   // Clearing the previous search belongs in render, not an effect: the
   // palette must never paint the last session's query for a frame when it
   // reopens. Results follow from the query, so clearing it is enough. Focus
-  // stays in an effect -- it touches the DOM, not state.
+  // stays in an effect; it touches the DOM, not state.
   const [wasOpen, setWasOpen] = useState(open);
   if (wasOpen !== open) {
     setWasOpen(open);

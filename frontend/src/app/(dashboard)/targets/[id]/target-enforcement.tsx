@@ -49,7 +49,7 @@ export function TargetEnforcement({
       <span className="text-xs text-muted-foreground">PR Guardrail enforcement:</span>
       {/* Two systems both sound like "what blocks a PR", and an external
           review found the distinction explained in the docs and nowhere in
-          the product -- with the two controls on different pages. Stated
+          the product, with the two controls on different pages. Stated
           here, next to the one that decides the consequence. */}
       <span className="text-[11px] text-muted-foreground">
         (Policy decides which findings count; this decides whether counting them fails the build.)

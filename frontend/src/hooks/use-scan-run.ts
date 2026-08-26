@@ -19,7 +19,7 @@ import type { ScanPhase } from "@/components/scan-status";
  *  1. Elapsed time ticks locally between polls, anchored to the server's
  *     number rather than to the client's clock. Deriving it from
  *     `started_at` against `Date.now()` would fold any client/server clock
- *     skew straight into the display -- a laptop a minute fast would show a
+ *     skew straight into the display; a laptop a minute fast would show a
  *     scan as having run for a minute before it was dispatched.
  *  2. The scan starts in `queued`, not `running`. The gap between the API
  *     accepting the dispatch and a worker picking it up is real, and calling
@@ -27,7 +27,7 @@ import type { ScanPhase } from "@/components/scan-status";
  *  3. Settling is reported through callbacks fired from the poll, not by
  *     leaving the caller to watch `phase` in an effect. A caller reacting to
  *     a phase change in an effect would fire again on every re-render that
- *     preserved that phase, so it would need its own guard -- and the moment
+ *     preserved that phase, so it would need its own guard; and the moment
  *     a scan finishes is a genuine event, not a piece of derived state.
  */
 export type UseScanRunOptions = {
@@ -61,13 +61,13 @@ export function useScanRun({ onCompleted, onFailed }: UseScanRunOptions = {}): U
   // The server's elapsed count and the local moment it arrived. Elapsed is
   // recomputed from this on each tick, so it advances smoothly between polls
   // without trusting the client clock's absolute value. Held in a ref
-  // because it is read inside a timer, not during render -- reading a clock
+  // because it is read inside a timer, not during render; reading a clock
   // during render is impure and two renders could disagree.
   const anchorRef = useRef<{ serverSeconds: number; at: number } | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
 
-  // Callbacks are held in refs so a caller passing inline arrows -- which is
-  // every caller -- does not re-create `track` on each render.
+  // Callbacks are held in refs so a caller passing inline arrows (which is
+  // every caller) does not re-create `track` on each render.
   const onCompletedRef = useRef(onCompleted);
   const onFailedRef = useRef(onFailed);
   useEffect(() => {
@@ -134,7 +134,7 @@ export function useScanRun({ onCompleted, onFailed }: UseScanRunOptions = {}): U
         async () => {
           const run = await api.getScan(scanId);
           // The API returns { error } for a missing row. Normalising it to a
-          // failed status is what stops the loop -- otherwise it would poll
+          // failed status is what stops the loop; otherwise it would poll
           // a nonexistent scan until the timeout. Same shape as
           // api-discovery's active-scan poll.
           if ("error" in run) {

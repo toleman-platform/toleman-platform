@@ -26,7 +26,7 @@ function readStoredDensity(): Density {
 
 /**
  * Applies the persisted density to `<html data-density>` as early as
- * possible on mount -- rendered once near the top of the body in the root
+ * possible on mount, rendered once near the top of the body in the root
  * layout. Uses `useLayoutEffect` (fires synchronously before the browser
  * paints) rather than a raw `<script dangerouslySetInnerHTML>`/next/script
  * `beforeInteractive` injection: both of those produced a real
@@ -47,7 +47,7 @@ export function DensityInit() {
 export function DensityToggle({ collapsed, compact }: { collapsed?: boolean; compact?: boolean }) {
   // Lazy initializer (not an effect + setState) so this reads localStorage
   // exactly once on mount without the "setState synchronously in an effect"
-  // cascading-render smell -- <DensityInit /> (rendered once, near the top
+  // cascading-render smell, <DensityInit /> (rendered once, near the top
   // of <body>) already applied the data-density attribute; this just keeps
   // the button's own label/icon state in sync with it.
   const [density, setDensity] = useState<Density>(readStoredDensity);

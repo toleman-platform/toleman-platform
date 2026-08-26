@@ -13,14 +13,14 @@ def upsert_components(
     source: str = "trivy",
 ) -> list[SbomComponent]:
     """Persist SBOM components (upsert on target+branch+name+version+purl),
-    returning the subset that are new since the last run -- same net-new
+    returning the subset that are new since the last run; same net-new
     pattern used for ApiEndpoint (see upsert_endpoints() in
     app/core/discovery_ingestion.py).
 
     Extracted from app/api/sbom.py (#59) so both the API layer and
     app.tasks.sbom_tasks.run_sbom_generation (the Celery task that now does
     the actual clone+scan work) call the exact same logic instead of two
-    copies drifting apart -- app.api.sbom still re-exports this name so
+    copies drifting apart, app.api.sbom still re-exports this name so
     existing imports/tests keep working.
     """
     existing = {
@@ -40,7 +40,7 @@ def upsert_components(
             existing_row.package_type = item.get("package_type", "")
             # (#227) Union, not overwrite. A component both trivy and
             # GitHub's Dependency Graph report should end up "trivy,github"
-            # rather than whichever source happened to run second -- the
+            # rather than whichever source happened to run second; the
             # whole point of the second source is knowing which found what,
             # and last-writer-wins would erase exactly that.
             existing_row.source = _merge_sources(existing_row.source, source)
@@ -65,7 +65,7 @@ def upsert_components(
         session.refresh(row)
     return new_components
 
-# Stable ordering so the stored value is comparable across runs -- "a,b" and
+# Stable ordering so the stored value is comparable across runs; "a,b" and
 # "b,a" describing the same thing would defeat any query or UI grouping on it.
 _SOURCE_ORDER = ("trivy", "github")
 

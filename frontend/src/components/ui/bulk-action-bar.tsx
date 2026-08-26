@@ -19,8 +19,8 @@ import { Button } from "@/components/ui/button";
  * their next click will affect. `role="status"` reports it.
  *
  * **Destructive bulk actions read as destructive.** Not by painting the whole
- * bar red -- #171 established that over-using the destructive colour drains
- * it of meaning -- but by marking the specific action.
+ * bar red, #171 established that over-using the destructive colour drains
+ * it of meaning, but by marking the specific action.
  */
 export type BulkAction = {
   label: string;

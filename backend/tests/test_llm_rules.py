@@ -9,7 +9,7 @@ precision bugs were caught by exactly these assertions while the rules were
 being written:
 
   1. Without `mode: taint`, semgrep silently ignores `pattern-sources` and
-     matches the sink alone -- so `os.system("ls -la")` with a literal
+     matches the sink alone, so `os.system("ls -la")` with a literal
      argument was reported as an LLM-output-to-shell finding.
   2. With taint mode but a bare `$CHAIN.run(...)` source, `subprocess.run()`
      matched as both source and sink and tainted itself, producing six false

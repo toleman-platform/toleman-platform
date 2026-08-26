@@ -36,7 +36,7 @@ def _get_target(target_id: int, session: Session) -> Target:
 
 @router.get("/activity/{target_id}")
 def repo_activity(target_id: int, session: Session = Depends(get_session)):
-    """Recent commit activity on a target's default branch — real GitHub API data."""
+    """Recent commit activity on a target's default branch, real GitHub API data."""
     target = _get_target(target_id, session)
     slug = repo_slug_from_url(target.repo_url)
     res = github_get(f"/repos/{slug}/commits", params={"sha": target.default_branch, "per_page": 20}, token=resolve_github_token(session, target.workspace_id, slug) or "")
@@ -57,7 +57,7 @@ def repo_activity(target_id: int, session: Session = Depends(get_session)):
 
 @router.get("/prs/{target_id}")
 def repo_prs(target_id: int, session: Session = Depends(get_session)):
-    """Recent pull requests on a target repo — real GitHub API data.
+    """Recent pull requests on a target repo, real GitHub API data.
 
     Diff-vuln status per PR is not populated: the PR Guardrail scan-on-push
     flow (architecture doc Flow C) isn't wired up yet, only native/push scans
@@ -93,7 +93,7 @@ def org_activity(
     page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
 ) -> OrgActivityResponse:
-    """Recent commit activity across every integrated target — substitutes for a
+    """Recent commit activity across every integrated target, substitutes for a
     GitHub Org audit log, which requires an Enterprise/paid-org audit log API
     scope not available for personal accounts/repos.
 

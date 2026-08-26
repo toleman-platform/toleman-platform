@@ -12,7 +12,7 @@ import { ActivityPagination } from "@/components/activity-pagination";
  * Issue #123: a single bulk-triage action used to write one FindingStateLog
  * row per finding, so a 30-finding bulk action flooded this feed with 30
  * near-identical cards. The backend now collapses same-batch rows into one
- * item with grouped_count > 1 -- rendered here as a single card with an
+ * item with grouped_count > 1, rendered here as a single card with an
  * "N findings ... ▸ expand" disclosure instead of N separate cards.
  */
 function AuditEventCard({ event }: { event: AuditEvent }) {

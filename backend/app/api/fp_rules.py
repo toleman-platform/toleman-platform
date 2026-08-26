@@ -2,11 +2,11 @@
 
 Read is workspace-scoped the same way GET /api/sla-rules is (issue #57's
 accessible_workspace_ids); write actions (expire/reactivate/delete) require
-at least SECURITY_ENGINEER on that rule's workspace via enforce_workspace_role
--- same trust tier as SlaRule, since a FalsePositiveRule can suppress a real
+at least SECURITY_ENGINEER on that rule's workspace via enforce_workspace_role,
+same trust tier as SlaRule, since a FalsePositiveRule can suppress a real
 finding across every repo in the workspace, same blast radius as an SLA
 override. Rules are created automatically by app.core.fp_learning (triggered
-from app.api.findings' triage endpoints), not via a POST here -- there's
+from app.api.findings' triage endpoints), not via a POST here; there's
 deliberately no manual "create a suppression rule from scratch" endpoint in
 this first version, mirroring the issue's "on FP marking, extract a
 suppression signature" framing (learned, not hand-authored). A security

@@ -34,8 +34,8 @@ def scans_summary(
     memberships yet -> nothing to summarize).
 
     Aggregated in SQL rather than in Python (senior-review pass, #220): the
-    original version selected every Scan row -- target_id, tool,
-    started_at, completed_at -- for every accessible target and grouped it
+    original version selected every Scan row (target_id, tool,
+    started_at, completed_at) for every accessible target and grouped it
     in the app process. That scales with total scan history, not with the
     number of targets: a target scanned nightly by CI for a year sends
     hundreds of near-identical rows over the wire on every single page
@@ -43,7 +43,7 @@ def scans_summary(
     timestamp and a handful of tool names. The two queries below return
     at most one row per (target, tool) pair and one row per target,
     respectively, regardless of how many times each has actually run.
-    Response shape is byte-for-byte identical -- see
+    Response shape is byte-for-byte identical; see
     tests/test_scans_summary.py, written against the old implementation
     before this rewrite specifically so behavior could be pinned rather
     than re-derived.
@@ -57,13 +57,13 @@ def scans_summary(
             return query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
         return query
 
-    # One row per (target, tool) ever run, not one row per scan -- this is
+    # One row per (target, tool) ever run, not one row per scan; this is
     # the query that used to return the whole table.
     tool_rows = session.exec(
         scoped(select(Scan.target_id, Scan.tool).distinct())
     ).all()
 
-    # A still-"running" scan has no completed_at yet -- coalesce to
+    # A still-"running" scan has no completed_at yet, coalesce to
     # started_at in SQL so "last scanned" reflects the most recent attempt
     # per target, not just settled ones, without pulling every row to do
     # that comparison in Python.
@@ -81,7 +81,7 @@ def scans_summary(
     return {
         str(target_id): {
             # started_at/completed_at are naive UTC datetimes (datetime.utcnow(),
-            # see the Scan model) -- append "Z" explicitly so the frontend's
+            # see the Scan model); append "Z" explicitly so the frontend's
             # `new Date(...)` (lib/utils.ts's timeAgo) parses this as UTC
             # instead of local time, which would silently skew "last scanned"
             # by the server's UTC offset.
@@ -97,7 +97,7 @@ def scans_summary(
 
 # Each request here dispatches a Celery task that clones the target repo and
 # spawns a scanner subprocess, so this needs a tighter limit than plain API
-# reads -- generous enough for a human triggering ad-hoc scans, tight enough
+# reads; generous enough for a human triggering ad-hoc scans, tight enough
 # to bound concurrent clone+subprocess load on the worker pool.
 SCAN_RUN_RATE_LIMIT = 10
 SCAN_RUN_RATE_WINDOW_SECONDS = 60
@@ -114,7 +114,7 @@ def run_native_scan(
     """Pull/Native scan: dispatch a Celery task to clone the target repo,
     execute the CLI tool, and ingest results (#59).
 
-    Previously ran the clone+scan synchronously inside this handler -- a
+    Previously ran the clone+scan synchronously inside this handler, a
     plain `def` route, so FastAPI ran it in its threadpool, but a handful of
     concurrent scan requests was enough to exhaust that pool and stall the
     whole API. Now this just validates input, creates the Scan row
@@ -133,12 +133,12 @@ def run_native_scan(
         return {"error": "target not found"}
     if tool not in PARSER_MAP:
         return {"error": f"unsupported tool: {tool}"}
-    # (#232) The request always names a tool explicitly -- there is no
+    # (#232) The request always names a tool explicitly; there is no
     # "tools omitted, use the workspace default" case for this endpoint,
     # since each button in the UI dispatches one specific tool. So the
     # assignment's role here is a gate, not a default: an explicitly
     # requested tool that the workspace has disabled for on_demand_scan is
-    # refused loudly, the same way an unsupported tool already is above --
+    # refused loudly, the same way an unsupported tool already is above;
     # never silently run anyway (that would be GH-01 again) and never
     # silently swapped for something else (that would drop what the user
     # actually asked for, which the issue calls out as its own version of
@@ -170,7 +170,7 @@ def active_scans(
 
     Stale rows are swept here as well as in the single-scan poll. This
     endpoint is read by list views, so it is often the first thing to touch a
-    row that a dead worker left "running" -- without the sweep those rows
+    row that a dead worker left "running"; without the sweep those rows
     would render as permanently in-flight, which is indistinguishable from a
     hung platform.
 
@@ -218,7 +218,7 @@ def scan_history(
     Deliberately separate from GET /summary rather than an extension of it.
     That endpoint aggregates to at most one row per (target, tool) precisely
     so a target scanned nightly for a year does not send hundreds of rows to
-    render one timestamp -- see its docstring. A history view is the one
+    render one timestamp; see its docstring. A history view is the one
     place those individual rows ARE the point, so this returns them, but
     scoped to a single target and paginated, which keeps the property that
     made the aggregation worth doing: response size never scales with total
@@ -228,7 +228,7 @@ def scan_history(
     order, and "history" would otherwise be captured as a scan_id and 422
     on int coercion.
 
-    Workspace-scoped like every other read here (#57) -- a target id from
+    Workspace-scoped like every other read here (#57), a target id from
     another tenant 404s rather than exposing that tenant's scan cadence,
     which is itself operational information.
     """
@@ -282,7 +282,7 @@ def get_scan(
     if not scan:
         return {"error": "scan not found"}
     # A row swept to "failed" here carries its timeout reason in `error`,
-    # which the response already surfaces as error_message -- the UI shows
+    # which the response already surfaces as error_message; the UI shows
     # that instead of a spinner that would never resolve.
     mark_stale_if_needed(session, scan)
     return {

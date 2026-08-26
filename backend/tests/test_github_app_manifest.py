@@ -1,7 +1,7 @@
 """Tests for findings GH-03 and GH-05 in the generated GitHub App manifest.
 
 GH-03: the manifest declared `"default_events": []` with no `hook_attributes`,
-so the App subscribed to nothing. Nothing ran when a PR opened -- a human had
+so the App subscribed to nothing. Nothing ran when a PR opened; a human had
 to open PR History and press "Scan This PR". As the review put it, "blocking
 mode" that depends on someone remembering to press a button is advisory in
 practice, and a required check nobody triggers blocks every PR forever.
@@ -11,8 +11,8 @@ the signature, filters to pull_request and dispatches the scan, and the
 manifest-conversion handler already persists the webhook secret GitHub
 generates. Only the subscription was missing.
 
-GH-05: the App was named "OSP DevSecOps <suffix>" -- the pre-rename product
-name -- so GitHub derived a bot login of `osp-devsecops-*[bot]`, which signed
+GH-05: the App was named "OSP DevSecOps <suffix>" (the pre-rename product
+name) so GitHub derived a bot login of `osp-devsecops-*[bot]`, which signed
 every PR comment in every adopting org.
 """
 
@@ -47,7 +47,7 @@ def test_app_is_named_toleman_not_the_pre_rename_product():
     the product's signature on every PR comment in an adopting org."""
     name = _manifest()["name"]
     assert name.startswith("Toleman")
-    # Both superseded product names -- "OSP DevSecOps" (GH-05) and "Rikugan",
+    # Both superseded product names, "OSP DevSecOps" (GH-05) and "Rikugan",
     # which this one replaced in turn.
     assert "OSP" not in name
     assert "Rikugan" not in name
@@ -66,7 +66,7 @@ def test_permissions_still_cover_what_pr_guardrail_needs():
 
 def test_manifest_data_flags_an_unreachable_webhook_host(monkeypatch):
     """A localhost PUBLIC_API_URL produces an App whose deliveries can never
-    arrive -- indistinguishable, from the operator's side, from a scanner
+    arrive, indistinguishable, from the operator's side, from a scanner
     that finds nothing."""
     import app.api.github_app as github_app
 

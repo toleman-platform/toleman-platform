@@ -1,4 +1,4 @@
-"""Tests for GET /api/search -- requires auth, matches findings/targets by
+"""Tests for GET /api/search: requires auth, matches findings/targets by
 substring across the fields listed in the Sprint 3 roadmap item (title/
 file_path/rule_id/cve_id for findings; name/repo_url for targets).
 
@@ -39,7 +39,7 @@ def client(engine):
     original_deps_engine = deps_module.engine
     deps_module.engine = engine
 
-    # Skip lifespan (see test_rate_limit.py) -- we only want the overridden
+    # Skip lifespan (see test_rate_limit.py); we only want the overridden
     # in-memory SQLite session, not a connection to the real Postgres engine.
     c = TestClient(app)
     yield c

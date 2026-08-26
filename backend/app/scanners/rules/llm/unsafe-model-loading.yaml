@@ -1,7 +1,7 @@
 ## Issue #189: code that loads models unsafely.
 ##
 ## Complements #186. That scans model files committed to the repo; these
-## catch the code that will load a model at runtime -- including models
+## catch the code that will load a model at runtime, including models
 ## fetched from the network, which never appear in the checkout at all and so
 ## are invisible to a file scanner.
 rules:
@@ -50,7 +50,7 @@ rules:
     severity: WARNING
     message: >-
       Model loaded from the Hugging Face Hub with no `revision` pin. The
-      referenced repo can be updated -- or taken over -- after review, so the
+      referenced repo can be updated (or taken over) after review, so the
       weights you audited are not necessarily the weights you run. This is the
       model-supply-chain equivalent of an unpinned dependency. Pass
       revision="<commit-sha>".
@@ -67,6 +67,6 @@ rules:
       - pattern-not: $CLS.from_pretrained(..., revision=..., ...)
       - pattern-not: hf_hub_download(..., revision=..., ...)
       - pattern-not: snapshot_download(..., revision=..., ...)
-      # A local directory isn't a hub reference -- a hub repo id always
+      # A local directory isn't a hub reference, a hub repo id always
       # contains exactly one "/" and no path separators beyond it.
       - pattern-not: $CLS.from_pretrained("=~/^\\.{0,2}\\//", ...)

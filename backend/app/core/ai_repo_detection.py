@@ -1,4 +1,4 @@
-"""AI/ML repo detection (issue #185) -- the gate every AI-specific scanner
+"""AI/ML repo detection (issue #185): the gate every AI-specific scanner
 in epic #192 runs behind.
 
 Why detect rather than let an admin flag it: an explicit per-target toggle
@@ -6,14 +6,14 @@ was considered and rejected, because somebody has to remember to set it and
 an *unflagged* AI repo then silently gets zero AI coverage. Silent
 non-coverage is the exact failure mode the AI scanners exist to prevent, so
 the default has to be "the platform works it out". A manual override still
-wins where it's been set (see Target.is_ai_repo_override) -- auto-detection
+wins where it's been set (see Target.is_ai_repo_override); auto-detection
 is the default, not a straitjacket.
 
 Two independent signals, either sufficient:
 
   1. Model artifacts present in the checkout (by extension).
   2. AI/ML packages in the target's already-persisted SbomComponent
-     inventory -- a DB query, not a re-parse of the manifests, since
+     inventory, a DB query, not a re-parse of the manifests, since
      app.core.sbom_ingestion already stores name/version/package_type per
      target+branch.
 
@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # Serialized-model extensions. Deliberately the same set #186's modelscan
-# integration cares about -- if a file here is present, that scanner has
+# integration cares about; if a file here is present, that scanner has
 # something real to look at.
 MODEL_FILE_EXTENSIONS = frozenset(
     {
@@ -68,7 +68,7 @@ SKIP_DIRECTORIES = frozenset(
 )
 
 # AI/ML package names by ecosystem. Matching is exact on the lowercased
-# package name except where a prefix is noted below -- a substring match
+# package name except where a prefix is noted below; a substring match
 # would flag any package merely containing "ai", which is most of npm.
 _PY_PACKAGES = frozenset(
     {
@@ -91,7 +91,7 @@ _PY_PACKAGES = frozenset(
     }
 )
 
-# Python packages matched by prefix -- these are real namespace families
+# Python packages matched by prefix; these are real namespace families
 # (langchain-core, langchain-openai, ...) rather than a loose contains-check.
 _PY_PREFIXES = ("langchain", "llama-index-", "opentelemetry-instrumentation-openai")
 
@@ -120,7 +120,7 @@ _GO_SUBSTRINGS = (
 @dataclass
 class AiRepoDetection:
     """Result of a detection pass. `signals` is the human-readable reason
-    list -- empty exactly when `detected` is False."""
+    list; empty exactly when `detected` is False."""
 
     detected: bool = False
     signals: list[str] = field(default_factory=list)
@@ -168,14 +168,14 @@ def detect_model_files(repo_path: str | Path, max_reported: int = 5) -> list[str
                 found.append(str(path.relative_to(root)))
         except (OSError, ValueError):
             # Broken symlink, permission error, or a path that escaped the
-            # root -- skip it rather than failing the whole detection pass.
+            # root; skip it rather than failing the whole detection pass.
             continue
     return found
 
 
 def detect_ai_packages(components: list[tuple[str, str]], max_reported: int = 5) -> list[str]:
     """AI/ML package names among `components`, a list of (name,
-    package_type) -- i.e. SbomComponent rows the caller already has."""
+    package_type); i.e. SbomComponent rows the caller already has."""
     matched: list[str] = []
     seen: set[str] = set()
     for name, package_type in components:
@@ -197,7 +197,7 @@ def detect_ai_repo(
     """Run both signals. Either one alone is sufficient.
 
     `repo_path` is optional so detection can be re-run from persisted SBOM
-    inventory alone, without a checkout -- useful for re-evaluating every
+    inventory alone, without a checkout; useful for re-evaluating every
     target without cloning 35 repos.
     """
     signals: list[str] = []

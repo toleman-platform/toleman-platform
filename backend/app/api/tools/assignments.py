@@ -1,10 +1,10 @@
-"""`GET`/`PUT /api/tools/assignments` -- per-workspace, per-tool usage
+"""`GET`/`PUT /api/tools/assignments`: per-workspace, per-tool usage
 assignment (issue #75): on-demand scan / CI pipeline / API scan / PR
 guardrail, backed by WorkspaceToolConfig.
 
 Read is workspace-scoped via accessible_workspace_ids like every other GET/
 list endpoint over workspace-owned resources; write is gated at
-SECURITY_ENGINEER-or-admin, same trust level as SlaRule/PolicyRule -- which
+SECURITY_ENGINEER-or-admin, same trust level as SlaRule/PolicyRule; which
 scanners run where is a security-policy decision, not general repo
 housekeeping.
 """
@@ -46,7 +46,7 @@ def list_assignments(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    """Per-tool usage assignment for a workspace (issue #75) -- one row per
+    """Per-tool usage assignment for a workspace (issue #75); one row per
     registered tool, real saved WorkspaceToolConfig where one exists, else
     the tool's built-in default (`is_default: true` distinguishes the two
     for the UI, e.g. to show "not customized" vs. an explicit save)."""
@@ -89,7 +89,7 @@ def upsert_assignment(
     if payload.tool not in {e["tool"] for e in TOOL_REGISTRY}:
         raise HTTPException(status_code=422, detail=f"unknown tool: {payload.tool!r}")
 
-    # workspace_id lives inside the JSON body -- same reason
+    # workspace_id lives inside the JSON body, same reason
     # sla_rules.create_sla_rule checks explicitly instead of a
     # Depends-based require_workspace_role.
     enforce_workspace_role(session, user, WorkspaceRole.SECURITY_ENGINEER, workspace_id=payload.workspace_id)

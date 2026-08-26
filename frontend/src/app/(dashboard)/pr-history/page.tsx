@@ -35,7 +35,7 @@ export default function PrHistoryPage() {
   const isOrgWide = targetId === ALL_TARGETS;
 
   // GitHub's PR API is inherently single-repo, so "All repositories" has no
-  // PR list to fetch here -- it only drives the aggregated PR Guardrail scan
+  // PR list to fetch here; it only drives the aggregated PR Guardrail scan
   // log below (issue #64).
   const {
     data: prsData,
@@ -48,7 +48,7 @@ export default function PrHistoryPage() {
   });
   const prs = isOrgWide ? [] : (prsData ?? []);
 
-  // A 401 is not a page error -- it means the GitHub session lapsed, and the
+  // A 401 is not a page error; it means the GitHub session lapsed, and the
   // page has a dedicated reconnect affordance for it.
   const sessionExpired = loadError !== null && isSessionError(loadError);
   const error = sessionExpired ? null : (loadError?.message ?? null);
@@ -81,7 +81,7 @@ export default function PrHistoryPage() {
 
       {isOrgWide ? (
         <p className="text-sm text-muted-foreground">
-          Live GitHub pull requests are per-repository -- select a single repository above to see
+          Live GitHub pull requests are per-repository, select a single repository above to see
           its open PRs. Showing the aggregated PR Guardrail scan history across all repositories
           below.
         </p>

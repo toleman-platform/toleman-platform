@@ -4,7 +4,7 @@ import tsParser from "@typescript-eslint/parser";
 import rule from "./no-client-value-import-in-server.mjs";
 
 // Fixtures live on disk because the rule resolves the imported module and
-// reads its directive -- that file I/O is the part worth testing.
+// reads its directive; that file I/O is the part worth testing.
 const FIXTURES = path.join(import.meta.dirname, "__fixtures__");
 const options = [{ srcRoot: FIXTURES }];
 const serverFile = path.join(FIXTURES, "server-consumer.tsx");

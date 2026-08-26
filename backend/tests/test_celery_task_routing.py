@@ -4,7 +4,7 @@ Celery does not fail loudly when a task has no explicit route: it falls back
 to the default `celery` queue, and `.delay()` returns normally because
 enqueueing succeeds. The task then sits there forever, because
 docker-compose's celery-worker service only consumes `-Q scans`. This is
-exactly what happened to `app.tasks.tool_install_tasks` -- it was added to
+exactly what happened to `app.tasks.tool_install_tasks`; it was added to
 Celery's `include=[...]` (so the worker can deserialize it) but not to
 `task_routes` (so nothing tells the worker to actually pull it), and the
 first symptom would have been an install that "runs" forever and only fails

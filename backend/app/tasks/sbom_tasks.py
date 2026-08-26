@@ -21,15 +21,15 @@ logger = logging.getLogger(__name__)
 
 # Same retry rationale as app/tasks/scan_tasks.py's RETRYABLE_EXCEPTIONS:
 # only a `git clone` failure whose cause looks transient (network/remote
-# issue) is worth retrying. RepoCloneError -- bad repo_url/branch, or a
+# issue) is worth retrying. RepoCloneError, bad repo_url/branch, or a
 # permanent remote failure classified by runner._classify_clone_stderr
-# (missing credentials, deleted repo, nonexistent branch, access denied) --
+# (missing credentials, deleted repo, nonexistent branch, access denied);
 # and anything else are deterministic and will fail identically on retry.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
 
 
 def _notify_scan_failure(session: Session, target: Target, tool: str, error: str) -> None:
-    """Issue #73 scan_failure trigger -- see app.tasks.scan_tasks for the
+    """Issue #73 scan_failure trigger; see app.tasks.scan_tasks for the
     same helper's full rationale; SBOM generation runs are one of the three
     "Scan/DiscoveryRun/SbomRun row transitions to failed" cases the issue
     calls out."""
@@ -92,7 +92,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             # what is pinned there; GitHub reports what those manifests
             # actually resolve to, including transitive dependencies that
             # appear in no manifest at all. On this repo's own backend that
-            # was 22 direct pins versus ~98 installed packages -- the gap
+            # was 22 direct pins versus ~98 installed packages, the gap
             # #239 found from the other direction.
             #
             # This is the right mechanism for *target* repos specifically.
@@ -106,7 +106,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             # Best-effort and explicitly recorded. A repo whose graph is
             # disabled (the default for private repos) is not a repo with no
             # dependencies, so the failure is written to sources_failed
-            # rather than swallowed -- see DependencyGraphUnavailable.
+            # rather than swallowed; see DependencyGraphUnavailable.
             sources_run = ["trivy"]
             sources_failed: list[str] = []
             try:
@@ -126,7 +126,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 logger.exception("GitHub dependency graph fetch failed for target %s", target_id)
                 sources_failed.append("github (unexpected error)")
 
-            # Issue #190: extract the AIBOM from the same checkout. Free --
+            # Issue #190: extract the AIBOM from the same checkout. Free;
             # the clone above already happened, and extraction is regexes
             # over source, no extra tooling. Best-effort: an AIBOM failure
             # must not fail an otherwise-successful SBOM run.
@@ -137,7 +137,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 logger.exception("AIBOM extraction failed for target %s", target_id)
 
             # Issue #181: run the OSV malicious-package check over the freshly
-            # persisted inventory. Free (no clone, no subprocess -- just OSV
+            # persisted inventory. Free (no clone, no subprocess; just OSV
             # HTTP calls against rows we already have) and best-effort: a
             # malware-check failure must not fail an otherwise-successful SBOM
             # run, and its own "failed" status is never reported as clean.
@@ -166,7 +166,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             return {"run_id": run.id, "count": all_count, "new_count": len(new_components)}
         except RETRYABLE_EXCEPTIONS:
             # Transient failure: only mark the run permanently failed once
-            # retries are exhausted -- otherwise let it propagate so
+            # retries are exhausted; otherwise let it propagate so
             # Celery's autoretry_for schedules the next attempt.
             if self.request.retries >= self.max_retries:
                 run.status = "failed"

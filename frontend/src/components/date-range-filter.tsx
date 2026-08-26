@@ -4,7 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Input } from "@/components/ui/input";
 
 /**
- * Shared "activity feed" date-range filter (issue #123) — the one filter
+ * Shared "activity feed" date-range filter (issue #123), the one filter
  * common to both Audit Log and GitHub Org Logs. Reads/writes date_from and
  * date_to query params directly (no local state to reconcile), same
  * URL-is-the-source-of-truth approach as FindingsFilterBar's dropdowns.

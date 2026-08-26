@@ -4,7 +4,7 @@ name: Docker Images Build
 #
 # Why this exists: every other job runs Python and Node directly against
 # whatever the runner already has. None of them build the images, so a
-# broken image could -- and did -- reach main with every check green. The
+# broken image could (and did) reach main with every check green. The
 # break: nothing asks for setuptools directly, but semgrep's pinned
 # opentelemetry-instrumentation declares setuptools>=16.0, pip resolved
 # 82.0.0, which removed pkg_resources, which that same module imports.
@@ -13,7 +13,7 @@ name: Docker Images Build
 #
 # That failure mode is exactly what a pre-merge check is for, which is why
 # this runs on pull requests as well as main. It did not, briefly, while CI
-# was rationed against a GitHub Actions minute budget -- a constraint that
+# was rationed against a GitHub Actions minute budget; a constraint that
 # does not apply to standard runners on a public repository.
 on:
   pull_request:
@@ -68,7 +68,7 @@ jobs:
 
       - name: Verify bundled scanners actually run
         # "docker build succeeded" only proves the install commands exited
-        # zero. It does not prove the binaries still run -- and a scanner
+        # zero. It does not prove the binaries still run; and a scanner
         # that is missing or broken fails silently at runtime, producing
         # zero findings that look exactly like a clean repo.
         #
@@ -87,7 +87,7 @@ jobs:
 
       # (#269) The third and last "we scan what is written down, not what is
       # shipped" gap. #239 closed it for the resolved Python dependency tree;
-      # this closes it for the image itself -- base-image OS packages, and
+      # this closes it for the image itself, base-image OS packages, and
       # the scanner binaries we vendor in, none of which appear in any
       # manifest we parse. Notably it also covers
       # /usr/local/bin/{gitleaks,gosec,trivy}, the Go binaries we bundle,

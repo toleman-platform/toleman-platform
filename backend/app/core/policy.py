@@ -9,7 +9,7 @@ target's workspace, return the filtered findings plus the effective set of
 blocking severities.
 
 If no relevant policy rules exist, callers should fall back to the default
-`app.core.pr_guardrail.BLOCKING_SEVERITIES` -- policy rules are opt-in.
+`app.core.pr_guardrail.BLOCKING_SEVERITIES`; policy rules are opt-in.
 """
 from app.core.pr_guardrail import BLOCKING_SEVERITIES, SEVERITY_ORDER
 

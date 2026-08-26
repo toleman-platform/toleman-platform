@@ -22,7 +22,7 @@ from app.models.models import GitHubAppConfig, GitHubInstallation, Organization,
 
 # GH-02: were hardcoded localhost literals. The manifest's callback/webhook
 # URLs are handed to GitHub, so on any real deployment they must be an
-# address GitHub's servers can actually resolve -- a localhost value there
+# address GitHub's servers can actually resolve; a localhost value there
 # silently produces an App that can never call back.
 FRONTEND_URL = settings.public_base_url.rstrip("/")
 BACKEND_URL = settings.public_api_url.rstrip("/")
@@ -58,13 +58,13 @@ def manifest_data(org: str | None = None):
     suffix = secrets.token_hex(3)
     state = secrets.token_urlsafe(24)
     _pending_states.add(state)
-    # `state` doubles as the App's permanent setup_token (#34) -- see
+    # `state` doubles as the App's permanent setup_token (#34); see
     # build_manifest's docstring for why this is safe and durable.
     manifest = build_manifest(FRONTEND_URL, BACKEND_URL, suffix, setup_token=state)
     base = f"https://github.com/organizations/{org}/settings/apps/new" if org else "https://github.com/settings/apps/new"
 
     # (GH-03) The App now subscribes to pull_request, so PR Guardrail runs
-    # automatically -- but only if GitHub can reach this backend. A localhost
+    # automatically; but only if GitHub can reach this backend. A localhost
     # PUBLIC_API_URL creates an App whose webhook deliveries silently never
     # arrive, which looks identical to "the scanner isn't finding anything".
     #
@@ -207,8 +207,8 @@ def setup_callback(
     ``cfg`` (#34) is the setup_token baked into this specific App's
     setup_url at creation time, so multiple registered Apps each route back
     to their own GitHubAppConfig row instead of assuming there's only one.
-    Falls back to "the only configured App" when ``cfg`` is absent/unmatched
-    -- covers Apps registered before this column existed, whose setup_url on
+    Falls back to "the only configured App" when ``cfg`` is absent/unmatched;
+    covers Apps registered before this column existed, whose setup_url on
     GitHub's side has no ``?cfg=`` param and can't be changed after the fact
     without hitting GitHub's App-update API.
     """
@@ -245,7 +245,7 @@ def setup_callback(
 
 
 def _sync_repos(session: Session) -> int:
-    """Sync repos for EVERY installation of EVERY registered App (#34) --
+    """Sync repos for EVERY installation of EVERY registered App (#34);
     previously only the first GitHubInstallation row was ever synced, so a
     platform with more than one real installation (app installed on a second
     org/account, or a second App entirely) silently never saw that

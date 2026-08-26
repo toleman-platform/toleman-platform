@@ -64,7 +64,7 @@ export default function ReportsPage() {
           Compliance Reports
         </h1>
         <p className="text-sm text-muted-foreground">
-          Audit-ready posture export built from your live workspace data —
+          Audit-ready posture export built from your live workspace data,
           finding counts by severity and state, open-finding SLA age, scan
           coverage, and SBOM summary. Every figure reflects your current
           findings and scans, generated fresh each time you run it.
@@ -97,9 +97,9 @@ export default function ReportsPage() {
             <p className="text-xs text-muted-foreground">
               Scope: <span className="font-medium text-foreground">{scopeLabel}</span>
               {targetId === ALL_TARGETS
-                ? " — every target in the platform"
+                ? ", every target in the platform"
                 : currentTarget
-                  ? ` — default branch (${currentTarget.default_branch})`
+                  ? `, default branch (${currentTarget.default_branch})`
                   : ""}
             </p>
 
@@ -118,7 +118,7 @@ export default function ReportsPage() {
         items={[
           "Finding counts by severity and triage state, per target and totals",
           "Open-finding age / SLA buckets (0-7d, 8-30d, 31-90d, 90d+)",
-          "Scan history and coverage — latest run per tool, per target",
+          "Scan history and coverage; latest run per tool, per target",
           "SBOM component summary per target (when SBOM data has been generated)",
         ]}
         footnote="All figures reflect each target's default branch, matching the Posture Dashboard."

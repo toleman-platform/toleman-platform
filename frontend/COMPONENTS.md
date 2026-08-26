@@ -16,7 +16,7 @@ L3  components/* + app/*           features     FindingsList, TargetsList, AiBom
 
 **L1** is styling and a11y for a single element. It knows nothing about the domain.
 
-**L2** is the shape of a recurring *interaction* — fetching, selecting, rendering the four
+**L2** is the shape of a recurring *interaction*, fetching, selecting, rendering the four
 states of a request. It knows nothing about findings, targets or scans.
 
 **L3** is where the domain lives. A feature composes L2 and L1 and adds meaning.
@@ -40,7 +40,7 @@ fetches and missing in others, `allSelected` computed against an unpaginated lis
 and the density fix in #172 applied file by file.
 
 **A pattern layer earns its place by deleting more code than it adds.** If a proposed L2
-component has one caller, it is not a pattern — it is that caller's implementation detail.
+component has one caller, it is not a pattern; it is that caller's implementation detail.
 Wait for the third occurrence.
 
 ---
@@ -58,7 +58,7 @@ const state = useAsyncData<AiBomView>(() => api.aibom(targetId), { deps: [target
 
 | Option | Type | Default | Notes |
 |---|---|---|---|
-| `enabled` | `boolean` | `true` | `false` keeps the state `idle` — no spinner for something nobody requested |
+| `enabled` | `boolean` | `true` | `false` keeps the state `idle`, no spinner for something nobody requested |
 | `deps` | `readonly unknown[]` | `[]` | Refetch triggers. Explicit, because an inline fetcher is a new identity every render |
 
 Returns `status`, `data`, `error`, `isRefreshing`, `isInitialLoading`, `refetch`.
@@ -74,7 +74,7 @@ unmount and on refetch.
 
 ### `<AsyncContent state={...}>{(data) => ...}</AsyncContent>`
 
-Renders the four states, once, correctly — and is where the accessibility work lives.
+Renders the four states, once, correctly; and is where the accessibility work lives.
 
 ```tsx
 <AsyncContent
@@ -91,7 +91,7 @@ Renders the four states, once, correctly — and is where the accessibility work
 |---|---|---|
 | `state` | `UseAsyncDataResult<T>` | Passed whole, so `isRefreshing` cannot be miswired to the skeleton |
 | `isEmpty` | `(data: T) => boolean` | Defaults to "array with no items" |
-| `isFiltered` | `boolean` | Changes the empty copy and CTA. **Explicit** — see below |
+| `isFiltered` | `boolean` | Changes the empty copy and CTA. **Explicit**; see below |
 | `onClearFilters` | `() => void` | Renders the *Clear filters* exit |
 | `itemNoun` | `string` | Used in announcements: "Loaded 25 findings" |
 | `skeletonCount` | `number` | Match your expected row count so the layout does not jump |
@@ -101,7 +101,7 @@ What it contributes:
 
 - **Status is announced.** Swapping a skeleton for a list is invisible to a screen reader.
   A polite live region reports "Loading findings", "Loaded 25 findings", "Failed to load".
-  Polite, not assertive — loading a list should not interrupt what the user is reading.
+  Polite, not assertive; loading a list should not interrupt what the user is reading.
 - **`aria-busy` during refresh**, because a background refetch keeps old rows on screen with
   nothing visual signalling staleness.
 - **Filtered-empty ≠ never-had-data.** "No findings match these filters" wants *clear filters*;
@@ -123,7 +123,7 @@ Returns `selected`, `selectedIds`, `count`, `isSelected`, `toggle`, `toggleAllVi
 
 **`visibleIds` is the page, and select-all acts on the page.** A control the user can see must
 only act on rows the user can see. Bulk-acting on 1,300 unseen rows because a header checkbox
-was ticked is how someone's afternoon gets ruined — and it was a real bug (#204) before this
+was ticked is how someone's afternoon gets ruined; and it was a real bug (#204) before this
 was structural. Selections on other pages are preserved, so paging away and back does not
 silently drop them.
 
@@ -141,14 +141,14 @@ silently drop them.
 </ListRows>
 ```
 
-`ListRow` applies `py-0` to cancel the base Card's `py-6` — 48px that no density token can
+`ListRow` applies `py-0` to cancel the base Card's `py-6`; 48px that no density token can
 reach. That was the actual cause of "Compact only saves 7%" in #172, and it had to be fixed
 file by file. Here it is applied once.
 
 `selectLabel` is required whenever `selectable` is set; a column of unlabelled checkboxes
 announces as "checkbox, checkbox, checkbox". Omitting it warns in development.
 
-`SelectAllVisible` handles `indeterminate`, which is a DOM property with no JSX attribute —
+`SelectAllVisible` handles `indeterminate`, which is a DOM property with no JSX attribute;
 the detail every hand-rolled copy skipped, leaving a half-selected page showing an empty box.
 
 ### `<StatCard>` / `<StatGrid>`
@@ -156,12 +156,12 @@ the detail every hand-rolled copy skipped, leaving a half-selected page showing 
 ```tsx
 <StatGrid columns={4}>
   <StatCard label="Open findings" value={String(count)} icon={AlertTriangle}
-            unknown={!lastScan} unknownHint="never scanned — posture unknown" />
+            unknown={!lastScan} unknownHint="never scanned, posture unknown" />
 </StatGrid>
 ```
 
 `unknown` is a first-class variant, not decoration. Across this codebase the distinction
-between *measured zero* and *not measured* keeps mattering — an unscanned repository is not a
+between *measured zero* and *not measured* keeps mattering; an unscanned repository is not a
 clean one (#174), an ungenerated AIBOM is not an absence of models (#190). A stat card that
 renders a confident `0` for missing data actively misinforms, so `unknown` renders an em dash
 and a reason instead.
@@ -182,7 +182,7 @@ The count is wrapped in `role="status"`: selecting rows by keyboard changes a nu
 screen-reader user otherwise never hears, so they cannot tell how many rows the next click
 affects.
 
-`destructive` marks a *specific* action, never the whole bar — #171 established that
+`destructive` marks a *specific* action, never the whole bar; #171 established that
 over-using the destructive colour drains it of meaning.
 
 ---
@@ -202,12 +202,12 @@ the single most commonly skipped a11y detail in list UIs.
 **Pass `isFiltered` honestly.** A filtered-empty state offering no way back to the unfiltered
 list is a dead end.
 
-**Prefer URL state to component state** for anything a user might link to — tabs, page, page
+**Prefer URL state to component state** for anything a user might link to, tabs, page, page
 size, filters. See `target-tabs.tsx`; the Admin page's `useState` tabs are the counter-example
 that cannot be linked to.
 
 **Shared values used by Server Components go in a plain module.** Never export a constant or
-function from a `"use client"` file and import it server-side — it becomes a client reference
+function from a `"use client"` file and import it server-side; it becomes a client reference
 stub, and for a constant it fails *silently*. This bit twice (#196, #204) and is now enforced
 by a lint rule (`toleman/no-client-value-import-in-server`).
 
@@ -215,7 +215,7 @@ by a lint rule (`toleman/no-client-value-import-in-server`).
 
 - **A one-off.** Wait for the third occurrence; two is a coincidence.
 - **Server Components.** `useAsyncData` is client-side. A Server Component should fetch
-  directly and render — see `targets/[id]/page.tsx`.
+  directly and render; see `targets/[id]/page.tsx`.
 - **Anything domain-aware.** If it needs to know what a finding is, it belongs in L3.
 
 ---
@@ -228,7 +228,7 @@ npm run test:lint-rules  # the custom ESLint rule's own tests
 npm run lint:boundary    # client/server import boundary gate
 ```
 
-Pure logic (`async-state.ts`) is tested as a reducer — exhaustively, no DOM. Components are
+Pure logic (`async-state.ts`) is tested as a reducer, exhaustively, no DOM. Components are
 tested with Testing Library, and **accessibility is asserted rather than described**: live
 region text, `aria-busy`, `indeterminate`, accessible names, and keyboard operability all have
 tests. A component whose docblock claims it is accessible, with nothing asserting it, is not.

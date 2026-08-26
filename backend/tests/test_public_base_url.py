@@ -2,8 +2,8 @@
 come from configuration, not from five hardcoded "localhost" literals.
 
 What the external evaluation hit:
-  * every link Toleman posted to GitHub -- the PR comment's "review in
-    Toleman", the "request ignore" link, the commit status target_url --
+  * every link Toleman posted to GitHub, the PR comment's "review in
+    Toleman", the "request ignore" link, the commit status target_url;
     pointed at http://localhost:3000, so no teammate on a shared repository
     could follow any of them;
   * CORS was pinned to that same single origin, so running the frontend on
@@ -35,7 +35,7 @@ def test_public_base_url_becomes_the_allowed_cors_origin():
 
 def test_trailing_slash_is_normalised_away():
     # "https://x.example.com/" would never match a browser Origin header,
-    # which sends no trailing slash -- a silent, confusing CORS failure.
+    # which sends no trailing slash; a silent, confusing CORS failure.
     s = _settings(public_base_url="https://toleman.example.com/")
     assert s.cors_allow_origins == ["https://toleman.example.com"]
 
@@ -77,7 +77,7 @@ def test_pr_guardrail_links_are_derived_from_settings():
     object while every module that did `from app.core.config import settings`
     keeps the old one, so a later test monkeypatching the new object silently
     has no effect on them. That leaked across files and broke
-    test_security.py's default-secret check in CI -- a real cost, for a
+    test_security.py's default-secret check in CI; a real cost, for a
     weaker assertion than this one.
     """
     from app.core import pr_guardrail_executor as executor
@@ -100,7 +100,7 @@ def test_no_hardcoded_localhost_remains_in_backend_source():
     invisible in review.
 
     AST-based rather than a grep so it flags real string *values* and ignores
-    prose -- both this codebase's comments and its docstrings legitimately
+    prose; both this codebase's comments and its docstrings legitimately
     discuss the localhost problem (see core/pipeline_workflow.py, which warns
     an operator not to point TOLEMAN_API_URL at localhost). A line-based
     check would either flag that documentation or have to be loosened until
@@ -130,7 +130,7 @@ def test_no_hardcoded_localhost_remains_in_backend_source():
                 continue
             for line in node.value.splitlines():
                 # A generated-file template can legitimately *warn about*
-                # localhost in its own comment lines -- pipeline_workflow.py's
+                # localhost in its own comment lines, pipeline_workflow.py's
                 # workflow template tells the operator not to set
                 # TOLEMAN_API_URL to localhost. That is the guidance working,
                 # not the bug.
@@ -140,6 +140,6 @@ def test_no_hardcoded_localhost_remains_in_backend_source():
                     offenders.append(f"{path.relative_to(root)}:{node.lineno}: {line.strip()!r}")
 
     assert not offenders, (
-        "hardcoded localhost URL(s) reintroduced -- use settings.public_base_url / "
+        "hardcoded localhost URL(s) reintroduced; use settings.public_base_url / "
         "settings.public_api_url instead:\n" + "\n".join(offenders)
     )

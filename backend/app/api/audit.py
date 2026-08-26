@@ -44,7 +44,7 @@ class AuditLogResponse(BaseModel):
 
 def _parse_date_bound(value: str | None, *, end_of_day: bool) -> datetime | None:
     """Parse a plain 'YYYY-MM-DD' (or full ISO) date-range boundary from a
-    query param. Never raises on a malformed value -- an unparseable filter
+    query param. Never raises on a malformed value; an unparseable filter
     is simply ignored rather than 500ing the whole feed."""
     if not value:
         return None
@@ -69,7 +69,7 @@ def audit_log(
 ) -> AuditLogResponse:
     """Global audit trail: finding triage transitions + scan runs, real DB
     records. Supports the same filter-bar + real-pagination pattern as
-    findings.list_findings (issue #123) -- date range, event type, actor.
+    findings.list_findings (issue #123), date range, event type, actor.
     """
     findings = {f.id: f for f in session.exec(select(Finding)).all()}
     targets = {t.id: t for t in session.exec(select(Target)).all()}
@@ -137,7 +137,7 @@ def audit_log(
             })
 
     if event_type in (None, "", "scan"):
-        # Scans are always actor="system" -- an explicit non-"system" actor
+        # Scans are always actor="system"; an explicit non-"system" actor
         # filter should exclude scan events entirely rather than silently
         # ignoring the filter and returning them anyway.
         if not actor or actor == "system":
@@ -173,7 +173,7 @@ def audit_log(
 @router.get("/actors")
 def list_actors(session: Session = Depends(get_session)) -> list[str]:
     """Distinct actors across the triage audit trail, for populating the
-    Audit Log actor filter -- same 'real facet from real data' pattern as
+    Audit Log actor filter; same 'real facet from real data' pattern as
     findings.list_tool_facets."""
     rows = session.exec(select(FindingStateLog.actor).distinct()).all()
     return sorted(rows)

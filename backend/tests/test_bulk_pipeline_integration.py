@@ -1,4 +1,4 @@
-"""Tests for issue #68: multi-select "Add Pipeline" -- the bulk wrapper
+"""Tests for issue #68: multi-select "Add Pipeline", the bulk wrapper
 around #66's per-target pipeline integration mechanism
 (POST /api/targets/{id}/pipeline-integrate).
 
@@ -13,7 +13,7 @@ Same two-layer approach as tests/test_celery_offload.py (#59):
      monkeypatch only open_pipeline_pr (the actual GitHub-API boundary,
      same as #66's own tests monkeypatch it), proving the full
      dispatch -> sequential per-item processing -> batch "completed" path
-     genuinely works -- including the already-integrated skip and the
+     genuinely works; including the already-integrated skip and the
      per-item failure isolation (#68's scope requirements).
 """
 from unittest.mock import MagicMock
@@ -255,7 +255,7 @@ def eager_celery():
 
 def test_batch_processes_all_targets_and_reports_mixed_outcomes(client, engine, monkeypatch, eager_celery):
     """One target already integrated (skipped, not re-run), one succeeds,
-    one fails -- proves the batch finishes "completed" with an accurate
+    one fails; proves the batch finishes "completed" with an accurate
     per-item breakdown instead of stopping/crashing on the failure."""
     ws = _make_workspace(engine)
     already_id = _make_target(engine, ws, name="already", pipeline_integrated=True)

@@ -26,7 +26,7 @@ export default async function TargetsPage({
 
   // Issue #174: scan history + open-finding counts alongside the inventory,
   // so a Repo Sync card can say which repos actually need attention instead
-  // of just naming them. Both summaries degrade to {} on failure -- a card
+  // of just naming them. Both summaries degrade to {} on failure, a card
   // then renders without its metadata line rather than failing the page.
   const [targetsResult, githubStatus, groups, scanSummary, targetSummary] = await Promise.all([
     settleOrNull(api.targets({ group_id })),
@@ -49,7 +49,7 @@ export default async function TargetsPage({
 
       {/* Issue #125: integration admin config (connect button, webhook status,
           org sync controls) collapsed to a one-line summary by default so it
-          doesn't push the actual target inventory below the fold -- expand to
+          doesn't push the actual target inventory below the fold, expand to
           reach the full ConnectGithubCard. */}
       <IntegrationSummary
         installed={githubStatus.installed}

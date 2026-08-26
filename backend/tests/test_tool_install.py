@@ -3,7 +3,7 @@
 Most of these are about what the endpoint *refuses*. Installing software in
 response to an HTTP request is an obvious RCE surface, and the only reason it
 is defensible here is that the caller picks a registry key rather than naming
-a package -- so the tests that matter are the ones proving there is no path
+a package; so the tests that matter are the ones proving there is no path
 from a request to an arbitrary package, and that a non-admin cannot reach it
 at all.
 

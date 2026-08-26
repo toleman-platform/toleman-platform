@@ -9,7 +9,7 @@ from app.core.crypto import (
     encrypt_secret,
     reseed_encryption_key_canary,
 )
-from app.models.models import EncryptionKeyCanary  # noqa: F401 -- registers the table on SQLModel.metadata
+from app.models.models import EncryptionKeyCanary  # noqa: F401, registers the table on SQLModel.metadata
 
 
 @pytest.fixture()
@@ -63,7 +63,7 @@ def test_decrypt_with_wrong_key_raises():
             decrypt_secret(ciphertext)
             assert False, "expected decrypt_secret to raise ValueError"
         except ValueError as exc:
-            # SecretDecryptionError is a ValueError subclass -- every existing
+            # SecretDecryptionError is a ValueError subclass; every existing
             # `except ValueError` call site keeps working unchanged, but
             # callers that want to react specifically to a key mismatch can
             # now catch SecretDecryptionError by name.
@@ -117,7 +117,7 @@ def test_reseed_encryption_key_canary_restores_health(session):
     try:
         assert check_encryption_key_health(session) is False
         # Admin has reconnected every affected integration under the new
-        # (current) key -- reseed marks it as the new source of truth.
+        # (current) key, reseed marks it as the new source of truth.
         reseed_encryption_key_canary(session)
         assert check_encryption_key_health(session) is True
     finally:
@@ -134,7 +134,7 @@ def select_canary():
 def test_pre_rename_canary_still_reports_healthy(session):
     """Rikugan -> Toleman rename: a database seeded before the rename holds a
     canary encrypting the *old* plaintext. The key itself has not changed, so
-    the health check must not report a mismatch -- otherwise the rename alone
+    the health check must not report a mismatch; otherwise the rename alone
     would fire the CRITICAL "PLATFORM_ENCRYPTION_KEY MISMATCH" alert on every
     existing deployment and send operators to reconnect working integrations.
     """

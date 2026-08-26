@@ -20,13 +20,13 @@ function duration(entry: ScanHistoryEntry): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-// (#276) Per-target scan history -- trend over time, rather than the single
+// (#276) Per-target scan history, trend over time, rather than the single
 // "Last scan" timestamp the overview already shows.
 //
 // Reads GET /api/scans/history, which is deliberately a separate endpoint
 // from /api/scans/summary: that one aggregates to at most one row per
 // (target, tool) so list pages never pull a year of history. Here the
-// individual rows are the point, so they are returned -- scoped to one
+// individual rows are the point, so they are returned; scoped to one
 // target and paginated, which keeps the property that made the aggregation
 // worth doing in the first place.
 export async function TargetHistory({ targetId }: { targetId: number }) {

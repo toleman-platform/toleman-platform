@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 
 // Shared chrome around every dashboard widget (issue #69): title/icon in
 // view mode, plus move-up/move-down/remove controls in edit mode. Move
-// buttons are a deliberate, real reorder implementation -- not a stand-in
-// for drag-and-drop -- since they're simpler to get genuinely working than
+// buttons are a deliberate, real reorder implementation (not a stand-in
+// for drag-and-drop) since they're simpler to get genuinely working than
 // a drag library integration and are just as functional for reordering a
 // short widget list.
 export function WidgetShell({

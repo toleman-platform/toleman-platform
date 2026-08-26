@@ -4,11 +4,11 @@ Both surfaces held "is this job running" in local React state, so navigating
 away and back offered a fresh, clickable button for a job still running on
 the worker:
 
-  * PR History -- "Scan This PR" reset to clickable while the API still
+  * PR History, "Scan This PR" reset to clickable while the API still
     reported the scan `running`, and the audit-log card *lower on the same
     page* correctly showed `running`. Clicking again starts a duplicate
     clone-and-scan.
-  * Tool Marketplace -- the install spinner vanished and the card offered
+  * Tool Marketplace, the install spinner vanished and the card offered
     "Install" again mid-install.
 
 On-Demand Scan already did this correctly by reading GET /api/scans/active
@@ -146,7 +146,7 @@ def test_settled_pr_scans_are_not_reported_as_active(client, engine):
 def test_a_stale_running_pr_scan_is_swept_not_reported(client, engine):
     """A worker that died mid-scan leaves the row "running" forever. Reporting
     it as active renders as permanently in flight, which is indistinguishable
-    from a hung platform -- and keeps the button disabled forever."""
+    from a hung platform; and keeps the button disabled forever."""
     target_id, _ = _make_target(engine)
     scan_id = _pr_scan(engine, target_id, created_at=datetime.utcnow() - timedelta(hours=3))
     client, _ = _login(client, engine)
@@ -155,7 +155,7 @@ def test_a_stale_running_pr_scan_is_swept_not_reported(client, engine):
 
     with Session(engine) as session:
         scan = session.get(PRGuardrailScan, scan_id)
-        # Its own status vocabulary, not the generic "failed" -- this value
+        # Its own status vocabulary, not the generic "failed"; this value
         # is what the GitHub commit status is derived from.
         assert scan.status == PRGuardrailStatus.ERROR
         assert scan.completed_at is not None
@@ -253,5 +253,5 @@ def test_active_installs_are_admin_only(client, engine):
     client, _ = _login(client, engine, role=UserRole.DEVELOPER)
 
     # Installing mutates the running environment, so even knowing what is
-    # installing is admin-scoped -- same gate as the install endpoint itself.
+    # installing is admin-scoped; same gate as the install endpoint itself.
     assert client.get("/api/tools/installs/active").status_code == 403

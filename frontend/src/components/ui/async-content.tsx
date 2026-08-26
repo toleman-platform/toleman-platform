@@ -12,8 +12,8 @@ import type { UseAsyncDataResult } from "@/hooks/use-async-data";
 /**
  * Renders the four states of an async request, once, correctly (issue #210).
  *
- * Four files hand-rolled the same ladder -- `if (loading) ... if (error) ...
- * if (!data) ... if (empty) ...` -- and each got a slightly different subset
+ * Four files hand-rolled the same ladder, `if (loading) ... if (error) ...
+ * if (!data) ... if (empty) ...`, and each got a slightly different subset
  * right. Concentrating it here means the accessibility work is done once
  * rather than four times badly.
  *
@@ -166,14 +166,14 @@ export function AsyncContent<T>({
 
     return (
       <>
-        {/* A refetch that failed keeps the stale rows -- but says so, rather
+        {/* A refetch that failed keeps the stale rows; but says so, rather
             than presenting them as current. */}
         {status === "error" && (
           <div
             role="alert"
             className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
           >
-            <span>Showing the last results — refresh failed: {error?.message}</span>
+            <span>Showing the last results, refresh failed: {error?.message}</span>
             <Button size="sm" variant="outline" className="h-6 text-xs" onClick={refetch}>
               Retry
             </Button>

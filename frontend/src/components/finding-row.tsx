@@ -23,7 +23,7 @@ import { CriticalityChip } from "@/components/criticality-chip";
 
 // Issue #117: the risk/priority score was a bare number (360, 320, 240...)
 // with no explanation of what it meant. Mirrors the real formula in
-// backend/app/core/scoring.py::compute_priority_score verbatim -- severity
+// backend/app/core/scoring.py::compute_priority_score verbatim, severity
 // weight (1-5) x target criticality weight (1-5) x 40, capped at 1000, then
 // floored to 900 for a CISA KEV-listed CVE or bumped +160 when EPSS predicts
 // >50% real-world exploit probability. Kept in one place so the tooltip
@@ -34,7 +34,7 @@ const RISK_SCORE_EXPLANATION =
   "Raised to a floor of 900 for CISA KEV-listed (known exploited) vulnerabilities, " +
   "or boosted when EPSS predicts >50% real-world exploit probability in the next 30 days. " +
   // (UI-04) An external review found every High finding rendering an
-  // identical 320/1000 and concluded the column was decorative. It wasn't --
+  // identical 320/1000 and concluded the column was decorative. It wasn't;
   // the repo scanned was a single target at one criticality weight, so the
   // formula genuinely collapses to a constant. Saying so is the difference
   // between "this feature is broken" and "this needs more than one repo".
@@ -64,13 +64,13 @@ function RiskScore({ score }: { score: number }) {
 const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
 // Issue #70: SLA countdown/violation badge. sla_days is null when no
-// SlaRule applies to this finding (group/severity or workspace default) --
+// SlaRule applies to this finding (group/severity or workspace default),
 // render nothing in that case rather than a fabricated countdown.
 // (#246) Whether this can be closed today, next to how bad it is.
 //
 // "unknown" renders nothing at all rather than a grey "unknown" chip. Most
-// findings are unknown -- every SAST and secrets finding carries no CVE to
-// look up -- so a chip on each one would be pure noise, and worse, it would
+// findings are unknown (every SAST and secrets finding carries no CVE to
+// look up) so a chip on each one would be pure noise, and worse, it would
 // read as a finding *about* the finding rather than an absence of data. The
 // filter still exposes the state for anyone who wants to hunt for it.
 function FixabilityBadge({ finding }: { finding: Finding }) {
@@ -107,7 +107,7 @@ function SlaBadge({ finding }: { finding: Finding }) {
   const deadline = firstSeen + finding.sla_days * 24 * 60 * 60 * 1000;
   // Captured once at mount rather than read during every render: the
   // countdown is day-granular, so re-reading the clock changes nothing a user
-  // can see, and a render that depends on the current time is impure -- two
+  // can see, and a render that depends on the current time is impure; two
   // renders of the same finding could disagree.
   const msLeft = deadline - now;
   const daysLeft = Math.ceil(Math.abs(msLeft) / (24 * 60 * 60 * 1000));
@@ -135,7 +135,7 @@ function SlaBadge({ finding }: { finding: Finding }) {
   );
 }
 
-// GET /api/findings/{id}/enrichment (issue #71) -- real CVE/CWE/CVSS/fix-
+// GET /api/findings/{id}/enrichment (issue #71), real CVE/CWE/CVSS/fix-
 // version data sourced from NVD + OSV.dev, no AI provider involved. Lazily
 // fetched the first time a finding's details are expanded, then cached in
 // component state so re-expanding doesn't re-hit the network.
@@ -169,7 +169,7 @@ function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
     return <p className="text-xs text-destructive">{error}</p>;
   }
   if (!enrichment || !enrichment.cve_id) {
-    // No CVE on this finding (SAST/secrets finding) -- nothing to show here.
+    // No CVE on this finding (SAST/secrets finding); nothing to show here.
     return null;
   }
 
@@ -181,7 +181,7 @@ function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
     <div className="mt-3 rounded-md border border-border bg-secondary/40 p-3">
       <div className="mb-2 flex items-center gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Vulnerability Details</span>
-        <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground" title="Sourced from public data (NVD/OSV.dev) -- no AI involved">
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground" title="Sourced from public data (NVD/OSV.dev), no AI involved">
           no AI · MITRE/NVD/OSV.dev
         </Badge>
       </div>
@@ -271,9 +271,9 @@ export function FindingRow({
 }: {
   finding: Finding;
   repoUrl?: string;
-  // Issue #117: target name/criticality label (Target.label -- "Prod",
+  // Issue #117: target name/criticality label (Target.label: "Prod",
   // "Internal", "Dev", or a custom value), rendered as a CriticalityChip
-  // next to the target it belongs to. Optional -- callers without target
+  // next to the target it belongs to. Optional, callers without target
   // context (e.g. the onboarding wizard's finding preview) simply omit it
   // and no chip/target line renders.
   targetName?: string;
@@ -303,7 +303,7 @@ export function FindingRow({
   return (
     // `py-0` cancels the base Card's `py-6`. Without it every row carried
     // 48px of padding that no density token could reach, on top of
-    // CardContent's own `--density-row-py` -- which is why switching to
+    // CardContent's own `--density-row-py`; which is why switching to
     // Compact only ever moved about 7% of the row height (#172). The token
     // now actually governs the row.
     <Card
@@ -367,7 +367,7 @@ export function FindingRow({
               </div>
               {/* Issue #172: these two secondary lines each take a full line
                   in comfortable density and collapse onto one wrapping line
-                  in compact -- see .density-stack in globals.css. */}
+                  in compact; see .density-stack in globals.css. */}
               <div className="density-stack">
                 <div className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
                   <span className="truncate">

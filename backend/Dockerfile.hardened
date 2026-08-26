@@ -1,4 +1,4 @@
-# Hardened runtime stage on gcr.io/distroless/cc-debian12 -- no shell, no
+# Hardened runtime stage on gcr.io/distroless/cc-debian12, no shell, no
 # package manager, minimal attack surface. Everything is built normally in a
 # python:3.12-slim `builder` stage (identical to the original single-stage
 # Dockerfile), then only the specific files runtime needs are copied into
@@ -8,36 +8,36 @@
 # scan both run successfully inside the built image (not just "docker build
 # succeeds"). Trivy self-scan, CRITICAL+HIGH only: 135 -> 75 vulnerabilities
 # vs. the original image, entirely from dropping the Debian OS-package layer
-# (60 CVEs) -- the remaining 75 are in Python itself and the Gitleaks/gosec/
+# (60 CVEs); the remaining 75 are in Python itself and the Gitleaks/gosec/
 # Trivy binaries' own bundled dependency versions, unrelated to base-image
 # choice. Image size 1.22GB -> 1.04GB. NOT yet wired into docker-compose.yml
-# or CI as the default -- available as an alternative, promote deliberately.
+# or CI as the default, available as an alternative, promote deliberately.
 #
 # Why distroless/cc-debian12 and not Chainguard: Chainguard's free tier only
 # ships a rolling `latest` tag (Python 3.14 as of this writing), and this
 # project is pinned to 3.12 exactly (3.14 breaks pydantic-core/psycopg wheel
-# builds -- see the original Dockerfile). Pinned Chainguard versions require
+# builds; see the original Dockerfile). Pinned Chainguard versions require
 # a paid Console subscription. distroless/cc-debian12 was chosen over the
 # plainer distroless/base-debian12 because it already bundles libstdc++/
 # libgcc_s (needed by a couple of Pillow/greenlet .so's) alongside glibc,
-# openssl, and ca-certificates -- one dependency fewer to hand-vendor.
+# openssl, and ca-certificates; one dependency fewer to hand-vendor.
 #
 # The remaining gap, and it's bigger than it first looked: the bare `git`
 # binary itself only needs pcre2/z/c, but `clone_repo()` clones over https,
-# which git always shells out to a separate helper for --
+# which git always shells out to a separate helper for;
 # /usr/lib/git-core/git-remote-https. THAT binary links the full libcurl-
 # gnutls stack (TLS, HTTP/2, SSH, RTMP, brotli, punycode/IDN, GSSAPI/LDAP/
-# SASL for optional auth schemes this project doesn't use) -- 28 extra
+# SASL for optional auth schemes this project doesn't use); 28 extra
 # shared libraries distroless doesn't ship, not the ~13 an initial pass over
 # the plain `git` binary suggested. Gitleaks/Trivy/gosec/semgrep-core are
-# still all static binaries -- zero extra shared-library dependencies,
+# still all static binaries, zero extra shared-library dependencies,
 # confirmed via `ldd` (see #158).
 #
 # MUST be pinned to -bookworm (Debian 12), not the floating `python:3.12-slim`
-# tag -- that now resolves to Debian 13 "trixie" (glibc 2.41), while
+# tag; that now resolves to Debian 13 "trixie" (glibc 2.41), while
 # distroless/cc-debian12 is glibc ~2.36. A binary/interpreter built against
 # the newer glibc fails at runtime in the older one with
-# `version 'GLIBC_2.38' not found` -- caught live in this exact spike.
+# `version 'GLIBC_2.38' not found`, caught live in this exact spike.
 # distroless has no debian13 variant yet, so the builder pins down to match
 # the runtime, not the other way around.
 FROM python:3.12-slim-bookworm AS builder
@@ -107,7 +107,7 @@ RUN set -eux; \
     trivy --version
 
 # This comment used to say the rate-limited api.github.com lookup in gosec's
-# installer was unavoidable -- "nothing here can raise the limit". True, but
+# installer was unavoidable; "nothing here can raise the limit". True, but
 # the limit only applies because the script asks the API to resolve a
 # release we already know the exact URL of. The first GHCR publish run hit
 # it again and failed the build; downloading the asset directly removes the
@@ -127,7 +127,7 @@ RUN set -eux; \
 
 #
 # `setuptools<81` is load-bearing, not hygiene. Nothing here asks for
-# setuptools directly -- semgrep's pinned opentelemetry-instrumentation
+# setuptools directly, semgrep's pinned opentelemetry-instrumentation
 # (0.46b0) declares `setuptools>=16.0`, so pip installs the newest one.
 # setuptools 82.0.0 removed `pkg_resources`, which that same module imports
 # at line 4 of its dependencies.py, so an unconstrained resolve builds an
@@ -142,13 +142,13 @@ RUN set -eux; \
 #
 # The floor (#239's transitive-dependency scan job found this) matters just
 # as much as the ceiling: nothing pinned a minimum, so an unconstrained
-# resolve was free to land anywhere below 81 -- observed landing on 70.3.0,
+# resolve was free to land anywhere below 81; observed landing on 70.3.0,
 # which carries CVE-2025-47273 (HIGH, path traversal in PackageIndex).
 # 78.1.1 is the real fix version and stays comfortably under the
 # pkg_resources ceiling, so both constraints hold at once.
 #
 # One setuptools issue in the same scan, CVE-2026-59890 (MEDIUM, MANIFEST.in
-# exclusion bypass via Unicode normalization), needs >=83.0.0 -- above the
+# exclusion bypass via Unicode normalization), needs >=83.0.0; above the
 # pkg_resources ceiling, so it stays open until that ceiling can be lifted.
 # Not worked around here: forcing it past 81 would silently break semgrep,
 # which is a worse outcome than one open MEDIUM with a documented reason.
@@ -164,22 +164,22 @@ COPY . .
 FROM gcr.io/distroless/cc-debian12 AS runtime
 
 # Python interpreter + its shared library (python:3.12-slim installs both
-# under /usr/local -- not part of the OS package manager, so nothing here
+# under /usr/local, not part of the OS package manager, so nothing here
 # depends on apt/dpkg being present at runtime).
 COPY --from=builder /usr/local/bin/python3.12 /usr/local/bin/python3.12
 COPY --from=builder /usr/local/lib/libpython3.12.so* /usr/local/lib/
 COPY --from=builder /usr/local/lib/python3.12 /usr/local/lib/python3.12
 
-# Native scanner binaries -- Gitleaks/Trivy/gosec confirmed static (no .so
+# Native scanner binaries, Gitleaks/Trivy/gosec confirmed static (no .so
 # deps) via ldd. `semgrep` itself is pip's generated console-script (a
 # `#!/usr/local/bin/python3.12` shebang wrapper around the semgrep package
-# already under site-packages) -- easy to miss since runner.py invokes it by
+# already under site-packages), easy to miss since runner.py invokes it by
 # bare name like the other three, but it isn't a native binary like them.
 COPY --from=builder /usr/local/bin/gitleaks /usr/local/bin/gitleaks
 COPY --from=builder /usr/local/bin/trivy /usr/local/bin/trivy
 COPY --from=builder /usr/local/bin/gosec /usr/local/bin/gosec
 # `semgrep`'s native CLI binary shells out to a second pip console-script,
-# `pysemgrep`, by bare name via PATH for most real functionality -- missing
+# `pysemgrep`, by bare name via PATH for most real functionality; missing
 # it fails with "execvp pysemgrep: No such file or directory" despite
 # `semgrep --version` on its own looking like it might work.
 COPY --from=builder /usr/local/bin/semgrep /usr/local/bin/semgrep
@@ -187,7 +187,7 @@ COPY --from=builder /usr/local/bin/pysemgrep /usr/local/bin/pysemgrep
 
 # git + git-remote-https + the ~28 shared libraries the https helper's
 # libcurl-gnutls stack pulls in transitively (TLS/crypto, HTTP/2, SSH,
-# GSSAPI/LDAP/SASL, brotli, IDN) -- see the note above `builder` for why
+# GSSAPI/LDAP/SASL, brotli, IDN); see the note above `builder` for why
 # this is much larger than a plain `ldd git` would suggest.
 COPY --from=builder /usr/bin/git /usr/bin/git
 COPY --from=builder /usr/lib/git-core /usr/lib/git-core
@@ -234,6 +234,6 @@ ENV PATH="/usr/local/bin:$PATH" \
 
 EXPOSE 8000
 
-# No shell to interpret an entrypoint script or a shebang line -- invoke the
+# No shell to interpret an entrypoint script or a shebang line, invoke the
 # copied interpreter directly as a module, exec-form only (already is).
 CMD ["python3.12", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -9,7 +9,7 @@ import { ConnectGithubCard } from "@/components/connect-github-card";
 // and above the fold on every visit, forcing daily users triaging the target
 // inventory to scroll past integration plumbing first. Collapsed into a
 // one-line summary strip by default; the full ConnectGithubCard (unchanged,
-// reused verbatim -- not re-implemented) only mounts once expanded, so its
+// reused verbatim; not re-implemented) only mounts once expanded, so its
 // own status fetch/webhook-secret state doesn't run until someone actually
 // opens it.
 export function IntegrationSummary({

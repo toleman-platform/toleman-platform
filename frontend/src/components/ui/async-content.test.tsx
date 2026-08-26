@@ -5,7 +5,7 @@ import { AsyncContent } from "./async-content";
 
 /**
  * Accessibility asserted rather than claimed. Every announcement, aria-busy
- * state and keyboard path below is checked against a real DOM -- a component
+ * state and keyboard path below is checked against a real DOM, a component
  * that merely *says* it is accessible in a docblock is not.
  */
 type State = React.ComponentProps<typeof AsyncContent<string[]>>["state"];

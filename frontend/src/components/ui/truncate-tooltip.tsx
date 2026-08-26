@@ -4,7 +4,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-// Issue #117: reusable truncation-with-tooltip affordance -- any place a
+// Issue #117: reusable truncation-with-tooltip affordance; any place a
 // long label gets clipped with CSS `truncate` should render it through this
 // instead of a bare `<span className="truncate">`, so hovering (or focusing,
 // for keyboard users) reveals the full text instead of the value silently

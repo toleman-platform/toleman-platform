@@ -4,7 +4,7 @@ import { EnforcementMode } from "@/lib/api";
 
 // Issue #62: shared Inherit/Block/Alert/Disabled select, reused on the
 // target detail page, the group admin UI, and the workspace-level setting.
-// `value` is the raw override (null = "Inherit") -- never the resolved
+// `value` is the raw override (null = "Inherit"); never the resolved
 // effective mode, which is display-only (see EnforcementModeLabel below).
 export function EnforcementModeSelect({
   value,
@@ -48,11 +48,11 @@ const SOURCE_LABEL: Record<string, string> = {
   target: "set directly on this target",
   group: "inherited from a group",
   workspace: "inherited from workspace",
-  default: "default — nothing configured",
+  default: "default; nothing configured",
 };
 
 // Legibility label for the *effective* resolved mode (issue #62): "Block
-// (inherited from workspace)" -- not just settable, but visible where it
+// (inherited from workspace)", not just settable, but visible where it
 // actually came from.
 export function EnforcementModeLabel({
   mode,

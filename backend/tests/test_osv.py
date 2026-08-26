@@ -38,7 +38,7 @@ def test_successful_parse_of_realistic_response_shape(mocker):
     assert result is not None
     assert result["osv_id"] == "CVE-2020-28483"
     # extracted_events (human-readable "1.7.0") preferred over the raw GIT
-    # commit-hash event -- see test_extracted_events_preferred_... below.
+    # commit-hash event; see test_extracted_events_preferred_... below.
     assert result["fixed_versions"] == [
         {"package": "github.com/gin-gonic/gin", "ecosystem": "Go", "fixed": "1.7.0"}
     ]
@@ -49,7 +49,7 @@ def test_extracted_events_preferred_over_raw_git_commit_hash(mocker):
     """Real-world shape (verified live against CVE-2020-28483 on api.osv.dev):
     CVEs auto-converted from NVD's CPE data express GIT-type ranges whose raw
     "fixed" event is a commit hash. OSV's own database_specific.extracted_events
-    carries the human-readable version derived from that commit -- prefer it."""
+    carries the human-readable version derived from that commit; prefer it."""
     payload = {
         "id": "CVE-2020-28483",
         "affected": [

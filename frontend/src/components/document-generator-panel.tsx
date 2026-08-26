@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
  * now build on, matching the design board's `doc-gen` panel:
  *
  *  - "stacked" layout: numbered vertical steps (SBOM, API Discovery,
- *    PR History's repo/scope picker) -- `DocGenStep` for each field.
+ *    PR History's repo/scope picker), `DocGenStep` for each field.
  *  - "inline" layout: a single horizontal row (Reports' own pre-existing
  *    best-in-app shape, kept close to as-is per the design board) --
  *    `DocGenField` for each field.
@@ -135,14 +135,14 @@ export function DocumentGeneratorPanel({
   layout?: "stacked" | "inline";
   steps: React.ReactNode[];
   /** Omit both to render the panel purely as a scope filter with no
-   * generate action -- e.g. PR History's repo picker doesn't produce a
+   * generate action, e.g. PR History's repo picker doesn't produce a
    * downloadable document, it filters the table rendered below it. */
   generateLabel?: string;
   onGenerate?: () => void;
   generating?: boolean;
   generateDisabled?: boolean;
   /** Trailing content below the generate button (stacked) or after it
-   * (inline) -- e.g. SBOM's secondary "Export" action, which downloads
+   * (inline), e.g. SBOM's secondary "Export" action, which downloads
    * already-persisted data independent of the "Generate" scan trigger. */
   extra?: React.ReactNode;
   className?: string;

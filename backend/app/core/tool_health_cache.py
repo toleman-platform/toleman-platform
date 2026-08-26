@@ -2,12 +2,12 @@
 pass, #221).
 
 `GET /api/tools/registry` ran a live subprocess `--version` check for every
-registry entry on every request -- fine at the size the registry started at,
+registry entry on every request, fine at the size the registry started at,
 but the endpoint's own comment already quantified the cost: ~2.06s
 parallelized, dominated by semgrep paying full Python interpreter startup.
 That is paid by every admin on every load of the marketplace page, for
 information that only changes when a tool is installed, removed, or
-upgraded -- not on every page view.
+upgraded; not on every page view.
 
 Same Redis-first / in-process-fallback shape as app.core.rate_limit, for the
 same reason: this backend can run as a single process (an in-memory cache is
@@ -15,15 +15,15 @@ enough) or as multiple worker processes (`uvicorn --workers N`, or
 separately from the Celery worker that actually runs installs), and only
 Redis is visible across all of them. The Celery worker process that runs a
 tool install is a *different process* than the one serving this GET, so an
-in-process-only cache could never be invalidated by an install completing --
+in-process-only cache could never be invalidated by an install completing;
 this specifically has to go through the shared backend.
 
 TTL is short (30s) rather than the minutes-scale TTL used elsewhere in this
 codebase for genuinely stable data (CVE enrichment, EPSS/KEV). A stale
 "not installed" for up to 30 seconds after someone else changes host state
 outside this app entirely (e.g. `brew install trivy` by hand) is an
-acceptable cost; the case that matters -- an install triggered *through this
-UI* -- is handled correctly by invalidating on completion (`invalidate`,
+acceptable cost; the case that matters (an install triggered *through this
+UI*) is handled correctly by invalidating on completion (`invalidate`,
 called from app.core.tool_install), so the specific action a user just took
 is never the one left stale.
 """
@@ -46,7 +46,7 @@ _KEY_PREFIX = "toolhealth:"
 # not "what did the web process see just now" but "what did the process that
 # actually runs scans see when it last installed this tool".
 #
-# The web process cannot re-derive this -- that is the entire bug -- so it
+# The web process cannot re-derive this (that is the entire bug) so it
 # must not expire on the 30s probe cadence, or a successfully installed tool
 # would flip back to "not installed" half a minute later. It is refreshed on
 # every install and, being Redis-backed, is lost on a Redis restart, which is
@@ -166,7 +166,7 @@ def invalidate(tool: str) -> None:
 
     Called from app.core.tool_install once an install settles, so the exact
     action a user just took through this UI is never the one still showing
-    stale data -- everything else is left to expire on its own TTL.
+    stale data; everything else is left to expire on its own TTL.
     """
     client = _get_redis()
     if client is not None:

@@ -10,7 +10,7 @@ writable by the process it aborts *before scanning anything*:
 
 `run_tool` never looked at the return code. Empty stdout hit the
 "no findings" default, so a file containing a live-format AWS key came back
-as `[]` -- a clean pass, with a green commit status, from a scanner that had
+as `[]`; a clean pass, with a green commit status, from a scanner that had
 examined nothing.
 
 Two fixes, both pinned here: check every tool's exit code, and stop using
@@ -20,7 +20,7 @@ The rule is the one this codebase keeps restating:
 
     ran, found nothing   a real clean result
     did not run          ToolNotApplicable (#243)
-    broke                ToolExecutionError -- the check is unreliable
+    broke                ToolExecutionError; the check is unreliable
 """
 
 import json
@@ -63,7 +63,7 @@ class TestExitCodeIsChecked:
         assert out == {"results": [{"x": 1}]}
 
     def test_zero_exit_with_no_output_is_still_clean(self, monkeypatch, tmp_path):
-        """The legitimate empty case must keep working -- this fix must not
+        """The legitimate empty case must keep working; this fix must not
         turn quiet successes into failures."""
         self._fake_proc(monkeypatch, 0, stdout="")
         assert runner.run_tool("trivy", tmp_path) == {}
@@ -98,7 +98,7 @@ class TestGitleaksReportPath:
 
     def test_missing_report_after_success_is_an_error_not_a_pass(self, monkeypatch, tmp_path):
         """Exited 0 but wrote nothing. gitleaks writes a report on every real
-        run, so this means something went wrong -- it is not evidence of a
+        run, so this means something went wrong; it is not evidence of a
         clean repo."""
         class P:
             returncode, stdout, stderr = 0, "", ""

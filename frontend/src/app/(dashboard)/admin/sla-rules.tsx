@@ -13,7 +13,7 @@ import { SEVERITY_COLOR, SEVERITY_ORDER } from "@/lib/severity";
 import { Building2, Clock, Timer, Trash2 } from "lucide-react";
 
 // Issue #70: workspace-scoped SLA (days-to-fix) rules, keyed by severity and
-// optionally a repo Group (#61) -- null group means "workspace default",
+// optionally a repo Group (#61); null group means "workspace default",
 // applied to targets with no group-specific rule for that severity. Mirrors
 // the Groups tab's workspace-picker-then-CRUD-list shape (#61/#62).
 export function SlaRules() {

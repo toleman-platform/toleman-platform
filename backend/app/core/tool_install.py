@@ -10,7 +10,7 @@ command comes from*:
 
   * The caller supplies a **registry key**, not a package. `resolve_package`
     looks the key up in TOOL_REGISTRY and returns None for anything absent.
-    There is no code path from a request body to a package name -- the set
+    There is no code path from a request body to a package name; the set
     of installable packages is fixed at deploy time, in source.
   * The command is an argv list built from a module constant with the
     package appended as one element. No shell, no `shell=True`, no string
@@ -26,7 +26,7 @@ Two honest limitations, both surfaced in the UI rather than hidden:
      site-packages. A redeploy, or `docker compose up --build`, starts from
      the image again and the tool is gone. Presenting a one-click install as
      permanent would be a lie, and an operator who believes a scanner is
-     installed when it is not gets silent zero-finding scans -- the same
+     installed when it is not gets silent zero-finding scans; the same
      failure this codebase keeps guarding against. The durable fix is adding
      the tool to the image; the UI says so.
   2. **Only pip-installable tools qualify.** gitleaks, trivy, gosec, tfsec
@@ -63,7 +63,7 @@ def resolve_package(tool: str) -> Optional[str]:
     """The pip package for a registry key, or None if it is not installable.
 
     None covers both "no such tool" and "this tool needs brew/go/docker".
-    Callers must treat None as a refusal -- it is the allowlist check.
+    Callers must treat None as a refusal; it is the allowlist check.
     """
     entry = _BY_TOOL.get(tool)
     if entry is None:
@@ -85,7 +85,7 @@ def _tail(text: str) -> str:
 def _installed_version(tool: str) -> str:
     """Run the tool's own version_cmd after installing.
 
-    pip exiting zero is not proof the tool runs -- the setuptools/pkg_resources
+    pip exiting zero is not proof the tool runs; the setuptools/pkg_resources
     break that prompted scripts/verify_tools.py was exactly a clean install
     whose binary then failed on invocation. So an install is only reported as
     successful once the thing actually answers.
@@ -175,7 +175,7 @@ def _finish(session: Session, run, *, status: str, error: str = "", version: str
     session.refresh(run)
 
     # (#221) Whatever GET /api/tools/registry cached for this tool is now
-    # stale by definition -- an install just settled, successfully or not.
+    # stale by definition, an install just settled, successfully or not.
     # Invalidating here rather than waiting out the cache's own TTL means
     # the tool an admin just watched install shows correctly on the very
     # next registry fetch (the frontend's useToolInstall calls that fetch
@@ -191,13 +191,13 @@ def _finish(session: Session, run, *, status: str, error: str = "", version: str
     # containers from the same image, so a pip install into the worker's
     # site-packages is invisible to the backend's `shutil.which()`. Dropping
     # the cache just made the backend re-probe *itself*, find nothing, and
-    # publish "not installed" -- for a tool that had installed successfully
+    # publish "not installed"; for a tool that had installed successfully
     # and whose version we had just read, one line above. An external
     # evaluation hit exactly this: Checkov installed (3.3.13), card said "not
     # installed", still said it after "Recheck all".
     #
-    # The version this worker read is the operationally meaningful one --
-    # every scan runs on a worker, not in the web process -- so publish it
+    # The version this worker read is the operationally meaningful one (
+    # every scan runs on a worker, not in the web process) so publish it
     # rather than throwing it away. `checked_in` keeps the answer honest
     # about which environment it describes.
     if status == "completed" and version:

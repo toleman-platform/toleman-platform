@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 # NOTE: `alembic revision --autogenerate` also picked up a batch of unrelated
 # pre-existing schema drift (a stale `discoveredendpoint` table left over
 # from a model that no longer exists, missing indexes on finding/scan, and
-# NOT NULL tightening on platformconfig columns) -- same drift already
+# NOT NULL tightening on platformconfig columns); same drift already
 # flagged and deliberately left out of 1aec0547092a (#61). None of that is
 # part of issue #71, so it's stripped from this migration too; only the new
 # `cveenrichment` table below is issue #71's actual change.

@@ -257,7 +257,7 @@ def test_ai_ml_risk_counts_flagged_repos_and_open_ai_tool_findings(engine):
             target_id=t1, dedup_hash="sl1", tool="semgrep-llm", rule_id="llm-eval-sink", title="LLM output reaches eval()",
             file_path="app.py", severity=Severity.HIGH, priority_score=150, state=FindingState.OPEN,
         ))
-        # Mitigated -- must not count toward the "open" figure.
+        # Mitigated; must not count toward the "open" figure.
         session.add(Finding(
             target_id=t1, dedup_hash="ms2", tool="modelscan", rule_id="unsafe-pickle", title="Fixed",
             file_path="old.pkl", severity=Severity.CRITICAL, priority_score=200, state=FindingState.MITIGATED,
@@ -305,7 +305,7 @@ def test_guardrail_activity_lists_recent_scans_and_pending_approvals(engine):
 def test_widget_catalog_has_eleven_concrete_widgets():
     # Issue #63 added "security_score" to the original 6 (#69); issue #76
     # added "fp_auto_suppressions"; issue #224 added "live_scan_activity",
-    # "ai_ml_risk" and "guardrail_activity" -- all opt-in, not part of the
+    # "ai_ml_risk" and "guardrail_activity"; all opt-in, not part of the
     # default layout (see DEFAULT_WIDGET_ORDER, still 7 entries).
     assert set(WIDGET_CATALOG.keys()) == {
         "kpi_cards",
@@ -333,7 +333,7 @@ def test_build_default_layout_all_valid_widget_ids():
 
 def test_security_score_widget_org_wide(engine):
     """Issue #63's security_score widget, added to the catalog after #69
-    shipped -- reuses app.core.security_score.compute_security_score
+    shipped; reuses app.core.security_score.compute_security_score
     (exhaustively hand-verified in tests/test_security_score.py), so this
     only needs to confirm the widget wiring itself: org-wide with no config
     covers both seeded targets."""

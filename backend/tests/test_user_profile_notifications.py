@@ -1,7 +1,7 @@
 """Tests for issue #73: profile editing (name, password change with real
 token_version-based session revocation), and notification preferences CRUD
 + dispatch (Slack-only real delivery per #74's webhook, email is a real
-saveable no-op preference -- see NotificationChannel's docstring).
+saveable no-op preference; see NotificationChannel's docstring).
 
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
 used across tests/test_sla_rules.py and tests/test_enforcement_mode.py.
@@ -67,7 +67,7 @@ def client(engine):
 
 
 def _login(client, engine, role=UserRole.USER, password="whatever123"):
-    # id(object()) is not a reliable uniqueness source -- CPython can reuse a
+    # id(object()) is not a reliable uniqueness source; CPython can reuse a
     # freed object's id within the same test, which produced a real flaky
     # UNIQUE constraint failure on user.email when two logins happened close
     # together (e.g. test_preferences_are_scoped_to_own_user's two clients).
@@ -142,7 +142,7 @@ def test_change_password_invalidates_old_session_and_new_password_works(client, 
     )
     assert res.status_code == 200
 
-    # The OLD token (captured before the change) is now revoked -- real
+    # The OLD token (captured before the change) is now revoked, real
     # token_version bump, same mechanism as logout.
     stale_client = TestClient(app)
     stale_client.cookies.set("toleman_session", old_token)
@@ -194,7 +194,7 @@ def test_set_preferences_is_idempotent_upsert(client, engine):
         "/api/notification-preferences",
         json={"preferences": [{"channel": "slack", "event_type": "sla_breach", "enabled": True}]},
     )
-    # Flip the same (channel, event_type) -- should update in place, not duplicate.
+    # Flip the same (channel, event_type); should update in place, not duplicate.
     res = client.put(
         "/api/notification-preferences",
         json={"preferences": [{"channel": "slack", "event_type": "sla_breach", "enabled": False}]},
@@ -249,11 +249,11 @@ def test_dispatch_notification_calls_slack_for_opted_in_workspace_member(engine)
             )
         )
         # dispatch_notification only actually calls Slack if a webhook is
-        # configured platform-wide (#74) -- without this row it correctly
+        # configured platform-wide (#74); without this row it correctly
         # no-ops, which is exactly what test_dispatch_notification_skips_*
         # below covers for the no-opt-in case; this test needs both.
         # slack_webhook_url is encrypted at rest (see app/api/config.py's POST
-        # handler) -- store it that way here too, matching real production
+        # handler), store it that way here too, matching real production
         # rows, since _dispatch_slack now decrypts before use.
         session.add(PlatformConfig(slack_webhook_url=encrypt_secret("https://hooks.slack.example/T000/B000/xxx")))
         session.commit()
@@ -324,7 +324,7 @@ def test_sla_breach_notification_fires_once_not_on_every_read(client, engine):
         session.add(TargetGroup(target_id=target_id, group_id=group_id))
         session.add(SlaRule(workspace_id=ws_id, group_id=group_id, severity=Severity.CRITICAL, days_to_fix=1))
         # slack_webhook_url is encrypted at rest (see app/api/config.py's POST
-        # handler) -- store it that way here too, matching real production
+        # handler), store it that way here too, matching real production
         # rows, since _dispatch_slack now decrypts before use.
         session.add(PlatformConfig(slack_webhook_url=encrypt_secret("https://hooks.slack.example/T000/B000/xxx")))
         finding = Finding(
@@ -368,7 +368,7 @@ def test_sla_breach_notification_fires_once_not_on_every_read(client, engine):
 
     # dispatch_notification is only called once across all 3 reads, even
     # though _dispatch_slack itself may be skipped (no opted-in recipient
-    # here) -- what we're really proving is _to_finding_out's dedup guard,
+    # here); what we're really proving is _to_finding_out's dedup guard,
     # so assert the DB-level marker instead of the mock call count (which
     # would be 0 either way since no user opted into slack for sla_breach).
     with Session(engine) as session:
@@ -408,7 +408,7 @@ def test_sla_breach_marker_resets_when_no_longer_violated(client, engine):
         session.refresh(admin)
         token = create_session_token(admin.id, admin.token_version)
 
-        # Mitigate it -- compute_sla_status only counts OPEN/REOPENED, so
+        # Mitigate it, compute_sla_status only counts OPEN/REOPENED, so
         # this genuinely flips sla_violated back to False.
         finding.state = FindingState.MITIGATED
         session.add(finding)

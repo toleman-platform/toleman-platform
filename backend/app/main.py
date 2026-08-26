@@ -20,7 +20,7 @@ from app.api.auth import current_user, require_admin
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # (#239 follow-on) @app.on_event("startup") is deprecated as of the
-    # fastapi/starlette bump that fixed the live starlette CVEs -- still
+    # fastapi/starlette bump that fixed the live starlette CVEs; still
     # functional, but `lifespan` is the ASGI-native replacement and the one
     # actually recommended going forward, so migrated rather than left as a
     # warning in a freshly-bumped stack.
@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
             ))
             session.commit()
         # Detect a PLATFORM_ENCRYPTION_KEY mismatch here, at boot, rather than
-        # letting it surface later as a random feature's decrypt failure --
+        # letting it surface later as a random feature's decrypt failure;
         # see check_encryption_key_health's docstring for why this exists.
         # Deliberately logged, not raised: a hard startup failure here would
         # lock an admin out of the very UI (Admin > Global Integrations) they
@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
                 "this warning."
             )
     yield
-    # No shutdown behavior needed -- nothing here holds a resource that
+    # No shutdown behavior needed; nothing here holds a resource that
     # requires explicit teardown beyond process exit.
 
 
@@ -61,7 +61,7 @@ app = FastAPI(title="Toleman - DevSecOps Vulnerability Management Platform", lif
 app.add_middleware(
     CORSMiddleware,
     # GH-02: was a single hardcoded localhost:3000 literal, so any
-    # deployment not on that exact origin failed CORS preflight -- and the
+    # deployment not on that exact origin failed CORS preflight; and the
     # login form reported that transport failure as "Invalid email or
     # password". Driven by PUBLIC_BASE_URL (+ EXTRA_CORS_ORIGINS) now.
     allow_origins=settings.cors_allow_origins,
@@ -108,7 +108,7 @@ app.include_router(admin_workspace_roles.router, dependencies=admin_required)
 app.include_router(config_api.router, dependencies=admin_required)
 app.include_router(github_token.router, dependencies=admin_required)
 # Policy rules can silently suppress real findings / widen PR Guardrail's
-# blocking threshold platform-wide -- there's no per-workspace membership
+# blocking threshold platform-wide, there's no per-workspace membership
 # model in this app (single org/admin pattern, same as admin.router and
 # config_api.router above), so admin-only is the only safe gate available.
 # Previously login_required, which let any authenticated user (including
@@ -121,8 +121,8 @@ app.include_router(policies.router, dependencies=admin_required)
 def health():
     """Liveness, plus build identity (BLD-01).
 
-    The identity fields are what let anyone -- an evaluator, a deploy script,
-    a support conversation -- confirm *which* instance is answering on this
+    The identity fields are what let anyone (an evaluator, a deploy script,
+    a support conversation) confirm *which* instance is answering on this
     address before drawing conclusions from what it shows. Cheap insurance
     against reviewing a stack you are not actually running.
     """
@@ -130,7 +130,7 @@ def health():
         "status": "ok",
         "version": settings.build_version,
         "commit": settings.build_commit,
-        # Which database this instance is talking to, host/name only -- never
+        # Which database this instance is talking to, host/name only; never
         # the URL, which carries credentials.
         "database": _database_identity(),
     }

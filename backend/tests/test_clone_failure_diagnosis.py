@@ -10,12 +10,12 @@ container. Every scan and discovery run failed, and the only signal was:
 Exit 128 is what git returns for a missing repo, a missing branch, a bad URL
 *and* absent credentials, so the log said nothing about which. On top of that,
 `RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)` meant each doomed
-clone was attempted four times with backoff -- seven queued scans produced
+clone was attempted four times with backoff; seven queued scans produced
 roughly fifty identical tracebacks and no diagnosis.
 
 The safety property that produced the vague message is real and is preserved:
 nothing here may echo raw stderr, argv, paths, or a token. These tests pin
-both halves -- useful message, no leak.
+both halves, useful message, no leak.
 """
 
 import subprocess
@@ -140,7 +140,7 @@ class TestNotRetried:
             assert not issubclass(RepoCloneError, module.RETRYABLE_EXCEPTIONS), module.__name__
 
     def test_token_is_scrubbed_before_classification(self, monkeypatch, tmp_path):
-        """Scrubbing must happen first -- otherwise a token could reach the
+        """Scrubbing must happen first; otherwise a token could reach the
         classifier and, in a future change, a message."""
         monkeypatch.setattr(runner.settings, "scan_workdir", str(tmp_path))
         token = "ghp_ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"

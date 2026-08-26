@@ -7,7 +7,7 @@ replaces the old env-only GITHUB_TOKEN pickup. The token is encrypted at rest
 (app.core.github_token.resolve_github_token).
 
 Security: no endpoint ever logs the token value, its ciphertext, or the
-Authorization header used by the test call -- only workspace_id and HTTP
+Authorization header used by the test call; only workspace_id and HTTP
 status context.
 """
 
@@ -54,7 +54,7 @@ class TestGithubTokenRequest(BaseModel):
 def _resolve_workspace_id(session: Session, workspace_id: int | None) -> int:
     if workspace_id is not None:
         # Issue #226 review nit: a caller-supplied id that doesn't exist used
-        # to sail through here unchecked -- a GET silently read back
+        # to sail through here unchecked; a GET silently read back
         # "token_set: false" (indistinguishable from "no token saved yet"),
         # and a PUT surfaced as a bare 500 from the GitHubToken FK constraint
         # instead of a real 404.

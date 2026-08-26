@@ -4,7 +4,7 @@ Replaces the previous env-only ``GITHUB_TOKEN`` pickup (app.core.github.
 get_github_token, now removed) with a DB-stored, Fernet-encrypted, TTL'd
 per-workspace PAT. A token is:
 
-  * encrypted at rest (app.core.crypto.encrypt_secret) -- the plaintext is
+  * encrypted at rest (app.core.crypto.encrypt_secret); the plaintext is
     never persisted and never logged;
   * never echoed back to the client (the API returns only ``token_set`` /
     ``expires_at`` / ``created_at``);
@@ -16,7 +16,7 @@ per-workspace PAT. A token is:
 by every GitHub call site: it prefers the workspace's stored PAT, then falls
 back to a GitHub App installation token for the repo (short-lived, minted on
 demand) when the workspace has a matching installation. Security note: none
-of these functions ever log the token value -- only workspace_id / slug /
+of these functions ever log the token value, only workspace_id / slug /
 status context.
 """
 
@@ -88,8 +88,8 @@ def resolve_github_token(session: Session, workspace_id: int, slug: str | None =
     Precedence: the workspace's stored PAT (explicit user configuration),
     then a GitHub App installation token for ``slug`` when one is given. Pass
     ``slug`` for repo-scoped operations (clone, dependency-graph SBOM); omit
-    it for workspace-wide operations. Returns None when neither is available
-    -- callers should fail soft (clone anonymously, skip the enhancement) or
+    it for workspace-wide operations. Returns None when neither is available;
+    callers should fail soft (clone anonymously, skip the enhancement) or
     surface a clear 502/403 rather than inventing a token.
     """
     token = _resolve_workspace_token(session, workspace_id)

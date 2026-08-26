@@ -31,7 +31,7 @@ def test_discovers_express_route_lowercase_only(tmp_path: Path):
 
 def test_router_get_line_not_double_matched_by_fastapi_and_express(tmp_path: Path):
     # `router.get("/x")` satisfies both the case-insensitive FastAPI pattern
-    # and the express pattern -- regression test for the API Discovery UI
+    # and the express pattern, regression test for the API Discovery UI
     # bug where the same line was reported twice under different frameworks.
     (tmp_path / "routes.py").write_text('router.get("/{finding_id}", handler)\n')
     out = discover_endpoints(tmp_path)

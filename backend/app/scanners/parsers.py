@@ -163,7 +163,7 @@ def parse_trivy_sbom(raw: dict) -> list[dict]:
 
     Distinct schema from the JSON-format parsers above: a flat CycloneDX 1.x
     `components` array rather than Results[].Vulnerabilities[]. Only
-    type == "library" entries are real dependencies -- "application"
+    type == "library" entries are real dependencies, "application"
     components describe the manifest file itself (e.g. requirements.txt)
     and aren't a package. Package type/ecosystem (pip, npm, gomod, ...)
     comes from the CycloneDX property named "aquasecurity:trivy:PkgType".
@@ -189,7 +189,7 @@ def parse_trivy_sbom(raw: dict) -> list[dict]:
 # Fallback ecosystem-from-purl map for the CycloneDX upload branch below,
 # used only when the `aquasecurity:trivy:PkgType` property is absent (e.g.
 # an SBOM produced by a tool other than Trivy). Deliberately not reused for
-# the SPDX branch -- that goes through app.core.github_dependency_graph's own
+# the SPDX branch; that goes through app.core.github_dependency_graph's own
 # parse_spdx_packages (the same parser app.tasks.sbom_tasks.run_sbom_generation
 # already uses for the automatic GitHub-dependency-graph union), which keeps
 # GitHub-sourced components consistent regardless of which endpoint imported
@@ -252,7 +252,7 @@ def parse_sbom_upload(raw: dict) -> list[dict]:
         return out
     if "packages" in doc:
         # parse_spdx_packages expects GitHub's own {"sbom": {...}} wrapper
-        # shape -- re-wrap here so a bare, unwrapped SPDX export (what a
+        # shape, re-wrap here so a bare, unwrapped SPDX export (what a
         # user's own tooling produces) parses the same as one fetched
         # automatically, since `doc` above already unwrapped it if present.
         return parse_spdx_packages({"sbom": doc})
@@ -279,12 +279,12 @@ def parse_nuclei(raw: list[dict]) -> list[dict]:
     """Issue #72: nuclei `-jsonl` output -> standard Finding schema.
 
     Unlike every other parser here, this is ACTIVE-scan output (a real HTTP
-    probe against a live endpoint), not a static source-code finding --
+    probe against a live endpoint), not a static source-code finding;
     `file_path` deliberately carries the discovered route/matched URL
     instead of a repo-relative path, since there's no source file for a
     runtime detection to point at. `cve_id` is pulled from nuclei's own
     classification metadata when the matched template maps to one (many
-    nuclei templates -- default-login checks, misconfig detections -- have
+    nuclei templates; default-login checks, misconfig detections; have
     no CVE at all, which is fine; cve_id stays None rather than fabricated).
     """
     out = []
@@ -320,7 +320,7 @@ def parse_checkov(raw: dict | list) -> list[dict]:
     the scanned repo: a single dict (one framework, e.g. only Terraform
     present) or a list of per-framework dicts (Terraform + Kubernetes +
     ...). Normalize both to a flat list of "reports" before walking
-    results.failed_checks -- only failed checks are findings; passed_checks
+    results.failed_checks; only failed checks are findings; passed_checks
     are intentionally not surfaced as anything (there's no "informational
     passed control" concept in Toleman's Finding model).
     """
@@ -383,7 +383,7 @@ UNSAFE_DESERIALIZATION_MODULES = frozenset(
 
 
 def parse_modelscan(raw: dict) -> list[dict]:
-    """modelscan JSON output (issue #186) -- unsafe operators found in
+    """modelscan JSON output (issue #186), unsafe operators found in
     serialized model files. Shape pinned against a real modelscan 0.8.8 run
     against a pickle whose __reduce__ calls os.system, not a guessed schema:
 
@@ -391,7 +391,7 @@ def parse_modelscan(raw: dict) -> list[dict]:
          "source", "scanner", "severity"}], "errors": []}
 
     `source` is the model file, relative to the scanned path. There is no
-    line number -- the finding is the file itself, which is why line_start
+    line number; the finding is the file itself, which is why line_start
     and line_end are None rather than a fabricated 1.
     """
     out = []
@@ -423,7 +423,7 @@ def parse_modelscan(raw: dict) -> list[dict]:
 
 
 def parse_sarif(raw: dict) -> list[dict]:
-    """Generic SARIF 2.1.0 parser — covers most CI-pushed SAST tool output."""
+    """Generic SARIF 2.1.0 parser; covers most CI-pushed SAST tool output."""
     out = []
     for run in raw.get("runs", []):
         tool_name = run.get("tool", {}).get("driver", {}).get("name", "sarif")
@@ -458,12 +458,12 @@ def parse_sarif(raw: dict) -> list[dict]:
 
 
 # Shared by app/api/scans.py (synchronous "Pull" scan endpoint) and
-# app/tasks/scan_tasks.py (async Celery scan task) -- both dispatch on
+# app/tasks/scan_tasks.py (async Celery scan task); both dispatch on
 # tool name to pick the parser for runner.run_tool's raw output.
 PARSER_MAP = {
     "semgrep": parse_semgrep,
-    # Issue #189: same output shape as semgrep -- it *is* semgrep, just with
-    # Toleman's curated LLM ruleset -- so it reuses the parser verbatim.
+    # Issue #189: same output shape as semgrep (it *is* semgrep, just with
+    # Toleman's curated LLM ruleset) so it reuses the parser verbatim.
     "semgrep-llm": parse_semgrep,
     "gitleaks": parse_gitleaks,
     "noseyparker": parse_noseyparker,

@@ -7,7 +7,7 @@ scan was scoped to the PR's changed files.
 `tools_skipped` is deliberately its own column rather than a note folded into
 `tools_run`. "trivy was skipped because no dependency manifest changed" and
 "trivy ran and found nothing" are different claims, and only the second is
-evidence of safety -- collapsing them is the false-all-clear failure mode
+evidence of safety; collapsing them is the false-all-clear failure mode
 this codebase keeps refusing (see osv_malware.py, issue #229).
 
 `target.diff_scoped_pr_scans` defaults False so no existing target silently

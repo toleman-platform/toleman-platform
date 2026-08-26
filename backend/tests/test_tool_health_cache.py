@@ -1,11 +1,11 @@
 """Tests for the tool-health cache introduced in #221 to stop GET
-/api/tools/registry paying a full subprocess `--version` sweep -- measured
-at ~2.06s, dominated by semgrep's interpreter startup -- on every single
+/api/tools/registry paying a full subprocess `--version` sweep (measured
+at ~2.06s, dominated by semgrep's interpreter startup) on every single
 request.
 
 These use the in-memory fallback path deliberately (no local Redis
 assumed in test environments), which is the same fallback production runs
-under if Redis is ever unreachable -- so this doubles as coverage for that
+under if Redis is ever unreachable; so this doubles as coverage for that
 degradation path.
 """
 import time

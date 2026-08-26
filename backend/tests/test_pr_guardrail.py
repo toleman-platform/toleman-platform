@@ -105,7 +105,7 @@ def test_render_comment_severity_count_table_reflects_mix():
     ]
     body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=1, pr_scan_id=1)
 
-    # Header row names every severity column, single data row with counts --
+    # Header row names every severity column, single data row with counts;
     # a "one-line" summary table appearing before any per-finding detail.
     header_idx = body.index("| Informational | Low | Medium | High | Critical |")
     data_idx = body.index("| 0 | 1 | 0 | 1 | 2 |")

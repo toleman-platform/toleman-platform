@@ -11,7 +11,7 @@ import { DEFAULT_API_URL } from "@/lib/api";
 import "./globals.css";
 
 // Plus Jakarta Sans: distinctive geometric grotesque, used everywhere in the
-// UI (body copy, headings) in place of the previous system-default Geist —
+// UI (body copy, headings) in place of the previous system-default Geist;
 // part of #77's typography pass. Weight range covers body copy through
 // display headings so we don't need a second display font.
 const displaySans = Plus_Jakarta_Sans({
@@ -34,7 +34,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   // Theme (#115): read the persisted preference straight from the request's
   // cookie (set alongside localStorage by ThemeToggle, see
   // src/components/theme-toggle.tsx) so the server can render the correct
-  // `data-theme` attribute in the initial HTML -- no flash of the wrong
+  // `data-theme` attribute in the initial HTML, no flash of the wrong
   // theme on load, since there's nothing client-side to correct after the
   // fact. `ThemeInit` is just a same-tab safety net for the cookie/
   // localStorage falling out of sync (see its own comment).

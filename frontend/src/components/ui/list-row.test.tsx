@@ -72,7 +72,7 @@ describe("ListRows", () => {
 describe("SelectAllVisible", () => {
   it("sets indeterminate for a partial selection", () => {
     // `indeterminate` is a DOM property with no JSX attribute, so it is the
-    // detail every hand-rolled copy skipped -- leaving a half-selected page
+    // detail every hand-rolled copy skipped; leaving a half-selected page
     // showing an empty box.
     render(<SelectAllVisible allSelected={false} someSelected onChange={() => {}} />);
     expect((screen.getByRole("checkbox") as HTMLInputElement).indeterminate).toBe(true);
@@ -88,7 +88,7 @@ describe("SelectAllVisible", () => {
   it("is labelled and clickable via its text", async () => {
     const onChange = vi.fn();
     render(<SelectAllVisible allSelected={false} someSelected={false} onChange={onChange} />);
-    // Clicking the label must toggle the box -- a 16px hit target is not enough.
+    // Clicking the label must toggle the box; a 16px hit target is not enough.
     await userEvent.click(screen.getByText(/select all on this page/i));
     expect(onChange).toHaveBeenCalledWith(true);
   });

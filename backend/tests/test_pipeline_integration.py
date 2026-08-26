@@ -1,4 +1,4 @@
-"""Tests for issue #66: per-target CI/CD pipeline integration -- generating
+"""Tests for issue #66: per-target CI/CD pipeline integration, generating
 a real GitHub Actions workflow (app.core.pipeline_workflow) and opening a PR
 against the target's repo adding it (app.core.pipeline_pr,
 POST /api/targets/{id}/pipeline-integrate)."""
@@ -73,7 +73,7 @@ def _make_target(session, name="gotest", repo_url="https://github.com/geekshiv/g
 #
 # Confirmed live against a real installed App (geekshiv/gotest): writing
 # under .github/workflows/ via the Contents API 403s with "Resource not
-# accessible by integration" on contents:write alone -- GitHub gates that
+# accessible by integration" on contents:write alone, GitHub gates that
 # path behind a separate `workflows` permission scope. Issue #66's PR-open
 # flow needs it declared in the manifest so future App installs/reconfigures
 # actually have it.

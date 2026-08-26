@@ -221,7 +221,7 @@ def test_summary_counts():
 def test_revision_does_not_bleed_from_the_next_call(tmp_path):
     """An earlier version scanned a fixed window forward from the match,
     which picked up the *next* statement's revision kwarg and reported an
-    unpinned model as pinned -- inventing provenance, the single worst thing
+    unpinned model as pinned; inventing provenance, the single worst thing
     this module could do."""
     (tmp_path / "a.py").write_text(
         "m   = AutoModel.from_pretrained('org/unpinned')\n"

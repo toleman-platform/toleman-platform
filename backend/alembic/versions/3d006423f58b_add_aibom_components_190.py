@@ -1,7 +1,7 @@
 """add aibom components (issue #190)
 
 Models and datasets a target depends on, populated during the existing SBOM
-generation run. Separate table from sbomcomponent on purpose -- see
+generation run. Separate table from sbomcomponent on purpose; see
 AiBomComponent's docstring: a package at a resolved version and a model
 reference with genuinely unknown provenance are different things, and sharing
 a table would push toward fabricating a version for every model.
@@ -40,7 +40,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_aibomcomponent_target_id"), "aibomcomponent", ["target_id"])
     # Upsert key: a model is identified by target + branch + name + type.
-    # Version is deliberately NOT part of it -- an unpinned reference that
+    # Version is deliberately NOT part of it, an unpinned reference that
     # later gains a revision is the same dependency, now pinned, not a new
     # one, and the whole point is to be able to see that change.
     op.create_index(

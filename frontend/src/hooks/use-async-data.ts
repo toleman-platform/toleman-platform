@@ -7,7 +7,7 @@ import { AsyncState, asyncReducer, initialAsyncState, toError } from "./async-st
  * One fetch, one state machine (issue #210).
  *
  * Sixteen files hand-rolled this: a `useEffect`, a `loading` boolean, an
- * `error` string, and -- inconsistently -- a `cancelled` guard in the
+ * `error` string, and (inconsistently) a `cancelled` guard in the
  * cleanup. The ones missing that guard set state after unmount and could
  * apply a stale response over a newer one.
  *
@@ -18,7 +18,7 @@ import { AsyncState, asyncReducer, initialAsyncState, toError } from "./async-st
 export type UseAsyncDataOptions = {
   /**
    * Skip the request entirely. For a fetch that depends on a selection the
-   * user has not made yet -- the state stays `idle` rather than pretending
+   * user has not made yet; the state stays `idle` rather than pretending
    * to load something nobody asked for.
    */
   enabled?: boolean;
@@ -72,7 +72,7 @@ export function useAsyncData<T>(
 
     fetcherRef.current(controller.signal).then(
       (data) => {
-        // An aborted request is not a failure -- the caller moved on, and
+        // An aborted request is not a failure, the caller moved on, and
         // surfacing "AbortError" as an error banner would be a lie.
         if (controller.signal.aborted) return;
         dispatch({ type: "resolve", requestId, data });

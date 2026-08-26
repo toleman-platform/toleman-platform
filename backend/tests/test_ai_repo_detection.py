@@ -1,4 +1,4 @@
-"""Tests for AI/ML repo detection (issue #185) -- the gate every AI-specific
+"""Tests for AI/ML repo detection (issue #185), the gate every AI-specific
 scanner in epic #192 runs behind.
 
 Two halves: the pure detection functions (app.core.ai_repo_detection, no DB)
@@ -84,7 +84,7 @@ def test_various_model_extensions_detected(tmp_path):
 
 def test_model_file_inside_node_modules_is_ignored(tmp_path):
     """A model vendored inside a dependency belongs to that dependency, not
-    to this repo -- otherwise any app with a transitive ML package looks
+    to this repo; otherwise any app with a transitive ML package looks
     like an AI repo."""
     vendored = tmp_path / "node_modules" / "some-pkg"
     vendored.mkdir(parents=True)
@@ -120,7 +120,7 @@ def test_python_ai_package_detected():
 
 
 def test_npm_ai_package_detected():
-    """npm is 1351 of 1396 components on a live instance -- a Python-only
+    """npm is 1351 of 1396 components on a live instance; a Python-only
     list would miss most of the estate."""
     assert detect_ai_packages([("openai", "npm")]) == ["openai"]
 
@@ -145,7 +145,7 @@ def test_ordinary_packages_not_flagged():
 
 
 def test_package_named_ai_in_wrong_ecosystem_not_matched_by_substring():
-    """Matching must be exact/prefix, not substring -- a substring check on
+    """Matching must be exact/prefix, not substring; a substring check on
     "ai" flags most of npm."""
     assert detect_ai_packages([("chair", "npm"), ("aiohttp", "pip")]) == []
 
@@ -177,7 +177,7 @@ def test_neither_signal_means_not_detected(tmp_path):
 
 
 def test_signals_explain_why_it_fired(tmp_path):
-    """A bare boolean isn't contestable -- a user who thinks the platform is
+    """A bare boolean isn't contestable; a user who thinks the platform is
     wrong needs to see what it matched on."""
     (tmp_path / "model.pkl").write_bytes(b"x")
     result = detect_ai_repo(repo_path=tmp_path, components=[("torch", "pip")])

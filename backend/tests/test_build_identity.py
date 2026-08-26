@@ -31,12 +31,12 @@ def test_health_reports_build_identity():
 
     assert body["status"] == "ok"
     for field in ("version", "commit", "database"):
-        assert field in body, f"/health must carry {field} -- see BLD-01"
+        assert field in body, f"/health must carry {field}; see BLD-01"
 
 
 def test_health_needs_no_session():
     """Container healthchecks curl this with no cookie, and an evaluator has
-    to be able to check which instance answers *before* logging in -- which
+    to be able to check which instance answers *before* logging in; which
     is exactly the moment the wrong-instance confusion happens."""
     assert _client().get("/health").status_code == 200
 
@@ -69,7 +69,7 @@ def test_database_identity_distinguishes_two_instances(monkeypatch):
 
 
 def test_database_identity_survives_an_unparseable_url(monkeypatch):
-    # A healthcheck endpoint must not 500 because a DSN is malformed -- that
+    # A healthcheck endpoint must not 500 because a DSN is malformed; that
     # turns a config typo into an unhealthy container with no explanation.
     monkeypatch.setattr(main_module.settings, "database_url", "not a url at all::::")
     assert isinstance(_database_identity(), str)

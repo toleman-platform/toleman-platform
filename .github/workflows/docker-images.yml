@@ -47,7 +47,7 @@ jobs:
     name: build-${{ matrix.name }}
     env:
       TRIVY_VERSION: 0.73.0
-      TRIVY_INSTALLER_SHA256: e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+      TRIVY_SHA256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
     steps:
       - uses: actions/checkout@v4
 
@@ -99,11 +99,11 @@ jobs:
       # genuinely from scratch) or need a registry to hand it over.
       - name: Install Trivy
         run: |
-          curl -sSL -o /tmp/trivy-install.sh \
-            "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh"
-          echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c -
-          sudo sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}"
-          rm -f /tmp/trivy-install.sh
+          curl -sSL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy
+          rm -f /tmp/trivy.tar.gz
 
       - name: Scan the built image
         # Non-blocking (|| true), matching the other scan jobs' posture.

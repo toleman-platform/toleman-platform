@@ -35,15 +35,20 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Pinned installer + checksum, matching backend/Dockerfile (BLD-04). The
-  # hole this closed was a mutable URL piped into `sudo sh`. Pinning the
-  # binary freezes the scanner engine, not its vulnerability knowledge --
-  # trivy downloads its vulnerability database separately at scan time.
+  # Release asset + checksum, matching backend/Dockerfile. Upstream's
+  # install.sh resolves the release through an unauthenticated
+  # api.github.com call, which is rate limited per runner IP and reports a
+  # throttle as "unable to find 'vX.Y.Z'" -- that is what failed the first
+  # GHCR publish. The asset URL at a pinned tag needs no API call.
   #
-  # To bump: change TRIVY_VERSION, re-fetch, and record the new sum with
-  #   curl -sSL <url> | sha256sum
+  # Pinning the binary freezes the scanner engine, not its vulnerability
+  # knowledge: trivy downloads its vulnerability database separately at scan
+  # time.
+  #
+  # To bump: change TRIVY_VERSION and take the new sum from
+  #   https://github.com/aquasecurity/trivy/releases/download/vX.Y.Z/trivy_X.Y.Z_checksums.txt
   TRIVY_VERSION: 0.73.0
-  TRIVY_INSTALLER_SHA256: e00df553be558995b994758bc8995956554a16937f456dc6615b0cc411bfec7a
+  TRIVY_SHA256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
 
 jobs:
   semgrep:
@@ -116,11 +121,11 @@ jobs:
 
       - name: Install Trivy
         run: |
-          curl -sSL -o /tmp/trivy-install.sh \
-            "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh"
-          echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c -
-          sudo sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}"
-          rm -f /tmp/trivy-install.sh
+          curl -sSL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy
+          rm -f /tmp/trivy.tar.gz
           trivy --version
 
       - name: Run Trivy (filesystem scan)
@@ -158,11 +163,11 @@ jobs:
 
       - name: Install Trivy
         run: |
-          curl -sSL -o /tmp/trivy-install.sh \
-            "https://raw.githubusercontent.com/aquasecurity/trivy/v${TRIVY_VERSION}/contrib/install.sh"
-          echo "${TRIVY_INSTALLER_SHA256}  /tmp/trivy-install.sh" | sha256sum -c -
-          sudo sh /tmp/trivy-install.sh -b /usr/local/bin "v${TRIVY_VERSION}"
-          rm -f /tmp/trivy-install.sh
+          curl -sSL -o /tmp/trivy.tar.gz \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy
+          rm -f /tmp/trivy.tar.gz
 
       - name: Resolve backend/requirements.txt into a real venv
         # Mirrors backend/Dockerfile's actual install line -- same packages

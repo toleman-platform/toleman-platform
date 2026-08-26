@@ -128,7 +128,18 @@ jobs:
       # typical project: this image bundles four security scanners, and
       # "where did this binary come from" is the question the tool exists to
       # help its users ask about their own dependencies.
+      #
+      # continue-on-error, deliberately. Both images are already pushed by
+      # the time these run, so a failure here means "published, but not
+      # attested" -- and failing the job at that point reports a successful
+      # publish as a broken one, which is what happened on the first run.
+      # The attestation API is also not available on every plan and
+      # repository-visibility combination, so this must degrade rather than
+      # gate. Check the step's own status to see whether an image carries
+      # provenance; the summary below records it either way.
       - name: Attest backend provenance
+        id: backend-attest
+        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.BACKEND_IMAGE }}
@@ -136,13 +147,20 @@ jobs:
           push-to-registry: true
 
       - name: Attest frontend provenance
+        id: frontend-attest
+        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ env.FRONTEND_IMAGE }}
           subject-digest: ${{ steps.frontend-build.outputs.digest }}
           push-to-registry: true
 
+      # always(), so the record of what was pushed survives a failure in the
+      # non-gating steps above. Previously this was skipped on the first
+      # failure, leaving a run that had genuinely published two images with
+      # no record of their digests anywhere.
       - name: Summarize what was published
+        if: always()
         run: |
           {
             echo "## Published images"
@@ -160,4 +178,6 @@ jobs:
             echo "digest: \`${{ steps.frontend-build.outputs.digest }}\`"
             echo
             echo "platforms: \`${{ env.PLATFORMS }}\`"
+            echo
+            echo "provenance attestation — backend: \`${{ steps.backend-attest.outcome }}\`, frontend: \`${{ steps.frontend-attest.outcome }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

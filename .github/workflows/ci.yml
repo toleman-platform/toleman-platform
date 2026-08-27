@@ -217,6 +217,7 @@ jobs:
             --set-string secrets.sessionSecret="ci-test-session-secret" \
             --set-string secrets.adminPassword="ci-test-admin-password" \
             --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
+            --set-string postgres.password="ci-test-postgres-password" \
             > /tmp/toleman-default.yaml
 
       # The two documented alternate configurations (README's "Managed
@@ -241,6 +242,7 @@ jobs:
             --set-string secrets.sessionSecret="ci-test-session-secret" \
             --set-string secrets.adminPassword="ci-test-admin-password" \
             --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
+            --set-string postgres.password="ci-test-postgres-password" \
             --set ingress.enabled=true \
             --set ingress.className=nginx \
             --set ingress.frontendHost=toleman.example.com \
@@ -262,6 +264,17 @@ jobs:
           fi
           grep -q "externalDatabaseUrl is required" /tmp/err
 
+          if helm template toleman charts/toleman \
+            --set-string secrets.sessionSecret="ci-test-session-secret" \
+            --set-string secrets.adminPassword="ci-test-admin-password" \
+            --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
+            --set-string postgres.password="ci-test-postgres-password" \
+            --set redis.enabled=false 2>/tmp/err; then
+            echo "FAIL: expected this render to fail (redis.enabled=false with no externalRedisUrl)" >&2
+            exit 1
+          fi
+          grep -q "externalRedisUrl is required" /tmp/err
+
       # secret.yaml's `required` guards (config.environment != "local",
       # secrets.existingSecret unset) must actually fire, not silently
       # render an empty SESSION_SECRET/ADMIN_PASSWORD/
@@ -273,6 +286,22 @@ jobs:
             exit 1
           fi
           grep -q "secrets.sessionSecret must be set" /tmp/err
+
+      # The bundled Postgres StatefulSet's own default password ("toleman",
+      # documented in values.yaml) must not be usable outside config.environment
+      # "local": anything that can reach the bundled Postgres Service would
+      # otherwise already have its password.
+      - name: helm template fails with the default postgres password outside local
+        run: |
+          if helm template toleman charts/toleman \
+            --set-string secrets.sessionSecret="ci-test-session-secret" \
+            --set-string secrets.adminPassword="ci-test-admin-password" \
+            --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
+            2>/tmp/err; then
+            echo "FAIL: expected this render to fail (production environment with the default postgres.password)" >&2
+            exit 1
+          fi
+          grep -q "postgres.password must be set to a real, non-default value" /tmp/err
 
       - name: helm template succeeds with local environment and no secrets
         run: |

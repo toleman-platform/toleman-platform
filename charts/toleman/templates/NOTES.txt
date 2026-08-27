@@ -20,7 +20,7 @@ Ingress is enabled. Once DNS/TLS are in place:
 {{- if .Values.ingress.backendHost }}
   Backend:  {{ $scheme }}://{{ .Values.ingress.backendHost }}
 {{- end }}
-{{- if and (eq $scheme "http") .Values.config.cookieSecure }}
+{{- if and (eq $scheme "http") (eq (.Values.config.cookieSecure | toString | lower) "true") }}
 
 WARNING: config.cookieSecure is "{{ .Values.config.cookieSecure }}" but no
 ingress.tls is configured, so this Ingress serves plain HTTP. Browsers do
@@ -32,19 +32,6 @@ config.cookieSecure to "False".
 
 Sign in with the seeded admin account: {{ .Values.config.adminEmail }} / the
 ADMIN_PASSWORD set in values.secrets.adminPassword (or your existingSecret).
-
-{{- if not .Values.secrets.existingSecret }}
-{{- if or (not .Values.secrets.sessionSecret) (not .Values.secrets.adminPassword) (not .Values.secrets.platformEncryptionKey) }}
-
-WARNING: one or more of secrets.sessionSecret / secrets.adminPassword /
-secrets.platformEncryptionKey is unset. values.config.environment defaults
-to "production", and app/core/config.py's validate_production_secrets()
-refuses to start with default SESSION_SECRET/ADMIN_PASSWORD once
-ENVIRONMENT is non-"local" -- the backend Pod will crash-loop until these
-are set. Set them via --set-string, a values file kept out of git, or
-point secrets.existingSecret at a Secret you manage separately.
-{{- end }}
-{{- end }}
 
 {{- if not .Values.postgres.enabled }}
 

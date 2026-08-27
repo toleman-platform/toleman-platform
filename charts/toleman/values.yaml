@@ -22,6 +22,12 @@ image:
 # Cloud SQL, etc. -- app/core/config.py's DATABASE_URL doesn't
 # distinguish a managed instance from the bundled one); the backend
 # reads DATABASE_URL either way and doesn't know the difference.
+#
+# password: "toleman" is a committed, publicly-documented chart default,
+# same reasoning as the blank secrets.* below -- it must be overridden
+# (--set-string postgres.password=...) for anything beyond config.environment
+# "local"; templates/secret.yaml's chart render fails outright otherwise,
+# rather than deploying bundled Postgres reachable with a known password.
 postgres:
   enabled: true
   image: postgres:16

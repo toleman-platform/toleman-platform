@@ -76,6 +76,7 @@ def run_discovery(self, target_id: int, run_id: int):
                 target.repo_url, target.default_branch,
                 resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
                 scan_id=f"discovery-{run.id}",
+                **runner.clone_kwargs_for_target(target),
             )
             discovered = discover_endpoints(repo_path)
             new_endpoints = upsert_endpoints(session, target_id, target.default_branch, discovered)

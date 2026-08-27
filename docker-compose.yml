@@ -85,6 +85,7 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
       DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-600}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      EXTRA_CLONE_HOSTS: ${EXTRA_CLONE_HOSTS:-}
     ports:
       - "8000:8000"
     healthcheck:
@@ -155,6 +156,7 @@ services:
       DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
       DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-600}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      EXTRA_CLONE_HOSTS: ${EXTRA_CLONE_HOSTS:-}
 
   # Remote MCP server (issue #108): lets an MCP client (Claude Code, Claude
   # Desktop, any other MCP-compatible tool) connect over HTTP and act on

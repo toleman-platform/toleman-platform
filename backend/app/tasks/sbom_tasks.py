@@ -145,6 +145,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 target.repo_url, target.default_branch,
                 resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
                 scan_id=f"sbom-{run.id}",
+                **runner.clone_kwargs_for_target(target),
             )
 
             # Issue #190: extract the AIBOM from the checkout. The clone above

@@ -66,9 +66,11 @@ redis://{{ include "toleman.fullname" . }}-redis:6379/0
 
 {{/*
 Name of the Secret holding SESSION_SECRET/ADMIN_PASSWORD/
-PLATFORM_ENCRYPTION_KEY: values.secrets.existingSecret when set (bring your
-own, e.g. via external-secrets/Sealed Secrets), otherwise the chart's own
-Secret template (templates/secret.yaml).
+PLATFORM_ENCRYPTION_KEY/DATABASE_URL/REDIS_URL/WORKSPACE_API_KEY/
+ANTHROPIC_API_KEY (and, when postgres.enabled, POSTGRES_USER/
+POSTGRES_PASSWORD): values.secrets.existingSecret when set (bring your own,
+e.g. via external-secrets/Sealed Secrets - must include every one of those
+keys), otherwise the chart's own Secret template (templates/secret.yaml).
 */}}
 {{- define "toleman.secretName" -}}
 {{- if .Values.secrets.existingSecret -}}

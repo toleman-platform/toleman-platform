@@ -6,7 +6,6 @@ this pulls real rows out of Finding / Scan / SbomComponent, never
 fabricated content, matching the pattern already established by
 GET /api/sbom/{target_id}/export and GET /api/sbom/org/export.
 """
-import csv
 import io
 from datetime import datetime
 from typing import Optional
@@ -17,6 +16,7 @@ from sqlmodel import Session, func, select
 
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
+from app.core.csv_export import safe_csv_writer
 from app.models.models import Finding, FindingState, Scan, SbomComponent, Target, User
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -194,7 +194,7 @@ def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Opt
 
 def render_csv(data: dict) -> str:
     buf = io.StringIO()
-    writer = csv.writer(buf)
+    writer = safe_csv_writer(buf)
 
     writer.writerow(["Toleman Compliance Posture Report"])
     writer.writerow(["Generated At", data["generated_at"]])

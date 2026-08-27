@@ -23,6 +23,7 @@ See the [architecture](ARCHITECTURE.md) for the full design. Full docs, includin
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
   - [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades)
+  - [Managed Cloud DB (RDS / Cloud SQL / etc.)](#managed-cloud-db-rds--cloud-sql--etc)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
 - [Contributing](#contributing)
@@ -250,6 +251,24 @@ If something goes wrong, restore the backup taken just before the upgrade:
 For a Kubernetes deployment (`charts/toleman`), the equivalent is `kubectl exec` into the postgres Pod with the same `pg_dump`/`psql` invocations the scripts above use; there's no in-cluster backup CronJob yet (tracked as a follow-up), so back up before every Helm upgrade the same way.
 
 Postgres's data itself already survives a `docker compose down` (no `-v`) or a Pod restart via the named volume/PVC; these scripts are for the case a completed migration needs to be undone, not for routine restarts.
+
+### Managed Cloud DB (RDS / Cloud SQL / etc.)
+
+The bundled `postgres` container in `docker-compose.yml` is a convenience, not a requirement. `DATABASE_URL` is a plain setting (`app/core/config.py`), read by the same code path whether it points at that container or at a managed instance, so pointing `backend`/`celery-worker` at RDS, Cloud SQL, Azure Database for PostgreSQL, or any Postgres 16-compatible managed service works today: set `DATABASE_URL` to the managed instance's connection string and drop (or ignore) the `postgres` service.
+
+```
+DATABASE_URL=postgresql+psycopg://<user>:<password>@<managed-host>:5432/<db>?sslmode=require
+```
+
+`sslmode=require` (or `verify-full` with the provider's CA bundle) is a query parameter on the URL itself, `psycopg` reads it directly; there's no separate TLS setting in the app. Most managed providers reject plaintext connections by default, so this is usually required, not optional.
+
+With the bundled `docker-compose.yml` specifically: `backend`/`celery-worker`'s `DATABASE_URL` there is hardcoded to the `postgres` service (`@postgres:5432/...`), since that's what makes the zero-config Quickstart work. To point that same Compose stack at a managed DB instead, either edit those two `DATABASE_URL` lines directly or add an override file (the same pattern `docker-compose.ghcr.yml` uses for images) rather than fighting the `POSTGRES_*`-derived default; either way, drop the `postgres` service too so nothing depends on it.
+
+The connection pool is tuned for this case specifically, not just the bundled container:
+
+- `pool_pre_ping` is always on: a managed DB, its connection proxy (RDS Proxy, Cloud SQL Auth Proxy), or a load balancer in front of it can silently drop an idle connection, which the bundled container never does. Without this, the first query after a quiet period fails instead of transparently reconnecting.
+- `DB_POOL_RECYCLE_SECONDS` (default `600`) retires a pooled connection before the far end's own idle/connection-lifetime cutoff closes it out from under an in-flight query (RDS Proxy defaults to a 15-minute idle timeout; other proxies sit lower).
+- `DB_POOL_SIZE` (default `5`) and `DB_MAX_OVERFLOW` (default `10`) cap how many connections each `backend`/`celery-worker` process opens. A managed instance's `max_connections` is often lower than a self-hosted default, and every replica of both services counts against it, size these down (or raise the DB's own limit) before scaling replicas up.
 
 ### Pre-commit hooks
 

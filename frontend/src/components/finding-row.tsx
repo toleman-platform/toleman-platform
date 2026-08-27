@@ -461,7 +461,14 @@ function FindingDetailDialog({ finding, open, onClose }: { finding: Finding; ope
         </div>
 
         <div className="flex flex-col gap-4 overflow-y-auto px-5 py-4">
-          {finding.description && <p className="text-sm text-muted-foreground">{finding.description}</p>}
+          {/* whitespace-pre-wrap because descriptions are plain text with real line
+              breaks, not prose that can be reflowed: the osv-malware compromise-scope
+              block (#331) is several paragraphs, and OSV advisory bodies carry their own
+              wrapping. Collapsed by default HTML whitespace, they render as one run-on
+              paragraph with the block's separator inline. */}
+          {finding.description && (
+            <p className="whitespace-pre-wrap text-sm text-muted-foreground">{finding.description}</p>
+          )}
           <FindingEnrichmentPanel finding={finding} />
           <div className="rounded-md border border-border bg-secondary/40 p-3">
             <SuggestedFixSection finding={finding} />

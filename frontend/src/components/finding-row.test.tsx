@@ -45,6 +45,9 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
     last_seen: "2026-08-26T00:00:00Z",
     sla_days: null,
     sla_violated: false,
+    // Required on Finding as of the category grouping added upstream; the
+    // server derives it from `tool`, and osv-malware maps to OSS/SCA.
+    category: "OSS/SCA",
     ...overrides,
   };
 }
@@ -53,8 +56,8 @@ describe("FindingRow description", () => {
   it("preserves the line breaks a multi-paragraph description carries", () => {
     render(<FindingRow finding={makeFinding()} />);
 
-    // The description lives behind the details toggle on the title button.
-    fireEvent.click(screen.getByTitle("Show details"));
+    // The description lives in the detail dialog the title button opens.
+    fireEvent.click(screen.getByTitle("View vulnerability details and suggested fix"));
 
     const description = screen.getByText(/Compromise scope/);
     // Plain className check: this project does not load jest-dom matchers.
@@ -69,7 +72,7 @@ describe("FindingRow description", () => {
   it("renders nothing for a finding with no description", () => {
     render(<FindingRow finding={makeFinding({ description: "" })} />);
 
-    fireEvent.click(screen.getByTitle("Show details"));
+    fireEvent.click(screen.getByTitle("View vulnerability details and suggested fix"));
 
     expect(screen.queryByText(/Compromise scope/)).toBeNull();
   });

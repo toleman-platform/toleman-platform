@@ -15,6 +15,7 @@ See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery ba
   - [Manual setup (macOS/Linux/Windows)](#manual-setup-macoslinuxwindows)
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
+  - [Logging and error tracking](#logging-and-error-tracking)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
 - [License & Security](#license--security)
@@ -186,6 +187,12 @@ alembic revision --autogenerate -m "describe the schema change"
 ```
 
 Review the generated file under `alembic/versions/` before committing; autogenerate is a starting point, not a guarantee (it can miss things like column renames, which it sees as a drop+add). `alembic upgrade head` (or just starting the app) applies it. See `alembic/env.py` for how migrations read `DATABASE_URL` from `app.core.config.settings`, the same source the app itself uses, so they can never disagree about which DB they're pointed at.
+
+### Logging and error tracking
+
+The backend logs structured JSON to stdout (`app/core/logging.py`), one object per line with `timestamp`/`level`/`logger`/`message`/`request_id`, and a stack trace under `exception` when there is one. `LOG_LEVEL` (default `INFO`) controls verbosity. Every response carries an `X-Request-ID` header (generated, or echoed back if the caller already set one), and every log line emitted while handling that request carries the same id, so a support report ("what happened for X-Request-ID abc123") can be grepped straight out of the logs.
+
+An exception a route handler doesn't turn into an `HTTPException` (i.e. a real bug, not an expected 4xx) is caught, logged with its full traceback, and turned into a generic `{"detail": "Internal server error", "request_id": "..."}` 500 rather than leaking internals to the caller or vanishing without a trace. See `RequestIDMiddleware` in `app/core/logging.py` for why this lives in that middleware specifically rather than a `@app.exception_handler(Exception)`.
 
 ### Pre-commit hooks
 

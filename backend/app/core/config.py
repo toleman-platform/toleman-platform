@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     build_version: str = "dev"
     build_commit: str = ""
 
+    # Python logging level name (DEBUG/INFO/WARNING/ERROR/CRITICAL) for the
+    # JSON logging configured by app/core/logging.py's configure_logging().
+    log_level: str = "INFO"
+
     class Config:
         env_file = ".env"
 

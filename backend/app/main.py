@@ -9,8 +9,15 @@ from sqlmodel import Session, select
 from app.core.config import settings, validate_production_secrets
 from app.core.crypto import check_encryption_key_health
 from app.core.db import engine, init_db
+from app.core.logging import RequestIDMiddleware, configure_logging
 from app.core.security import hash_password
 from app.models.models import User
+
+# Configured before anything else runs (including the router imports below,
+# several of which create their own module-level `logging.getLogger(...)`),
+# so every log line the app ever emits, from here on, goes through the same
+# JSON formatter instead of Python's unconfigured last-resort handler.
+configure_logging(settings.log_level)
 
 logger = logging.getLogger(__name__)
 from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api, github_token
@@ -26,6 +33,14 @@ async def lifespan(app: FastAPI):
     # warning in a freshly-bumped stack.
     validate_production_secrets()
     init_db()
+    # alembic/env.py's fileConfig(alembic.ini) call, made on every init_db()
+    # run, replaces the root logger's handlers wholesale with alembic.ini's
+    # own plain-text config, silently undoing configure_logging() above for
+    # the rest of this process's life. Re-apply after init_db() rather than
+    # only once at import time, so every request the app actually serves
+    # still logs as JSON; only the migration output itself (which runs
+    # before this line) is in alembic's own plain-text format.
+    configure_logging(settings.log_level)
     with Session(engine) as session:
         existing = session.exec(select(User).where(User.email == settings.admin_email)).first()
         if not existing:
@@ -58,6 +73,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Toleman - DevSecOps Vulnerability Management Platform", lifespan=lifespan)
 
+# Unhandled-exception logging + the X-Request-ID header/correlation id both
+# live inside RequestIDMiddleware itself (#297) rather than in a separate
+# `@app.exception_handler(Exception)` -- see that middleware's docstring in
+# app/core/logging.py for why a handler registered for the bare `Exception`
+# class runs in the wrong place in Starlette's middleware stack to do this
+# correctly. Added last so it ends up outermost (Starlette's add_middleware
+# prepends, so the most-recently-added user middleware wraps every other
+# one), letting it see and log a failure anywhere else in the stack too.
 app.add_middleware(
     CORSMiddleware,
     # GH-02: was a single hardcoded localhost:3000 literal, so any
@@ -69,6 +92,7 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=True,
 )
+app.add_middleware(RequestIDMiddleware)
 
 
 login_required = [Depends(current_user)]

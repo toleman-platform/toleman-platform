@@ -184,3 +184,74 @@ jobs:
               *) echo "FAIL $svc resolved to '$image', expected a ghcr.io image" >&2; exit 1 ;;
             esac
           done
+
+  helm-chart:
+    # #290: catches a broken chart (bad Go-template syntax, an undeclared
+    # value, a manifest that doesn't match its Kubernetes API schema)
+    # before it reaches someone actually trying `helm install`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: helm lint charts/toleman
+
+      - name: helm template (default values)
+        run: helm template toleman charts/toleman > /tmp/toleman-default.yaml
+
+      # The two documented alternate configurations (README's "Managed
+      # Cloud DB" section, and Ingress) each take a different branch
+      # through the templates than the defaults do, so rendering only the
+      # defaults would leave those branches unchecked by CI.
+      - name: helm template (external postgres/redis)
+        run: |
+          helm template toleman charts/toleman \
+            --set postgres.enabled=false \
+            --set redis.enabled=false \
+            --set externalDatabaseUrl="postgresql+psycopg://user:pass@db.example.com:5432/toleman" \
+            --set externalRedisUrl="redis://cache.example.com:6379/0" \
+            > /tmp/toleman-external.yaml
+
+      - name: helm template (ingress enabled)
+        run: |
+          helm template toleman charts/toleman \
+            --set ingress.enabled=true \
+            --set ingress.className=nginx \
+            --set ingress.frontendHost=toleman.example.com \
+            --set ingress.backendHost=api.toleman.example.com \
+            > /tmp/toleman-ingress.yaml
+
+      # required in _helpers.tpl (externalDatabaseUrl/externalRedisUrl) must
+      # actually fire, not silently render an empty DATABASE_URL, when
+      # postgres/redis are disabled without one set.
+      - name: helm template fails without required external URLs
+        run: |
+          if helm template toleman charts/toleman --set postgres.enabled=false 2>/tmp/err; then
+            echo "FAIL: expected this render to fail (postgres.enabled=false with no externalDatabaseUrl)" >&2
+            exit 1
+          fi
+          grep -q "externalDatabaseUrl is required" /tmp/err
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      # Installed via `go install` (not a release tarball download) because
+      # that's what was actually verified to work: this repo's CI has no
+      # existing kubeconform usage to copy, and the sandbox this workflow
+      # was authored in could reach proxy.golang.org but not github.com's
+      # release-asset host directly, so the tarball URL/asset-name pattern
+      # was never confirmed. Pinned to v0.6.7, which installs cleanly
+      # against the Go version above; a newer kubeconform (v0.8.0 at time
+      # of writing) requires Go >=1.26.
+      - name: Install kubeconform
+        run: go install github.com/yannh/kubeconform/cmd/kubeconform@v0.6.7
+
+      - name: Validate every rendered manifest against the Kubernetes API schema
+        run: |
+          for f in /tmp/toleman-default.yaml /tmp/toleman-external.yaml /tmp/toleman-ingress.yaml; do
+            echo "--- $f ---"
+            kubeconform -summary -verbose "$f"
+          done

@@ -82,6 +82,21 @@ See `.env.example` for every variable Compose reads (Postgres credentials, backe
 
 To stop everything: `docker compose down` (add `-v` to also drop the Postgres volume and start fully fresh next time).
 
+### Kubernetes (Helm)
+
+An out-of-the-box Helm chart lives at [`charts/toleman`](charts/toleman), covering the same five services as the Docker Compose stack above (bundled Postgres StatefulSet + PVC, bundled Redis, backend, celery-worker, frontend), plus an optional Ingress.
+
+```bash
+helm install toleman charts/toleman \
+  --set-string secrets.sessionSecret="$(openssl rand -hex 32)" \
+  --set-string secrets.adminPassword="a real password" \
+  --set-string secrets.platformEncryptionKey="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  --set config.publicBaseUrl="http://toleman.example.com" \
+  --set config.publicApiUrl="http://api.toleman.example.com"
+```
+
+See `charts/toleman/values.yaml` for every option, including how to point at a managed Postgres/Redis instead of the bundled ones (`postgres.enabled: false` / `redis.enabled: false` plus `externalDatabaseUrl` / `externalRedisUrl`, a full SQLAlchemy connection string — `app/core/config.py` doesn't distinguish a managed DB from the bundled one) and how to enable the Ingress. `helm install`'s NOTES output repeats the port-forward command and flags any secret still left at its (insecure) default.
+
 ### Manual setup (macOS/Linux/Windows)
 
 Prefer running the backend/frontend directly on your machine instead of in containers, e.g. for faster iteration with hot reload, or to attach a debugger. Skip this section if you used Docker Compose above.

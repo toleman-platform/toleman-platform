@@ -1,0 +1,43 @@
+Toleman has been deployed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+{{- if not .Values.ingress.enabled }}
+
+No Ingress is configured (ingress.enabled=false). Reach the UI with:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "toleman.fullname" . }}-frontend {{ .Values.frontend.service.port }}:{{ .Values.frontend.service.port }}
+
+then open http://localhost:{{ .Values.frontend.service.port }}.
+{{- else }}
+
+Ingress is enabled. Once DNS/TLS are in place:
+{{- if .Values.ingress.frontendHost }}
+  Frontend: http://{{ .Values.ingress.frontendHost }}
+{{- end }}
+{{- if .Values.ingress.backendHost }}
+  Backend:  http://{{ .Values.ingress.backendHost }}
+{{- end }}
+{{- end }}
+
+Sign in with the seeded admin account: {{ .Values.config.adminEmail }} / the
+ADMIN_PASSWORD set in values.secrets.adminPassword (or your existingSecret).
+
+{{- if not .Values.secrets.existingSecret }}
+{{- if or (not .Values.secrets.sessionSecret) (not .Values.secrets.adminPassword) (not .Values.secrets.platformEncryptionKey) }}
+
+WARNING: one or more of secrets.sessionSecret / secrets.adminPassword /
+secrets.platformEncryptionKey is unset. values.config.environment defaults
+to "production", and app/core/config.py's validate_production_secrets()
+refuses to start with default SESSION_SECRET/ADMIN_PASSWORD once
+ENVIRONMENT is non-"local" -- the backend Pod will crash-loop until these
+are set. Set them via --set-string, a values file kept out of git, or
+point secrets.existingSecret at a Secret you manage separately.
+{{- end }}
+{{- end }}
+
+{{- if not .Values.postgres.enabled }}
+
+postgres.enabled is false: DATABASE_URL points at externalDatabaseUrl. See
+app/core/config.py's DATABASE_URL handling for pool sizing and TLS
+(sslmode) guidance -- it's a plain connection string, no separate
+managed-DB code path.
+{{- end }}

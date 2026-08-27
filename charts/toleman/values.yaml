@@ -1,0 +1,138 @@
+# Default values for the toleman chart.
+# Mirrors docker-compose.yml's service topology and env vars (see
+# backend/app/core/config.py for what the backend actually reads) so the
+# in-cluster deployment behaves the same as the documented Docker Compose
+# quickstart, just on Kubernetes instead of a single host.
+
+image:
+  # Published by .github/workflows/publish-images.yml. "edge" moves on
+  # every merge to main; pin to a released version or a sha- tag for
+  # anything that needs to be reproducible. See README's "Upgrading"
+  # section for the tag strategy.
+  registry: ghcr.io
+  backendRepository: toleman-platform/toleman-platform-backend
+  frontendRepository: toleman-platform/toleman-platform-frontend
+  tag: edge
+  pullPolicy: IfNotPresent
+
+# --- Postgres --------------------------------------------------------------
+# Bundled by default (a single-replica StatefulSet + PVC), same as
+# docker-compose.yml's postgres service. Set postgres.enabled: false and
+# fill in externalDatabaseUrl to point at a managed instance instead (RDS,
+# Cloud SQL, etc. -- app/core/config.py's DATABASE_URL doesn't
+# distinguish a managed instance from the bundled one); the backend
+# reads DATABASE_URL either way and doesn't know the difference.
+postgres:
+  enabled: true
+  image: postgres:16
+  user: toleman
+  password: toleman
+  database: toleman
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+# Only read when postgres.enabled is false. Full SQLAlchemy URL, e.g.
+# postgresql+psycopg://user:pass@host:5432/db?sslmode=require
+externalDatabaseUrl: ""
+
+# --- Redis -------------------------------------------------------------
+# Bundled by default (no persistence, same as docker-compose.yml — Redis
+# here is Celery's broker/result backend, not a durability requirement).
+# Set redis.enabled: false and fill in externalRedisUrl for a managed
+# Redis/Elasticache/Memorystore instance instead.
+redis:
+  enabled: true
+  image: redis:7
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+externalRedisUrl: ""
+
+# --- Backend / Celery worker -------------------------------------------
+# Same image, different command/replica count, exactly like
+# docker-compose.yml's backend + celery-worker services.
+backend:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+  service:
+    port: 8000
+
+celeryWorker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+frontend:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  service:
+    port: 3000
+
+# --- Backend/frontend config (app/core/config.py) -----------------------
+# Mirrors .env.example. Values here are honest local-dev-grade defaults,
+# not fit for a real deployment: set every one of secrets.* for anything
+# beyond a throwaway try-it-out install (see
+# validate_production_secrets() in app/core/config.py, which refuses to
+# start with default secrets once config.environment is non-"local").
+config:
+  environment: production
+  workspaceApiKey: dev-local-key
+  cookieSecure: "True"
+  adminEmail: admin@toleman.local
+  adminName: Admin
+  # Where the browser and GitHub reach this deployment. localhost defaults
+  # from docker-compose.yml make no sense in-cluster; these MUST be set to
+  # real, reachable addresses for anything beyond smoke-testing the chart
+  # itself (see app/core/config.py's public_base_url/public_api_url
+  # docstring for what breaks otherwise: dead links posted to GitHub, CORS
+  # failures at the login form).
+  publicBaseUrl: "http://localhost:3000"
+  publicApiUrl: "http://localhost:8000"
+  extraCorsOrigins: ""
+  anthropicApiKey: ""
+
+# Secrets. Left blank here on purpose: a chart default is committed to the
+# repo and version control, so a real secret does not belong here. Set via
+# --set-string or a values file that stays out of git (or point
+# existingSecret at a Secret you manage separately, e.g. through
+# external-secrets/Sealed Secrets, and this chart's own Secret template is
+# skipped entirely).
+secrets:
+  existingSecret: ""
+  sessionSecret: ""
+  adminPassword: ""
+  platformEncryptionKey: ""
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  frontendHost: ""
+  backendHost: ""
+  tls: []

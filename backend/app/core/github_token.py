@@ -50,13 +50,15 @@ def _resolve_workspace_token(session: Session, workspace_id: int) -> str | None:
     if row.expires_at is not None and row.expires_at <= datetime.utcnow():
         session.delete(row)
         session.commit()
-        logger.info("Purged expired GitHub token for workspace %s", workspace_id)
+        # workspace_id only, never the token value.
+        logger.info("Purged expired GitHub token for workspace %s", workspace_id)  # nosemgrep: python.lang.security.audit.logging.python-logger-credential-disclosure
         return None
 
     try:
         return decrypt_secret(row.token_ciphertext)
     except ValueError:
-        logger.error(
+        # workspace_id only, never the ciphertext or a decrypted value.
+        logger.error(  # nosemgrep: python.lang.security.audit.logging.python-logger-credential-disclosure
             "Failed to decrypt GitHub token for workspace %s - "
             "PLATFORM_ENCRYPTION_KEY is missing or was rotated",
             workspace_id,
@@ -78,7 +80,9 @@ def _resolve_installation_token(session: Session, workspace_id: int, slug: str) 
     try:
         return get_installation_token(config, installation.installation_id)
     except Exception as exc:
-        logger.warning("Failed to mint installation token for %s: %s", slug, exc)
+        # repo slug and exception message only; get_installation_token never
+        # raises with the minted token embedded in its exception text.
+        logger.warning("Failed to mint installation token for %s: %s", slug, exc)  # nosemgrep: python.lang.security.audit.logging.python-logger-credential-disclosure
         return None
 
 

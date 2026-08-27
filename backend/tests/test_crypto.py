@@ -21,7 +21,9 @@ def session():
 
 
 def test_encrypt_decrypt_roundtrip():
-    plaintext = "-----BEGIN RSA PRIVATE KEY-----\nabc123\n-----END RSA PRIVATE KEY-----"
+    # Not a real key: only the PEM header/footer shape, to exercise the
+    # roundtrip on PEM-like content.
+    plaintext = "-----BEGIN RSA PRIVATE KEY-----\nabc123\n-----END RSA PRIVATE KEY-----"  # gitleaks:allow
     ciphertext = encrypt_secret(plaintext)
     assert decrypt_secret(ciphertext) == plaintext
 

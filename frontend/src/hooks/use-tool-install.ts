@@ -76,7 +76,9 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
 
   const watch = useCallback(
     (tool: string, runId: number) => {
-      cancellersRef.current[tool]?.();
+      // Map lookup by a known registry tool key, not a dynamic method call
+      // on user input.
+      cancellersRef.current[tool]?.(); // nosemgrep: javascript.lang.security.audit.unsafe-dynamic-method
       cancellersRef.current[tool] = pollUntilSettled(
         async () => {
           const run = await api.getToolInstall(runId);
@@ -127,7 +129,9 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
 
   const install = useCallback(
     async (tool: string) => {
-      cancellersRef.current[tool]?.();
+      // Map lookup by a known registry tool key, not a dynamic method call
+      // on user input.
+      cancellersRef.current[tool]?.(); // nosemgrep: javascript.lang.security.audit.unsafe-dynamic-method
       set(tool, { status: "running", version: "", error: "", output: "" });
 
       let runId: number;
@@ -152,7 +156,9 @@ export function useToolInstall(onSettled?: () => void): UseToolInstallResult {
   );
 
   const dismiss = useCallback((tool: string) => {
-    cancellersRef.current[tool]?.();
+    // Map lookup by a known registry tool key, not a dynamic method call on
+    // user input.
+    cancellersRef.current[tool]?.(); // nosemgrep: javascript.lang.security.audit.unsafe-dynamic-method
     delete cancellersRef.current[tool];
     setInstalls((prev) => {
       const next = { ...prev };

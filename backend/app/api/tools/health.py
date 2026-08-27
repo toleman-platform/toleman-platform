@@ -44,7 +44,9 @@ def _check_one(tool: str, cmd: list[str], checked_in: str = "api") -> dict:
 
     start = time.monotonic()
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        # cmd is one of the fixed VERSION_COMMANDS argv lists above, no shell,
+        # no interpolated input.
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         elapsed_ms = round((time.monotonic() - start) * 1000)
         output = (proc.stdout or proc.stderr).strip().splitlines()
         version = output[0] if output else "unknown"

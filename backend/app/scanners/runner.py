@@ -211,7 +211,11 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
         env["GIT_CONFIG_VALUE_0"] = f"Authorization: Basic {basic}"
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+        # repo_url/branch are validated above (_validate_repo_url,
+        # _validate_branch: https-only, host allowlist, no leading "-") and
+        # the argv has a "--" positional separator before repo_url, so
+        # neither can be mistaken for a git flag. No shell.
+        subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     except subprocess.CalledProcessError as exc:
         # Defense in depth: argv above never contains the token, but scrub
         # stdout/stderr too in case git ever echoes config values back on
@@ -394,7 +398,9 @@ def run_nuclei(urls: list[str]) -> list[dict]:
         ]
         if settings.nuclei_exclude_tags:
             cmd += ["-etags", settings.nuclei_exclude_tags]
-        proc = subprocess.run(
+        # cmd is built entirely from settings/constants above, no shell, no
+        # interpolated repo content.
+        proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             cmd, capture_output=True, text=True, timeout=settings.nuclei_timeout_seconds
         )
     finally:
@@ -427,7 +433,9 @@ def _run_noseyparker(cmd: list[str], cwd: str | None) -> list:
     datastore = Path(tempfile.mkdtemp(prefix="toleman-np-")) / "datastore"
     scan_cmd = [str(datastore) if c == NOSEYPARKER_DATASTORE_PLACEHOLDER else c for c in cmd]
     try:
-        proc = subprocess.run(scan_cmd, capture_output=True, text=True, cwd=cwd)
+        # scan_cmd is the caller's fixed argv with only the datastore path
+        # substituted in, no shell.
+        proc = subprocess.run(scan_cmd, capture_output=True, text=True, cwd=cwd)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         if proc.returncode != 0:
             detail = _strip_ansi(proc.stderr or "").strip().splitlines()
             raise ToolExecutionError(
@@ -464,7 +472,9 @@ def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
     report_path = Path(tempfile.mkdtemp(prefix="toleman-gitleaks-")) / "report.json"
     resolved = [str(report_path) if c == GITLEAKS_REPORT_PLACEHOLDER else c for c in cmd]
     try:
-        proc = subprocess.run(resolved, capture_output=True, text=True, cwd=cwd)
+        # resolved is the caller's fixed argv with only the report path
+        # substituted in, no shell.
+        proc = subprocess.run(resolved, capture_output=True, text=True, cwd=cwd)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         if proc.returncode != 0:
             detail = _strip_ansi(proc.stderr or "").strip().splitlines()
             tail = detail[-1] if detail else "no stderr"
@@ -502,7 +512,9 @@ def _run_modelscan(cmd: list[str]) -> dict:
     with tempfile.TemporaryDirectory() as tmpdir:
         report_path = Path(tmpdir) / "modelscan-report.json"
         resolved = [str(report_path) if part == MODELSCAN_REPORT_PLACEHOLDER else part for part in cmd]
-        proc = subprocess.run(resolved, capture_output=True, text=True)
+        # resolved is the caller's fixed argv with only the report path
+        # substituted in, no shell.
+        proc = subprocess.run(resolved, capture_output=True, text=True)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
 
         if proc.returncode in (2, 4):
             raise ToolExecutionError(f"modelscan failed (exit {proc.returncode})")
@@ -755,7 +767,9 @@ def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
     if tool == "noseyparker":
         return _run_noseyparker(cmd, cwd)
 
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
+    # cmd is the caller's fixed per-tool argv (see the scanner command
+    # builders above), no shell.
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
 
     # (#253) Check this BEFORE falling through to the empty-stdout defaults
     # below. A tool that dies writes nothing to stdout, and "nothing on

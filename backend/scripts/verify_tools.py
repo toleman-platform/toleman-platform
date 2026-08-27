@@ -43,7 +43,9 @@ def check(tool: str, cmd: list[str]) -> tuple[bool, str]:
         return False, f"{binary!r} not on PATH"
 
     try:
-        proc = subprocess.run(
+        # cmd comes from TOOL_REGISTRY's fixed version_cmd entries, no shell,
+        # no interpolated input.
+        proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             cmd, capture_output=True, text=True, timeout=VERSION_TIMEOUT_SECONDS
         )
     except subprocess.TimeoutExpired:

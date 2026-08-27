@@ -1,4 +1,3 @@
-import csv
 import io
 import json
 import logging
@@ -15,6 +14,7 @@ from app.api.deps import get_session
 from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
 from app.core.async_jobs import create_running_row
 from app.core.aibom import AiComponent, aibom_summary, build_aibom
+from app.core.csv_export import safe_csv_writer
 from app.core.github import repo_slug_from_url
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.github_token import resolve_github_token
@@ -450,7 +450,7 @@ def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dic
 
 def _render_sbom_csv(target: Target, components: list[SbomComponent]) -> str:
     buf = io.StringIO()
-    writer = csv.writer(buf)
+    writer = safe_csv_writer(buf)
     writer.writerow(["Target", target.name])
     writer.writerow(["Branch", target.default_branch])
     writer.writerow(["Generated At", datetime.utcnow().isoformat() + "Z"])

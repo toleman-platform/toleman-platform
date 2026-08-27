@@ -205,7 +205,7 @@ If something goes wrong, restore the backup taken just before the upgrade:
 ./scripts/restore-postgres.sh backups/toleman-osp-20260101T000000Z.sql.gz
 ```
 
-`restore-postgres.sh` asks for confirmation before overwriting the current database (it drops and recreates every object the backup covers via `pg_dump --clean --if-exists`), and reminds you to `docker compose restart backend celery-worker` afterward so they don't keep serving from connections opened against the pre-restore state.
+`restore-postgres.sh` validates the backup file, asks for confirmation, then stops `backend`/`celery-worker` before restoring (they hold open connections, and the backend's own startup hook runs `alembic upgrade head` against this same database, either of which can interleave with a restore in progress) and runs the restore itself in a single transaction that aborts on the first error (`psql -v ON_ERROR_STOP=on --single-transaction`), so a bad restore rolls back cleanly instead of leaving a half-applied mix of old and new state. It leaves both services stopped afterward; start them (`docker compose up -d backend celery-worker`) once you're sure the schema the restored data expects matches what's about to run.
 
 For a Kubernetes deployment (`charts/toleman`), the equivalent is `kubectl exec` into the postgres Pod with the same `pg_dump`/`psql` invocations the scripts above use; there's no in-cluster backup CronJob yet (tracked as a follow-up), so back up before every Helm upgrade the same way.
 

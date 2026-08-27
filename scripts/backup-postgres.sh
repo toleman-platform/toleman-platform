@@ -14,7 +14,13 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 OUT_DIR="${1:-./backups}"
+# umask 077 + explicit chmod 0700: a database dump is as sensitive as the
+# database itself. Without this, a common 022 umask leaves the directory
+# world-readable (0755) and the dump world-readable (0644), letting any
+# other local user read it.
+umask 077
 mkdir -p "$OUT_DIR"
+chmod 0700 "$OUT_DIR"
 
 # Same defaults docker-compose.yml itself falls back to, so this works
 # with a bare `docker compose up` and no .env file, the same zero-config
@@ -30,6 +36,8 @@ fi
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT_FILE="$OUT_DIR/toleman-${POSTGRES_DB}-${TIMESTAMP}.sql.gz"
+TMP_FILE="${OUT_FILE}.partial"
+trap 'rm -f "$TMP_FILE"' EXIT
 
 echo "Backing up '$POSTGRES_DB' (user '$POSTGRES_USER') to $OUT_FILE ..."
 
@@ -38,9 +46,15 @@ echo "Backing up '$POSTGRES_DB' (user '$POSTGRES_USER') to $OUT_FILE ..."
 # working against an empty one, which matters for the actual disaster
 # case this script exists for. -Fp (plain SQL) rather than a custom
 # archive format so the output is inspectable/greppable without pg_restore.
+#
+# Written to a .partial temp file and only renamed to OUT_FILE once the
+# whole pipeline succeeds (set -o pipefail above makes a pg_dump failure
+# fail this line too), so a failed/interrupted backup never leaves behind
+# a truncated file that looks like a complete one.
 docker compose exec -T postgres \
   pg_dump -U "$POSTGRES_USER" --clean --if-exists -Fp "$POSTGRES_DB" \
-  | gzip > "$OUT_FILE"
+  | gzip > "$TMP_FILE"
+mv "$TMP_FILE" "$OUT_FILE"
 
 SIZE="$(du -h "$OUT_FILE" | cut -f1)"
 echo "Backup complete: $OUT_FILE ($SIZE)"

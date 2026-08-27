@@ -24,6 +24,11 @@ fi
 POSTGRES_USER="${POSTGRES_USER:-osp}"
 POSTGRES_DB="${POSTGRES_DB:-osp}"
 
+if ! gunzip -t "$BACKUP_FILE" 2>/dev/null; then
+  echo "error: $BACKUP_FILE is not a valid gzip file (corrupt or truncated download/copy)." >&2
+  exit 1
+fi
+
 if ! docker compose ps postgres --format json 2>/dev/null | grep -q .; then
   echo "error: the 'postgres' service isn't running (docker compose ps postgres found nothing)." >&2
   echo "Start it first: docker compose up -d postgres" >&2
@@ -37,12 +42,29 @@ case "$CONFIRM" in
   *) echo "Aborted."; exit 1 ;;
 esac
 
-# The dump itself was taken with --clean --if-exists, so psql tears down
-# and recreates every object as it goes; nothing extra needed here beyond
-# piping it in.
-gunzip -c "$BACKUP_FILE" | docker compose exec -T postgres \
-  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+# Stop backend/celery-worker first: both hold open connections and the
+# backend's own startup hook runs `alembic upgrade head` against this
+# same database, either of which can interleave with the restore below
+# and leave it half-applied. Left stopped afterward - see the final
+# messages - so whoever ran this decides when it's safe to start them
+# (e.g. after also rolling the image/commit back, if this restore is
+# undoing a migration).
+echo "Stopping backend/celery-worker before restoring..."
+docker compose stop backend celery-worker
 
-echo "Restore complete. Restart the backend/celery-worker so they pick up any"
-echo "schema/data change rather than keeping stale cached state:"
-echo "  docker compose restart backend celery-worker"
+# The dump itself was taken with --clean --if-exists, so psql tears down
+# and recreates every object as it goes. ON_ERROR_STOP=on +
+# --single-transaction wrap the whole restore in one transaction and abort
+# it on the first SQL error, instead of psql's default of plowing on and
+# committing whatever ran before the error - which would leave the
+# database in an unknown mix of old and new state, exactly what this
+# script exists to avoid.
+gunzip -c "$BACKUP_FILE" | docker compose exec -T postgres \
+  psql -v ON_ERROR_STOP=on --single-transaction -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+
+echo "Restore complete."
+echo "backend/celery-worker are still stopped. If this restore is undoing a bad"
+echo "upgrade, roll the image/commit back first; either way, start them only"
+echo "once you're sure the schema this data expects matches what's about to run"
+echo "(the backend runs 'alembic upgrade head' on startup):"
+echo "  docker compose up -d backend celery-worker"

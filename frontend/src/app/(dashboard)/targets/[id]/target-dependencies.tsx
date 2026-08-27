@@ -8,21 +8,25 @@ import { Package } from "lucide-react";
 // (#227) Human label for a component's provenance source. Legacy rows from
 // before trivy SBOM generation was removed keep a neutral label rather than
 // being dropped or relabelled as a newer source.
+const SOURCE_LABELS: Record<string, string> = {
+  github: "graph",
+  upload: "upload",
+  // Legacy, no longer produced: rows written while trivy generated the SBOM.
+  trivy: "manifest",
+};
+
+// Labelled per part rather than per whole string. source is a merged set
+// (_merge_sources in app/core/sbom_ingestion.py), and its order follows
+// _SOURCE_ORDER with anything unrecognised appended, so a legacy "trivy" row
+// re-seen by the Dependency Graph import merges to "github,trivy", not
+// "trivy,github". Enumerating whole combinations missed that one and rendered
+// the raw internal string in the table.
 function sourceLabel(source?: string): string {
-  switch (source) {
-    case "github":
-      return "graph";
-    case "upload":
-      return "upload";
-    case "github,upload":
-      return "graph + upload";
-    case "trivy":
-      return "manifest";
-    case "trivy,github":
-      return "manifest + graph";
-    default:
-      return source ?? "manifest";
-  }
+  if (!source) return "manifest";
+  return source
+    .split(",")
+    .map((part) => SOURCE_LABELS[part] ?? part)
+    .join(" + ");
 }
 
 // (#276) A per-target dependency inventory, separate from the findings list.

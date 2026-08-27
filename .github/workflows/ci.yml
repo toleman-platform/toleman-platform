@@ -202,36 +202,71 @@ jobs:
           cp .env.example .env
           docker compose up --build -d
 
-      - name: Wait for backend + frontend to report healthy
-        # docker-compose.yml already defines healthchecks for every service
-        # (postgres/redis via their own CLIs, backend via curl /health);
-        # `docker compose ps` surfaces them without re-implementing the
-        # polling logic that would just be a worse copy of the healthcheck
-        # config, and covers celery-worker/frontend's own `depends_on:
-        # condition: service_healthy` gating implicitly (they wouldn't be
-        # "running" yet if what they depend on hadn't turned healthy).
+      - name: Wait for all five services to be up and healthy
+        # docker-compose.yml already defines healthchecks for postgres,
+        # redis and backend; `docker compose ps` surfaces them without
+        # re-implementing the polling logic that would just be a worse copy
+        # of the healthcheck config.
+        #
+        # --all is load-bearing, not decoration: without it, `ps` omits any
+        # exited container entirely, so a celery-worker that crashed on
+        # startup would simply not appear in the output instead of showing
+        # up as unhealthy or stopped, an earlier version of this check
+        # verified the *absence* of "unhealthy" among whatever containers
+        # happened to still be listed, which a silently-dead celery-worker
+        # would have passed.
         run: |
           for i in $(seq 1 60); do
-            if [ "$(docker compose ps --format json | python3 -c "
+            check_output="$(docker compose ps --all --format json | python3 -c "
           import json, sys
-          statuses = [json.loads(l).get('Health', '') for l in sys.stdin if l.strip()]
-          # frontend/celery-worker have no healthcheck of their own; empty
-          # Health is fine for them as long as they're not exited/restarting,
-          # which the separate 'State' check below catches.
-          print('unhealthy' if any(s == 'unhealthy' for s in statuses) else 'ok')
-          ")" = "unhealthy" ]; then
-              echo "a service reported unhealthy" >&2
-              docker compose ps
+
+          expected = {'postgres', 'redis', 'backend', 'celery-worker', 'frontend'}
+          must_be_healthy = {'postgres', 'redis', 'backend'}
+          rows = {row['Service']: row for row in
+                  (json.loads(line) for line in sys.stdin if line.strip())}
+
+          missing = expected - rows.keys()
+          if missing:
+              print('missing services:', ', '.join(sorted(missing)))
+              sys.exit(1)
+
+          not_running = [name for name, row in rows.items() if row.get('State') != 'running']
+          if not_running:
+              print('not running:', ', '.join(sorted(not_running)))
+              sys.exit(1)
+
+          unhealthy = [name for name in must_be_healthy if rows[name].get('Health') != 'healthy']
+          if unhealthy:
+              print('not yet healthy:', ', '.join(sorted(unhealthy)))
+              sys.exit(2)
+
+          print('all five services running, postgres/redis/backend healthy')
+          ")"
+            status=$?
+            echo "$check_output"
+            if [ "$status" -eq 0 ]; then
+              break
+            elif [ "$status" -eq 1 ]; then
+              # Missing or not-running is never transient once compose has
+              # finished starting containers: something actually crashed
+              # (or was never defined), not "still starting up".
+              docker compose ps --all
               exit 1
             fi
-            if curl -sf http://localhost:8000/health >/dev/null && curl -sf http://localhost:3000 >/dev/null; then
-              echo "backend and frontend are both responding"
-              exit 0
+            # status 2: present and running, just not healthy yet -- keep polling.
+            if [ "$i" -eq 60 ]; then
+              echo "timed out waiting for postgres/redis/backend to report healthy" >&2
+              docker compose ps --all
+              exit 1
             fi
             sleep 5
           done
-          echo "timed out waiting for backend/frontend to come up" >&2
-          exit 1
+
+          if ! curl -sf http://localhost:8000/health >/dev/null || ! curl -sf http://localhost:3000 >/dev/null; then
+            echo "services report healthy but the HTTP endpoints aren't responding" >&2
+            exit 1
+          fi
+          echo "backend and frontend are both responding"
 
       - name: Verify backend health payload
         run: curl -sf http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'

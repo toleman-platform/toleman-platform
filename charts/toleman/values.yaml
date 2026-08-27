@@ -50,7 +50,7 @@ postgres:
 externalDatabaseUrl: ""
 
 # --- Redis -------------------------------------------------------------
-# Bundled by default (no persistence, same as docker-compose.yml — Redis
+# Bundled by default (no persistence, same as docker-compose.yml; Redis
 # here is Celery's broker/result backend, not a durability requirement).
 # Set redis.enabled: false and fill in externalRedisUrl for a managed
 # Redis/Elasticache/Memorystore instance instead.

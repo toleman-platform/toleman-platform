@@ -1,6 +1,6 @@
 apiVersion: v2
 name: toleman
-description: Toleman — Open-Source DevSecOps Vulnerability Management Platform
+description: "Toleman: Open-Source DevSecOps Vulnerability Management Platform"
 type: application
 # Chart version, bumped independently of the app; appVersion tracks the
 # published image tag this chart defaults to (see values.yaml image.tag).

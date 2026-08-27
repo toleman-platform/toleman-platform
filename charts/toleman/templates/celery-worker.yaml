@@ -33,7 +33,7 @@ spec:
         - name: celery-worker
           image: "{{ .Values.image.registry }}/{{ .Values.image.backendRepository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # Same image as backend, different command — mirrors
+          # Same image as backend, different command: mirrors
           # docker-compose.yml's celery-worker service exactly (see BLD-05
           # in that file for why they must always share the same image).
           command: ["celery", "-A", "app.tasks.celery_app", "worker", "-Q", "scans", "--loglevel=info"]

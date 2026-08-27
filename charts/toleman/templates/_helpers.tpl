@@ -50,7 +50,13 @@ app/core/config.py doesn't distinguish a managed DB from the bundled one.
 */}}
 {{- define "toleman.databaseUrl" -}}
 {{- if .Values.postgres.enabled -}}
-postgresql+psycopg://{{ .Values.postgres.user }}:{{ .Values.postgres.password }}@{{ include "toleman.fullname" . }}-postgres:5432/{{ .Values.postgres.database }}
+{{- /* urlquery: postgres.user/password are interpolated raw into a URL's
+       authority component. A generated password containing @, /, #, %, or :
+       would otherwise split the authority early, end it, start a fragment,
+       start a percent-escape, or shift the port - and secret.yaml's own
+       `fail` guard forces exactly this scenario for any non-local install
+       by requiring a real (often generator-produced) password. */ -}}
+postgresql+psycopg://{{ .Values.postgres.user | urlquery }}:{{ .Values.postgres.password | urlquery }}@{{ include "toleman.fullname" . }}-postgres:5432/{{ .Values.postgres.database }}
 {{- else -}}
 {{- required "externalDatabaseUrl is required when postgres.enabled is false" .Values.externalDatabaseUrl -}}
 {{- end -}}

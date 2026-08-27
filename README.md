@@ -17,6 +17,7 @@ See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery ba
   - [Database migrations (Alembic)](#database-migrations-alembic)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
+- [Contributing](#contributing)
 - [License & Security](#license--security)
 
 ## Getting Started
@@ -202,6 +203,13 @@ A gitleaks failure blocks the commit; run `git commit` with `SKIP=gitleaks` only
 - **Python driver**: `psycopg[binary]` (v3) instead of `psycopg2-binary`, no prebuilt wheel for `psycopg2` on Python 3.13+/3.14 yet.
 - **pydantic pinned to 2.9.x**: `sqlmodel==0.0.22` breaks on pydantic ≥2.10 (`Field 'id' requires a type annotation`), a known upstream incompatibility.
 - **Scan execution runs as a direct subprocess** for this MVP (no container isolation yet); matches the architecture review's noted blocker; must move to ephemeral containers before multi-tenant/mass-rollout use.
+
+## Contributing
+
+Bug reports, feature requests, and PRs are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, how to run
+the same checks CI runs, and commit/PR conventions, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
 
 ## License & Security
 

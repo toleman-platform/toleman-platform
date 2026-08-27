@@ -1,0 +1,9 @@
+# Code owners for toleman-platform.
+#
+# These are requested for review automatically on a matching PR. Order
+# matters: later, more specific patterns override earlier ones, matching
+# gitignore semantics.
+#
+# See https://docs.github.com/articles/about-codeowners for the syntax.
+
+*                       @geekshiv @r0075h3ll

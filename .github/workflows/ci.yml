@@ -298,18 +298,28 @@ jobs:
           # but never sends a response would otherwise block this step (and
           # the teardown steps after it) indefinitely instead of failing
           # within the ~5-minute budget this loop is supposed to enforce.
-          for i in $(seq 1 60); do
+          #
+          # A wall-clock deadline (via bash's $SECONDS, not an iteration
+          # count) is deliberate here rather than the seq-based loop above:
+          # two sequential `curl --max-time 5` calls plus a 5s sleep means a
+          # single iteration can take up to 15s, so 60 fixed iterations
+          # could take ~15 minutes in the worst case instead of the ~5 this
+          # step is meant to enforce.
+          deadline=$((SECONDS + 300))
+          responding=false
+          while [ "$SECONDS" -lt "$deadline" ]; do
             if curl -sf --max-time 5 http://localhost:8000/health >/dev/null && curl -sf --max-time 5 http://localhost:3000 >/dev/null; then
               echo "backend and frontend are both responding"
+              responding=true
               break
-            fi
-            if [ "$i" -eq 60 ]; then
-              echo "timed out waiting for backend/frontend HTTP endpoints to respond" >&2
-              docker compose ps --all
-              exit 1
             fi
             sleep 5
           done
+          if [ "$responding" = false ]; then
+            echo "timed out waiting for backend/frontend HTTP endpoints to respond" >&2
+            docker compose ps --all
+            exit 1
+          fi
 
       - name: Verify backend health payload
         run: curl -sf --max-time 5 http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'

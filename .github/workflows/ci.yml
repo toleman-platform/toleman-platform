@@ -293,8 +293,13 @@ jobs:
           # later. Retrying here, with the same budget as the health loop
           # above, is what actually waits for frontend instead of assuming
           # "containers healthy" means "HTTP is up".
+          # --max-time bounds each individual attempt: curl has no transfer
+          # timeout by default, so a service that accepts the TCP connection
+          # but never sends a response would otherwise block this step (and
+          # the teardown steps after it) indefinitely instead of failing
+          # within the ~5-minute budget this loop is supposed to enforce.
           for i in $(seq 1 60); do
-            if curl -sf http://localhost:8000/health >/dev/null && curl -sf http://localhost:3000 >/dev/null; then
+            if curl -sf --max-time 5 http://localhost:8000/health >/dev/null && curl -sf --max-time 5 http://localhost:3000 >/dev/null; then
               echo "backend and frontend are both responding"
               break
             fi
@@ -307,7 +312,7 @@ jobs:
           done
 
       - name: Verify backend health payload
-        run: curl -sf http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'
+        run: curl -sf --max-time 5 http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'
 
       - name: Show container status
         if: always()

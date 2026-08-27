@@ -36,7 +36,11 @@ fi
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT_FILE="$OUT_DIR/toleman-${POSTGRES_DB}-${TIMESTAMP}.sql.gz"
-TMP_FILE="${OUT_FILE}.partial"
+# mktemp, not "${OUT_FILE}.partial": two backups started in the same UTC
+# second would otherwise share one temp path, and one process's EXIT trap
+# removing it out from under the other's still-writing gzip would corrupt
+# or truncate that backup.
+TMP_FILE="$(mktemp "$OUT_DIR/.toleman-${POSTGRES_DB}-${TIMESTAMP}.XXXXXX")"
 trap 'rm -f "$TMP_FILE"' EXIT
 
 echo "Backing up '$POSTGRES_DB' (user '$POSTGRES_USER') to $OUT_FILE ..."

@@ -10,6 +10,9 @@ frontend/.next/
 frontend/.env.local
 
 .DS_Store
+# scripts/backup-postgres.sh's default output directory -- a database dump
+# is real user data and secrets, never something to commit.
+/backups/
 KT.md
 CLAUDE.md
 .claude/worktrees/

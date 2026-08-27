@@ -21,6 +21,7 @@ See the [architecture](ARCHITECTURE.md) for the full design. Full docs, includin
   - [Manual setup (macOS/Linux/Windows)](#manual-setup-macoslinuxwindows)
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
+  - [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
 - [Contributing](#contributing)
@@ -197,6 +198,29 @@ alembic revision --autogenerate -m "describe the schema change"
 ```
 
 Review the generated file under `alembic/versions/` before committing; autogenerate is a starting point, not a guarantee (it can miss things like column renames, which it sees as a drop+add). `alembic upgrade head` (or just starting the app) applies it. See `alembic/env.py` for how migrations read `DATABASE_URL` from `app.core.config.settings`, the same source the app itself uses, so they can never disagree about which DB they're pointed at.
+
+### Backups and zero data loss during upgrades
+
+An Alembic migration is not guaranteed reversible: some in `backend/alembic/versions/` are, by their own name, destructive (e.g. `drop onboarding profile`). Rolling an upgrade back by re-pointing at the previous image tag or commit does **not** undo a schema change already applied to the running database, since migrations run forward automatically on every backend startup (see above). The only real zero-data-loss guarantee is a backup taken immediately before the upgrade runs.
+
+For the Docker Compose deployment:
+
+```bash
+./scripts/backup-postgres.sh                 # writes ./backups/toleman-<db>-<timestamp>-<unique>.sql.gz
+docker compose pull && docker compose up -d  # or `docker compose up --build -d`
+```
+
+If something goes wrong, restore the backup taken just before the upgrade:
+
+```bash
+./scripts/restore-postgres.sh backups/toleman-osp-20260101T000000Z-a1B2c3.sql.gz
+```
+
+`restore-postgres.sh` validates the backup file, asks for confirmation, then stops `backend`/`celery-worker` before restoring (they hold open connections, and the backend's own startup hook runs `alembic upgrade head` against this same database, either of which can interleave with a restore in progress) and runs the restore itself in a single transaction that aborts on the first error (`psql -v ON_ERROR_STOP=on --single-transaction`), so a bad restore rolls back cleanly instead of leaving a half-applied mix of old and new state. It leaves both services stopped afterward; start them (`docker compose up -d backend celery-worker`) once you're sure the schema the restored data expects matches what's about to run.
+
+For a Kubernetes deployment (`charts/toleman`), the equivalent is `kubectl exec` into the postgres Pod with the same `pg_dump`/`psql` invocations the scripts above use; there's no in-cluster backup CronJob yet (tracked as a follow-up), so back up before every Helm upgrade the same way.
+
+Postgres's data itself already survives a `docker compose down` (no `-v`) or a Pod restart via the named volume/PVC; these scripts are for the case a completed migration needs to be undone, not for routine restarts.
 
 ### Pre-commit hooks
 

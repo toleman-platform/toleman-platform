@@ -122,7 +122,13 @@ config:
 # --set-string or a values file that stays out of git (or point
 # existingSecret at a Secret you manage separately, e.g. through
 # external-secrets/Sealed Secrets, and this chart's own Secret template is
-# skipped entirely).
+# skipped entirely - that Secret must then also carry DATABASE_URL,
+# REDIS_URL, WORKSPACE_API_KEY, ANTHROPIC_API_KEY, and, when
+# postgres.enabled, POSTGRES_USER/POSTGRES_PASSWORD; see templates/secret.yaml).
+#
+# sessionSecret/adminPassword/platformEncryptionKey are required (the chart
+# render itself fails without them) whenever config.environment isn't
+# "local" and existingSecret is unset; see templates/secret.yaml.
 secrets:
   existingSecret: ""
   sessionSecret: ""

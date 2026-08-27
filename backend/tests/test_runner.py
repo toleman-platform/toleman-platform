@@ -207,3 +207,146 @@ def test_repo_clone_error_message_is_safe_and_descriptive(recorded_calls):
         assert clone_error_message(exc) == str(exc)
     else:
         pytest.fail("expected RepoCloneError")
+
+
+# --- Issue #298: VPN/client-cert-gated target hosts -----------------------
+
+
+def test_non_github_host_still_rejected_when_not_in_extra_clone_hosts(recorded_calls):
+    with pytest.raises(RepoCloneError):
+        clone_repo("https://gitlab.internal.corp/team/project.git", "main")
+    assert recorded_calls == []
+
+
+def test_extra_clone_hosts_allows_an_operator_configured_host(recorded_calls, monkeypatch):
+    monkeypatch.setattr(runner.settings, "extra_clone_hosts", "gitlab.internal.corp")
+    clone_repo("https://gitlab.internal.corp/team/project.git", "main")
+    assert len(recorded_calls) == 1
+    cmd = recorded_calls[0]["cmd"]
+    assert "https://gitlab.internal.corp/team/project.git" in cmd
+
+
+def test_github_token_never_sent_to_a_non_github_allowed_host(recorded_calls, monkeypatch):
+    """The credential-leak fix: a workspace's GitHub PAT must never be
+    attached when the target host isn't actually github.com, even though
+    resolve_github_token has no idea what host it will be used against.
+
+    Doesn't assert "no GIT_CONFIG_* env vars set at all": this sandbox's own
+    git setup already has some ambient (GIT_CONFIG_COUNT=3 for its own
+    github.com SSH rewriting, unrelated to this call), which clone_repo
+    correctly leaves untouched when it has nothing of its own to add. The
+    actual property under test is narrower and more direct: the token value
+    itself must not appear anywhere in the env clone_repo built.
+    """
+    monkeypatch.setattr(runner.settings, "extra_clone_hosts", "gitlab.internal.corp")
+    token = "ghp_supersecrettoken1234567890"  # noqa: S105
+    clone_repo("https://gitlab.internal.corp/team/project.git", "main", github_token=token)
+
+    env = recorded_calls[0]["env"]
+    assert all(token not in str(v) for v in env.values())
+    cmd = recorded_calls[0]["cmd"]
+    assert all(token not in str(part) for part in cmd)
+
+
+def test_github_token_still_sent_to_github(recorded_calls):
+    token = "ghp_supersecrettoken1234567890"  # noqa: S105
+    clone_repo("https://github.com/acme/widgets.git", "main", github_token=token)
+    env = recorded_calls[0]["env"]
+    assert env["GIT_CONFIG_KEY_0"] == "http.extraheader"
+
+
+def test_client_cert_and_key_written_to_git_config_and_cleaned_up(tmp_path, monkeypatch):
+    """clone_repo deletes the temp cert dir in `finally` right after the
+    subprocess call, before returning -- so the file content/permissions
+    have to be captured *during* the (faked) subprocess.run call, same
+    approach as test_client_cert_temp_dir_cleaned_up_even_on_clone_failure
+    below, not by inspecting paths after clone_repo already returned.
+    """
+    monkeypatch.setattr(runner.settings, "scan_workdir", str(tmp_path))
+    monkeypatch.setattr(runner.settings, "extra_clone_hosts", "gitlab.internal.corp")
+    cert_pem = "-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----\n"
+    key_pem = "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n"
+    captured = {}
+
+    def _run_and_capture(cmd, check=False, capture_output=False, text=False, env=None):
+        captured["env"] = env
+        captured["cert_path"] = env["GIT_CONFIG_VALUE_0"]
+        captured["key_path"] = env["GIT_CONFIG_VALUE_1"]
+        captured["cert_content"] = Path(captured["cert_path"]).read_text()
+        captured["key_content"] = Path(captured["key_path"]).read_text()
+        captured["cert_mode"] = oct(Path(captured["cert_path"]).stat().st_mode)[-3:]
+        captured["key_mode"] = oct(Path(captured["key_path"]).stat().st_mode)[-3:]
+        Path(cmd[-1]).mkdir(parents=True, exist_ok=True)
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", _run_and_capture)
+
+    clone_repo(
+        "https://gitlab.internal.corp/team/project.git", "main",
+        client_cert_pem=cert_pem, client_key_pem=key_pem,
+    )
+
+    # GIT_CONFIG_COUNT=2 is what actually governs what git reads, so only
+    # indices 0/1 matter here; this sandbox's own ambient git setup already
+    # has other GIT_CONFIG_KEY_N entries at higher indices (unrelated SSH
+    # rewriting), which git ignores once COUNT caps it at 2.
+    env = captured["env"]
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "http.sslCert"
+    assert env["GIT_CONFIG_KEY_1"] == "http.sslKey"
+
+    assert captured["cert_content"] == cert_pem
+    assert captured["key_content"] == key_pem
+    assert captured["cert_mode"] == "600"
+    assert captured["key_mode"] == "600"
+
+    # Cleaned up after the call returns, success or not, so nothing lingers
+    # on disk past the single clone that needed it.
+    assert not Path(captured["cert_path"]).exists()
+    assert not Path(captured["key_path"]).exists()
+    assert not Path(captured["cert_path"]).parent.exists()
+
+
+def test_client_cert_temp_dir_cleaned_up_even_on_clone_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner.settings, "scan_workdir", str(tmp_path))
+    monkeypatch.setattr(runner.settings, "extra_clone_hosts", "gitlab.internal.corp")
+    captured = {}
+
+    def _failing_run(cmd, check=False, capture_output=False, text=False, env=None):
+        captured["cert_path"] = env["GIT_CONFIG_VALUE_0"]
+        raise subprocess.CalledProcessError(returncode=128, cmd=cmd, output="", stderr="fatal: boom")
+
+    monkeypatch.setattr(runner.subprocess, "run", _failing_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        clone_repo(
+            "https://gitlab.internal.corp/team/project.git", "main",
+            client_cert_pem="fake-cert",
+        )
+
+    assert not Path(captured["cert_path"]).exists()
+    assert not Path(captured["cert_path"]).parent.exists()
+
+
+def test_proxy_url_sets_https_and_http_proxy_env(recorded_calls, monkeypatch):
+    monkeypatch.setattr(runner.settings, "extra_clone_hosts", "gitlab.internal.corp")
+    clone_repo(
+        "https://gitlab.internal.corp/team/project.git", "main",
+        proxy_url="http://vpn-gateway.internal.corp:3128",
+    )
+    env = recorded_calls[0]["env"]
+    assert env["HTTPS_PROXY"] == "http://vpn-gateway.internal.corp:3128"
+    assert env["HTTP_PROXY"] == "http://vpn-gateway.internal.corp:3128"
+
+
+def test_no_proxy_env_set_when_no_proxy_url_given(recorded_calls, monkeypatch):
+    # Isolated from whatever the *real* environment already has (a sandbox
+    # or CI runner behind its own outbound proxy legitimately sets these);
+    # the property under test is "clone_repo doesn't add its own", not
+    # "the ambient environment never has one".
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    clone_repo("https://github.com/acme/widgets.git", "main")
+    env = recorded_calls[0]["env"]
+    assert "HTTPS_PROXY" not in env
+    assert "HTTP_PROXY" not in env

@@ -75,6 +75,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       EXTRA_CORS_ORIGINS: ${EXTRA_CORS_ORIGINS:-}
+      EXTRA_CLONE_HOSTS: ${EXTRA_CLONE_HOSTS:-}
     ports:
       - "8000:8000"
     healthcheck:
@@ -127,6 +128,7 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       EXTRA_CORS_ORIGINS: ${EXTRA_CORS_ORIGINS:-}
+      EXTRA_CLONE_HOSTS: ${EXTRA_CLONE_HOSTS:-}
 
   frontend:
     build:

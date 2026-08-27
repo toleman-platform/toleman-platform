@@ -667,7 +667,8 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
 
     try:
         repo_path = runner.clone_repo(
-            target.repo_url, head_branch, resolve_github_token(session, target.workspace_id, slug) or "", scan_id=f"pr-{pr_scan.id}"
+            target.repo_url, head_branch, resolve_github_token(session, target.workspace_id, slug) or "",
+            scan_id=f"pr-{pr_scan.id}", **runner.clone_kwargs_for_target(target),
         )
         guardrail_tools = _resolve_guardrail_tools(session, target)
 

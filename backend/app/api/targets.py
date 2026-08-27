@@ -9,6 +9,8 @@ from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
+from app.core.config import settings
+from app.core.crypto import encrypt_secret
 from app.core.enforcement import VALID_ENFORCEMENT_MODES, resolve_enforcement_mode_with_source
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
@@ -37,12 +39,25 @@ router = APIRouter(prefix="/api/targets", tags=["targets"])
 # Scan execution clones this URL and runs local tools against the checkout, so
 # an unrestricted repo_url is an SSRF / local-file-read primitive (file://,
 # internal hosts, cloud metadata IPs). Only allow real GitHub HTTPS clone URLs.
-_ALLOWED_REPO_URL = re.compile(r"^https://github\.com/[\w.\-]+/[\w.\-]+(\.git)?/?$")
+_ALLOWED_REPO_URL = re.compile(r"^https://(?P<host>[\w.\-]+)/[\w.\-]+/[\w.\-]+(\.git)?/?$")
 
 
 def _validate_repo_url(url: str) -> str:
-    if not _ALLOWED_REPO_URL.match(url):
-        raise HTTPException(status_code=400, detail="repo_url must be an https://github.com/<org>/<repo> URL")
+    # (#298) github.com is always allowed; EXTRA_CLONE_HOSTS (operator-set
+    # env var, see its docstring in app/core/config.py) extends this the
+    # same way for a VPN-gated/client-cert-protected internal host. This
+    # must stay in lockstep with app/scanners/runner.py's own
+    # ALLOWED_CLONE_HOSTS | extra_clone_hosts_set check - that's the SSRF
+    # defense that actually matters at clone time, this is just the
+    # earliest point to reject a bad host with a clear 400 instead of a
+    # scan failing later.
+    match = _ALLOWED_REPO_URL.match(url)
+    allowed_hosts = {"github.com"} | settings.extra_clone_hosts_set
+    if not match or match.group("host") not in allowed_hosts:
+        raise HTTPException(
+            status_code=400,
+            detail=f"repo_url must be an https://<host>/<org>/<repo> URL where <host> is one of {sorted(allowed_hosts)}",
+        )
     return url
 
 
@@ -98,6 +113,12 @@ class UpdateTargetRequest(BaseModel):
     # without anyone deciding to.
     diff_scoped_pr_scans: bool | None = None
 
+    # (#298) HTTP(S) proxy (e.g. a VPN gateway) git's clone should tunnel
+    # through for this target. Not a secret (no encrypt_secret here, unlike
+    # client_cert/key below), just a URL; explicit null clears it, same
+    # exclude_unset semantics as enforcement_mode above.
+    clone_proxy_url: str | None = None
+
     @field_validator("diff_scoped_pr_scans")
     @classmethod
     def _check_diff_scoped(cls, v: bool | None) -> bool | None:
@@ -149,10 +170,19 @@ def _with_groups(target: Target, groups_by_target: dict[int, list[dict]]) -> dic
     # reimplement that precedence and get it subtly wrong. The raw
     # is_ai_repo / is_ai_repo_override fields ride along via model_dump()
     # so the UI can still distinguish "auto-detected" from "forced".
+    out = target.model_dump()
+    # (#298) Never echo the encrypted client cert/key back to the client,
+    # same "token_set, not the token" pattern as GitHubToken/app.api.github_token.
+    # client_cert_ciphertext/client_key_ciphertext are internal storage
+    # details a caller never needs and must never receive.
+    client_cert_set = bool(out.pop("client_cert_ciphertext", ""))
+    client_key_set = bool(out.pop("client_key_ciphertext", ""))
     return {
-        **target.model_dump(),
+        **out,
         "groups": groups_by_target.get(target.id, []),
         "is_ai_repo_effective": effective_is_ai_repo(target),
+        "client_cert_set": client_cert_set,
+        "client_key_set": client_key_set,
     }
 
 
@@ -259,7 +289,7 @@ def create_target(
     session.add(target)
     session.commit()
     session.refresh(target)
-    return target
+    return _with_groups(target, {})
 
 
 @router.get("/{target_id}")
@@ -296,11 +326,15 @@ def update_target(
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "clone_proxy_url" and value is None:
+            # Not Optional on the model (default ""); null in the request
+            # means "clear it", same as every other nullable field here.
+            value = ""
         setattr(target, field, value)
     session.add(target)
     session.commit()
     session.refresh(target)
-    return target
+    return _with_groups(target, {})
 
 
 @router.get("/{target_id}/workspace-key")
@@ -362,6 +396,48 @@ def _get_target_scoped(target_id: int, session: Session, user: User) -> Target:
     if ws_ids is not None and target.workspace_id not in ws_ids:
         raise HTTPException(status_code=404, detail="target not found")
     return target
+
+
+class SaveCloneCredentialsRequest(BaseModel):
+    # PEM text for the mTLS client cert/key git presents when cloning this
+    # target's repo_url. Omit a field (exclude_unset) to leave it
+    # unchanged; pass "" explicitly to clear it. Mirrors
+    # SaveGithubTokenRequest's plaintext-in/never-echoed-back shape.
+    client_cert_pem: str | None = None
+    client_key_pem: str | None = None
+
+
+@router.put("/{target_id}/clone-credentials")
+def save_clone_credentials(
+    target_id: int,
+    payload: SaveCloneCredentialsRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """(#298) Set/clear the mTLS client cert/key used to clone this target's
+    repo_url, for a host behind a VPN or requiring client-cert auth (see
+    EXTRA_CLONE_HOSTS in app/core/config.py). Encrypted at rest the same way
+    as GitHubToken (app.core.crypto); never echoed back - the response only
+    reports whether each is set, same as GET/PUT /api/github-token."""
+    target = session.get(Target, target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="target not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "client_cert_pem" in updates:
+        target.client_cert_ciphertext = encrypt_secret(updates["client_cert_pem"])
+    if "client_key_pem" in updates:
+        target.client_key_ciphertext = encrypt_secret(updates["client_key_pem"])
+    session.add(target)
+    session.commit()
+    session.refresh(target)
+    return {
+        "client_cert_set": bool(target.client_cert_ciphertext),
+        "client_key_set": bool(target.client_key_ciphertext),
+    }
 
 
 @router.get("/{target_id}/pipeline-workflow")

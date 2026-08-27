@@ -107,6 +107,7 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                 target.repo_url, target.default_branch,
                 resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
                 scan_id=scan.id,
+                **runner.clone_kwargs_for_target(target),
             )
             # Issue #185: recompute AI-repo detection from the fresh
             # checkout while we have one. Best-effort; a detection failure

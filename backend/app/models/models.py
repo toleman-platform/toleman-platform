@@ -185,6 +185,21 @@ class Target(SQLModel, table=True):
     # forced this on" stay distinguishable in the UI.
     is_ai_repo_override: Optional[bool] = None
 
+    # (#298) VPN/client-cert-gated clone hosts. repo_url can point at any
+    # host an operator has added to EXTRA_CLONE_HOSTS (app/core/config.py),
+    # e.g. an internal GitHub Enterprise Server or GitLab instance reachable
+    # only over a VPN or requiring mTLS. These three make that reachable:
+    # client_cert/key are the mTLS client certificate git presents (mirrors
+    # GitHubToken.token_ciphertext - encrypted at rest via
+    # app.core.crypto.encrypt_secret/decrypt_secret since they're
+    # replayable credentials, never hashed, never echoed back by the API),
+    # clone_proxy_url is the HTTP(S) proxy (e.g. a VPN gateway) git's clone
+    # should tunnel through. All optional/blank: a target on a normal
+    # public github.com repo needs none of this.
+    client_cert_ciphertext: str = ""
+    client_key_ciphertext: str = ""
+    clone_proxy_url: str = ""
+
 
 class Group(SQLModel, table=True):
     """A workspace-scoped tag/group for organizing Targets at scale (issue

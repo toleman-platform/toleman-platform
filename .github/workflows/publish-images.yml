@@ -86,6 +86,12 @@ jobs:
           push: true
           tags: ${{ steps.backend-meta.outputs.tags }}
           labels: ${{ steps.backend-meta.outputs.labels }}
+          # GHA-backed layer cache, scoped per platform so amd64 and arm64
+          # builds don't thrash a shared cache with each other's layers
+          # (unlike docker-images.yml's PR build, nothing here needs a
+          # from-scratch build to catch dependency drift).
+          cache-from: type=gha,scope=backend-${{ env.PLATFORMS }}
+          cache-to: type=gha,mode=max,scope=backend-${{ env.PLATFORMS }}
           # (BLD-01) Stamp the real build identity into the image so a
           # running instance can say which one it is; GET /health and the
           # sidebar both surface it. A published image with version "dev"
@@ -115,6 +121,8 @@ jobs:
           push: true
           tags: ${{ steps.frontend-meta.outputs.tags }}
           labels: ${{ steps.frontend-meta.outputs.labels }}
+          cache-from: type=gha,scope=frontend-${{ env.PLATFORMS }}
+          cache-to: type=gha,mode=max,scope=frontend-${{ env.PLATFORMS }}
           # Baked in at build time because Next.js inlines NEXT_PUBLIC_*
           # into the client bundle. It is only a fallback: the dashboard
           # layout injects `window.__TOLEMAN_API_URL__` from PUBLIC_API_URL

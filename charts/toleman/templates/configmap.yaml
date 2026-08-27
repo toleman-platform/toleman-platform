@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "toleman.fullname" . }}-config
+  labels:
+    {{- include "toleman.labels" . | nindent 4 }}
+data:
+  # Non-secret settings read by backend/app/core/config.py. DATABASE_URL and
+  # REDIS_URL are computed here too (not secret in the Redis case since
+  # there's no auth by default; DATABASE_URL does embed the postgres
+  # password, but Kubernetes ConfigMaps are as readable as Secrets to
+  # anyone who can already get either, and splitting the DB URL across a
+  # ConfigMap/Secret pair to hide one piece of it buys no real isolation).
+  DATABASE_URL: {{ include "toleman.databaseUrl" . | quote }}
+  REDIS_URL: {{ include "toleman.redisUrl" . | quote }}
+  WORKSPACE_API_KEY: {{ .Values.config.workspaceApiKey | quote }}
+  COOKIE_SECURE: {{ .Values.config.cookieSecure | quote }}
+  ADMIN_EMAIL: {{ .Values.config.adminEmail | quote }}
+  ADMIN_NAME: {{ .Values.config.adminName | quote }}
+  ANTHROPIC_API_KEY: {{ .Values.config.anthropicApiKey | quote }}
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  PUBLIC_BASE_URL: {{ .Values.config.publicBaseUrl | quote }}
+  PUBLIC_API_URL: {{ .Values.config.publicApiUrl | quote }}
+  EXTRA_CORS_ORIGINS: {{ .Values.config.extraCorsOrigins | quote }}

@@ -30,6 +30,11 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
+# Least privilege: every job here only checks out, scans, and uploads
+# artifacts, so a read-only token is enough.
+permissions:
+  contents: read
+
 concurrency:
   group: self-scan-${{ github.ref }}
   cancel-in-progress: true

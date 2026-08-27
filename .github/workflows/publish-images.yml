@@ -140,7 +140,7 @@ jobs:
       - name: Attest backend provenance
         id: backend-attest
         continue-on-error: true
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ${{ env.BACKEND_IMAGE }}
           subject-digest: ${{ steps.backend-build.outputs.digest }}
@@ -149,7 +149,7 @@ jobs:
       - name: Attest frontend provenance
         id: frontend-attest
         continue-on-error: true
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ${{ env.FRONTEND_IMAGE }}
           subject-digest: ${{ steps.frontend-build.outputs.digest }}

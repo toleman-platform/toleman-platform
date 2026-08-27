@@ -11,7 +11,7 @@ def _rows(text: str) -> list[list[str]]:
 def test_formula_prefixes_are_neutralized():
     buf = io.StringIO()
     writer = safe_csv_writer(buf)
-    writer.writerow(["=cmd|' /C calc'!A0", "+1+1", "-1+1", "@SUM(1,1)", "\tHYPERLINK", "normal"])
+    writer.writerow(["=cmd|' /C calc'!A0", "+1+1", "-1+1", "@SUM(1,1)", "\tHYPERLINK", "\rDROP", "normal"])
     row = _rows(buf.getvalue())[0]
     assert row == [
         "'=cmd|' /C calc'!A0",
@@ -19,6 +19,7 @@ def test_formula_prefixes_are_neutralized():
         "'-1+1",
         "'@SUM(1,1)",
         "'\tHYPERLINK",
+        "'\rDROP",
         "normal",
     ]
 

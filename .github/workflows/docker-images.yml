@@ -21,6 +21,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege: this workflow builds and scans images locally, never
+# pushes or logs into a registry, so a read-only token is enough.
+permissions:
+  contents: read
+
 concurrency:
   group: docker-images-${{ github.ref }}
   cancel-in-progress: true

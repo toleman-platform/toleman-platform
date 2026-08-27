@@ -24,6 +24,14 @@ on:
   push:
     branches: [main]
 
+# Least-privilege default for every job below: none of them push commits,
+# comment, or touch releases/packages, they only check out the repo, build,
+# and run tests/smoke checks. Explicit rather than relying on the repo's
+# default token permissions, which can be broader than this workflow needs
+# (flagged by zizmor's excessive-permissions check).
+permissions:
+  contents: read
+
 # (#233) A force-push during review should not leave a superseded run
 # occupying a runner and reporting a result nobody will act on.
 concurrency:

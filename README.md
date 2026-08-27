@@ -209,7 +209,7 @@ If something goes wrong, restore the backup taken just before the upgrade:
 
 For a Kubernetes deployment (`charts/toleman`), the equivalent is `kubectl exec` into the postgres Pod with the same `pg_dump`/`psql` invocations the scripts above use; there's no in-cluster backup CronJob yet (tracked as a follow-up), so back up before every Helm upgrade the same way.
 
-Postgres's data itself already survives a `docker compose down` (no `-v`) or a Pod restart via the named volume/PVC — these scripts are for the case a completed migration needs to be undone, not for routine restarts.
+Postgres's data itself already survives a `docker compose down` (no `-v`) or a Pod restart via the named volume/PVC; these scripts are for the case a completed migration needs to be undone, not for routine restarts.
 
 ### Pre-commit hooks
 

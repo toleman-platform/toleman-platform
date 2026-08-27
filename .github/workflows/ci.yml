@@ -225,7 +225,17 @@ jobs:
         # would have passed.
         run: |
           for i in $(seq 1 60); do
-            check_output="$(docker compose ps --all --format json | python3 -c "
+            # The assignment must be the direct condition of this `if` (not
+            # a plain `check_output=$(...)` line followed by `status=$?`):
+            # GitHub Actions runs `run:` steps under `bash -e`, and a nonzero
+            # command-substitution assignment aborts the script immediately
+            # under errexit, before a following `status=$?` line ever
+            # executes. That would have quietly turned "not yet healthy"
+            # (this loop's normal, expected first few iterations) into an
+            # immediate hard failure instead of a retry. A command that is
+            # the direct condition of `if` is exempt from errexit, which is
+            # what actually lets `status=2` reach the branch below.
+            if check_output="$(docker compose ps --all --format json | python3 -c "
           import json, sys
 
           expected = {'postgres', 'redis', 'backend', 'celery-worker', 'frontend'}
@@ -249,8 +259,11 @@ jobs:
               sys.exit(2)
 
           print('all five services running, postgres/redis/backend healthy')
-          ")"
-            status=$?
+          ")"; then
+              status=0
+            else
+              status=$?
+            fi
             echo "$check_output"
             if [ "$status" -eq 0 ]; then
               break

@@ -109,7 +109,7 @@ export default async function TargetDetailPage({
         />
       )}
 
-      {tab === "dependencies" && <TargetDependencies targetId={targetId} />}
+      {tab === "dependencies" && <TargetDependencies targetId={targetId} target={target} />}
 
       {tab === "history" && <TargetHistory targetId={targetId} />}
 

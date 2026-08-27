@@ -262,11 +262,28 @@ jobs:
             sleep 5
           done
 
-          if ! curl -sf http://localhost:8000/health >/dev/null || ! curl -sf http://localhost:3000 >/dev/null; then
-            echo "services report healthy but the HTTP endpoints aren't responding" >&2
-            exit 1
-          fi
-          echo "backend and frontend are both responding"
+          # A separate, un-retried loop here was the bug in an earlier version
+          # of this fix: postgres/redis/backend can all turn "healthy" (backend's
+          # own healthcheck only proves *it* is serving) well before frontend's
+          # Next.js server has actually bound its port, since frontend has no
+          # healthcheck of its own for the loop above to wait on. A single curl
+          # attempt right after breaking out of that loop raced frontend's
+          # listener and failed the job even though the stack was fine seconds
+          # later. Retrying here, with the same budget as the health loop
+          # above, is what actually waits for frontend instead of assuming
+          # "containers healthy" means "HTTP is up".
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/health >/dev/null && curl -sf http://localhost:3000 >/dev/null; then
+              echo "backend and frontend are both responding"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "timed out waiting for backend/frontend HTTP endpoints to respond" >&2
+              docker compose ps --all
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Verify backend health payload
         run: curl -sf http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'

@@ -1,12 +1,18 @@
-# Toleman: Open-Source DevSecOps Vulnerability Management Platform
+# Toleman
+
+**Open-source DevSecOps vulnerability management.** FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, OSV.dev malicious-package detection, a dedup engine, two-tier priority scoring, and a triage state machine — no paid tiers, no feature gating.
+
+[![CI](https://github.com/toleman-platform/toleman-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/toleman-platform/toleman-platform/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-geekshiv.github.io%2Ftoleman-blue)](https://geekshiv.github.io/toleman)
 
 > **Status: active development.** No tagged release yet; `main` is the only
 > line to track. APIs, schema, and config vars can change without notice.
 > Expect rough edges; file issues for what you hit.
 
-See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, OSV.dev malicious-package detection on SBOM inventory (surfaced as `osv-malware` Critical findings), dedup engine, two-tier priority scoring, triage state machine.
+See the [architecture](ARCHITECTURE.md) for the full design. Full docs, including feature-by-feature guides, live at **[geekshiv.github.io/toleman](https://geekshiv.github.io/toleman)** (source: [geekshiv/toleman](https://github.com/geekshiv/toleman)) — this README covers getting a copy running and developing on it.
 
-**Documentation:** [geekshiv.github.io/toleman](https://geekshiv.github.io/toleman) (source: [geekshiv/toleman](https://github.com/geekshiv/toleman)).
+---
 
 ## Contents
 
@@ -17,7 +23,10 @@ See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery ba
   - [Database migrations (Alembic)](#database-migrations-alembic)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
+- [Contributing](#contributing)
 - [License & Security](#license--security)
+
+---
 
 ## Getting Started
 
@@ -172,6 +181,8 @@ Open http://localhost:3000, redirects to `/login`. Sign in with the seeded admin
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
 
+---
+
 ## Development
 
 ### Database migrations (Alembic)
@@ -197,11 +208,24 @@ pip install pre-commit && pre-commit install
 
 A gitleaks failure blocks the commit; run `git commit` with `SKIP=gitleaks` only when you have a deliberate reason.
 
+---
+
 ## Architecture decisions made during build (deltas from the design doc)
 
 - **Python driver**: `psycopg[binary]` (v3) instead of `psycopg2-binary`, no prebuilt wheel for `psycopg2` on Python 3.13+/3.14 yet.
 - **pydantic pinned to 2.9.x**: `sqlmodel==0.0.22` breaks on pydantic ≥2.10 (`Field 'id' requires a type annotation`), a known upstream incompatibility.
 - **Scan execution runs as a direct subprocess** for this MVP (no container isolation yet); matches the architecture review's noted blocker; must move to ephemeral containers before multi-tenant/mass-rollout use.
+
+---
+
+## Contributing
+
+Bug reports, feature requests, and PRs are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, how to run
+the same checks CI runs, and commit/PR conventions, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
+
+---
 
 ## License & Security
 

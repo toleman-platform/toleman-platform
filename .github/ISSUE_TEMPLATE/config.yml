@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/toleman-platform/toleman-platform/security/advisories/new
+    about: Please don't file vulnerabilities as public issues — use private advisory reporting instead. See SECURITY.md.
+  - name: Ask a question
+    url: https://github.com/toleman-platform/toleman-platform/discussions
+    about: For "how do I..." or "is this expected" questions, start a discussion instead of an issue.

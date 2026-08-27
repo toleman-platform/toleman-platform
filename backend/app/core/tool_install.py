@@ -94,7 +94,9 @@ def _installed_version(tool: str) -> str:
     if not entry:
         return ""
     try:
-        proc = subprocess.run(
+        # entry["version_cmd"] is a fixed argv list from the tool registry,
+        # no shell, no interpolated input.
+        proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             entry["version_cmd"],
             capture_output=True,
             text=True,
@@ -126,7 +128,10 @@ def perform_install(session: Session, run) -> None:
     cmd = [sys.executable, "-m", "pip", "install", "--no-input", "--disable-pip-version-check", package]
 
     try:
-        proc = subprocess.run(
+        # cmd is built from sys.executable and a package name resolved via
+        # resolve_package(), a registry-key lookup, not a package string
+        # supplied by the caller. No shell, one argv element per part.
+        proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
             cmd, capture_output=True, text=True, timeout=INSTALL_TIMEOUT_SECONDS
         )
     except subprocess.TimeoutExpired:

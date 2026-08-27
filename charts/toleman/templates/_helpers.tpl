@@ -48,15 +48,27 @@ postgres Service when postgres.enabled, otherwise values.externalDatabaseUrl
 verbatim -- this is the same DATABASE_URL setting either way,
 app/core/config.py doesn't distinguish a managed DB from the bundled one.
 */}}
+{{- define "toleman.urlEscape" -}}
+{{- /* urlquery encodes a literal space as "+" (query-string escaping), but
+       SQLAlchemy's URL parser only percent-decodes the userinfo component
+       (Python's urllib.parse.unquote, not unquote_plus) - it never turns a
+       "+" back into a space. A password containing a literal space would
+       otherwise reach Postgres as a literal "+", and authentication fails.
+       urlquery already encodes a literal "+" as "%2B", so every remaining
+       "+" after it can only be an encoded space; replacing those with
+       "%20" (which SQLAlchemy does decode to a real space) fixes both. */ -}}
+{{- . | urlquery | replace "+" "%20" -}}
+{{- end -}}
+
 {{- define "toleman.databaseUrl" -}}
 {{- if .Values.postgres.enabled -}}
-{{- /* urlquery: postgres.user/password are interpolated raw into a URL's
+{{- /* urlEscape: postgres.user/password are interpolated raw into a URL's
        authority component. A generated password containing @, /, #, %, or :
        would otherwise split the authority early, end it, start a fragment,
        start a percent-escape, or shift the port - and secret.yaml's own
        `fail` guard forces exactly this scenario for any non-local install
        by requiring a real (often generator-produced) password. */ -}}
-postgresql+psycopg://{{ .Values.postgres.user | urlquery }}:{{ .Values.postgres.password | urlquery }}@{{ include "toleman.fullname" . }}-postgres:5432/{{ .Values.postgres.database }}
+postgresql+psycopg://{{ include "toleman.urlEscape" .Values.postgres.user }}:{{ include "toleman.urlEscape" .Values.postgres.password }}@{{ include "toleman.fullname" . }}-postgres:5432/{{ .Values.postgres.database }}
 {{- else -}}
 {{- required "externalDatabaseUrl is required when postgres.enabled is false" .Values.externalDatabaseUrl -}}
 {{- end -}}

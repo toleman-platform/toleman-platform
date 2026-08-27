@@ -174,6 +174,27 @@ Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py
 
 ## Development
 
+### Scanning targets behind a VPN or requiring client certs (#298)
+
+`repo_url` is normally restricted to `https://github.com/<org>/<repo>` (an
+open allowlist would let a Target point `git clone` at an arbitrary host -
+an SSRF vector, e.g. a cloud metadata endpoint). To scan a target on an
+internal GitHub Enterprise Server, GitLab, or Gitea instance reachable only
+over a VPN or requiring a client certificate:
+
+1. The operator adds that host to `EXTRA_CLONE_HOSTS` (comma-separated) in
+   `.env`/the deployment's environment, e.g. `EXTRA_CLONE_HOSTS=gitlab.internal.corp`.
+   Deliberately operator-set only, never anything an API caller can
+   influence, the same trust boundary `EXTRA_CORS_ORIGINS` already uses.
+2. Create/point a Target's `repo_url` at that host.
+3. If the host requires an mTLS client certificate, set it via
+   `PUT /api/targets/{id}/clone-credentials` with `client_cert_pem`/
+   `client_key_pem` (PEM text). Encrypted at rest the same way as the
+   per-workspace GitHub token, and never echoed back by any GET/PATCH; the
+   API reports only `client_cert_set`/`client_key_set`.
+4. If cloning needs to go through a VPN gateway or other HTTP(S) proxy, set
+   it via `PATCH /api/targets/{id}` with `clone_proxy_url`.
+
 ### Database migrations (Alembic)
 
 The backend's startup hook (`app/core/db.py:init_db`, called from `app/main.py`) runs `alembic upgrade head` automatically against `DATABASE_URL` every time it starts; both `uvicorn app.main:app` and the Docker Compose `backend` service. There's no separate manual migration step for the common case of running the app.

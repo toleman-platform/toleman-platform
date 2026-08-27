@@ -82,6 +82,21 @@ class Settings(BaseSettings):
     # second port). See cors_allow_origins below.
     extra_cors_origins: str = ""
 
+    # (#298) Extra git-clone hosts, comma-separated, beyond github.com.
+    # app/scanners/runner.py's ALLOWED_CLONE_HOSTS exists specifically to
+    # stop a Target.repo_url (any authenticated user who can create a
+    # Target controls this value) from pointing `git clone` at an
+    # arbitrary host, an SSRF vector, e.g. a cloud metadata endpoint or an
+    # internal admin panel. That defense only works as long as the
+    # allowlist is something an end user can never influence: this setting
+    # extends it, but it's an operator-set env var (deployment-time), not
+    # anything reachable from the API. A workspace that needs to scan an
+    # internal GitHub Enterprise Server, GitLab, or Gitea instance -
+    # exactly the case a VPN-gated or client-cert-protected host implies -
+    # gets there by the operator deliberately adding that host here, the
+    # same trust boundary EXTRA_CORS_ORIGINS already uses.
+    extra_clone_hosts: str = ""
+
     # (BLD-01) Build identity, surfaced by GET /health and in the sidebar.
     #
     # An external evaluator built a fresh stack while a previously-running
@@ -117,6 +132,14 @@ class Settings(BaseSettings):
             if extra and extra not in origins:
                 origins.append(extra)
         return origins
+
+    @property
+    def extra_clone_hosts_set(self) -> set[str]:
+        """Operator-configured hosts to add to ALLOWED_CLONE_HOSTS. See
+        extra_clone_hosts's own docstring for why this must stay
+        operator-set (an env var) rather than anything an API caller can
+        influence."""
+        return {h.strip() for h in self.extra_clone_hosts.split(",") if h.strip()}
 
 
 settings = Settings()

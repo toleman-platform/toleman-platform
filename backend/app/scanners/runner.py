@@ -140,9 +140,17 @@ def _validate_repo_url(repo_url: str) -> None:
     parsed = urlparse(repo_url)
     if parsed.scheme != "https" or not parsed.netloc:
         raise RepoCloneError(f"repo_url must be an https:// URL, got: {repo_url!r}")
-    if parsed.netloc not in ALLOWED_CLONE_HOSTS:
+    # (#298) settings.extra_clone_hosts_set is operator-configured (an env
+    # var), never anything an API caller can influence, so unioning it here
+    # extends the allowlist without weakening the SSRF defense it exists
+    # for: an end user still can't point a Target at an arbitrary host,
+    # only at one the deployment's operator explicitly opted into (e.g. an
+    # internal GitHub Enterprise Server/GitLab/Gitea reachable via VPN or
+    # gated behind a client certificate).
+    allowed_hosts = ALLOWED_CLONE_HOSTS | settings.extra_clone_hosts_set
+    if parsed.netloc not in allowed_hosts:
         raise RepoCloneError(
-            f"repo_url host {parsed.netloc!r} is not supported (allowed: {sorted(ALLOWED_CLONE_HOSTS)})"
+            f"repo_url host {parsed.netloc!r} is not supported (allowed: {sorted(allowed_hosts)})"
         )
     if not parsed.path or parsed.path == "/":
         raise RepoCloneError(f"repo_url is missing a repository path: {repo_url!r}")
@@ -157,7 +165,15 @@ def _validate_branch(branch: str) -> None:
         raise RepoCloneError(f"invalid branch name: {branch!r}")
 
 
-def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int | str | None = None) -> Path:
+def clone_repo(
+    repo_url: str,
+    branch: str,
+    github_token: str = "",
+    scan_id: int | str | None = None,
+    client_cert_pem: str = "",
+    client_key_pem: str = "",
+    proxy_url: str = "",
+) -> Path:
     """Clone repo_url@branch into a scan-scoped workdir.
 
     The destination is keyed by repo name AND a unique suffix (the caller's
@@ -189,6 +205,22 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
       workspace-stored PAT (ghp_/github_pat_) or a GitHub App installation
       token. Basic works for all three token shapes, so it's used
       unconditionally rather than branching on token prefix.
+    - github_token is only ever attached when repo_url's host is actually
+      github.com (#298). resolve_github_token resolves a workspace's stored
+      PAT independent of which Target asked for it, so without this guard
+      a workspace with a GitHub PAT configured would send that PAT, as an
+      HTTP Basic header, to any other allowed host (extra_clone_hosts) a
+      Target happened to point at -- a real credential leak to a host the
+      token was never meant for. client_cert_pem/client_key_pem/proxy_url
+      are the credential path for those other hosts instead.
+    - client_cert_pem/client_key_pem (#298, VPN/client-cert-gated hosts):
+      written to 0600 temp files for the duration of this call only (never
+      passed as argv, same reasoning as github_token) and wired in via
+      http.sslCert/http.sslKey using the same GIT_CONFIG_* mechanism as the
+      auth header above. Always deleted in `finally`, clone success or not.
+    - proxy_url (#298, VPN-gated hosts reached through a corporate HTTP(S)
+      proxy/gateway): set as HTTPS_PROXY/HTTP_PROXY, which git's libcurl
+      HTTP backend honours natively; no extra plumbing needed beyond that.
     """
     _validate_repo_url(repo_url)
     _validate_branch(branch)
@@ -204,33 +236,62 @@ def clone_repo(repo_url: str, branch: str, github_token: str = "", scan_id: int 
     cmd = ["git", "clone", "--depth", "1", "--branch", branch, "--", repo_url, str(dest)]
 
     env = os.environ.copy()
-    if github_token:
+    git_configs: list[tuple[str, str]] = []
+
+    is_github = urlparse(repo_url).netloc == "github.com"
+    if github_token and is_github:
         basic = base64.b64encode(f"x-access-token:{github_token}".encode()).decode()
-        env["GIT_CONFIG_COUNT"] = "1"
-        env["GIT_CONFIG_KEY_0"] = "http.extraheader"
-        env["GIT_CONFIG_VALUE_0"] = f"Authorization: Basic {basic}"
+        git_configs.append(("http.extraheader", f"Authorization: Basic {basic}"))
 
+    cert_dir = tempfile.mkdtemp(prefix="toleman-clone-cert-") if (client_cert_pem or client_key_pem) else None
+    cert_path = key_path = None
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
-    except subprocess.CalledProcessError as exc:
-        # Defense in depth: argv above never contains the token, but scrub
-        # stdout/stderr too in case git ever echoes config values back on
-        # failure, so nothing downstream (logs, retried task state, an API
-        # response) can leak it even if some caller reaches into .stderr.
-        if github_token:
-            exc.stderr = (exc.stderr or "").replace(github_token, "***REDACTED***")
-            exc.stdout = (exc.stdout or "").replace(github_token, "***REDACTED***")
+        if cert_dir:
+            if client_cert_pem:
+                cert_path = Path(cert_dir) / "client-cert.pem"
+                cert_path.write_text(client_cert_pem)
+                cert_path.chmod(0o600)
+                git_configs.append(("http.sslCert", str(cert_path)))
+            if client_key_pem:
+                key_path = Path(cert_dir) / "client-key.pem"
+                key_path.write_text(client_key_pem)
+                key_path.chmod(0o600)
+                git_configs.append(("http.sslKey", str(key_path)))
 
-        # Turn a permanent failure into RepoCloneError so Celery stops
-        # retrying it. A missing repo, a missing branch and absent
-        # credentials are all facts about the world that three more attempts
-        # will not change; see _classify_clone_stderr for why this matters
-        # beyond tidiness.
-        permanent = _classify_clone_stderr(exc.stderr or "")
-        if permanent:
-            raise RepoCloneError(permanent) from exc
-        raise
-    return dest
+        for i, (key, value) in enumerate(git_configs):
+            env[f"GIT_CONFIG_KEY_{i}"] = key
+            env[f"GIT_CONFIG_VALUE_{i}"] = value
+        if git_configs:
+            env["GIT_CONFIG_COUNT"] = str(len(git_configs))
+
+        if proxy_url:
+            env["HTTPS_PROXY"] = proxy_url
+            env["HTTP_PROXY"] = proxy_url
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
+        except subprocess.CalledProcessError as exc:
+            # Defense in depth: argv above never contains the token, but scrub
+            # stdout/stderr too in case git ever echoes config values back on
+            # failure, so nothing downstream (logs, retried task state, an API
+            # response) can leak it even if some caller reaches into .stderr.
+            if github_token:
+                exc.stderr = (exc.stderr or "").replace(github_token, "***REDACTED***")
+                exc.stdout = (exc.stdout or "").replace(github_token, "***REDACTED***")
+
+            # Turn a permanent failure into RepoCloneError so Celery stops
+            # retrying it. A missing repo, a missing branch and absent
+            # credentials are all facts about the world that three more attempts
+            # will not change; see _classify_clone_stderr for why this matters
+            # beyond tidiness.
+            permanent = _classify_clone_stderr(exc.stderr or "")
+            if permanent:
+                raise RepoCloneError(permanent) from exc
+            raise
+        return dest
+    finally:
+        if cert_dir:
+            shutil.rmtree(cert_dir, ignore_errors=True)
 
 
 # Substrings git prints for causes that are permanent (retrying cannot fix
@@ -266,6 +327,23 @@ _PERMANENT_CLONE_FAILURES: tuple[tuple[tuple[str, ...], str], ...] = (
         "permission for this repository.",
     ),
 )
+
+
+def clone_kwargs_for_target(target) -> dict:
+    """(#298) Decrypt a Target's stored mTLS client cert/key and read its
+    clone_proxy_url, in the shape clone_repo's client_cert_pem/
+    client_key_pem/proxy_url kwargs expect. Centralized here (rather than
+    duplicated in each of clone_repo's callers) so every caller decrypts the
+    same way GitHubToken/resolve_github_token does (app.core.crypto),
+    instead of reinventing it per call site.
+    """
+    from app.core.crypto import decrypt_secret
+
+    return {
+        "client_cert_pem": decrypt_secret(target.client_cert_ciphertext),
+        "client_key_pem": decrypt_secret(target.client_key_ciphertext),
+        "proxy_url": target.clone_proxy_url,
+    }
 
 
 def _classify_clone_stderr(stderr: str) -> str | None:

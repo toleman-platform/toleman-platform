@@ -112,12 +112,16 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.BACKEND_IMAGE }}
-          # onlatest isn't needed: flavor's own auto-`latest` tag is never
-          # used here (the `latest` entry below comes from an explicit
-          # type=raw tag instead), and suffix always applies to every tag
-          # metadata-action generates regardless of that setting.
+          # latest=false: metadata-action's own implicit `latest` tag (fired
+          # by type=semver on a release tag) is unsuffixed and would
+          # overwrite the *standard* backend image's `latest` tag, since
+          # both metadata-action calls in this job target the same
+          # BACKEND_IMAGE. The `latest` entry below is an explicit type=raw
+          # tag instead, which still gets the -hardened suffix from this
+          # same flavor block.
           flavor: |
             suffix=-hardened
+            latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

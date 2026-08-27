@@ -9,6 +9,25 @@ DEFAULT_ADMIN_PASSWORD = "changeme123"
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://toleman:toleman@localhost:5432/toleman"
+    # Pool knobs, tuned for a managed DB (RDS/Cloud SQL/etc.), not just the
+    # bundled docker-compose postgres. Managed proxies (RDS Proxy, Cloud SQL
+    # Auth Proxy, pgbouncer) and the DB itself both silently drop idle
+    # connections after their own timeout, which the bundled postgres
+    # container never does; pool_pre_ping (always on, not configurable, the
+    # cost is one cheap round-trip only on a pooled-out connection) is what
+    # turns that into a transparent reconnect instead of the first request
+    # after a quiet period failing with an OperationalError. Defaults are
+    # deliberately small: they must fit under whatever max_connections the
+    # target DB enforces, which a managed instance often caps lower than a
+    # self-hosted one, times however many backend + celery-worker replicas
+    # are running.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    # Recycle before most managed DBs' own idle/connection-lifetime cutoff
+    # (RDS Proxy defaults to 15 min idle; Cloud SQL Auth Proxy and most
+    # cloud LBs sit lower still), so a connection is retired on our terms
+    # before the far end closes it out from under an in-flight query.
+    db_pool_recycle_seconds: int = 600
     redis_url: str = "redis://localhost:6379/0"
     workspace_api_key: str = "dev-local-key"
     scan_workdir: str = "/tmp/toleman-scans"

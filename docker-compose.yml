@@ -75,6 +75,14 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       EXTRA_CORS_ORIGINS: ${EXTRA_CORS_ORIGINS:-}
+      # Connection pool sizing; matters once DATABASE_URL points at a
+      # managed DB instead of the bundled postgres service above (see
+      # README's "Managed Cloud DB" section). Defaults here match
+      # app/core/config.py's own, so leaving these unset in .env changes
+      # nothing.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-600}
     ports:
       - "8000:8000"
     healthcheck:
@@ -127,6 +135,14 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       EXTRA_CORS_ORIGINS: ${EXTRA_CORS_ORIGINS:-}
+      # Connection pool sizing; matters once DATABASE_URL points at a
+      # managed DB instead of the bundled postgres service above (see
+      # README's "Managed Cloud DB" section). Defaults here match
+      # app/core/config.py's own, so leaving these unset in .env changes
+      # nothing.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-10}
+      DB_POOL_RECYCLE_SECONDS: ${DB_POOL_RECYCLE_SECONDS:-600}
 
   frontend:
     build:

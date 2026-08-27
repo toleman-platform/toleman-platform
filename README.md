@@ -24,6 +24,7 @@ See the [architecture](ARCHITECTURE.md) for the full design. Full docs, includin
   - [Database migrations (Alembic)](#database-migrations-alembic)
   - [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades)
   - [Managed Cloud DB (RDS / Cloud SQL / etc.)](#managed-cloud-db-rds--cloud-sql--etc)
+  - [Logging and error tracking](#logging-and-error-tracking)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
 - [Contributing](#contributing)
@@ -269,6 +270,12 @@ The connection pool is tuned for this case specifically, not just the bundled co
 - `pool_pre_ping` is always on: a managed DB, its connection proxy (RDS Proxy, Cloud SQL Auth Proxy), or a load balancer in front of it can silently drop an idle connection, which the bundled container never does. Without this, the first query after a quiet period fails instead of transparently reconnecting.
 - `DB_POOL_RECYCLE_SECONDS` (default `600`) retires a pooled connection before the far end's own idle/connection-lifetime cutoff closes it out from under an in-flight query (RDS Proxy defaults to a 15-minute idle timeout; other proxies sit lower).
 - `DB_POOL_SIZE` (default `5`) and `DB_MAX_OVERFLOW` (default `10`) cap how many connections each `backend`/`celery-worker` process opens. A managed instance's `max_connections` is often lower than a self-hosted default, and every replica of both services counts against it, size these down (or raise the DB's own limit) before scaling replicas up.
+
+### Logging and error tracking
+
+The backend logs structured JSON to stdout (`app/core/logging.py`), one object per line with `timestamp`/`level`/`logger`/`message`/`request_id`, and a stack trace under `exception` when there is one. `LOG_LEVEL` (default `INFO`) controls verbosity. Every response carries an `X-Request-ID` header (generated, or echoed back if the caller already set one), and every log line emitted while handling that request carries the same id, so a support report ("what happened for X-Request-ID abc123") can be grepped straight out of the logs.
+
+An exception a route handler doesn't turn into an `HTTPException` (i.e. a real bug, not an expected 4xx) is caught, logged with its full traceback, and turned into a generic `{"detail": "Internal server error", "request_id": "..."}` 500 rather than leaking internals to the caller or vanishing without a trace. See `RequestIDMiddleware` in `app/core/logging.py` for why this lives in that middleware specifically rather than a `@app.exception_handler(Exception)`.
 
 ### Pre-commit hooks
 

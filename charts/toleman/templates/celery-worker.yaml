@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "toleman.fullname" . }}-celery-worker
+  labels:
+    {{- include "toleman.componentLabels" (merge (dict "component" "celery-worker") .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.celeryWorker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "toleman.componentLabels" (merge (dict "component" "celery-worker") .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "toleman.componentLabels" (merge (dict "component" "celery-worker") .) | nindent 8 }}
+    spec:
+      # Waits for the backend Service to answer /health, the same ordering
+      # docker-compose.yml's `depends_on: backend: condition:
+      # service_healthy` enforces: the backend's startup hook runs `alembic
+      # upgrade head` before it serves, so a worker that starts first could
+      # otherwise pick up a scan task and query tables that don't exist yet.
+      # A worker Pod that starts before the backend Service has any ready
+      # endpoints just waits here; it does not need Postgres to be up
+      # directly since the backend already gated on that.
+      initContainers:
+        - name: wait-for-backend
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - until wget -q -O /dev/null http://{{ include "toleman.fullname" . }}-backend:{{ .Values.backend.service.port }}/health; do echo waiting for backend; sleep 2; done
+      containers:
+        - name: celery-worker
+          image: "{{ .Values.image.registry }}/{{ .Values.image.backendRepository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Same image as backend, different command — mirrors
+          # docker-compose.yml's celery-worker service exactly (see BLD-05
+          # in that file for why they must always share the same image).
+          command: ["celery", "-A", "app.tasks.celery_app", "worker", "-Q", "scans", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "toleman.fullname" . }}-config
+            - secretRef:
+                name: {{ include "toleman.secretName" . }}
+          resources:
+            {{- toYaml .Values.celeryWorker.resources | nindent 12 }}

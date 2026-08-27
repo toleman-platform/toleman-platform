@@ -1,0 +1,85 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "toleman.fullname" . }}-postgres
+  labels:
+    {{- include "toleman.componentLabels" (merge (dict "component" "postgres") .) | nindent 4 }}
+spec:
+  serviceName: {{ include "toleman.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "toleman.componentLabels" (merge (dict "component" "postgres") .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "toleman.componentLabels" (merge (dict "component" "postgres") .) | nindent 8 }}
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.postgres.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          # Same check docker-compose.yml's postgres healthcheck uses.
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+{{- if not .Values.postgres.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+{{- end }}
+{{- if .Values.postgres.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.postgres.persistence.storageClassName }}
+        storageClassName: {{ .Values.postgres.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.persistence.size }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "toleman.fullname" . }}-postgres
+  labels:
+    {{- include "toleman.componentLabels" (merge (dict "component" "postgres") .) | nindent 4 }}
+spec:
+  # Headless: StatefulSet Pods are addressed directly by the DATABASE_URL
+  # built in _helpers.tpl (single replica, no need for load-balanced
+  # ClusterIP semantics here).
+  clusterIP: None
+  selector:
+    {{- include "toleman.componentLabels" (merge (dict "component" "postgres") .) | nindent 4 }}
+  ports:
+    - port: 5432
+      targetPort: 5432
+{{- end }}

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "toleman.fullname" . }}-config
+  labels:
+    {{- include "toleman.labels" . | nindent 4 }}
+data:
+  # Non-secret settings read by backend/app/core/config.py. DATABASE_URL,
+  # REDIS_URL, WORKSPACE_API_KEY and ANTHROPIC_API_KEY live in
+  # templates/secret.yaml instead: a Kubernetes RBAC role can grant
+  # `get configmaps` without granting `get secrets`, so anything that can
+  # carry a credential (DATABASE_URL always embeds the postgres password;
+  # Redis has no auth by default today but REDIS_URL is the same kind of
+  # value) belongs in the Secret, not here.
+  COOKIE_SECURE: {{ .Values.config.cookieSecure | quote }}
+  ADMIN_EMAIL: {{ .Values.config.adminEmail | quote }}
+  ADMIN_NAME: {{ .Values.config.adminName | quote }}
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  PUBLIC_BASE_URL: {{ .Values.config.publicBaseUrl | quote }}
+  PUBLIC_API_URL: {{ .Values.config.publicApiUrl | quote }}
+  EXTRA_CORS_ORIGINS: {{ .Values.config.extraCorsOrigins | quote }}

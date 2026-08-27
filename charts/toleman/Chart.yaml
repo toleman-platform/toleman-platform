@@ -1,0 +1,16 @@
+apiVersion: v2
+name: toleman
+description: "Toleman: Open-Source DevSecOps Vulnerability Management Platform"
+type: application
+# Chart version, bumped independently of the app; appVersion tracks the
+# published image tag this chart defaults to (see values.yaml image.tag).
+# No tagged release exists yet (see README's "Upgrading" section), so this
+# defaults to "edge" and both should move together once releases start.
+version: 0.1.0
+appVersion: "edge"
+home: https://github.com/toleman-platform/toleman-platform
+sources:
+  - https://github.com/toleman-platform/toleman-platform
+maintainers:
+  - name: toleman-platform
+    url: https://github.com/toleman-platform

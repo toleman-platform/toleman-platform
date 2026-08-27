@@ -91,6 +91,31 @@ See `.env.example` for every variable Compose reads (Postgres credentials, backe
 
 To stop everything: `docker compose down` (add `-v` to also drop the Postgres volume and start fully fresh next time).
 
+### Kubernetes (Helm)
+
+An out-of-the-box Helm chart lives at [`charts/toleman`](charts/toleman), covering the same five services as the Docker Compose stack above (bundled Postgres StatefulSet + PVC, bundled Redis, backend, celery-worker, frontend), plus an optional Ingress.
+
+```bash
+helm install toleman charts/toleman \
+  --set-string secrets.sessionSecret="$(openssl rand -hex 32)" \
+  --set-string secrets.adminPassword="a real password" \
+  --set-string secrets.platformEncryptionKey="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  --set-string postgres.password="$(openssl rand -hex 24)" \
+  --set config.publicBaseUrl="https://toleman.example.com" \
+  --set config.publicApiUrl="https://api.toleman.example.com" \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.frontendHost=toleman.example.com \
+  --set ingress.backendHost=api.toleman.example.com \
+  --set ingress.tls[0].hosts[0]=toleman.example.com \
+  --set ingress.tls[0].hosts[1]=api.toleman.example.com \
+  --set ingress.tls[0].secretName=toleman-tls
+```
+
+`config.environment` defaults to `production`, so the `secrets.*` values and `postgres.password` above are required; the chart's own render fails without them (see `charts/toleman/templates/secret.yaml`) rather than silently deploying with an empty session-signing key/admin password/encryption key, or a bundled Postgres reachable with its publicly-documented default password. `config.publicBaseUrl`/`config.publicApiUrl` are just what the app *tells itself* its own address is (used to build links/CORS/webhook URLs); they don't make it reachable at those hosts on their own, hence the matching `ingress.*` values above (swap `ingress.className` and the TLS secret name for whatever your cluster's ingress controller/cert-manager setup expects), or point your own load balancer at the `frontend`/`backend` Services instead. Use `https://` for `public*Url` for anything but throwaway testing: `config.cookieSecure` defaults to `"True"`, and a browser will not send a `Secure` session cookie over plain HTTP, so login fails. Put TLS in front of the deployment (an Ingress with `ingress.tls` configured, as above, or your own load balancer) rather than setting `config.cookieSecure` to `"False"`, which is for non-production HTTP testing only.
+
+See `charts/toleman/values.yaml` for every option, including how to point at a managed Postgres/Redis instead of the bundled ones (`postgres.enabled: false` / `redis.enabled: false` plus `externalDatabaseUrl` / `externalRedisUrl`, a full SQLAlchemy connection string; `app/core/config.py` doesn't distinguish a managed DB from the bundled one) and how to enable the Ingress (`ingress.enabled: true`, plus `ingress.tls` for HTTPS). `helm install`'s NOTES output repeats the port-forward command, prints `http`/`https` in the Ingress URLs it shows based on whether `ingress.tls` is set, and warns if secure cookies are enabled without it.
+
 ### Manual setup (macOS/Linux/Windows)
 
 Prefer running the backend/frontend directly on your machine instead of in containers, e.g. for faster iteration with hot reload, or to attach a debugger. Skip this section if you used Docker Compose above.

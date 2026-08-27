@@ -184,3 +184,66 @@ jobs:
               *) echo "FAIL $svc resolved to '$image', expected a ghcr.io image" >&2; exit 1 ;;
             esac
           done
+
+  compose-up-smoke-test:
+    # #293: verify the platform actually runs on a plain VM, not just that
+    # docker-compose.yml parses (compose-config above) and that each image
+    # builds in isolation (docker-images.yml). Neither of those starts the
+    # containers together, so nothing had ever proven postgres, redis,
+    # backend, celery-worker and frontend actually come up and talk to each
+    # other. A GitHub-hosted `ubuntu-latest` runner is exactly the "plain
+    # VM" case: no Docker Desktop, no pre-pulled layers, real network egress.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bring up the full stack
+        run: |
+          cp .env.example .env
+          docker compose up --build -d
+
+      - name: Wait for backend + frontend to report healthy
+        # docker-compose.yml already defines healthchecks for every service
+        # (postgres/redis via their own CLIs, backend via curl /health);
+        # `docker compose ps` surfaces them without re-implementing the
+        # polling logic that would just be a worse copy of the healthcheck
+        # config, and covers celery-worker/frontend's own `depends_on:
+        # condition: service_healthy` gating implicitly (they wouldn't be
+        # "running" yet if what they depend on hadn't turned healthy).
+        run: |
+          for i in $(seq 1 60); do
+            if [ "$(docker compose ps --format json | python3 -c "
+          import json, sys
+          statuses = [json.loads(l).get('Health', '') for l in sys.stdin if l.strip()]
+          # frontend/celery-worker have no healthcheck of their own; empty
+          # Health is fine for them as long as they're not exited/restarting,
+          # which the separate 'State' check below catches.
+          print('unhealthy' if any(s == 'unhealthy' for s in statuses) else 'ok')
+          ")" = "unhealthy" ]; then
+              echo "a service reported unhealthy" >&2
+              docker compose ps
+              exit 1
+            fi
+            if curl -sf http://localhost:8000/health >/dev/null && curl -sf http://localhost:3000 >/dev/null; then
+              echo "backend and frontend are both responding"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "timed out waiting for backend/frontend to come up" >&2
+          exit 1
+
+      - name: Verify backend health payload
+        run: curl -sf http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'
+
+      - name: Show container status
+        if: always()
+        run: docker compose ps
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

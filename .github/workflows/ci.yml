@@ -190,16 +190,34 @@ jobs:
     # value, a manifest that doesn't match its Kubernetes API schema)
     # before it reaches someone actually trying `helm install`.
     runs-on: ubuntu-latest
+    # This job only reads repository contents (chart templates/values) and
+    # never needs to authenticate back to Git, so it gets the narrowest
+    # token GitHub Actions supports rather than inheriting the repo's
+    # default (broader) permissions.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: azure/setup-helm@v4
 
       - name: helm lint
         run: helm lint charts/toleman
 
+      # values.yaml's config.environment defaults to "production", and
+      # secret.yaml's `required` guards refuse to render production
+      # secrets left blank (see that file), so a realistic default-values
+      # render supplies them the same way a real installer would (--set
+      # or -f a values file kept out of git).
       - name: helm template (default values)
-        run: helm template toleman charts/toleman > /tmp/toleman-default.yaml
+        run: |
+          helm template toleman charts/toleman \
+            --set-string secrets.sessionSecret="ci-test-session-secret" \
+            --set-string secrets.adminPassword="ci-test-admin-password" \
+            --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
+            > /tmp/toleman-default.yaml
 
       # The two documented alternate configurations (README's "Managed
       # Cloud DB" section, and Ingress) each take a different branch
@@ -208,6 +226,9 @@ jobs:
       - name: helm template (external postgres/redis)
         run: |
           helm template toleman charts/toleman \
+            --set-string secrets.sessionSecret="ci-test-session-secret" \
+            --set-string secrets.adminPassword="ci-test-admin-password" \
+            --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
             --set postgres.enabled=false \
             --set redis.enabled=false \
             --set externalDatabaseUrl="postgresql+psycopg://user:pass@db.example.com:5432/toleman" \
@@ -217,6 +238,9 @@ jobs:
       - name: helm template (ingress enabled)
         run: |
           helm template toleman charts/toleman \
+            --set-string secrets.sessionSecret="ci-test-session-secret" \
+            --set-string secrets.adminPassword="ci-test-admin-password" \
+            --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
             --set ingress.enabled=true \
             --set ingress.className=nginx \
             --set ingress.frontendHost=toleman.example.com \
@@ -228,11 +252,31 @@ jobs:
       # postgres/redis are disabled without one set.
       - name: helm template fails without required external URLs
         run: |
-          if helm template toleman charts/toleman --set postgres.enabled=false 2>/tmp/err; then
+          if helm template toleman charts/toleman \
+            --set-string secrets.sessionSecret="ci-test-session-secret" \
+            --set-string secrets.adminPassword="ci-test-admin-password" \
+            --set-string secrets.platformEncryptionKey="ci-test-encryption-key" \
+            --set postgres.enabled=false 2>/tmp/err; then
             echo "FAIL: expected this render to fail (postgres.enabled=false with no externalDatabaseUrl)" >&2
             exit 1
           fi
           grep -q "externalDatabaseUrl is required" /tmp/err
+
+      # secret.yaml's `required` guards (config.environment != "local",
+      # secrets.existingSecret unset) must actually fire, not silently
+      # render an empty SESSION_SECRET/ADMIN_PASSWORD/
+      # PLATFORM_ENCRYPTION_KEY, when they're left unset.
+      - name: helm template fails without required production secrets
+        run: |
+          if helm template toleman charts/toleman 2>/tmp/err; then
+            echo "FAIL: expected this render to fail (production environment with no secrets set)" >&2
+            exit 1
+          fi
+          grep -q "secrets.sessionSecret must be set" /tmp/err
+
+      - name: helm template succeeds with local environment and no secrets
+        run: |
+          helm template toleman charts/toleman --set config.environment=local > /tmp/toleman-local.yaml
 
       - uses: actions/setup-go@v5
         with:
@@ -251,7 +295,7 @@ jobs:
 
       - name: Validate every rendered manifest against the Kubernetes API schema
         run: |
-          for f in /tmp/toleman-default.yaml /tmp/toleman-external.yaml /tmp/toleman-ingress.yaml; do
+          for f in /tmp/toleman-default.yaml /tmp/toleman-external.yaml /tmp/toleman-ingress.yaml /tmp/toleman-local.yaml; do
             echo "--- $f ---"
             kubeconform -summary -verbose "$f"
           done

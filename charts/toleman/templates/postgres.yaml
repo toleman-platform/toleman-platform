@@ -20,10 +20,22 @@ spec:
         - name: postgres
           image: {{ .Values.postgres.image }}
           env:
+            # From the Secret (templates/secret.yaml), not a literal Values
+            # render: a Kubernetes RBAC role can grant read access to Pod
+            # specs/ConfigMaps without granting it for Secrets, and a
+            # literal `value:` here would put the postgres password in
+            # every one of those places (Pod spec, ReplicaSet, kubectl
+            # describe output) regardless.
             - name: POSTGRES_USER
-              value: {{ .Values.postgres.user | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "toleman.secretName" . }}
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
-              value: {{ .Values.postgres.password | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "toleman.secretName" . }}
+                  key: POSTGRES_PASSWORD
             - name: POSTGRES_DB
               value: {{ .Values.postgres.database | quote }}
             - name: PGDATA

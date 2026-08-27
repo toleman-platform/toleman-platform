@@ -8,13 +8,25 @@ No Ingress is configured (ingress.enabled=false). Reach the UI with:
 
 then open http://localhost:{{ .Values.frontend.service.port }}.
 {{- else }}
+{{- $scheme := "http" }}
+{{- if .Values.ingress.tls }}
+{{- $scheme = "https" }}
+{{- end }}
 
 Ingress is enabled. Once DNS/TLS are in place:
 {{- if .Values.ingress.frontendHost }}
-  Frontend: http://{{ .Values.ingress.frontendHost }}
+  Frontend: {{ $scheme }}://{{ .Values.ingress.frontendHost }}
 {{- end }}
 {{- if .Values.ingress.backendHost }}
-  Backend:  http://{{ .Values.ingress.backendHost }}
+  Backend:  {{ $scheme }}://{{ .Values.ingress.backendHost }}
+{{- end }}
+{{- if and (eq $scheme "http") .Values.config.cookieSecure }}
+
+WARNING: config.cookieSecure is "{{ .Values.config.cookieSecure }}" but no
+ingress.tls is configured, so this Ingress serves plain HTTP. Browsers do
+not send a Secure cookie over HTTP, so login will fail. Either configure
+ingress.tls (recommended for anything but throwaway testing) or set
+config.cookieSecure to "False".
 {{- end }}
 {{- end }}
 

@@ -91,11 +91,13 @@ helm install toleman charts/toleman \
   --set-string secrets.sessionSecret="$(openssl rand -hex 32)" \
   --set-string secrets.adminPassword="a real password" \
   --set-string secrets.platformEncryptionKey="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
-  --set config.publicBaseUrl="http://toleman.example.com" \
-  --set config.publicApiUrl="http://api.toleman.example.com"
+  --set config.publicBaseUrl="https://toleman.example.com" \
+  --set config.publicApiUrl="https://api.toleman.example.com"
 ```
 
-See `charts/toleman/values.yaml` for every option, including how to point at a managed Postgres/Redis instead of the bundled ones (`postgres.enabled: false` / `redis.enabled: false` plus `externalDatabaseUrl` / `externalRedisUrl`, a full SQLAlchemy connection string — `app/core/config.py` doesn't distinguish a managed DB from the bundled one) and how to enable the Ingress. `helm install`'s NOTES output repeats the port-forward command and flags any secret still left at its (insecure) default.
+`config.environment` defaults to `production`, so the three `secrets.*` values above are required — the chart's own render fails without them (see `charts/toleman/templates/secret.yaml`) rather than silently deploying with an empty session-signing key/admin password/encryption key. Use `https://` for `public*Url` for anything but throwaway testing: `config.cookieSecure` defaults to `"True"`, and a browser will not send a `Secure` session cookie over plain HTTP, so login fails. Put TLS in front of the deployment (an Ingress with `ingress.tls` configured, or your own load balancer) rather than setting `config.cookieSecure` to `"False"`, which is for non-production HTTP testing only.
+
+See `charts/toleman/values.yaml` for every option, including how to point at a managed Postgres/Redis instead of the bundled ones (`postgres.enabled: false` / `redis.enabled: false` plus `externalDatabaseUrl` / `externalRedisUrl`, a full SQLAlchemy connection string — `app/core/config.py` doesn't distinguish a managed DB from the bundled one) and how to enable the Ingress (`ingress.enabled: true`, plus `ingress.tls` for HTTPS). `helm install`'s NOTES output repeats the port-forward command, prints `http`/`https` in the Ingress URLs it shows based on whether `ingress.tls` is set, and warns if secure cookies are enabled without it.
 
 ### Manual setup (macOS/Linux/Windows)
 

@@ -522,7 +522,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
       ) : score.target_count === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">No targets in scope.</p>
       ) : (
-        <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-center gap-6 sm:gap-8">
+        <div className="@container mx-auto flex w-full max-w-4xl flex-wrap items-center justify-center gap-6 sm:gap-8">
           {/* max-w-4xl (896px), not max-w-2xl (672px): the gauge (280px) +
               gap (32px) + score list (up to 480px) need ~792px to sit on one
               line, and 672px was just short of that; forcing an unwanted
@@ -565,8 +565,21 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               keep it from looking cramped once there IS room. */}
           <SecurityScoreGauge score={score.score} grade={score.grade} />
           {/* border-l: a thin seam between the gauge and the list instead of
-              relying on the row's gap-6 alone to read as a boundary. */}
-          <div className="grid w-full max-w-[480px] grid-cols-1 gap-1.5 border-l border-border pl-6 text-xs sm:pl-8">
+              relying on the row's gap-6 alone to read as a boundary. It only
+              means anything while the two sit side by side; once the row
+              wraps and the list spans the full width under the gauge, a left
+              rule plus its indent read as a stray indent guide.
+
+              Gated on a container query, not a `sm:` breakpoint, for the same
+              reason spelled out above: whether this row wraps depends on how
+              wide THIS card is (sidebar + dashboard grid), not on the
+              viewport, so a viewport breakpoint would still show the seam on
+              a wrapped layout inside a narrow card. 792px is the gauge (280)
+              + gap (32) + the list at its 480px cap, i.e. the width at which
+              both fit at full size, so the seam can never appear on a wrapped
+              row. Between the real wrap point and 792px the two are side by
+              side without a seam, which is the harmless direction to miss. */}
+          <div className="grid w-full max-w-[480px] grid-cols-1 gap-1.5 text-xs @[792px]:border-l @[792px]:border-border @[792px]:pl-8">
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;

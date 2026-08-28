@@ -275,3 +275,34 @@ def test_unexpected_error_is_recorded_as_failed(engine, monkeypatch):
         assert target.dependency_sync_status == "failed"
         assert target.dependency_component_count is None
         assert "kaboom" in target.dependency_sync_error
+
+
+def test_refuses_a_session_holding_unflushed_work(engine, monkeypatch):
+    """The "pending" write has to be committed before .delay() hands the id
+    to a worker in another process, so this function commits the caller's
+    session. Both current callers commit right before calling it, so that
+    commit covers only this function's own write. A caller that still had
+    rows queued would have them flushed too, silently and early; refuse
+    instead of doing it."""
+    mock_delay = MagicMock()
+    monkeypatch.setattr(sbom_tasks.sync_dependency_graph, "delay", mock_delay)
+    with Session(engine) as session:
+        org = Organization(name="org-g")
+        session.add(org)
+        session.commit()
+        session.refresh(org)
+        ws = Workspace(organization_id=org.id, name="ws-g", api_key="key-g")
+        session.add(ws)
+        session.commit()
+        session.refresh(ws)
+        target = Target(workspace_id=ws.id, name="t", repo_url="https://github.com/acme/repo")
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+
+        # A row the caller is still assembling, not yet meant to be visible.
+        session.add(Target(workspace_id=ws.id, name="half-built", repo_url="https://github.com/acme/other"))
+
+        with pytest.raises(RuntimeError, match="no other pending inserts or deletes"):
+            sbom_tasks.queue_dependency_graph_sync(session, target)
+    mock_delay.assert_not_called()

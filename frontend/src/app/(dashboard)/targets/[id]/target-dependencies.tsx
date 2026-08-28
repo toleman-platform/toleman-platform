@@ -30,13 +30,21 @@ function DependencySyncNudge({ target }: { target: Target }) {
     failed: "border-destructive/40 text-destructive",
   };
 
+  // Fallbacks for a status this build does not know about: the backend can
+  // start writing a fifth value before the frontend that renders it ships.
+  // Without them the badge showed a bare status word with no sentence beside
+  // it and no tone, which reads as a rendering bug rather than as a state.
+  // The status itself is still shown in the badge, so nothing is hidden.
+  const description = text[status] ?? "Dependency import reported a status this page does not recognise.";
+  const badgeTone = tone[status] ?? "border-border text-muted-foreground";
+
   return (
     <div className="flex items-start gap-2">
-      <Badge variant="outline" className={cn("shrink-0 text-[10px] uppercase", tone[status])}>
+      <Badge variant="outline" className={cn("shrink-0 text-[10px] uppercase", badgeTone)}>
         {status}
       </Badge>
       <p className="text-sm text-muted-foreground">
-        {text[status]}
+        {description}
         {target.dependency_sync_error && status !== "pending" && (
           <span className="ml-1 font-mono text-xs">({target.dependency_sync_error})</span>
         )}

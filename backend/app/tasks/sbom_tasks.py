@@ -242,7 +242,25 @@ def queue_dependency_graph_sync(session: Session, target: Target) -> bool:
     Dispatch is async because `_sync_repos` runs this over every repo in an
     installation; doing the fetches inline would hold the OAuth callback
     open for as long as the org is large.
+
+    Commits the caller's session. That is not incidental: `sync_dependency_graph`
+    runs in a separate process and reads the row back, so the "pending" write
+    has to be durable before `.delay()` hands the id over, or the worker races
+    an uncommitted status. Both current callers already commit immediately
+    before calling this, so the commit here covers only this function's own
+    write; the guard below keeps that true for the next caller instead of
+    silently flushing work it meant to hold.
     """
+    if session.new or session.deleted:
+        # Deliberately not `session.dirty`: SQLAlchemy reports an object as
+        # dirty once an attribute has been touched, even when the value did
+        # not actually change, so guarding on it would reject honest callers.
+        # Pending inserts and deletes have no such false positive, and they
+        # are the case worth catching: the flush would make rows visible that
+        # the caller was still assembling.
+        raise RuntimeError(
+            "queue_dependency_graph_sync() commits the session; call it with no other pending inserts or deletes"
+        )
     if not _is_github_repo(target.repo_url):
         return False
     target.dependency_sync_status = "pending"

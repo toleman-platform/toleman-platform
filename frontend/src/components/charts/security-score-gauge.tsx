@@ -17,10 +17,21 @@ const GRADE_COLOR: Record<string, string> = {
 
 // Issue #173: bumped from 220x130. The widget spans the full dashboard
 // width and the gauge is its headline number, but at 220px it read as an
-// afterthought beside the component breakdown. Kept at a 2:1 ratio so the
-// semicircle still fills the box (cy sits on the bottom edge).
+// afterthought beside the component breakdown.
+//
+// Height bumped again, 160->200: cy sits on the bottom edge, so the ring's
+// radius (derived from height, since height was the smaller dimension) set
+// how much clear interior sat below the ring at center. At 160 that interior
+// was ~44.5px, and the number+"/100" text block is ~44px tall itself -
+// there was never a real gap, just rounding luck, and any offset applied to
+// "lift" the text off the ring's baseline (see below) ate directly into
+// that near-zero margin and made the text overlap the ring's stroke instead
+// of clearing it. Measured live in the browser (getBoundingClientRect on
+// the rendered sector vs. the text span) rather than trusted from the
+// radius percentages, because that's what actually caught this. 200px
+// gives ~60px of clear interior, comfortably more than the text needs.
 const CHART_WIDTH = 280;
-const CHART_HEIGHT = 160;
+const CHART_HEIGHT = 200;
 
 export function SecurityScoreGauge({ score, grade }: { score: number; grade: string | null }) {
   const color = grade ? GRADE_COLOR[grade] ?? "var(--color-chart-1)" : "var(--color-muted-foreground)";
@@ -63,12 +74,10 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
       {/* The number overlay is positioned against the chart box alone. It
           used to be `absolute bottom-0` of a wrapper that also contained the
           grade badge, which put the "/ 100" line directly on top of the
-          badge; both were unreadable. `bottom-3` then lifts it off the arc's
-          flat baseline: at bottom-0 the "/ 100" descenders sat exactly on the
-          line joining the two arc ends, so the number block read as resting
-          on the gauge rather than sitting inside it. There is ~100px of clear
-          interior (innerRadius 72% of a 140px radius) against a ~46px text
-          block, so the lift costs nothing. */}
+          badge; both were unreadable. `bottom-2` clears it off the arc's
+          flat baseline without eating into the (now genuinely sized)
+          interior above it - see the CHART_HEIGHT comment for why a bigger
+          offset here previously made things worse, not better. */}
       <div className="relative" style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}>
         {mounted && (
           <RadialBarChart
@@ -88,7 +97,7 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
           </RadialBarChart>
         )}
         <div
-          className="absolute inset-x-0 bottom-3 flex flex-col items-center"
+          className="absolute inset-x-0 bottom-2 flex flex-col items-center"
           role="img"
           aria-label={`Security score ${Math.round(score)} out of 100${grade ? `, grade ${grade}` : ""}`}
         >
@@ -98,7 +107,7 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
       </div>
       {grade && (
         <div
-          className="mt-4 flex h-9 w-9 items-center justify-center rounded-full border text-base font-semibold"
+          className="mt-3 flex h-9 w-9 items-center justify-center rounded-full border text-base font-semibold"
           style={{ borderColor: color, color }}
           aria-hidden="true"
         >

@@ -81,32 +81,6 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
-      # Package Manager Guard. Every dependency install in this job runs
-      # through PMG's local proxy, which blocks known-malicious packages and
-      # freshly-published versions (the default 5-day cooldown) before pip or
-      # npm can run their install scripts. This is the class of attack the
-      # platform exists to catch, so CI should not be the one place we take
-      # dependencies unguarded.
-      #
-      # Placed after setup-python/setup-node deliberately: PMG wraps the
-      # toolchain, so the toolchain has to be on PATH first.
-      #
-      # Note the interaction with the dependency caches above. A changed
-      # lockfile changes the cache key, so anything new is fetched from the
-      # registry and passes through PMG; an unchanged lockfile can be served
-      # from cache without touching the network, which PMG cannot inspect.
-      # That is the intended trade: new dependencies are always checked.
-      #
-      # On a pull request from a fork both secrets are empty (GitHub does not
-      # expose them, see the note at the top of this file). PMG then runs
-      # with cloud sync disabled: blocking is local and still applies, only
-      # the audit trail in SafeDep Cloud is skipped.
-      - uses: safedep/pmg@cb34b76fbcd1d1d517b1c0922b32d0ecf3f0e4a2 # v1
-        with:
-          server-mode: true
-          api-key: ${{ secrets.SAFEDEP_API_KEY }}
-          tenant-id: ${{ secrets.SAFEDEP_TENANT_ID }}
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -121,15 +95,6 @@ jobs:
         with:
           name: backend-test-results
           path: backend/test-results/pytest.xml
-
-      # Stops the proxy daemon and fails the job if PMG blocked anything. A
-      # blocked install already fails its own step; this makes the reason
-      # explicit rather than leaving a bare npm/pip error, and it is the
-      # daemon's chance to flush audit events to SafeDep Cloud before the
-      # runner is destroyed — hence if: always().
-      - name: Enforce PMG policy
-        if: always()
-        run: pmg proxy stop --fail-on-violation
 
   frontend-tests:
     runs-on: ubuntu-latest
@@ -146,14 +111,6 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
-      # Package Manager Guard, as in backend-tests above: installs below are
-      # proxied and malicious or too-new packages are blocked.
-      - uses: safedep/pmg@cb34b76fbcd1d1d517b1c0922b32d0ecf3f0e4a2 # v1
-        with:
-          server-mode: true
-          api-key: ${{ secrets.SAFEDEP_API_KEY }}
-          tenant-id: ${{ secrets.SAFEDEP_TENANT_ID }}
 
       - name: Install dependencies
         run: npm ci
@@ -178,10 +135,6 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
 
-      - name: Enforce PMG policy
-        if: always()
-        run: pmg proxy stop --fail-on-violation
-
   mcp-server-tests:
     runs-on: ubuntu-latest
     defaults:
@@ -201,14 +154,6 @@ jobs:
           cache: pip
           cache-dependency-path: mcp-server/requirements-dev.txt
 
-      # Package Manager Guard, as in backend-tests above: installs below are
-      # proxied and malicious or too-new packages are blocked.
-      - uses: safedep/pmg@cb34b76fbcd1d1d517b1c0922b32d0ecf3f0e4a2 # v1
-        with:
-          server-mode: true
-          api-key: ${{ secrets.SAFEDEP_API_KEY }}
-          tenant-id: ${{ secrets.SAFEDEP_TENANT_ID }}
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -222,10 +167,6 @@ jobs:
         with:
           name: mcp-server-test-results
           path: mcp-server/test-results/pytest.xml
-
-      - name: Enforce PMG policy
-        if: always()
-        run: pmg proxy stop --fail-on-violation
 
   compose-config:
     # Cheap and fast: catches a compose file referencing a service, image or

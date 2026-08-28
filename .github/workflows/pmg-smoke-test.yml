@@ -1,0 +1,98 @@
+name: PMG Smoke Test
+
+# Proves that the Package Manager Guard steps added to ci.yml are actually
+# intercepting installs, rather than installing PMG and silently passing
+# everything through. A green run here means PMG is on and blocking.
+#
+# The trick is getting a *deterministic* block out of a benign package. This
+# does it with the dependency cooldown rather than with malware: cooldown
+# blocks any version published more recently than the window, so a window of
+# ~100 years makes every version of every package "too new". No malicious
+# package is ever named, downloaded, or committed, and the assertion is
+# exact — an install that succeeds means interception is broken.
+#
+# The job passes when PMG blocks and fails when it does not, so a red check
+# here is a real regression: either the action stopped intercepting or the
+# proxy env is no longer reaching the package managers.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/pmg-smoke-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pmg-smoke-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pmg-blocks-installs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      # Same pinned action and the same server-mode wiring as ci.yml, so this
+      # exercises the real configuration. The one difference is cooldown-days.
+      - uses: safedep/pmg@cb34b76fbcd1d1d517b1c0922b32d0ecf3f0e4a2 # v1
+        with:
+          server-mode: true
+          # ~100 years. Every published version is inside the window, so the
+          # next install must be blocked on cooldown grounds alone.
+          cooldown-days: "36500"
+          api-key: ${{ secrets.SAFEDEP_API_KEY }}
+          tenant-id: ${{ secrets.SAFEDEP_TENANT_ID }}
+
+      # Cheap first: if the proxy env never reached the job, the install
+      # assertion below would fail for the wrong reason and read as a block.
+      - name: PMG proxy env is exported to the job
+        run: |
+          set -euo pipefail
+          fail=0
+          for var in HTTP_PROXY HTTPS_PROXY NODE_EXTRA_CA_CERTS; do
+            if [ -z "${!var:-}" ]; then
+              echo "::error::$var is not set; PMG did not export its proxy env"
+              fail=1
+            else
+              echo "ok  $var=${!var}"
+            fi
+          done
+          if [ ! -r "${NODE_EXTRA_CA_CERTS:-/nonexistent}" ]; then
+            echo "::error::PMG CA bundle is missing at ${NODE_EXTRA_CA_CERTS:-<unset>}"
+            fail=1
+          fi
+          exit "$fail"
+
+      - name: An npm install must be blocked
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cd "$work"
+          npm init -y >/dev/null
+
+          # Deliberately inverted: npm succeeding is the failure case.
+          if npm install --no-audit --no-fund left-pad; then
+            echo "::error::npm install succeeded — PMG is NOT intercepting installs"
+            exit 1
+          fi
+          echo "npm install was blocked, as expected"
+
+      - name: The block must be recorded as a violation
+        run: |
+          set -euo pipefail
+          # `--fail-on-violation` exits non-zero when PMG blocked something,
+          # which is what makes it a merge gate in ci.yml. Here that non-zero
+          # exit is the pass condition, so invert it again.
+          if pmg proxy stop --fail-on-violation; then
+            echo "::error::PMG recorded no violation — the enforce step in ci.yml would not gate anything"
+            exit 1
+          fi
+          echo "PMG reported the block via --fail-on-violation"
+          echo "PMG is on: installs are intercepted and blocks fail the job." >> "$GITHUB_STEP_SUMMARY"

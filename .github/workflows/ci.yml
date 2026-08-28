@@ -24,6 +24,12 @@ on:
   push:
     branches: [main]
 
+# Least privilege: every job here only checks out, tests, and uploads
+# artifacts, so a read-only token is enough. Narrower than whatever the
+# repo/org default GITHUB_TOKEN permissions happen to be.
+permissions:
+  contents: read
+
 # (#233) A force-push during review should not leave a superseded run
 # occupying a runner and reporting a result nobody will act on.
 concurrency:
@@ -65,9 +71,11 @@ jobs:
       DATABASE_URL: postgresql+psycopg://toleman:toleman@localhost:5432/toleman
       REDIS_URL: redis://localhost:6379/0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -82,7 +90,7 @@ jobs:
       - name: Run pytest
         run: python -m pytest -v --junitxml=test-results/pytest.xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: backend-test-results
@@ -94,9 +102,11 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
@@ -134,9 +144,11 @@ jobs:
       TOLEMAN_API_TOKEN: toleman_pat_test
       TOLEMAN_API_URL: http://localhost:8000
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
           cache: pip
@@ -150,7 +162,7 @@ jobs:
       - name: Run pytest
         run: python -m pytest -v --junitxml=test-results/pytest.xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: mcp-server-test-results
@@ -161,7 +173,9 @@ jobs:
     # build context that does not exist.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Validate docker-compose.yml
         run: docker compose -f docker-compose.yml config --quiet
 
@@ -184,3 +198,146 @@ jobs:
               *) echo "FAIL $svc resolved to '$image', expected a ghcr.io image" >&2; exit 1 ;;
             esac
           done
+
+  compose-up-smoke-test:
+    # #293: verify the platform actually runs on a plain VM, not just that
+    # docker-compose.yml parses (compose-config above) and that each image
+    # builds in isolation (docker-images.yml). Neither of those starts the
+    # containers together, so nothing had ever proven postgres, redis,
+    # backend, celery-worker and frontend actually come up and talk to each
+    # other. A GitHub-hosted `ubuntu-latest` runner is exactly the "plain
+    # VM" case: no Docker Desktop, no pre-pulled layers, real network egress.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bring up the full stack
+        run: |
+          cp .env.example .env
+          docker compose up --build -d
+
+      - name: Wait for all five services to be up and healthy
+        # docker-compose.yml already defines healthchecks for postgres,
+        # redis and backend; `docker compose ps` surfaces them without
+        # re-implementing the polling logic that would just be a worse copy
+        # of the healthcheck config.
+        #
+        # --all is load-bearing, not decoration: without it, `ps` omits any
+        # exited container entirely, so a celery-worker that crashed on
+        # startup would simply not appear in the output instead of showing
+        # up as unhealthy or stopped, an earlier version of this check
+        # verified the *absence* of "unhealthy" among whatever containers
+        # happened to still be listed, which a silently-dead celery-worker
+        # would have passed.
+        run: |
+          for i in $(seq 1 60); do
+            # The assignment must be the direct condition of this `if` (not
+            # a plain `check_output=$(...)` line followed by `status=$?`):
+            # GitHub Actions runs `run:` steps under `bash -e`, and a nonzero
+            # command-substitution assignment aborts the script immediately
+            # under errexit, before a following `status=$?` line ever
+            # executes. That would have quietly turned "not yet healthy"
+            # (this loop's normal, expected first few iterations) into an
+            # immediate hard failure instead of a retry. A command that is
+            # the direct condition of `if` is exempt from errexit, which is
+            # what actually lets `status=2` reach the branch below.
+            if check_output="$(docker compose ps --all --format json | python3 -c "
+          import json, sys
+
+          expected = {'postgres', 'redis', 'backend', 'celery-worker', 'frontend'}
+          must_be_healthy = {'postgres', 'redis', 'backend'}
+          rows = {row['Service']: row for row in
+                  (json.loads(line) for line in sys.stdin if line.strip())}
+
+          missing = expected - rows.keys()
+          if missing:
+              print('missing services:', ', '.join(sorted(missing)))
+              sys.exit(1)
+
+          not_running = [name for name, row in rows.items() if row.get('State') != 'running']
+          if not_running:
+              print('not running:', ', '.join(sorted(not_running)))
+              sys.exit(1)
+
+          unhealthy = [name for name in must_be_healthy if rows[name].get('Health') != 'healthy']
+          if unhealthy:
+              print('not yet healthy:', ', '.join(sorted(unhealthy)))
+              sys.exit(2)
+
+          print('all five services running, postgres/redis/backend healthy')
+          ")"; then
+              status=0
+            else
+              status=$?
+            fi
+            echo "$check_output"
+            if [ "$status" -eq 0 ]; then
+              break
+            elif [ "$status" -eq 1 ]; then
+              # Missing or not-running is never transient once compose has
+              # finished starting containers: something actually crashed
+              # (or was never defined), not "still starting up".
+              docker compose ps --all
+              exit 1
+            fi
+            # status 2: present and running, just not healthy yet -- keep polling.
+            if [ "$i" -eq 60 ]; then
+              echo "timed out waiting for postgres/redis/backend to report healthy" >&2
+              docker compose ps --all
+              exit 1
+            fi
+            sleep 5
+          done
+
+          # A separate, un-retried loop here was the bug in an earlier version
+          # of this fix: postgres/redis/backend can all turn "healthy" (backend's
+          # own healthcheck only proves *it* is serving) well before frontend's
+          # Next.js server has actually bound its port, since frontend has no
+          # healthcheck of its own for the loop above to wait on. A single curl
+          # attempt right after breaking out of that loop raced frontend's
+          # listener and failed the job even though the stack was fine seconds
+          # later. Retrying here, with the same budget as the health loop
+          # above, is what actually waits for frontend instead of assuming
+          # "containers healthy" means "HTTP is up".
+          # --max-time bounds each individual attempt: curl has no transfer
+          # timeout by default, so a service that accepts the TCP connection
+          # but never sends a response would otherwise block this step (and
+          # the teardown steps after it) indefinitely instead of failing
+          # within the ~5-minute budget this loop is supposed to enforce.
+          #
+          # A wall-clock deadline (via bash's $SECONDS, not an iteration
+          # count) is deliberate here rather than the seq-based loop above:
+          # two sequential `curl --max-time 5` calls plus a 5s sleep means a
+          # single iteration can take up to 15s, so 60 fixed iterations
+          # could take ~15 minutes in the worst case instead of the ~5 this
+          # step is meant to enforce.
+          deadline=$((SECONDS + 300))
+          responding=false
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if curl -sf --max-time 5 http://localhost:8000/health >/dev/null && curl -sf --max-time 5 http://localhost:3000 >/dev/null; then
+              echo "backend and frontend are both responding"
+              responding=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$responding" = false ]; then
+            echo "timed out waiting for backend/frontend HTTP endpoints to respond" >&2
+            docker compose ps --all
+            exit 1
+          fi
+
+      - name: Verify backend health payload
+        run: curl -sf --max-time 5 http://localhost:8000/health | tee /dev/stderr | grep -q '"status":"ok"'
+
+      - name: Show container status
+        if: always()
+        run: docker compose ps
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

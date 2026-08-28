@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose something new, or a change to existing behavior.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, a quick check of [ROADMAP.md](../../ROADMAP.md) is
+        worth it — the idea, or a decision about it, may already be
+        recorded there.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that Toleman doesn't support today?
+      placeholder: |
+        When triaging findings across multiple workspaces, I currently have to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: What you'd like to see, and if you have one, roughly how you'd build it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other ways to solve the same problem, and why they're worse for your case.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Would you be willing to implement this?
+      options:
+        - label: I'd like to work on this myself, with guidance.
+          required: false

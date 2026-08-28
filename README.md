@@ -1,12 +1,18 @@
-# Toleman: Open-Source DevSecOps Vulnerability Management Platform
+# Toleman
+
+**Open-source DevSecOps vulnerability management.** FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, OSV.dev malicious-package detection, a dedup engine, two-tier priority scoring, and a triage state machine — no paid tiers, no feature gating.
+
+[![CI](https://github.com/toleman-platform/toleman-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/toleman-platform/toleman-platform/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-geekshiv.github.io%2Ftoleman-blue)](https://geekshiv.github.io/toleman)
 
 > **Status: active development.** No tagged release yet; `main` is the only
 > line to track. APIs, schema, and config vars can change without notice.
 > Expect rough edges; file issues for what you hit.
 
-See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery backend, Next.js frontend, native execution of Semgrep/Trivy/Gitleaks/gosec and more, OSV.dev malicious-package detection on SBOM inventory (surfaced as `osv-malware` Critical findings), dedup engine, two-tier priority scoring, triage state machine.
+See the [architecture](ARCHITECTURE.md) for the full design. Full docs, including feature-by-feature guides, live at **[geekshiv.github.io/toleman](https://geekshiv.github.io/toleman)** (source: [geekshiv/toleman](https://github.com/geekshiv/toleman)) — this README covers getting a copy running and developing on it.
 
-**Documentation:** [geekshiv.github.io/toleman](https://geekshiv.github.io/toleman) (source: [geekshiv/toleman](https://github.com/geekshiv/toleman)).
+---
 
 ## Contents
 
@@ -16,9 +22,13 @@ See the [architecture](ARCHITECTURE.md) for the full design: FastAPI + Celery ba
 - [Upgrading](#upgrading)
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
+  - [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
+- [Contributing](#contributing)
 - [License & Security](#license--security)
+
+---
 
 ## Getting Started
 
@@ -195,7 +205,9 @@ docker compose up --build -d
 
 Either way, no separate migration step: `backend`'s startup hook runs `alembic upgrade head` against `DATABASE_URL` before it starts serving (see [Database migrations](#database-migrations-alembic)), and `celery-worker` waits for `backend`'s healthcheck before it starts, so it never runs against a schema older than what it expects. Compose recreates only the services whose image or config actually changed, so `postgres` and `redis` keep running (and keep their data) through an upgrade of `backend`/`celery-worker`/`frontend`.
 
-There's no rollback tooling beyond re-pointing at the previous tag/commit and re-running the same command; a migration that isn't reversible needs its own hand-written down-revision, same as any Alembic project. No tagged release has shipped yet, so there's no cross-version upgrade to test against — this section will grow real "upgrading from 1.x to 2.x" notes once one exists.
+There's no rollback tooling beyond re-pointing at the previous tag/commit and re-running the same command, and that alone does **not** undo a schema change already applied by a migration that ran forward: `alembic upgrade head` only applies pending upgrades, so an older image can fail its startup migration because it can no longer locate the revision the database is recorded at. An older application image is unsupported until the schema is restored from a backup taken before the upgrade, or the migration is proven backward-compatible; see [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades) for the tested restore procedure. No tagged release has shipped yet, so there's no cross-version upgrade to test against — this section will grow real "upgrading from 1.x to 2.x" notes once one exists.
+
+---
 
 ## Development
 
@@ -212,6 +224,29 @@ alembic revision --autogenerate -m "describe the schema change"
 
 Review the generated file under `alembic/versions/` before committing; autogenerate is a starting point, not a guarantee (it can miss things like column renames, which it sees as a drop+add). `alembic upgrade head` (or just starting the app) applies it. See `alembic/env.py` for how migrations read `DATABASE_URL` from `app.core.config.settings`, the same source the app itself uses, so they can never disagree about which DB they're pointed at.
 
+### Backups and zero data loss during upgrades
+
+An Alembic migration is not guaranteed reversible: some in `backend/alembic/versions/` are, by their own name, destructive (e.g. `drop onboarding profile`). Rolling an upgrade back by re-pointing at the previous image tag or commit does **not** undo a schema change already applied to the running database, since migrations run forward automatically on every backend startup (see above). The only real zero-data-loss guarantee is a backup taken immediately before the upgrade runs.
+
+For the Docker Compose deployment:
+
+```bash
+./scripts/backup-postgres.sh                 # writes ./backups/toleman-<db>-<timestamp>-<unique>.sql.gz
+docker compose pull && docker compose up -d  # or `docker compose up --build -d`
+```
+
+If something goes wrong, restore the backup taken just before the upgrade:
+
+```bash
+./scripts/restore-postgres.sh backups/toleman-osp-20260101T000000Z-a1B2c3.sql.gz
+```
+
+`restore-postgres.sh` validates the backup file, asks for confirmation, then stops `backend`/`celery-worker` before restoring (they hold open connections, and the backend's own startup hook runs `alembic upgrade head` against this same database, either of which can interleave with a restore in progress) and runs the restore itself in a single transaction that aborts on the first error (`psql -v ON_ERROR_STOP=on --single-transaction`), so a bad restore rolls back cleanly instead of leaving a half-applied mix of old and new state. It leaves both services stopped afterward; start them (`docker compose up -d backend celery-worker`) once you're sure the schema the restored data expects matches what's about to run.
+
+For a Kubernetes deployment (`charts/toleman`), the equivalent is `kubectl exec` into the postgres Pod with the same `pg_dump`/`psql` invocations the scripts above use; there's no in-cluster backup CronJob yet (tracked as a follow-up), so back up before every Helm upgrade the same way.
+
+Postgres's data itself already survives a `docker compose down` (no `-v`) or a Pod restart via the named volume/PVC; these scripts are for the case a completed migration needs to be undone, not for routine restarts.
+
 ### Pre-commit hooks
 
 The repo ships a `.pre-commit-config.yaml` that runs gitleaks v8.21.2 against staged changes before every commit, mirroring the CI self-scan job. Install once per checkout with:
@@ -222,11 +257,24 @@ pip install pre-commit && pre-commit install
 
 A gitleaks failure blocks the commit; run `git commit` with `SKIP=gitleaks` only when you have a deliberate reason.
 
+---
+
 ## Architecture decisions made during build (deltas from the design doc)
 
 - **Python driver**: `psycopg[binary]` (v3) instead of `psycopg2-binary`, no prebuilt wheel for `psycopg2` on Python 3.13+/3.14 yet.
 - **pydantic pinned to 2.9.x**: `sqlmodel==0.0.22` breaks on pydantic ≥2.10 (`Field 'id' requires a type annotation`), a known upstream incompatibility.
 - **Scan execution runs as a direct subprocess** for this MVP (no container isolation yet); matches the architecture review's noted blocker; must move to ephemeral containers before multi-tenant/mass-rollout use.
+
+---
+
+## Contributing
+
+Bug reports, feature requests, and PRs are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, how to run
+the same checks CI runs, and commit/PR conventions, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
+
+---
 
 ## License & Security
 

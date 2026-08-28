@@ -36,6 +36,9 @@ RUN npm ci
 
 FROM node:24-slim AS builder
 WORKDIR /app
+# Not a secret: a public, browser-visible API base URL, baked into the
+# client bundle by design (see the NEXT_PUBLIC_ comment above).
+# nosemgrep: dockerfile.security.secret-in-build-arg
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY --from=deps /app/node_modules ./node_modules

@@ -21,6 +21,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Least privilege: this workflow builds and scans images locally, never
+# pushes or logs into a registry, so a read-only token is enough.
+permissions:
+  contents: read
+
 concurrency:
   group: docker-images-${{ github.ref }}
   cancel-in-progress: true
@@ -49,7 +54,7 @@ jobs:
       TRIVY_VERSION: 0.73.0
       TRIVY_SHA256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Build ${{ matrix.name }} image
         # Never pushed: this proves the image builds, it does not publish.
@@ -131,7 +136,7 @@ jobs:
                   print(f'   {r.get(\"Target\")}: {n} ({r.get(\"Type\")})')
           " | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: image-scan-${{ matrix.name }}

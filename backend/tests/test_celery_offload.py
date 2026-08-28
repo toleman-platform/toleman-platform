@@ -324,3 +324,38 @@ def test_scan_dispatch_marks_row_failed_on_clone_error(client, engine, monkeypat
 
     poll = client.get(f"/api/scans/{scan_id}")
     assert poll.json()["status"] == "failed"
+
+
+def test_sbom_dispatch_fails_without_cloning_when_the_graph_is_unavailable(
+    client, engine, monkeypatch, eager_celery
+):
+    """The dependency graph is the only inventory source now that trivy's
+    SBOM path is gone, so a run that cannot read it produced nothing and is
+    reported failed, not completed-with-an-empty-inventory. It also stops
+    before the clone: the graph fetch needs no checkout, so there is nothing
+    left worth cloning for once it has failed."""
+    from app.core.github_dependency_graph import DependencyGraphUnavailable
+
+    client, target_id = _dev_client_with_target(client, engine)
+
+    cloned = []
+
+    def _record_clone(*args, **kwargs):
+        cloned.append(args)
+        return _fake_clone_repo(*args, **kwargs)
+
+    def _unavailable(repo_url, token=None):
+        raise DependencyGraphUnavailable("dependency graph disabled")
+
+    monkeypatch.setattr(sbom_tasks, "engine", engine)
+    monkeypatch.setattr(sbom_tasks.runner, "clone_repo", _record_clone)
+    monkeypatch.setattr(sbom_tasks, "fetch_dependency_graph", _unavailable)
+
+    res = client.post(f"/api/sbom/{target_id}")
+    assert res.status_code == 202
+    run_id = res.json()["run_id"]
+
+    body = client.get(f"/api/sbom/{target_id}/runs/{run_id}").json()
+    assert body["status"] == "failed"
+    assert "dependency graph disabled" in body["error"]
+    assert cloned == []

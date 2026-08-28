@@ -55,10 +55,26 @@ def _notify_scan_failure(session: Session, target: Target, tool: str, error: str
 )
 def run_sbom_generation(self, target_id: int, run_id: int):
     """Async counterpart to the previously-synchronous POST
-    /api/sbom/{target_id} handler (#59): clone the target's default branch,
-    import its GitHub Dependency Graph, upsert the components, and update the
-    SbomRun row the endpoint already created so
+    /api/sbom/{target_id} handler (#59): import the target's GitHub
+    Dependency Graph, clone the default branch for the AIBOM pass, upsert the
+    components, and update the SbomRun row the endpoint already created so
     GET /api/sbom/{target_id}/runs/{run_id} can report completion.
+
+    The dependency graph is required, not best-effort. It was best-effort
+    while trivy was the second source and could carry a run on its own; with
+    trivy's SBOM path removed it is the only source of a dependency
+    inventory, so a run that cannot read it produced no inventory and is
+    reported failed rather than completed-with-nothing. That distinction is
+    the whole point of the sources_run/sources_failed pair: an empty
+    inventory because GitHub refused to answer must never look like an empty
+    inventory because the repo has no dependencies.
+
+    It is therefore fetched *before* the clone, and a run with no source
+    stops right there. The fetch is one REST call against GitHub's resolved
+    graph and needs no checkout, so a repo whose graph is disabled (the
+    default for private repos) costs nothing beyond that call. The AIBOM and
+    malware passes below do not run in that case; they are extras layered on
+    a successful inventory, not reasons to keep a failed run going.
     """
     with Session(engine) as session:
         run = session.get(SbomRun, run_id)
@@ -75,11 +91,6 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             return {"error": "target not found", "run_id": run.id}
 
         try:
-            repo_path = runner.clone_repo(
-                target.repo_url, target.default_branch,
-                resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
-                scan_id=f"sbom-{run.id}",
-            )
             new_components: list = []
 
             # (#227, raised by @r0075h3ll) GitHub's Dependency Graph is the
@@ -97,10 +108,14 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             # generalise: resolving a customer's manifest means running
             # `pip install` on untrusted input.
             #
-            # Best-effort and explicitly recorded. A repo whose graph is
-            # disabled (the default for private repos) is not a repo with no
-            # dependencies, so the failure is written to sources_failed
-            # rather than swallowed; see DependencyGraphUnavailable.
+            # Required, not best-effort, and explicitly recorded either way.
+            # A repo whose graph is disabled (the default for private repos)
+            # is not a repo with no dependencies, so the failure is written to
+            # sources_failed rather than swallowed; see
+            # DependencyGraphUnavailable. This runs before the clone because
+            # it needs no checkout, and it is now the only inventory source:
+            # if it fails there is nothing left for this run to do, so the
+            # guard below stops before paying for a clone.
             sources_run: list[str] = []
             sources_failed: list[str] = []
             try:
@@ -109,7 +124,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 gh_new = upsert_components(
                     session, target_id, target.default_branch, gh_components, source="github"
                 )
-                new_components.extend(c for c in gh_new if c not in new_components)
+                new_components.extend(gh_new)
                 sources_run.append("github")
             except DependencyGraphUnavailable as exc:
                 logger.info(
@@ -119,6 +134,25 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             except Exception:
                 logger.exception("GitHub dependency graph fetch failed for target %s", target_id)
                 sources_failed.append("github (unexpected error)")
+
+            # Nothing below this point can add an inventory, so a run with no
+            # source that succeeded stops here rather than cloning the repo
+            # and running the AIBOM/malware passes only to be marked failed
+            # at the end anyway.
+            if not sources_run:
+                run.status = "failed"
+                run.error = f"No SBOM sources succeeded: {'; '.join(sources_failed)}"
+                run.sources_failed = "; ".join(sources_failed)
+                run.completed_at = utcnow()
+                session.add(run)
+                session.commit()
+                return {"error": run.error, "run_id": run.id}
+
+            repo_path = runner.clone_repo(
+                target.repo_url, target.default_branch,
+                resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
+                scan_id=f"sbom-{run.id}",
+            )
 
             # Issue #190: extract the AIBOM from the same checkout. The clone
             # above happens for AIBOM extraction (regexes over source, no extra
@@ -147,15 +181,6 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                     )
                 ).all()
             )
-
-            if not sources_run:
-                run.status = "failed"
-                run.error = f"No SBOM sources succeeded: {'; '.join(sources_failed)}"
-                run.sources_failed = "; ".join(sources_failed)
-                run.completed_at = utcnow()
-                session.add(run)
-                session.commit()
-                return {"error": run.error, "run_id": run.id}
 
             run.status = "completed"
             run.count = all_count

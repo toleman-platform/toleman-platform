@@ -63,7 +63,12 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
       {/* The number overlay is positioned against the chart box alone. It
           used to be `absolute bottom-0` of a wrapper that also contained the
           grade badge, which put the "/ 100" line directly on top of the
-          badge; both were unreadable. */}
+          badge; both were unreadable. `bottom-3` then lifts it off the arc's
+          flat baseline: at bottom-0 the "/ 100" descenders sat exactly on the
+          line joining the two arc ends, so the number block read as resting
+          on the gauge rather than sitting inside it. There is ~100px of clear
+          interior (innerRadius 72% of a 140px radius) against a ~46px text
+          block, so the lift costs nothing. */}
       <div className="relative" style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}>
         {mounted && (
           <RadialBarChart
@@ -83,7 +88,7 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
           </RadialBarChart>
         )}
         <div
-          className="absolute inset-x-0 bottom-0 flex flex-col items-center"
+          className="absolute inset-x-0 bottom-3 flex flex-col items-center"
           role="img"
           aria-label={`Security score ${Math.round(score)} out of 100${grade ? `, grade ${grade}` : ""}`}
         >
@@ -93,7 +98,7 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
       </div>
       {grade && (
         <div
-          className="mt-2 flex h-9 w-9 items-center justify-center rounded-full border text-base font-semibold"
+          className="mt-4 flex h-9 w-9 items-center justify-center rounded-full border text-base font-semibold"
           style={{ borderColor: color, color }}
           aria-hidden="true"
         >

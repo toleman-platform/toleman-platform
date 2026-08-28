@@ -564,7 +564,9 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               viewport width; flex-wrap plus a max-width cap is enough to
               keep it from looking cramped once there IS room. */}
           <SecurityScoreGauge score={score.score} grade={score.grade} />
-          <div className="grid w-full max-w-[480px] grid-cols-1 gap-1.5 text-xs">
+          {/* border-l: a thin seam between the gauge and the list instead of
+              relying on the row's gap-6 alone to read as a boundary. */}
+          <div className="grid w-full max-w-[480px] grid-cols-1 gap-1.5 border-l border-border pl-6 text-xs sm:pl-8">
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;
@@ -576,7 +578,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
                     {key === "trend" && <TrendIcon direction={score.components.trend.direction} />}
                     {detail && <span className="ml-1.5 text-[10px] text-muted-foreground/70">({detail})</span>}
                   </span>
-                  <span className={isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}>{Math.round(c.score)}/100</span>
+                  <span className={`tabular-nums ${isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}`}>{Math.round(c.score)}/100</span>
                 </div>
               );
             })}

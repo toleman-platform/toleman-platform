@@ -108,7 +108,14 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
               barSize={18}
             >
               <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
-              <RadialBar background={{ fill: "var(--color-secondary)" }} dataKey="value" cornerRadius={9} />
+              {/* Track tinted 18% toward the grade color instead of flat
+                  gray, so the ring reads as "colored capacity, partly
+                  filled" rather than a gray guide rail with a bar on it. */}
+              <RadialBar
+                background={{ fill: `color-mix(in srgb, ${color} 18%, var(--color-secondary))` }}
+                dataKey="value"
+                cornerRadius={9}
+              />
             </RadialBarChart>
           )}
           <div
@@ -116,7 +123,7 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
             role="img"
             aria-label={`Security score ${Math.round(score)} out of 100${grade ? `, grade ${grade}` : ""}`}
           >
-            <span className="text-3xl font-bold leading-none text-foreground">{Math.round(score)}</span>
+            <span className="text-3xl font-bold leading-none tabular-nums text-foreground">{Math.round(score)}</span>
             <span className="mt-0.5 text-xs leading-none text-muted-foreground">/ 100</span>
           </div>
         </div>

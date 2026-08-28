@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Package } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DependencySyncRefresher } from "./dependency-sync-refresher";
 
 // (#330) Outcome of the automatic Dependency Graph import that runs when a
 // target is created. Shown above the table, and above the empty state in
@@ -40,6 +41,7 @@ function DependencySyncNudge({ target }: { target: Target }) {
           <span className="ml-1 font-mono text-xs">({target.dependency_sync_error})</span>
         )}
       </p>
+      {status === "pending" && <DependencySyncRefresher />}
     </div>
   );
 }

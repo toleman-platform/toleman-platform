@@ -33,6 +33,18 @@ const GRADE_COLOR: Record<string, string> = {
 const CHART_WIDTH = 280;
 const CHART_HEIGHT = 200;
 
+// The 200px chart box is far taller than the dome it draws: cy sits on the
+// box's bottom edge, so the arc's bounding box only occupies the bottom
+// ~77px of it (measured live: outerTop sat 123px below the box top). That
+// leaves 123px of pure blank canvas above the ring, which reads as "the
+// gauge is pinned to the bottom of its space" rather than centered next to
+// the score list beside it. VISIBLE_HEIGHT crops that dead strip off (see
+// the overflow-hidden wrapper below) without touching CHART_HEIGHT, which
+// the ring-to-number gap math above still depends on. 95px keeps ~18px of
+// headroom above the ring's measured top so its rounded end caps, which
+// bulge a few px past the nominal radius, don't get clipped.
+const VISIBLE_HEIGHT = 95;
+
 export function SecurityScoreGauge({ score, grade }: { score: number; grade: string | null }) {
   const color = grade ? GRADE_COLOR[grade] ?? "var(--color-chart-1)" : "var(--color-muted-foreground)";
   const data = [{ value: score, fill: color }];
@@ -72,37 +84,41 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
     // flex-wrap) rather than distorting the gauge to fit.
     <div className="flex shrink-0 flex-col items-center">
       {/* The number overlay is positioned against the chart box alone. It
-          used to be `absolute bottom-0` of a wrapper that also contained the
+          used to be `absolute bottom-0` in a wrapper that also held the
           grade badge, which put the "/ 100" line directly on top of the
-          badge; both were unreadable. `bottom-2` clears it off the arc's
-          flat baseline without eating into the (now genuinely sized)
-          interior above it - see the CHART_HEIGHT comment for why a bigger
-          offset here previously made things worse, not better. */}
-      <div className="relative" style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}>
-        {mounted && (
-          <RadialBarChart
-            width={CHART_WIDTH}
-            height={CHART_HEIGHT}
-            cx="50%"
-            cy="100%"
-            innerRadius="72%"
-            outerRadius="100%"
-            startAngle={180}
-            endAngle={0}
-            data={data}
-            barSize={18}
+          badge; both were unreadable - the badge now lives outside this
+          box entirely (see `mt-3` below), so bottom-0 is back and is what
+          actually maximizes the ring-to-number gap: any positive offset
+          here lifts the text *toward* the ring, not away from it, since
+          the ring sits above the box's bottom edge. See the CHART_HEIGHT
+          comment for the interior-budget math this relies on. */}
+      <div className="relative overflow-hidden" style={{ width: CHART_WIDTH, height: VISIBLE_HEIGHT }}>
+        <div className="absolute inset-x-0 bottom-0" style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}>
+          {mounted && (
+            <RadialBarChart
+              width={CHART_WIDTH}
+              height={CHART_HEIGHT}
+              cx="50%"
+              cy="100%"
+              innerRadius="72%"
+              outerRadius="100%"
+              startAngle={180}
+              endAngle={0}
+              data={data}
+              barSize={18}
+            >
+              <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
+              <RadialBar background={{ fill: "var(--color-secondary)" }} dataKey="value" cornerRadius={9} />
+            </RadialBarChart>
+          )}
+          <div
+            className="absolute inset-x-0 bottom-0 flex flex-col items-center"
+            role="img"
+            aria-label={`Security score ${Math.round(score)} out of 100${grade ? `, grade ${grade}` : ""}`}
           >
-            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
-            <RadialBar background={{ fill: "var(--color-secondary)" }} dataKey="value" cornerRadius={9} />
-          </RadialBarChart>
-        )}
-        <div
-          className="absolute inset-x-0 bottom-2 flex flex-col items-center"
-          role="img"
-          aria-label={`Security score ${Math.round(score)} out of 100${grade ? `, grade ${grade}` : ""}`}
-        >
-          <span className="text-3xl font-bold leading-none text-foreground">{Math.round(score)}</span>
-          <span className="mt-0.5 text-xs leading-none text-muted-foreground">/ 100</span>
+            <span className="text-3xl font-bold leading-none text-foreground">{Math.round(score)}</span>
+            <span className="mt-0.5 text-xs leading-none text-muted-foreground">/ 100</span>
+          </div>
         </div>
       </div>
       {grade && (

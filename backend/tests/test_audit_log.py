@@ -269,7 +269,7 @@ def test_date_range_filter(client, engine):
     finding_id = _make_finding(engine, target_id)
     client.post(f"/api/findings/{finding_id}/triage", params={"to_state": "Accepted Risk"})
 
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
     tomorrow = (utcnow() + timedelta(days=1)).date().isoformat()
     yesterday = (utcnow() - timedelta(days=1)).date().isoformat()
 

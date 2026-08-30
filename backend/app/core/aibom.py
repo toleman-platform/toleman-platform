@@ -324,8 +324,6 @@ def upsert_aibom_components(
     dependency, now pinned; treating it as a new component would hide exactly
     the change a reader most wants to see.
     """
-    from datetime import UTC, datetime
-
     from sqlmodel import select
 
     from app.models.models import AiBomComponent

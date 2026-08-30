@@ -7,7 +7,7 @@ webhook-driven (real-time, PR opened/synchronize) path call the exact same
 logic instead of two copies drifting apart.
 """
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 import httpx
 from sqlmodel import Session, select

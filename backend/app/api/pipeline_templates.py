@@ -127,8 +127,6 @@ def update_template(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    from datetime import UTC, datetime
-
     template = _get_template_scoped(session, user, template_id)
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=template.workspace_id)
     if payload.name is not None:

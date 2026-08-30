@@ -10,7 +10,6 @@ from app.core.rate_limit import enforce_rate_limit
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import Scan, Target, User
 from app.core.tool_usage import tools_for_surface
-from app.core.time import utcnow
 from app.scanners import parsers
 from app.tasks.scan_tasks import run_scan
 

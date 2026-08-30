@@ -602,10 +602,13 @@ class SbomComponent(SQLModel, table=True):
     # an uploaded SBOM reports whatever the uploader's tooling found. "Only
     # upload found this" is a real provenance signal worth keeping.
     #
-    # The column's own default is "github", the only source that now writes
-    # rows automatically. Rows written before #328 removed trivy SBOM
-    # generation keep the "trivy" the #227 migration backfilled; they are
-    # not relabelled as confirmed by a source that never saw them.
+    # The model-level default is "github", the only source that now writes
+    # rows automatically; there is no DB-level default and no migration, and
+    # every upsert_components caller passes source= explicitly, so it is a
+    # statement of intent rather than a value rows actually take. Rows
+    # written before #328 removed trivy SBOM generation keep the "trivy" the
+    # #227 migration backfilled; they are not relabelled as confirmed by a
+    # source that never saw them.
     source: str = "github"
     first_seen: datetime = Field(default_factory=utcnow)
     last_seen: datetime = Field(default_factory=utcnow)

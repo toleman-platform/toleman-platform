@@ -1,9 +1,9 @@
 import { api } from "@/lib/api";
-import { FindingsFilterBar } from "@/components/findings-filter-bar";
+import { FindingsFilterBar, FindingsList } from "@/components/features/findings";
 import { FindingsCategoryTabs, type CategoryTab } from "@/components/findings-category-tabs";
-import { FindingsList } from "@/components/findings-list";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
+import { PageHeader } from "@/components/ui/page-header";
 import { settleOrNull } from "@/lib/settle";
 // Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.
@@ -122,10 +122,10 @@ export default async function FindingsPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">All Findings</h1>
-        <p className="text-sm text-muted-foreground">{result.total} findings across all targets</p>
-      </div>
+      <PageHeader
+        title="All Findings"
+        description={`${result.total} findings across all targets`}
+      />
       <FindingsCategoryTabs tabs={resolvedTabs} active={resolved ? "resolved" : "open"} />
       <FindingsCategoryTabs tabs={categoryTabs} active={category ?? ""} />
       <FindingsFilterBar targets={targets} tools={tools} groups={groups} resolved={resolved} />

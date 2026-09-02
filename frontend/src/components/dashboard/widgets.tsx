@@ -25,8 +25,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
-import { SEVERITY_COLOR } from "@/lib/severity";
-import { LOG_STATUS_COLOR } from "@/components/pr-guardrail-log";
+import { ProgressBar } from "@/components/ui/progress-bar";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
+import { SeverityChip } from "@/components/ui/severity-chip";
+import { LOG_STATUS_COLOR } from "@/components/features/scans/pr-guardrail-log";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
 import { api } from "@/lib/api";
@@ -56,7 +58,7 @@ import type {
 // that widget's app.core.widgets resolver on the backend.
 export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementType; colSpanClass?: string }> = {
   security_score: { label: "Security Score", icon: Gauge, colSpanClass: "lg:col-span-3" },
-  kpi_cards: { label: "KPI Cards", icon: ShieldAlert, colSpanClass: "lg:col-span-3" },
+  kpi_cards: { label: "Security Posture", icon: ShieldAlert, colSpanClass: "lg:col-span-3" },
   sla_compliance: { label: "SLA Compliance", icon: Timer, colSpanClass: "lg:col-span-3" },
   findings_trend: { label: "Findings Over Time", icon: Activity, colSpanClass: "lg:col-span-2" },
   top_risky_repos: { label: "Top Risky Repos", icon: GitBranch },
@@ -106,26 +108,55 @@ function KpiCardsWidget({ data }: { data: KpiCardsData }) {
   const items = [
     // Label unified to "Findings" (#116); was "Open Vulnerabilities" while
     // the sidebar nav said "Vulnerabilities" and the page header said
-    // "Findings"; all three now use the same term.
-    { icon: ShieldAlert, iconClass: "bg-destructive/10 text-destructive", value: data.open, label: "Open Findings" },
-    { icon: AlertTriangle, iconClass: "bg-chart-3/10 text-chart-3", value: data.critical, label: "Critical Issues" },
-    { icon: GitBranch, iconClass: "bg-primary/10 text-accent-strong", value: data.targets, label: "Targets Onboarded" },
-    { icon: CheckCircle2, iconClass: "bg-chart-5/10 text-chart-5", value: data.mitigated, label: "Mitigated" },
+    // "Findings"; all three now agree on one term.
+    {
+      icon: ShieldAlert,
+      iconClass: "bg-destructive/10 text-destructive",
+      value: data.open,
+      label: "Open Findings",
+      href: "/findings?state=Open",
+      tone: "critical" as const,
+    },
+    {
+      icon: AlertTriangle,
+      iconClass: "bg-chart-3/10 text-chart-3",
+      value: data.critical,
+      label: "Critical Issues",
+      href: "/findings?severity=Critical&state=Open",
+      tone: "attention" as const,
+    },
+    {
+      icon: GitBranch,
+      iconClass: "bg-primary/10 text-accent-strong",
+      value: data.targets,
+      label: "Targets Onboarded",
+      href: "/targets",
+      tone: "default" as const,
+    },
+    {
+      icon: CheckCircle2,
+      iconClass: "bg-chart-5/10 text-chart-5",
+      value: data.mitigated,
+      label: "Mitigated",
+      href: "/findings?state=Mitigated",
+      tone: "positive" as const,
+    },
   ];
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <StatGrid columns={4}>
       {items.map((it) => (
-        <div key={it.label} className="flex items-center gap-3">
-          <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${it.iconClass}`}>
-            <it.icon className="h-5 w-5" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-foreground">{it.value}</p>
-            <p className="text-xs text-muted-foreground">{it.label}</p>
-          </div>
-        </div>
+        <StatCard
+          key={it.label}
+          label={it.label}
+          value={it.value}
+          icon={it.icon}
+          iconClass={it.iconClass}
+          href={it.href}
+          tone={it.tone}
+        />
       ))}
-    </div>
+    </StatGrid>
   );
 }
 
@@ -141,19 +172,55 @@ function SlaComplianceWidget({ data }: { data: SlaComplianceData }) {
       </EmptyState>
     );
   }
+  const total = data.with_sla;
+  const compliantPct = total > 0 ? Math.round((data.compliant / total) * 100) : 100;
+  const violationPct = total > 0 ? 100 - compliantPct : 0;
+
   return (
-    <div className="flex items-center gap-6">
-      <div>
-        <p className="text-2xl font-bold text-foreground">{data.with_sla}</p>
-        <p className="text-xs text-muted-foreground">Open findings with an SLA</p>
+    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-wrap items-center gap-6">
+        <div>
+          <p className="text-2xl font-bold text-foreground">{data.with_sla}</p>
+          <p className="text-xs text-muted-foreground">Open findings with an SLA</p>
+        </div>
+        <Link
+          href="/findings?sla_violated=true&state=Open"
+          className="group rounded-md px-2 py-1 transition-colors hover:bg-accent/40"
+        >
+          <p className={`text-2xl font-bold ${data.in_violation > 0 ? "text-destructive" : "text-foreground"}`}>
+            {data.in_violation}
+          </p>
+          <p className="text-xs text-muted-foreground group-hover:underline">In violation &rarr;</p>
+        </Link>
+        <div>
+          <p className="text-2xl font-bold text-chart-5">{data.compliant}</p>
+          <p className="text-xs text-muted-foreground">Within SLA</p>
+        </div>
       </div>
-      <div>
-        <p className={`text-2xl font-bold ${data.in_violation > 0 ? "text-destructive" : "text-foreground"}`}>{data.in_violation}</p>
-        <p className="text-xs text-muted-foreground">In violation</p>
-      </div>
-      <div>
-        <p className="text-2xl font-bold text-chart-5">{data.compliant}</p>
-        <p className="text-xs text-muted-foreground">Within SLA</p>
+
+      <div className="flex min-w-[220px] flex-col gap-1.5 sm:min-w-[280px]">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-medium text-foreground">SLA Health Rate</span>
+          <span className={`font-semibold ${compliantPct >= 80 ? "text-chart-5" : compliantPct >= 50 ? "text-chart-3" : "text-destructive"}`}>
+            {compliantPct}%
+          </span>
+        </div>
+        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-secondary">
+          <div
+            className="bg-chart-5 transition-all duration-500"
+            style={{ width: `${compliantPct}%` }}
+            title={`Within SLA: ${data.compliant} (${compliantPct}%)`}
+          />
+          <div
+            className="bg-destructive transition-all duration-500"
+            style={{ width: `${violationPct}%` }}
+            title={`In Violation: ${data.in_violation} (${violationPct}%)`}
+          />
+        </div>
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+          <span>{data.compliant} within SLA</span>
+          <span>{data.in_violation} violated</span>
+        </div>
       </div>
     </div>
   );
@@ -315,32 +382,49 @@ function TopRiskyReposWidget({ data }: { data: TopRiskyReposData }) {
   // link inside a link is invalid and the browser resolves it unpredictably.
   return (
     <div className="flex flex-col gap-2">
-      {data.items.map((r) => (
-        <div key={r.target_id} className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-accent/40">
-          <Link href={`/targets/${r.target_id}`} className="truncate text-sm text-foreground hover:underline">
-            {r.target_name}
-          </Link>
-          <div className="flex shrink-0 gap-2">
-            {r.critical > 0 && (
-              <Link
-                href={`/findings?target_id=${r.target_id}&severity=Critical&state=Open`}
-                aria-label={`View ${r.critical} open Critical findings in ${r.target_name}`}
-              >
-                <Badge variant="outline" className={`${SEVERITY_COLOR["Critical"]} hover:brightness-110`}>Critical: {r.critical}</Badge>
+      {data.items.map((r) => {
+        const totalRisky = r.critical + r.high;
+        const critPct = totalRisky > 0 ? (r.critical / totalRisky) * 100 : 0;
+        const highPct = totalRisky > 0 ? (r.high / totalRisky) * 100 : 0;
+
+        return (
+          <div key={r.target_id} className="group flex items-center justify-between gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-accent/40">
+            <div className="flex min-w-0 flex-1 flex-col">
+              <Link href={`/targets/${r.target_id}`} className="min-w-0 hover:underline">
+                <TruncateTooltip
+                  text={r.target_name}
+                  className="text-sm font-medium text-foreground"
+                />
               </Link>
-            )}
-            {r.high > 0 && (
-              <Link
-                href={`/findings?target_id=${r.target_id}&severity=High&state=Open`}
-                aria-label={`View ${r.high} open High findings in ${r.target_name}`}
-              >
-                <Badge variant="outline" className={`${SEVERITY_COLOR["High"]} hover:brightness-110`}>High: {r.high}</Badge>
-              </Link>
-            )}
-            {r.critical === 0 && r.high === 0 && <span className="text-xs text-muted-foreground">No critical/high open</span>}
+              {totalRisky > 0 && (
+                <div className="mt-1 flex h-1 w-24 overflow-hidden rounded-full bg-secondary">
+                  <div className="bg-destructive" style={{ width: `${critPct}%` }} />
+                  <div className="bg-chart-3" style={{ width: `${highPct}%` }} />
+                </div>
+              )}
+            </div>
+            <div className="flex shrink-0 gap-1.5">
+              {r.critical > 0 && (
+                <Link
+                  href={`/findings?target_id=${r.target_id}&severity=Critical&state=Open`}
+                  aria-label={`View ${r.critical} open Critical findings in ${r.target_name}`}
+                >
+                  <SeverityChip severity="Critical" count={r.critical} size="sm" className="hover:brightness-110 font-semibold" />
+                </Link>
+              )}
+              {r.high > 0 && (
+                <Link
+                  href={`/findings?target_id=${r.target_id}&severity=High&state=Open`}
+                  aria-label={`View ${r.high} open High findings in ${r.target_name}`}
+                >
+                  <SeverityChip severity="High" count={r.high} size="sm" className="hover:brightness-110 font-semibold" />
+                </Link>
+              )}
+              {r.critical === 0 && r.high === 0 && <span className="text-xs text-muted-foreground">No critical/high open</span>}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -363,7 +447,7 @@ function CveTimelineWidget({ data }: { data: CveTimelineData }) {
             <p className="truncate text-sm text-foreground">{item.title}</p>
             <p className="text-xs text-muted-foreground">{item.target_name ?? `target #${item.target_id}`} &middot; {formatDate(item.first_seen)}</p>
           </div>
-          <Badge variant="outline" className={SEVERITY_COLOR[item.severity]}>{item.severity}</Badge>
+          <SeverityChip severity={item.severity} size="sm" />
         </Link>
       ))}
     </div>
@@ -394,7 +478,7 @@ function RecentFindingsWidget({ data }: { data: RecentFindingsData }) {
               {f.sla_violated && <span className="ml-1 text-destructive">&middot; SLA violated</span>}
             </p>
           </div>
-          <Badge variant="outline" className={SEVERITY_COLOR[f.severity]}>{f.severity}</Badge>
+          <SeverityChip severity={f.severity} size="sm" />
         </div>
       ))}
     </div>
@@ -564,26 +648,57 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               viewport width; flex-wrap plus a max-width cap is enough to
               keep it from looking cramped once there IS room. */}
           <SecurityScoreGauge score={score.score} grade={score.grade} />
-          <div className="grid w-full max-w-[480px] grid-cols-1 gap-1.5 text-xs">
+          <div className="grid w-full max-w-[480px] grid-cols-1 gap-2 text-xs">
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;
               const detail = scoreComponentDetail(key, c);
+              const val = Math.round(c.score);
               return (
-                <div key={key} className={`flex items-center justify-between rounded-md px-2 py-1 ${isWeakest ? "bg-destructive/10" : ""}`}>
-                  <span className={isWeakest ? "font-medium text-destructive" : "text-muted-foreground"}>
+                <div
+                  key={key}
+                  className={`flex items-center justify-between gap-3 rounded-md px-2.5 py-1.5 transition-colors ${
+                    isWeakest ? "bg-destructive/10" : "hover:bg-accent/20"
+                  }`}
+                >
+                  <span className={`min-w-0 truncate ${isWeakest ? "font-medium text-destructive" : "text-muted-foreground"}`}>
                     {SCORE_COMPONENT_LABEL[key]}
                     {key === "trend" && <TrendIcon direction={score.components.trend.direction} />}
-                    {detail && <span className="ml-1.5 text-[10px] text-muted-foreground/70">({detail})</span>}
+                    {detail && <span className="ml-1.5 text-meta text-muted-foreground">({detail})</span>}
                   </span>
-                  <span className={isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}>{Math.round(c.score)}/100</span>
+                  <div className="flex shrink-0 items-center gap-2.5">
+                    <div className="w-16">
+                      <ProgressBar value={val} max={100} size="sm" />
+                    </div>
+                    <span className={`w-12 text-right font-mono tabular-nums ${isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}`}>
+                      {val}/100
+                    </span>
+                  </div>
                 </div>
               );
             })}
             {score.weakest_component && (
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Dragged down by <span className="font-medium text-foreground">{SCORE_COMPONENT_LABEL[score.weakest_component]}</span>.
-              </p>
+              <div className="mt-1 flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/15 px-3 py-2 text-xs text-foreground">
+                <span className="flex items-center gap-1.5">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                  <span>
+                    Score penalty: <strong className="font-semibold text-destructive">{SCORE_COMPONENT_LABEL[score.weakest_component]}</strong>
+                  </span>
+                </span>
+                {score.weakest_component === "findings" ? (
+                  <Link href="/findings?state=Open" className="font-medium text-destructive hover:underline">
+                    View open findings &rarr;
+                  </Link>
+                ) : score.weakest_component === "sla" ? (
+                  <Link href="/findings?sla_violated=true&state=Open" className="font-medium text-destructive hover:underline">
+                    View SLA violations &rarr;
+                  </Link>
+                ) : score.weakest_component === "coverage" ? (
+                  <Link href="/targets" className="font-medium text-destructive hover:underline">
+                    Manage targets &rarr;
+                  </Link>
+                ) : null}
+              </div>
             )}
           </div>
         </div>

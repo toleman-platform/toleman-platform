@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
-import { GithubOrgLogsFilterBar } from "@/components/github-org-logs-filter-bar";
-import { GithubOrgLogsList } from "@/components/github-org-logs-list";
+import { GithubOrgLogsFilterBar, GithubOrgLogsList } from "@/components/features/logs";
+import { PageHeader } from "@/components/ui/page-header";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
 import { settleOrNull } from "@/lib/settle";
@@ -29,7 +29,7 @@ export default async function GithubOrgLogsPage({
   const page = pageRaw && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
   const pageSize = pageSizeFromParams(sp.page_size);
 
-  const [activityResult, targets] = await Promise.all([
+  const [activityResult, targetsList] = await Promise.all([
     settleOrNull(api.orgActivity({ target_id, date_from, date_to, page, page_size: pageSize })),
     api.targets().catch(() => []),
   ]);
@@ -37,15 +37,11 @@ export default async function GithubOrgLogsPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">GitHub Org Logs</h1>
-        <p className="text-sm text-muted-foreground">
-          A true organization-level audit trail is a GitHub Enterprise feature not available on personal accounts. In
-          its place, this page shows real commit activity pulled live from every repository you&apos;ve connected;
-          nothing here is simulated or backfilled.
-        </p>
-      </div>
-      <GithubOrgLogsFilterBar targets={targets} />
+      <PageHeader
+        title="GitHub Org Logs"
+        description="A true organization-level audit trail is a GitHub Enterprise feature not available on personal accounts. In its place, this page shows real commit activity pulled live from every repository you've connected; nothing here is simulated or backfilled."
+      />
+      <GithubOrgLogsFilterBar targets={targetsList} />
       {activityResult === null ? (
         <ErrorState description="GitHub org activity couldn't be loaded from the API." action={<ReloadButton />} />
       ) : (

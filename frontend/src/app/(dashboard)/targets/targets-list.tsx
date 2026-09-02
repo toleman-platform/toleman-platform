@@ -15,19 +15,26 @@ import {
   api,
 } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useActiveScans } from "@/hooks/use-active-scans";
-import { ScanProgress } from "@/components/scan-status";
+import { useActiveScans } from "@/hooks/features/use-active-scans";
+import { ScanProgress } from "@/components/features/scans";
 import { safeHref, timeAgo } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { GroupBadge } from "@/components/group-badge";
-import { CriticalityChip } from "@/components/criticality-chip";
+import { GroupBadge } from "@/components/features/targets/group-badge";
+import { CriticalityChip } from "@/components/features/targets/criticality-chip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { pollUntilSettled } from "@/lib/poll";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
 import type { TargetSort } from "./targets-filter-bar";
 import { Rocket, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+function paginateSlice<T>(items: T[], page: number, pageSize: number): { items: T[]; clampedPage: number } {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const clampedPage = Math.min(Math.max(1, page), totalPages);
+  const start = (clampedPage - 1) * pageSize;
+  return { items: items.slice(start, start + pageSize), clampedPage };
+}
 
 type QuickFilter = "all" | "attention" | "unscanned" | "stale";
 
@@ -481,9 +488,7 @@ export function TargetsList({
   // criticality and sort already filter the already-fetched list here;
   // adding a server round-trip just for slicing would make those three
   // interactions slower for no gain.
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const clampedPage = Math.min(page, totalPages);
-  const visible = filtered.slice((clampedPage - 1) * pageSize, clampedPage * pageSize);
+  const { items: visible, clampedPage } = paginateSlice(filtered, page, pageSize);
 
   const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
 

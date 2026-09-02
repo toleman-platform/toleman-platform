@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, Group, GroupBadge as GroupBadgeType } from "@/lib/api";
-import { GroupBadge } from "@/components/group-badge";
+import { GroupBadge } from "@/components/features/targets";
 import { Button } from "@/components/ui/button";
 
 // Issue #61: assign/remove this target's groups from its detail page. Only

@@ -2,14 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
-import { api, AiRecentAnalysis, Finding } from "@/lib/api";
+import { api, type AiRecentAnalysis, type Finding } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SEVERITY_COLOR } from "@/lib/severity";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn, timeAgo } from "@/lib/utils";
+import { PageHeader } from "@/components/ui/page-header";
+import { AlertBanner } from "@/components/ui/alert-banner";
+import { SeverityChip } from "@/components/ui/severity-chip";
+import { timeAgo } from "@/lib/utils";
 
 // Issue #122: the page previously said "select a finding" with no control
 // anywhere on the page to do so, a dead end when landed on directly
@@ -39,8 +40,7 @@ export default function AiAnalysisPage() {
   const [recent, setRecent] = useState<AiRecentAnalysis[] | null>(null);
 
   function loadRecent() {
-    api
-      .aiRecentAnalyses()
+    api.aiRecentAnalyses()
       .then(setRecent)
       .catch(() => setRecent([]));
   }
@@ -62,8 +62,7 @@ export default function AiAnalysisPage() {
     const q = query.trim();
     if (!q) return;
     const handle = setTimeout(() => {
-      api
-        .findings({ search: q, state: "Open", page_size: 8 })
+      api.findings({ search: q, state: "Open", page_size: 8 })
         .then((r) => setSearchResults({ query: q, items: r.items }))
         .catch(() => setSearchResults({ query: q, items: [] }));
     }, 250);
@@ -147,10 +146,10 @@ export default function AiAnalysisPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">AI Analysis</h1>
-        <p className="text-sm text-muted-foreground">{providerLabel}-generated remediation guidance for a selected finding</p>
-      </div>
+      <PageHeader
+        title="AI Analysis"
+        description={`${providerLabel}-generated remediation guidance for a selected finding`}
+      />
 
       {configured === null && (
         <div className="flex flex-col gap-3">
@@ -160,14 +159,12 @@ export default function AiAnalysisPage() {
       )}
 
       {configured === false && (
-        <Card className="border-border bg-card">
-          <CardContent className="px-4 py-3 text-sm text-muted-foreground">
-            Not configured. Set an AI provider in <code className="text-foreground">Admin &gt; Global Integrations</code>{" "}
-            (Anthropic API key, or a self-hosted/OpenAI-compatible endpoint like Ollama or Kimi) to enable this
-            feature. Search and the recent-analyses list below still work once a finding is selected, analysis
-            itself returns a clear &quot;not configured&quot; message rather than erroring.
-          </CardContent>
-        </Card>
+        <AlertBanner tone="info" title="AI Provider Not Configured">
+          Set an AI provider in <code className="text-foreground">Admin &gt; Global Integrations</code>{" "}
+          (Anthropic API key, or a self-hosted/OpenAI-compatible endpoint like Ollama or Kimi) to enable this
+          feature. Search and the recent-analyses list below still work once a finding is selected, analysis
+          itself returns a clear &quot;not configured&quot; message rather than erroring.
+        </AlertBanner>
       )}
 
       {configured !== null && (
@@ -178,9 +175,7 @@ export default function AiAnalysisPage() {
 
             {selected ? (
               <div className="flex items-center gap-2 rounded-md border border-input bg-secondary px-3 py-2 text-sm">
-                <Badge variant="outline" className={cn("shrink-0", SEVERITY_COLOR[selected.severity])}>
-                  {selected.severity}
-                </Badge>
+                <SeverityChip severity={selected.severity} size="sm" />
                 <span className="min-w-0 flex-1 truncate text-foreground">{selected.title}</span>
                 <button
                   onClick={clearSelection}
@@ -219,9 +214,7 @@ export default function AiAnalysisPage() {
                       onClick={() => pickFinding(f)}
                       className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent"
                     >
-                      <Badge variant="outline" className={cn("shrink-0", SEVERITY_COLOR[f.severity])}>
-                        {f.severity}
-                      </Badge>
+                      <SeverityChip severity={f.severity} size="sm" />
                       <span className="min-w-0 flex-1 truncate text-foreground">{f.title}</span>
                       <span className="shrink-0 font-mono text-xs text-muted-foreground">
                         {f.cve_id ? `${f.cve_id} · ` : ""}
@@ -245,9 +238,7 @@ export default function AiAnalysisPage() {
           {analysis && selected && (
             <Card className="border-border bg-card">
               <CardContent className="px-4 py-4">
-                <Badge variant="outline" className={SEVERITY_COLOR[selected.severity]}>
-                  {selected.severity}
-                </Badge>
+                <SeverityChip severity={selected.severity} size="sm" />
                 <p className="mt-3 whitespace-pre-wrap text-sm text-foreground">{analysis}</p>
               </CardContent>
             </Card>
@@ -284,9 +275,7 @@ export default function AiAnalysisPage() {
                       key={item.finding_id}
                       className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0"
                     >
-                      <Badge variant="outline" className={cn("shrink-0", SEVERITY_COLOR[item.severity])}>
-                        {item.severity}
-                      </Badge>
+                      <SeverityChip severity={item.severity} size="sm" />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-foreground">{item.title}</div>
                         <div className="truncate font-mono text-xs text-muted-foreground">

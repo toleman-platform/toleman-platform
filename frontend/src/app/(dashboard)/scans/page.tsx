@@ -1,9 +1,10 @@
 import { api } from "@/lib/api";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
-import { ScansFilterBar } from "@/components/scans-filter-bar";
+import { ScansFilterBar } from "@/components/features/scans";
 import { ScansList } from "./scans-list";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
+import { PageHeader } from "@/components/ui/page-header";
 import { settleOrNull } from "@/lib/settle";
 
 // Issue #120: rebuild of the flat, unfiltered ~165-button scan-trigger grid
@@ -32,12 +33,10 @@ export default async function OnDemandScanPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">On-Demand Scan</h1>
-        <p className="text-sm text-muted-foreground">
-          Trigger a native scan against any target · {targets.length} target{targets.length === 1 ? "" : "s"}
-        </p>
-      </div>
+      <PageHeader
+        title="On-Demand Scan"
+        description={`Trigger a native scan against any target · ${targets.length} target${targets.length === 1 ? "" : "s"}`}
+      />
 
       <ScansFilterBar tools={tools} />
 

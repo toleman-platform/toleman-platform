@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
 import { Button } from "@/components/ui/button";
-import { ScanProgress } from "@/components/scan-status";
-import { useScanRun } from "@/hooks/use-scan-run";
-import { useActiveScans } from "@/hooks/use-active-scans";
+import { ScanProgress } from "@/components/features/scans";
+import { useScanRun } from "@/hooks/features/use-scan-run";
+import { useActiveScans } from "@/hooks/features/use-active-scans";
 
 const TOOLS = SCAN_TOOLS;
 

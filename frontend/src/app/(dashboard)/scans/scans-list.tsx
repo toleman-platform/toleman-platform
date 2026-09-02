@@ -7,13 +7,25 @@ import { SCAN_TOOLS } from "@/lib/scan-tools";
 import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CriticalityChip } from "@/components/criticality-chip";
+import { CriticalityChip } from "@/components/features/targets";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
-import { ScanProgress } from "@/components/scan-status";
-import { useActiveScans } from "@/hooks/use-active-scans";
+import { ScanProgress } from "@/components/features/scans";
+import { useActiveScans } from "@/hooks/features/use-active-scans";
+import { BulkActionBar } from "@/components/ui/bulk-action-bar";
+import { SelectAllVisible } from "@/components/ui/list-row";
+import { useSelection } from "@/hooks/use-selection";
 import { Scan as ScanIcon } from "lucide-react";
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function paginateSlice<T>(items: T[], page: number, pageSize: number): { items: T[]; clampedPage: number } {
+  const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+  const clampedPage = Math.min(Math.max(1, page), totalPages);
+  const start = (clampedPage - 1) * pageSize;
+  return { items: items.slice(start, start + pageSize), clampedPage };
+}
 
 // A minimum spacing between dispatched POST /api/scans/run calls so a bulk
 // trigger across several targets stays under the backend's per-user rate
@@ -36,10 +48,6 @@ const ALL_TOOLS_VALUE = "";
 // claimed the scan was finished while the worker had not yet started it.
 type DispatchState = "idle" | "dispatching" | "dispatched" | "error";
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function lastScannedBucket(lastScanAt: string | null): string {
   if (!lastScanAt) return "never";
   const ageMs = Date.now() - new Date(lastScanAt).getTime();
@@ -61,7 +69,6 @@ function lastScannedBucket(lastScanAt: string | null): string {
 export function ScansList({ targets, summary }: { targets: Target[]; summary: ScanSummary }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [dispatchState, setDispatchState] = useState<Record<number, DispatchState>>({});
   const { activeScans, isTargetScanning, refresh: refreshActiveScans } = useActiveScans();
   const [scanMessage, setScanMessage] = useState<string | null>(null);
@@ -95,24 +102,9 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
     });
   }, [targets, summary, search, criticality, tool, lastScanned]);
 
-  function toggleOne(id: number, checked: boolean) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const clampedPage = Math.min(page, totalPages);
-  const visible = filtered.slice((clampedPage - 1) * pageSize, clampedPage * pageSize);
-
-  function toggleAll(checked: boolean) {
-    setSelected(checked ? new Set(visible.map((t) => t.id)) : new Set());
-  }
-
-  const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
+  const { items: visible, clampedPage } = paginateSlice(filtered, page, pageSize);
+  const visibleIds = useMemo(() => visible.map((t) => t.id), [visible]);
+  const selection = useSelection(visibleIds);
 
   // "Scan" re-runs whichever on-demand-triggerable tools this target has
   // real history for, falling back to the full default set for a
@@ -165,7 +157,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
         ? `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure); check Scan History.`
         : `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Progress is shown on each row below.`
     );
-    setSelected(new Set());
+    selection.clear();
     router.refresh();
   }
 
@@ -193,6 +185,9 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
   const confirmTargets = confirmIds ? targets.filter((t) => confirmIds.includes(t.id)) : [];
   const confirmProdCount = confirmTargets.filter((t) => t.label === "Prod").length;
 
+  const selectedTargets = useMemo(() => targets.filter((t) => selection.isSelected(t.id)), [targets, selection]);
+  const selectedProdCount = useMemo(() => selectedTargets.filter((t) => t.label === "Prod").length, [selectedTargets]);
+
   if (targets.length === 0) {
     return (
       <EmptyState
@@ -203,67 +198,47 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
     );
   }
 
-  const selectedTargets = targets.filter((t) => selected.has(t.id));
-  const selectedProdCount = selectedTargets.filter((t) => t.label === "Prod").length;
-  const selectedNonProdCount = selectedTargets.length - selectedProdCount;
-
   return (
     <div className="flex flex-col gap-3">
       {filtered.length > 0 && (
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            aria-label="Select all filtered targets"
-            className="h-4 w-4 accent-primary"
-            checked={allSelected}
-            onChange={(e) => toggleAll(e.target.checked)}
-          />
-          <span>
-            Select all on this page ({filtered.length} of {targets.length} match)
-          </span>
-        </div>
+        <SelectAllVisible
+          allSelected={selection.allVisibleSelected}
+          someSelected={selection.someVisibleSelected}
+          onChange={selection.toggleAllVisible}
+        />
       )}
 
-      {selected.size > 0 && (
-        <div
-          className={
-            selectedProdCount > 0
-              ? "flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3"
-              : "flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/50 p-3"
-          }
+      <BulkActionBar
+        count={selection.count}
+        itemNoun="target"
+        onClear={selection.clear}
+        actions={[
+          {
+            label: selectedProdCount > 0 ? "Scan Selected (Prod)..." : "Scan Selected",
+            onClick: () => requestScan(selection.selectedIds, bulkTool),
+            destructive: selectedProdCount > 0,
+          },
+        ]}
+      >
+        <select
+          aria-label="Tool to run on selected targets"
+          className={TOOL_SELECT_CLASS}
+          value={bulkTool}
+          onChange={(e) => setBulkTool(e.target.value)}
         >
-          <span className="text-xs font-medium text-foreground">
-            {selected.size} selected
-            {selectedProdCount > 0 && (
-              <> · {selectedProdCount} Prod{selectedNonProdCount > 0 ? `, ${selectedNonProdCount} other` : ""}</>
-            )}
+          <option value={ALL_TOOLS_VALUE}>All tools</option>
+          {SCAN_TOOLS.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        {selectedProdCount > 0 && (
+          <span className="text-xs font-medium text-destructive">
+            {selectedProdCount} Prod target{selectedProdCount === 1 ? "" : "s"} included
           </span>
-          <select
-            aria-label="Tool to run on selected targets"
-            className={TOOL_SELECT_CLASS}
-            value={bulkTool}
-            onChange={(e) => setBulkTool(e.target.value)}
-          >
-            <option value={ALL_TOOLS_VALUE}>All tools</option>
-            {SCAN_TOOLS.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <Button
-            size="sm"
-            variant={selectedProdCount > 0 ? "destructive" : "default"}
-            className="h-7 text-xs"
-            onClick={() => requestScan(Array.from(selected), bulkTool)}
-          >
-            Scan Selected&hellip;
-          </Button>
-          <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground underline">
-            clear selection
-          </button>
-        </div>
-      )}
+        )}
+      </BulkActionBar>
 
       {scanMessage && <p className="text-xs text-muted-foreground">{scanMessage}</p>}
 
@@ -289,7 +264,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
               <Card
                 key={t.id}
                 className={
-                  selected.has(t.id)
+                  selection.isSelected(t.id)
                     ? "border-accent-strong/40 bg-accent/5"
                     : "border-border bg-card"
                 }
@@ -299,8 +274,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                     type="checkbox"
                     aria-label={`Select ${t.name}`}
                     className="h-4 w-4 shrink-0 accent-primary"
-                    checked={selected.has(t.id)}
-                    onChange={(e) => toggleOne(t.id, e.target.checked)}
+                    checked={selection.isSelected(t.id)}
+                    onChange={(e) => selection.toggle(t.id, e.target.checked)}
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">

@@ -6,13 +6,13 @@ import { Copy, UserCircle, Bell, Cog, type LucideIcon } from "lucide-react";
 import {
   api,
   apiBaseUrl,
-  ApiToken,
-  ApiTokenScope,
-  AuthUser,
-  NotificationChannel,
-  NotificationEventType,
-  NotificationPreference,
-  Target,
+  type ApiToken,
+  type ApiTokenScope,
+  type AuthUser,
+  type NotificationChannel,
+  type NotificationEventType,
+  type NotificationPreference,
+  type Target,
 } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
 
 // mcp-server/README.md's own tool table, mirrored here so a user can see
@@ -151,7 +152,7 @@ function ApiTokensCard() {
           <h2 className="text-sm font-medium text-foreground">API Tokens</h2>
           <p className="text-xs text-muted-foreground">
             Personal access tokens for the public API (<code>/api/public/v1/*</code>, <code>Authorization: Bearer
-            &lt;token&gt;</code>), separate from the workspace API key above, which is CI-ingest-only. Default
+            &lt;token&gt;</code>), separate from workspace API keys, which are CI-ingest-only. Default
             scope is read-only; request read/write to also trigger scans via the public API.
           </p>
         </div>
@@ -640,10 +641,10 @@ export default function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground">Profile, notifications, target configuration, and workspace credentials</p>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Profile, notifications, target configuration, and workspace credentials"
+      />
 
       {/* Section-nav strip, same pattern as Admin's group-level nav (#118):
           a handful of pills, bounded within its own overflow-x-auto

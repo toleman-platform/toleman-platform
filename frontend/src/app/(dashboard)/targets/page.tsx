@@ -3,12 +3,13 @@ import { api } from "@/lib/api";
 import { AddTargetToggle } from "./add-target-toggle";
 import { ConnectedRefresher } from "./connected-refresher";
 import { IntegrationSummary } from "./integration-summary";
-import { GroupFilter } from "@/components/group-filter";
+import { GroupFilter } from "@/components/features/targets";
 import { TargetsFilterBar } from "./targets-filter-bar";
 import { TargetsList } from "./targets-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
+import { PageHeader } from "@/components/ui/page-header";
 import { settleOrNull } from "@/lib/settle";
 
 function firstValue(v: string | string[] | undefined): string | undefined {
@@ -28,7 +29,7 @@ export default async function TargetsPage({
   // so a Repo Sync card can say which repos actually need attention instead
   // of just naming them. Both summaries degrade to {} on failure, a card
   // then renders without its metadata line rather than failing the page.
-  const [targetsResult, githubStatus, groups, scanSummary, targetSummary] = await Promise.all([
+  const [targetsResult, githubStatus, groupsList, scanSummaryData, targetSummaryData] = await Promise.all([
     settleOrNull(api.targets({ group_id })),
     api.githubAppStatus().catch(() => ({ app_configured: false, app_slug: null, installed: false, account_login: null })),
     api.groups().catch(() => []),
@@ -36,16 +37,16 @@ export default async function TargetsPage({
     api.targetsSummary().catch(() => ({})),
   ]);
   const targetsFailed = targetsResult === null;
-  const targets = targetsResult ?? [];
+  const targetsList = targetsResult ?? [];
 
   return (
     <div className="flex flex-col gap-6">
       <ConnectedRefresher />
 
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Targets</h1>
-        <p className="text-sm text-muted-foreground">Repositories under management</p>
-      </div>
+      <PageHeader
+        title="Targets"
+        description="Repositories under management"
+      />
 
       {/* Issue #125: integration admin config (connect button, webhook status,
           org sync controls) collapsed to a one-line summary by default so it
@@ -54,25 +55,25 @@ export default async function TargetsPage({
       <IntegrationSummary
         installed={githubStatus.installed}
         accountLogin={githubStatus.account_login}
-        targetsCount={targets.length}
-        defaultOpen={!githubStatus.installed && targets.length === 0}
+        targetsCount={targetsList.length}
+        defaultOpen={!githubStatus.installed && targetsList.length === 0}
       />
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-muted-foreground">
-            Targets {targets.length > 0 && `(${targets.length})`}
+            Targets {targetsList.length > 0 && `(${targetsList.length})`}
           </h2>
-          {groups.length > 0 && <GroupFilter groups={groups} />}
+          {groupsList.length > 0 && <GroupFilter groups={groupsList} />}
         </div>
         <TargetsFilterBar />
         {targetsFailed && (
           <ErrorState description="The target list couldn't be loaded from the API." action={<ReloadButton />} />
         )}
-        {!targetsFailed && targets.length > 0 && (
-          <TargetsList targets={targets} scanSummary={scanSummary} targetSummary={targetSummary} />
+        {!targetsFailed && targetsList.length > 0 && (
+          <TargetsList targets={targetsList} scanSummary={scanSummaryData} targetSummary={targetSummaryData} />
         )}
-        {!targetsFailed && targets.length === 0 && (
+        {!targetsFailed && targetsList.length === 0 && (
           <EmptyState
             icon={GitBranch}
             title={group_id ? "No targets in this group" : "No targets yet"}
@@ -87,7 +88,7 @@ export default async function TargetsPage({
         )}
       </div>
 
-      <AddTargetToggle defaultOpen={!githubStatus.installed && targets.length === 0} />
+      <AddTargetToggle defaultOpen={!githubStatus.installed && targetsList.length === 0} />
     </div>
   );
 }

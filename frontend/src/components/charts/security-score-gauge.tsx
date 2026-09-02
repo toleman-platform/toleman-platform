@@ -1,12 +1,9 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
-import { RadialBar, RadialBarChart, PolarAngleAxis } from "recharts";
+import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
 
-// Issue #63: single-number security health gauge. Three-tier color by
-// letter grade (A/B -> healthy, C/D -> needs attention, F -> critical) using
-// the same CSS custom-property tokens as the rest of the dashboard's charts
-// (chart-5/chart-3/destructive) so this stays in sync with the theme.
+// Issue #63: single-number security health gauge.
 const GRADE_COLOR: Record<string, string> = {
   A: "var(--color-chart-5)",
   B: "var(--color-chart-5)",
@@ -15,91 +12,158 @@ const GRADE_COLOR: Record<string, string> = {
   F: "var(--color-destructive)",
 };
 
-// Issue #173: bumped from 220x130. The widget spans the full dashboard
-// width and the gauge is its headline number, but at 220px it read as an
-// afterthought beside the component breakdown. Kept at a 2:1 ratio so the
-// semicircle still fills the box (cy sits on the bottom edge).
-const CHART_WIDTH = 280;
-const CHART_HEIGHT = 160;
+const GRADE_STYLES: Record<string, string> = {
+  A: "border-chart-5/30 bg-chart-5/10 text-chart-5",
+  B: "border-chart-5/30 bg-chart-5/10 text-chart-5",
+  C: "border-chart-3/30 bg-chart-3/10 text-chart-3",
+  D: "border-chart-3/30 bg-chart-3/10 text-chart-3",
+  F: "border-destructive/30 bg-destructive/10 text-destructive",
+};
+
+const GRADE_LABELS: Record<string, string> = {
+  A: "Healthy",
+  B: "Good",
+  C: "Moderate",
+  D: "High Risk",
+  F: "Critical",
+};
 
 export function SecurityScoreGauge({ score, grade }: { score: number; grade: string | null }) {
+  const normalizedScore = Math.min(100, Math.max(0, score));
+  const targetScore = Math.round(normalizedScore);
   const color = grade ? GRADE_COLOR[grade] ?? "var(--color-chart-1)" : "var(--color-muted-foreground)";
-  const data = [{ value: score, fill: color }];
 
-  // Recharts derives its <clipPath> ids from a module-global counter, so the
-  // ids in the server-rendered HTML never line up with the ones the client
-  // generates on hydration ("recharts15-clip" vs "recharts2-clip"); React
-  // reported a hydration mismatch and regenerated this whole subtree on
-  // every dashboard load. The chart carries no content a crawler or a
-  // no-JS reader needs (the score, grade and full component breakdown are
-  // all real text next to it), so rendering it after mount is a clean fix
-  // rather than a workaround; the wrapper reserves the exact final size so
-  // nothing shifts when it appears.
-  // useSyncExternalStore is React's supported way to ask "am I on the
-  // client?": the server snapshot is false, the client snapshot is true, and
-  // it never subscribes to anything. An effect that calls setState would do
-  // the same job but costs an extra commit and is what
-  // react-hooks/set-state-in-effect flags.
-  const mounted = useSyncExternalStore(
-    () => () => {},
-    () => true,
-    () => false,
-  );
+  // Geometry: 230° arc.
+  // Center is at (120, 80) inside 240x160.
+  // Radius = 70, stroke = 10.
+  // Top of arc is at y = 5px, endpoints at y = 115px.
+  // Number is centered inside the dome at y ≈ 74px.
+  // Legend badge sits right below the arc at y = 125px (10px clean gap).
+  const radius = 70;
+  const strokeWidth = 10;
+  const circumference = 2 * Math.PI * radius; // ~439.82
+  const arcDegrees = 230;
+  const maxArcLength = (arcDegrees / 360) * circumference; // ~281.0
+
+  // Smooth entrance states
+  const [animatedScore, setAnimatedScore] = useState(0);
+  const [hasMounted, setHasMounted] = useState(false);
+
+  useEffect(() => {
+    let frameId: number;
+    let animFrameId: number;
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    if (prefersReducedMotion) {
+      frameId = requestAnimationFrame(() => {
+        setAnimatedScore(targetScore);
+        setHasMounted(true);
+      });
+      return () => cancelAnimationFrame(frameId);
+    }
+
+    frameId = requestAnimationFrame(() => {
+      setHasMounted(true);
+    });
+
+    const startTime = performance.now();
+    const duration = 800;
+
+    function animate(currentTime: number) {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const easeProgress = 1 - Math.pow(1 - progress, 3);
+      setAnimatedScore(Math.round(easeProgress * targetScore));
+
+      if (progress < 1) {
+        animFrameId = requestAnimationFrame(animate);
+      }
+    }
+
+    animFrameId = requestAnimationFrame(animate);
+    return () => {
+      cancelAnimationFrame(frameId);
+      cancelAnimationFrame(animFrameId);
+    };
+  }, [targetScore]);
+
+  const activeLength = (normalizedScore / 100) * maxArcLength;
+  const strokeDashoffset = hasMounted ? maxArcLength - activeLength : maxArcLength;
 
   return (
-    // shrink-0: this sits inside a flex row (widgets.tsx's SecurityScoreWidget)
-    // next to the score-breakdown list. The chart box below has a *fixed*
-    // pixel width via inline style (CHART_WIDTH), but flexbox's default
-    // flex-shrink: 1 still shrinks a fixed-width child when the row runs out
-    // of room; the outer div would shrink while the SVG inside it kept its
-    // hardcoded width={280} attribute, so the arc silently overflowed past
-    // its now-narrower parent and the centered text overlay (which centers
-    // against the *shrunk* parent) drifted out of alignment with it. This is
-    // exactly the "arc on the left, number/badge floating off to the right"
-    // bug reported against this gauge; shrink-0 keeps the box at its real
-    // size always; the flex row wraps to a new line instead (see the parent's
-    // flex-wrap) rather than distorting the gauge to fit.
-    <div className="flex shrink-0 flex-col items-center">
-      {/* The number overlay is positioned against the chart box alone. It
-          used to be `absolute bottom-0` of a wrapper that also contained the
-          grade badge, which put the "/ 100" line directly on top of the
-          badge; both were unreadable. */}
-      <div className="relative" style={{ width: CHART_WIDTH, height: CHART_HEIGHT }}>
-        {mounted && (
-          <RadialBarChart
-            width={CHART_WIDTH}
-            height={CHART_HEIGHT}
-            cx="50%"
-            cy="100%"
-            innerRadius="72%"
-            outerRadius="100%"
-            startAngle={180}
-            endAngle={0}
-            data={data}
-            barSize={18}
-          >
-            <PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />
-            <RadialBar background={{ fill: "var(--color-secondary)" }} dataKey="value" cornerRadius={9} />
-          </RadialBarChart>
-        )}
-        <div
-          className="absolute inset-x-0 bottom-0 flex flex-col items-center"
+    <div className="flex shrink-0 flex-col items-center justify-center">
+      <div className="relative flex flex-col items-center" style={{ width: 240, height: 160 }}>
+        <svg
+          width={240}
+          height={125}
+          viewBox="0 0 240 125"
+          className="overflow-visible"
           role="img"
-          aria-label={`Security score ${Math.round(score)} out of 100${grade ? `, grade ${grade}` : ""}`}
+          aria-label={`Security score ${targetScore} out of 100${grade ? `, grade ${grade}${GRADE_LABELS[grade] ? ` (${GRADE_LABELS[grade]})` : ""}` : ""}`}
         >
-          <span className="text-3xl font-bold leading-none text-foreground">{Math.round(score)}</span>
-          <span className="mt-0.5 text-xs leading-none text-muted-foreground">/ 100</span>
-        </div>
-      </div>
-      {grade && (
+          {/* Background track (230° arc, rotated 155° so gap is symmetrical at bottom) */}
+          <circle
+            cx={120}
+            cy={80}
+            r={radius}
+            fill="none"
+            stroke="var(--color-secondary)"
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${maxArcLength} ${circumference}`}
+            strokeLinecap="round"
+            transform="rotate(155 120 80)"
+          />
+          {/* Active progress arc animating via hardware-accelerated strokeDashoffset */}
+          <circle
+            cx={120}
+            cy={80}
+            r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth={strokeWidth}
+            strokeDasharray={`${maxArcLength} ${circumference}`}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            transform="rotate(155 120 80)"
+            style={{
+              transition: "stroke-dashoffset 850ms cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+          />
+        </svg>
+
+        {/* Center content: optically centered in the interior dome */}
         <div
-          className="mt-2 flex h-9 w-9 items-center justify-center rounded-full border text-base font-semibold"
-          style={{ borderColor: color, color }}
-          aria-hidden="true"
+          className="absolute inset-x-0 flex flex-col items-center justify-center pointer-events-none"
+          style={{ top: 24, height: 84 }}
         >
-          {grade}
+          <span className="text-4xl sm:text-[44px] font-extrabold font-tabular tracking-tight text-foreground leading-none">
+            {animatedScore}
+          </span>
+          <span className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground font-tabular">
+            out of 100
+          </span>
         </div>
-      )}
+
+        {/* Legend badge positioned close under the arc cradle with clean ~12px spacing */}
+        {grade && (
+          <div className="mt-0.5 flex justify-center">
+            <div
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold tracking-wide shadow-2xs",
+                GRADE_STYLES[grade] ?? "border-border bg-secondary text-foreground"
+              )}
+            >
+              <span>Grade {grade}</span>
+              {GRADE_LABELS[grade] && (
+                <>
+                  <span className="opacity-40">·</span>
+                  <span className="font-medium opacity-90">{GRADE_LABELS[grade]}</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

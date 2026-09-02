@@ -44,6 +44,15 @@ export function DensityInit() {
   return null;
 }
 
+export function toggleDensity(): Density {
+  if (typeof window === "undefined") return "comfortable";
+  const current = (document.documentElement.dataset.density as Density) || "comfortable";
+  const next: Density = current === "comfortable" ? "compact" : "comfortable";
+  applyDensity(next);
+  window.localStorage.setItem(STORAGE_KEY, next);
+  return next;
+}
+
 export function DensityToggle({ collapsed, compact }: { collapsed?: boolean; compact?: boolean }) {
   // Lazy initializer (not an effect + setState) so this reads localStorage
   // exactly once on mount without the "setState synchronously in an effect"
@@ -53,10 +62,8 @@ export function DensityToggle({ collapsed, compact }: { collapsed?: boolean; com
   const [density, setDensity] = useState<Density>(readStoredDensity);
 
   function toggle() {
-    const next: Density = density === "comfortable" ? "compact" : "comfortable";
+    const next = toggleDensity();
     setDensity(next);
-    applyDensity(next);
-    window.localStorage.setItem(STORAGE_KEY, next);
   }
 
   return (

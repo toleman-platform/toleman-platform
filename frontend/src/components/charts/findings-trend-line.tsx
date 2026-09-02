@@ -1,6 +1,6 @@
 "use client";
 
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import type { FindingsTrendData } from "@/lib/api";
 
 export function FindingsTrendLine({ data }: { data: FindingsTrendData }) {
@@ -14,15 +14,37 @@ export function FindingsTrendLine({ data }: { data: FindingsTrendData }) {
   }));
 
   return (
-    <div className="h-56">
+    <div className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-          <XAxis dataKey="date" tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} axisLine={{ stroke: "var(--color-border)" }} />
-          <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 12 }} axisLine={{ stroke: "var(--color-border)" }} allowDecimals={false} />
-          <Tooltip contentStyle={{ backgroundColor: "var(--color-popover)", border: "1px solid var(--color-border)", borderRadius: "8px", color: "var(--color-popover-foreground)" }} />
-          <Line type="monotone" dataKey="open" stroke="var(--color-accent-strong)" strokeWidth={2} dot={{ r: 3, fill: "var(--color-accent-strong)" }} />
-        </LineChart>
+        <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <defs>
+            <linearGradient id="trendGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="var(--color-accent-strong)" stopOpacity={0.35} />
+              <stop offset="95%" stopColor="var(--color-accent-strong)" stopOpacity={0.0} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" opacity={0.4} />
+          <XAxis dataKey="date" tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }} axisLine={{ stroke: "var(--color-border)" }} />
+          <YAxis tick={{ fill: "var(--color-muted-foreground)", fontSize: 11 }} axisLine={{ stroke: "var(--color-border)" }} allowDecimals={false} />
+          <Tooltip
+            contentStyle={{
+              backgroundColor: "var(--color-popover)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "8px",
+              color: "var(--color-popover-foreground)",
+              boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            }}
+          />
+          <Area
+            type="monotone"
+            dataKey="open"
+            stroke="var(--color-accent-strong)"
+            strokeWidth={2.5}
+            fill="url(#trendGradient)"
+            dot={{ r: 3, fill: "var(--color-accent-strong)", strokeWidth: 1 }}
+            activeDot={{ r: 5, stroke: "var(--color-background)", strokeWidth: 2 }}
+          />
+        </AreaChart>
       </ResponsiveContainer>
     </div>
   );

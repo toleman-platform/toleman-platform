@@ -1,29 +1,13 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
-import { Plus_Jakarta_Sans, Geist_Mono } from "next/font/google";
+// Plus Jakarta Sans & Geist Mono: distinctive typography system, used everywhere
+// in the UI in place of system defaults; part of #77's typography pass. Centralized
+// in @/lib/fonts as a single source of truth.
+import { sansFont, monoFont, THEME_COOKIE_KEY } from "@/tokens";
 import { DensityInit } from "@/components/density-toggle";
 import { ThemeInit } from "@/components/theme-toggle";
-// Imported from the plain module, not from theme-toggle.tsx: that file is a
-// Client Component, and a Server Component importing a constant from one
-// gets a client reference stub instead of the string (see @/lib/theme).
-import { THEME_COOKIE_KEY } from "@/lib/theme";
 import { DEFAULT_API_URL } from "@/lib/api";
 import "./globals.css";
-
-// Plus Jakarta Sans: distinctive geometric grotesque, used everywhere in the
-// UI (body copy, headings) in place of the previous system-default Geist;
-// part of #77's typography pass. Weight range covers body copy through
-// display headings so we don't need a second display font.
-const displaySans = Plus_Jakarta_Sans({
-  variable: "--font-display-sans",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "Toleman - DevSecOps Vulnerability Management",
@@ -53,7 +37,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       data-theme={theme}
-      className={`${displaySans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${sansFont.variable} ${monoFont.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-background text-foreground">
         {/* (BLD-02) The backend address the *browser* should call, injected

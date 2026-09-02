@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { useScanRun } from "./use-scan-run";
+import { useScanRun } from "@/hooks/features/use-scan-run";
 
 const getScan = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({ api: { getScan } }));

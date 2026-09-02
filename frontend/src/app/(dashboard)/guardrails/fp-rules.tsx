@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, FalsePositiveRule, FpRuleStats, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
@@ -46,6 +46,7 @@ export function FpRules() {
       setMutationError(e instanceof Error ? e.message : failureMessage);
     }
   }
+
 
   const toggleActive = (rule: FalsePositiveRule) =>
     mutate(() => api.setFpRuleActive(rule.id, !rule.active), "failed to update rule");

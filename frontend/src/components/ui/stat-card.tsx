@@ -1,6 +1,8 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
+import { Icon as IconWrapper } from "@/components/ui/icon";
+import Link from "next/link";
 
 /**
  * A single headline number with its label (issue #210).
@@ -21,12 +23,15 @@ import { Card, CardContent } from "@/components/ui/card";
  * card that renders a confident `0` for missing data actively misinforms, so
  * the unknown case is built in and styled differently.
  */
+
 export type StatCardProps = {
   label: string;
-  value: React.ReactNode;
+  value: React.ReactNode | null;
   /** Secondary line: units, provenance, or why the value is what it is. */
   hint?: string;
   icon?: React.ComponentType<{ className?: string }>;
+  iconClass?: string;
+  href?: string;
   /** Render as "not measured" rather than showing `value`. */
   unknown?: boolean;
   /** Copy for the unknown case. Say what is missing, not just "n/a". */
@@ -44,46 +49,72 @@ const TONE_CLASS: Record<NonNullable<StatCardProps["tone"]>, string> = {
   positive: "text-chart-5",
 };
 
+/**
+ * Headline KPI metric card with label, optional icon, trend/context hint,
+ * and first-class support for the unmeasured/unknown state (issue #210).
+ */
 export function StatCard({
   label,
   value,
   hint,
   icon: Icon,
+  iconClass,
+  href,
   unknown = false,
   unknownHint,
   tone = "default",
   className,
 }: StatCardProps) {
-  return (
-    <Card className={cn("border-border bg-card py-0", className)}>
-      <CardContent className="flex items-center gap-3 px-4 py-4">
-        {Icon && (
-          <div
-            aria-hidden="true"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"
-          >
-            <Icon className="h-4 w-4" />
+  const content = (
+    <CardContent className="flex items-center gap-3.5 px-4 py-3.5">
+      {Icon && (
+        <div
+          aria-hidden="true"
+          className={cn(
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-muted-foreground transition-transform group-hover:scale-105",
+            iconClass,
+          )}
+        >
+          <IconWrapper icon={Icon} size="lg" />
+        </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <div
+          className={cn(
+            "truncate font-mono text-2xl font-bold tabular-nums tracking-tight",
+            unknown ? "text-muted-foreground/60" : TONE_CLASS[tone],
+          )}
+        >
+          {unknown ? "—" : value}
+        </div>
+        <div className="truncate text-xs font-medium text-muted-foreground">{label}</div>
+        {(unknown ? unknownHint : hint) && (
+          <div className="truncate text-meta text-muted-foreground">
+            {unknown ? unknownHint : hint}
           </div>
         )}
-        <div className="min-w-0">
-          <div
-            className={cn(
-              "truncate text-lg font-semibold",
-              unknown ? "text-muted-foreground/60" : TONE_CLASS[tone],
-            )}
-          >
-            {/* An em dash, not "0". The difference between unmeasured and
-                measured-zero is the whole point of this variant. */}
-            {unknown ? "—" : value}
-          </div>
-          <div className="truncate text-xs text-muted-foreground">{label}</div>
-          {(unknown ? unknownHint : hint) && (
-            <div className="truncate text-[11px] text-muted-foreground/70">
-              {unknown ? unknownHint : hint}
-            </div>
+      </div>
+    </CardContent>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className="group block no-underline">
+        <Card
+          className={cn(
+            "interactive-surface border-border bg-card py-0 hover:border-primary/40",
+            className,
           )}
-        </div>
-      </CardContent>
+        >
+          {content}
+        </Card>
+      </Link>
+    );
+  }
+
+  return (
+    <Card className={cn("border-border bg-card py-0", className)}>
+      {content}
     </Card>
   );
 }

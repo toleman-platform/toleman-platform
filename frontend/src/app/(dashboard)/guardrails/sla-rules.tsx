@@ -3,14 +3,16 @@
 import { useState } from "react";
 import { api, Group, SlaRule, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { SEVERITY_COLOR, SEVERITY_ORDER } from "@/lib/severity";
+import { SeverityChip } from "@/components/ui/severity-chip";
+import { SEVERITY_ORDER } from "@/lib/severity";
 import { Building2, Clock, Timer, Trash2 } from "lucide-react";
+import { getErrorMessage, type Nullable } from "@/std-lib";
 
 // Issue #70: workspace-scoped SLA (days-to-fix) rules, keyed by severity and
 // optionally a repo Group (#61); null group means "workspace default",
@@ -56,7 +58,7 @@ export function SlaRules() {
       });
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to create SLA rule (a rule for this group + severity may already exist)");
+      setMutationError(getErrorMessage(e, "failed to create SLA rule (a rule for this group + severity may already exist)"));
     } finally {
       setSaving(false);
     }
@@ -68,7 +70,7 @@ export function SlaRules() {
       await api.updateSlaRule(rule.id, { days_to_fix: newDays });
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to update SLA rule");
+      setMutationError(getErrorMessage(e, "failed to update SLA rule"));
     }
   }
 
@@ -78,12 +80,12 @@ export function SlaRules() {
       await api.deleteSlaRule(id);
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to delete SLA rule");
+      setMutationError(getErrorMessage(e, "failed to delete SLA rule"));
     }
   }
 
-  function groupName(id: number | null): string {
-    if (id === null) return "Workspace default";
+  function groupName(id: Nullable<number>): string {
+    if (id == null) return "Workspace default";
     return groups?.find((g) => g.id === id)?.name ?? `group #${id}`;
   }
 
@@ -188,11 +190,7 @@ export function SlaRules() {
                     .map((r) => (
                       <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${SEVERITY_COLOR[r.severity]}`}
-                          >
-                            {r.severity}
-                          </span>
+                          <SeverityChip severity={r.severity} size="sm" />
                           <span className="text-xs text-muted-foreground">{groupName(r.group_id)}</span>
                         </div>
                         <div className="flex items-center gap-2">

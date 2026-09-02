@@ -4,9 +4,11 @@ import { api } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { AsyncContent } from "@/components/ui/async-content";
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { Loader2, XCircle } from "lucide-react";
+import { unique } from "@/std-lib";
 
 type Health = { tool: string; installed: boolean; version: string | null; response_ms: number | null };
 
@@ -25,7 +27,7 @@ export function ToolsHealth() {
 
   // Union of known tools and any tools the backend reported (in case new
   // tools are added server-side without updating this list).
-  const allTools = Array.from(new Set([...TOOLS, ...(health ?? []).map((h) => h.tool)]));
+  const allTools = unique([...TOOLS, ...(health ?? []).map((h) => h.tool)]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -89,13 +91,9 @@ export function ToolsHealth() {
                     <div className="flex items-center gap-2">
                       {h.response_ms !== null && <span className="text-xs text-muted-foreground">{h.response_ms}ms</span>}
                       {h.installed && h.version ? (
-                        <Badge variant="outline" className="border-chart-5/20 bg-chart-5/10 text-chart-5">
-                          <CheckCircle2 className="h-3 w-3" /> healthy
-                        </Badge>
+                        <StatusBadge status="completed" label="healthy" />
                       ) : (
-                        <Badge variant="outline" className="border-destructive/20 bg-destructive/10 text-destructive">
-                          <XCircle className="h-3 w-3" /> {h.installed ? "error" : "not installed"}
-                        </Badge>
+                        <StatusBadge status="failed" label={h.installed ? "error" : "not installed"} />
                       )}
                     </div>
                   </CardContent>

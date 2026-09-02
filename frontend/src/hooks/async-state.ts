@@ -97,11 +97,3 @@ export function asyncReducer<T>(state: AsyncState<T>, action: AsyncAction<T>): A
       return state;
   }
 }
-
-/** Normalises whatever a rejected promise carried into a real Error. Callers
- * throw strings, objects and Errors; the UI should not have to care. */
-export function toError(thrown: unknown): Error {
-  if (thrown instanceof Error) return thrown;
-  if (typeof thrown === "string") return new Error(thrown);
-  return new Error("Something went wrong");
-}

@@ -3,12 +3,13 @@
 import { useState } from "react";
 import { api, FalsePositiveRule, FpRuleStats, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Ban, Building2, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
+import { getErrorMessage } from "@/std-lib";
 
 // Issue #76: false-positive learning engine; rules here are learned
 // automatically the moment a finding is triaged "False Positive" (see
@@ -43,7 +44,7 @@ export function FpRules() {
       await action();
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : failureMessage);
+      setMutationError(getErrorMessage(e, failureMessage));
     }
   }
 

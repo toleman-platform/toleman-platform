@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useWorkspacePicker } from "./use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 
 const workspaces = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({

@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, BrainCircuit, CheckCircle2, Key, MessageSquare, Send, Ticket } from "lucide-react";
-import { ConnectGithubCard } from "@/components/connect-github-card";
+import { ConnectGithubCard } from "@/components/features/integrations";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
+import { getErrorMessage } from "@/std-lib";
 
 const PROVIDERS: { value: AiProvider; label: string }[] = [
   { value: "anthropic", label: "Anthropic (Claude)" },
@@ -142,7 +143,7 @@ export function GlobalIntegrations() {
       setGithubSaved(true);
       setGithubTokenView(view);
     } catch (e) {
-      setGithubError(e instanceof Error ? e.message : "failed to save");
+      setGithubError(getErrorMessage(e, "failed to save"));
     } finally {
       setGithubSaving(false);
     }
@@ -156,7 +157,7 @@ export function GlobalIntegrations() {
       const result = await api.testGithubToken(githubToken.trim() || undefined, githubWorkspaceId ?? undefined);
       setGithubTestResult(result.message || "Token is valid.");
     } catch (e) {
-      setGithubError(e instanceof Error ? e.message : "test connection failed");
+      setGithubError(getErrorMessage(e, "test connection failed"));
     } finally {
       setGithubTesting(false);
     }
@@ -171,7 +172,7 @@ export function GlobalIntegrations() {
       setGithubTokenView({ token_set: false, created_at: null, expires_at: null });
       setGithubSaved(false);
     } catch (e) {
-      setGithubError(e instanceof Error ? e.message : "failed to remove");
+      setGithubError(getErrorMessage(e, "failed to remove"));
     } finally {
       setGithubDeleting(false);
     }
@@ -188,7 +189,7 @@ export function GlobalIntegrations() {
       setSlackSaved(true);
       refresh();
     } catch (e) {
-      setSlackError(e instanceof Error ? e.message : "failed to save");
+      setSlackError(getErrorMessage(e, "failed to save"));
     } finally {
       setSlackSaving(false);
     }
@@ -202,7 +203,7 @@ export function GlobalIntegrations() {
       const result = await api.testSlack(slackWebhookUrl.trim() || undefined);
       setSlackTestResult(result.message || "Test message sent successfully.");
     } catch (e) {
-      setSlackError(e instanceof Error ? e.message : "test connection failed");
+      setSlackError(getErrorMessage(e, "test connection failed"));
     } finally {
       setSlackTesting(false);
     }
@@ -226,7 +227,7 @@ export function GlobalIntegrations() {
       setJiraSaved(true);
       refresh();
     } catch (e) {
-      setJiraError(e instanceof Error ? e.message : "failed to save");
+      setJiraError(getErrorMessage(e, "failed to save"));
     } finally {
       setJiraSaving(false);
     }
@@ -240,7 +241,7 @@ export function GlobalIntegrations() {
       const result = await api.testJira(jiraUrl.trim() || undefined, jiraApiToken.trim() || undefined);
       setJiraTestResult(result.message || "Connected successfully.");
     } catch (e) {
-      setJiraError(e instanceof Error ? e.message : "test connection failed");
+      setJiraError(getErrorMessage(e, "test connection failed"));
     } finally {
       setJiraTesting(false);
     }
@@ -259,7 +260,7 @@ export function GlobalIntegrations() {
       setSiemSaved(true);
       refresh();
     } catch (e) {
-      setSiemError(e instanceof Error ? e.message : "failed to save");
+      setSiemError(getErrorMessage(e, "failed to save"));
     } finally {
       setSiemSaving(false);
     }
@@ -273,7 +274,7 @@ export function GlobalIntegrations() {
       const result = await api.testSiem(siemWebhookUrl.trim() || undefined);
       setSiemTestResult(result.message || "Test event sent successfully.");
     } catch (e) {
-      setSiemError(e instanceof Error ? e.message : "test connection failed");
+      setSiemError(getErrorMessage(e, "test connection failed"));
     } finally {
       setSiemTesting(false);
     }
@@ -298,7 +299,7 @@ export function GlobalIntegrations() {
       setSaved(true);
       refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to save");
+      setError(getErrorMessage(e, "failed to save"));
     } finally {
       setSaving(false);
     }

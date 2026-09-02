@@ -2,16 +2,17 @@
 
 import { useState } from "react";
 import { Building2, Check, Pencil, X } from "lucide-react";
-import { api, workspaceDisplayName } from "@/lib/api";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { updateWorkspace, workspaceDisplayName } from "@/lib/api/admin";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { WorkspaceKeyCard } from "./workspace-key-card";
-import { WorkspaceRoles } from "../admin/workspace-roles";
+import { WorkspaceRoles } from "./workspace-roles";
 
 // Issue #224: workspaces previously had no dedicated management surface at
 // all; the only ways to reach one were the per-workspace API key buried
@@ -46,7 +47,7 @@ function RenamableWorkspaceRow({
     setSaving(true);
     setError(null);
     try {
-      await api.updateWorkspace(workspace.id, { name: trimmed });
+      await updateWorkspace(workspace.id, { name: trimmed });
       onRenamed();
       setEditing(false);
     } catch (e) {
@@ -120,12 +121,10 @@ export default function WorkspacesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Workspaces</h1>
-        <p className="text-sm text-muted-foreground">
-          Rename a workspace, manage its CI-ingestion API key, and assign per-workspace roles.
-        </p>
-      </div>
+      <PageHeader
+        title="Workspaces"
+        description="Rename a workspace, manage its CI-ingestion API key, and assign per-workspace roles."
+      />
 
       {error && <p className="text-xs text-destructive">{error.message}</p>}
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, EnforcementMode, Group, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,18 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { EnforcementModeSelect } from "@/components/enforcement-mode-select";
 import { Building2, FolderTree, Tag, Trash2 } from "lucide-react";
+import { getErrorMessage } from "@/std-lib";
 
-const SWATCHES = ["#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563eb", "#7c3aed", "#c026d3"];
+const SWATCHES = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--accent-strong)",
+  "var(--destructive)",
+  "var(--warning)",
+];
 
 // Issue #61: workspace-scoped tags/groups ("production", "PCI-scope",
 // "internal-tool", ...) for organizing Targets at scale, foundation for
@@ -58,7 +68,7 @@ export function Groups() {
       // how these panels drifted apart in the first place.
       reloadWorkspaces();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to update workspace enforcement mode");
+      setMutationError(getErrorMessage(e, "failed to update workspace enforcement mode"));
     } finally {
       setWsEnforcementBusy(false);
     }
@@ -71,7 +81,7 @@ export function Groups() {
       await api.updateGroup(groupId, { enforcement_mode: mode });
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to update group enforcement mode");
+      setMutationError(getErrorMessage(e, "failed to update group enforcement mode"));
     }
   }
 
@@ -84,7 +94,7 @@ export function Groups() {
       setName("");
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to create group");
+      setMutationError(getErrorMessage(e, "failed to create group"));
     } finally {
       setSaving(false);
     }
@@ -96,7 +106,7 @@ export function Groups() {
       await api.deleteGroup(id);
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to delete group");
+      setMutationError(getErrorMessage(e, "failed to delete group"));
     }
   }
 

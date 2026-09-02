@@ -4,10 +4,12 @@ import { useState } from "react";
 import { api, PrGuardrailFinding } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { SEVERITY_COLOR } from "@/lib/severity";
+import { SeverityChip } from "@/components/ui/severity-chip";
+import { AlertBanner } from "@/components/ui/alert-banner";
+import { EmptyState } from "@/components/ui/empty-state";
+import { CheckCircle2 } from "lucide-react";
 
 export function ApprovalQueue() {
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -41,14 +43,7 @@ export function ApprovalQueue() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">Approval Queue</h2>
-        <p className="text-sm text-muted-foreground">
-          PR Guardrail findings a developer has requested be ignored, pending security review.
-        </p>
-      </div>
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <AlertBanner tone="critical">{error}</AlertBanner>}
       {findings === null && !error && <SkeletonList count={3} />}
 
       {findings !== null && (
@@ -59,12 +54,7 @@ export function ApprovalQueue() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className={`shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${SEVERITY_COLOR[f.severity] || "text-muted-foreground"}`}
-                      >
-                        {f.severity}
-                      </Badge>
+                      <SeverityChip severity={f.severity} size="sm" />
                       <span className="truncate text-sm font-medium text-foreground">{f.title}</span>
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -100,7 +90,11 @@ export function ApprovalQueue() {
             </Card>
           ))}
           {findings.length === 0 && (
-            <p className="text-sm text-muted-foreground">No pending ignore requests.</p>
+            <EmptyState
+              icon={CheckCircle2}
+              title="No pending ignore requests"
+              description="PR Guardrail findings a developer has requested be ignored will appear here."
+            />
           )}
         </div>
       )}

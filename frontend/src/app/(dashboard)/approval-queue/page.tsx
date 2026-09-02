@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, AuthUser } from "@/lib/api";
-import { ApprovalQueue } from "@/app/(dashboard)/admin/approval-queue";
+import { me as fetchMe } from "@/lib/api/auth";
+import type { AuthUser } from "@/types";
+import { ApprovalQueue } from "./approval-queue-list";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { ShieldOff } from "lucide-react";
 
 // Nav restructure (IA review, #224): Approval Queue used to be reachable
@@ -23,8 +25,7 @@ export default function ApprovalQueuePage() {
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    api
-      .me()
+    fetchMe()
       .then(setUser)
       .catch(() => setUser(null))
       .finally(() => setChecked(true));
@@ -42,5 +43,13 @@ export default function ApprovalQueuePage() {
     );
   }
 
-  return <ApprovalQueue />;
+  return (
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Approval Queue"
+        description="PR Guardrail findings a developer has requested be ignored, pending security review."
+      />
+      <ApprovalQueue />
+    </div>
+  );
 }

@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { api, PolicyRule, PolicyRuleType, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Building2, ScrollText, ShieldAlert, Trash2 } from "lucide-react";
+import { getErrorMessage } from "@/std-lib";
 
 const RULE_TYPES: { value: PolicyRuleType; label: string; placeholder: string }[] = [
   { value: "block_severity", label: "Block severity threshold", placeholder: "Critical / High / Medium / Low" },
@@ -60,7 +61,7 @@ export function Policies() {
       setReason("");
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to create policy");
+      setMutationError(getErrorMessage(e, "failed to create policy"));
     } finally {
       setSaving(false);
     }
@@ -72,7 +73,7 @@ export function Policies() {
       await api.deletePolicy(id);
       refetch();
     } catch (e) {
-      setMutationError(e instanceof Error ? e.message : "failed to delete policy");
+      setMutationError(getErrorMessage(e, "failed to delete policy"));
     }
   }
 

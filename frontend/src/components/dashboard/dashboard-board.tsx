@@ -5,6 +5,7 @@ import { Pencil, Save, Plus, X, LayoutGrid } from "lucide-react";
 import { api, type LayoutWidget, type WidgetCatalogEntry, type WidgetDataResponse, type WidgetId } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { WidgetShell } from "@/components/dashboard/widget-shell";
 import { WidgetBody, WIDGET_META } from "@/components/dashboard/widgets";
 
@@ -74,55 +75,55 @@ export function DashboardBoard({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Security Overview</h1>
-          <p className="text-sm text-muted-foreground">Real-time security posture, default branches only</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {editMode && (
-            <div className="relative">
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowAddPicker((s) => !s)} disabled={addable.length === 0}>
-                <Plus className="h-3.5 w-3.5" />
-                Add Widget
+      <PageHeader
+        title="Security Overview"
+        description="Real-time security posture, default branches only"
+        actions={
+          <>
+            {editMode && (
+              <div className="relative">
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowAddPicker((s) => !s)} disabled={addable.length === 0}>
+                  <Plus className="h-3.5 w-3.5" />
+                  Add Widget
+                </Button>
+                {showAddPicker && (
+                  <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-border bg-card p-1 shadow-lg">
+                    {addable.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">All widgets already added</p>}
+                    {addable.map((c) => (
+                      <button
+                        key={c.widget_id}
+                        type="button"
+                        onClick={() => addWidget(c.widget_id)}
+                        className="block w-full rounded-sm px-2 py-1.5 text-left text-sm text-foreground hover:bg-accent/60"
+                      >
+                        {c.name}
+                        <span className="block text-xs text-muted-foreground">{c.description}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {editMode ? (
+              <>
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setWidgets(initialWidgets); setEditMode(false); setError(null); }}>
+                  <X className="h-3.5 w-3.5" />
+                  Cancel
+                </Button>
+                <Button type="button" size="sm" onClick={save} disabled={saving || widgets.length === 0}>
+                  <Save className="h-3.5 w-3.5" />
+                  {saving ? "Saving..." : "Save Dashboard"}
+                </Button>
+              </>
+            ) : (
+              <Button type="button" variant="outline" size="sm" onClick={() => setEditMode(true)}>
+                <Pencil className="h-3.5 w-3.5" />
+                Edit Dashboard
               </Button>
-              {showAddPicker && (
-                <div className="absolute right-0 z-10 mt-1 w-64 rounded-md border border-border bg-card p-1 shadow-lg">
-                  {addable.length === 0 && <p className="px-2 py-1.5 text-xs text-muted-foreground">All widgets already added</p>}
-                  {addable.map((c) => (
-                    <button
-                      key={c.widget_id}
-                      type="button"
-                      onClick={() => addWidget(c.widget_id)}
-                      className="block w-full rounded-sm px-2 py-1.5 text-left text-sm text-foreground hover:bg-accent/60"
-                    >
-                      {c.name}
-                      <span className="block text-xs text-muted-foreground">{c.description}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {editMode ? (
-            <>
-              <Button type="button" variant="ghost" size="sm" onClick={() => { setWidgets(initialWidgets); setEditMode(false); setError(null); }}>
-                <X className="h-3.5 w-3.5" />
-                Cancel
-              </Button>
-              <Button type="button" size="sm" onClick={save} disabled={saving || widgets.length === 0}>
-                <Save className="h-3.5 w-3.5" />
-                {saving ? "Saving..." : "Save Dashboard"}
-              </Button>
-            </>
-          ) : (
-            <Button type="button" variant="outline" size="sm" onClick={() => setEditMode(true)}>
-              <Pencil className="h-3.5 w-3.5" />
-              Edit Dashboard
-            </Button>
-          )}
-        </div>
-      </div>
+            )}
+          </>
+        }
+      />
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 

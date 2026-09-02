@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { api } from "@/lib/api";
-import { CriticalityChip } from "@/components/criticality-chip";
-import { FindingsList } from "@/components/findings-list";
+import { CriticalityChip } from "@/components/features/targets";
+import { FindingsList } from "@/components/features/findings";
 import { ScanButtons } from "./scan-buttons";
 import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";

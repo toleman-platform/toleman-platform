@@ -48,15 +48,10 @@ const NAV_GROUPS: NavGroup[] = [
     items: [{ href: "/", label: "Dashboard", icon: LayoutDashboard }],
   },
   {
-    label: "Discover",
+    label: "Detection & Scans",
     items: [
       { href: "/targets", label: "Targets", icon: GitBranch },
       { href: "/api-discovery", label: "API Discovery", icon: Globe },
-    ],
-  },
-  {
-    label: "Scan",
-    items: [
       { href: "/scans", label: "On-Demand Scan", icon: Scan },
       { href: "/sbom", label: "SBOM & OSS Vulns", icon: Package },
       { href: "/malicious-packages", label: "Malicious Packages", icon: Bug },
@@ -67,7 +62,7 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Triage",
+    label: "Triage & Guardrails",
     items: [
       // Nav label unified to "Findings" (#116); was "Vulnerabilities" here
       // while the page header said "Findings" and the dashboard KPI said
@@ -80,24 +75,14 @@ const NAV_GROUPS: NavGroup[] = [
       // security_engineer users (who could always reach it by typing the
       // old /admin URL, but had no link) an actual nav entry.
       { href: "/approval-queue", label: "Approval Queue", icon: ClipboardCheck },
-    ],
-  },
-  {
-    label: "Guardrails",
-    items: [
       { href: "/guardrails", label: "Guardrails", icon: ShieldCheck, adminOnly: true },
     ],
   },
   {
-    label: "Report",
+    label: "Governance & Ops",
     items: [
       { href: "/reports", label: "Compliance Reports", icon: FileText },
       { href: "/ai-analysis", label: "Explain with AI", icon: BrainCircuit },
-    ],
-  },
-  {
-    label: "Operate",
-    items: [
       { href: "/audit-log", label: "Audit Log", icon: ScrollText },
       { href: "/github-org-logs", label: "GitHub Org Logs", icon: Github },
       { href: "/settings", label: "Settings", icon: Settings },
@@ -110,6 +95,13 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+/**
+ * Primary navigation sidebar regrouped by security workflow stage (#116).
+ *
+ * Automatically adapts across viewports: expands to 240px on desktop, collapses
+ * to an icon rail on tablet (768px-1023px), and becomes an off-canvas drawer on mobile (<768px).
+ * Filters navigation items based on user role (e.g. admin/security_engineer).
+ */
 export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initialTheme?: Theme }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -212,7 +204,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
         <item.icon className={cn("h-4 w-4 shrink-0", isActive && "text-accent-strong")} />
         {!iconRail && <span className="flex-1">{item.label}</span>}
         {!iconRail && item.adminOnly && (
-          <span className="rounded border border-warning/30 bg-warning/10 px-1 py-0.5 font-mono text-[8px] tracking-wide text-warning">
+          <span className="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wider text-warning">
             ADMIN
           </span>
         )}

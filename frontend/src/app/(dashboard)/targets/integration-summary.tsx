@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ChevronRight, Github } from "lucide-react";
-import { ConnectGithubCard } from "@/components/connect-github-card";
+import { ConnectGithubCard } from "@/components/features/integrations";
 
 // Issue #125: the old page rendered ConnectGithubCard's full admin config
 // (connect button, per-App installation list, webhook secret inputs) inline

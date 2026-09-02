@@ -1,32 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CheckCircle2 } from "lucide-react";
-import { api, Target } from "@/lib/api";
+import { useState } from "react";
+import { api, type Target } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
+import { PageHeader } from "@/components/ui/page-header";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import {
   DocGenField,
   DocGenToggle,
   DocumentGeneratorPanel,
   WhatsIncludedCard,
-} from "@/components/document-generator-panel";
+} from "@/components/features/intelligence";
 
 type ExportFormat = "csv" | "pdf";
 
 export default function ReportsPage() {
-  const [targets, setTargets] = useState<Target[]>([]);
-  const [targetId, setTargetId] = useState<number | null>(null);
+  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  const targets = targetsData ?? [];
+  const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
+  const targetId = selectedTargetId ?? (targets.length > 0 ? ALL_TARGETS : null);
+  const setTargetId = setSelectedTargetId;
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastDownload, setLastDownload] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.targets().then((ts) => {
-      setTargets(ts);
-      setTargetId(ts.length > 0 ? ALL_TARGETS : null);
-    });
-  }, []);
 
   const currentTarget = targets.find((t) => t.id === targetId);
   const scopeLabel =
@@ -59,17 +57,10 @@ export default function ReportsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">
-          Compliance Reports
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Audit-ready posture export built from your live workspace data,
-          finding counts by severity and state, open-finding SLA age, scan
-          coverage, and SBOM summary. Every figure reflects your current
-          findings and scans, generated fresh each time you run it.
-        </p>
-      </div>
+      <PageHeader
+        title="Compliance Reports"
+        description="Audit-ready posture export built from live workspace data, finding counts by severity and state, SLA age, scan coverage, and SBOM summary."
+      />
 
       <DocumentGeneratorPanel
         layout="inline"
@@ -103,12 +94,15 @@ export default function ReportsPage() {
                   : ""}
             </p>
 
-            {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+            {error && (
+              <AlertBanner tone="critical" className="mt-2">
+                {error}
+              </AlertBanner>
+            )}
             {!error && lastDownload && (
-              <p className="mt-2 flex items-center gap-1.5 text-sm text-success">
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                Downloaded <span className="font-mono text-foreground">{lastDownload}</span>
-              </p>
+              <AlertBanner tone="positive" className="mt-2" title="Report Exported">
+                Downloaded <span className="font-mono font-medium">{lastDownload}</span>
+              </AlertBanner>
             )}
           </div>
         }

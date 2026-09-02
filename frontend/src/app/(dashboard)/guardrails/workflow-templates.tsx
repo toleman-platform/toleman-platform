@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, PIPELINE_WORKFLOW_TOOLS, PipelineWorkflowStep, PipelineWorkflowTemplate, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";

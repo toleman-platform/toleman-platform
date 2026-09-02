@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { api, Group, SlaRule, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { SEVERITY_COLOR, SEVERITY_ORDER } from "@/lib/severity";
+import { SeverityChip } from "@/components/ui/severity-chip";
+import { SEVERITY_ORDER } from "@/lib/severity";
 import { Building2, Clock, Timer, Trash2 } from "lucide-react";
 
 // Issue #70: workspace-scoped SLA (days-to-fix) rules, keyed by severity and
@@ -83,9 +84,10 @@ export function SlaRules() {
   }
 
   function groupName(id: number | null): string {
-    if (id === null) return "Workspace default";
+    if (id == null) return "Workspace default";
     return groups?.find((g) => g.id === id)?.name ?? `group #${id}`;
   }
+
 
   return (
     <div className="flex flex-col gap-4">
@@ -188,11 +190,7 @@ export function SlaRules() {
                     .map((r) => (
                       <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">
                         <div className="flex items-center gap-2">
-                          <span
-                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${SEVERITY_COLOR[r.severity]}`}
-                          >
-                            {r.severity}
-                          </span>
+                          <SeverityChip severity={r.severity} size="sm" />
                           <span className="text-xs text-muted-foreground">{groupName(r.group_id)}</span>
                         </div>
                         <div className="flex items-center gap-2">

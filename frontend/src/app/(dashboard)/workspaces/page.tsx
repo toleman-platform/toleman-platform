@@ -10,8 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { WorkspaceKeyCard } from "./workspace-key-card";
-import { WorkspaceRoles } from "../admin/workspace-roles";
+import { WorkspaceRoles } from "./workspace-roles";
 
 // Issue #224: workspaces previously had no dedicated management surface at
 // all; the only ways to reach one were the per-workspace API key buried
@@ -179,20 +180,18 @@ export default function WorkspacesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Workspaces</h1>
-          <p className="text-sm text-muted-foreground">
-            Create a workspace, rename one, manage its CI-ingestion API key, and assign per-workspace roles.
-          </p>
-        </div>
-        {!creatingWorkspace && (
-          <Button size="sm" onClick={() => setCreatingWorkspace(true)} className="shrink-0">
-            <Plus className="h-4 w-4" />
-            New workspace
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title="Workspaces"
+        description="Create a workspace, rename one, manage its CI-ingestion API key, and assign per-workspace roles."
+        actions={
+          !creatingWorkspace ? (
+            <Button size="sm" onClick={() => setCreatingWorkspace(true)} className="shrink-0">
+              <Plus className="h-4 w-4" />
+              New workspace
+            </Button>
+          ) : undefined
+        }
+      />
 
       {error && <p className="text-xs text-destructive">{error.message}</p>}
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, PolicyRule, PolicyRuleType, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -75,6 +75,7 @@ export function Policies() {
       setMutationError(e instanceof Error ? e.message : "failed to delete policy");
     }
   }
+
 
   return (
     <div className="flex flex-col gap-4">

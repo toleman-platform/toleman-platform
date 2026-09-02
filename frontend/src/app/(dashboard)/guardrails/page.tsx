@@ -3,11 +3,12 @@
 import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
 import { Tag, Timer, GitBranch, ShieldCheck, ShieldAlert } from "lucide-react";
-import { Groups } from "../admin/groups";
-import { SlaRules } from "../admin/sla-rules";
-import { WorkflowTemplates } from "../admin/workflow-templates";
-import { FpRules } from "../admin/fp-rules";
-import { Policies } from "../admin/policies";
+import { PageHeader } from "@/components/ui/page-header";
+import { Groups } from "./groups";
+import { SlaRules } from "./sla-rules";
+import { WorkflowTemplates } from "./workflow-templates";
+import { FpRules } from "./fp-rules";
+import { Policies } from "./policies";
 
 // IA review (#224): this is the old admin/page.tsx "Scan Config" group,
 // promoted to its own top-level route. Same tabs, same components, same
@@ -29,12 +30,10 @@ export default function GuardrailsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Guardrails</h1>
-        <p className="text-sm text-muted-foreground">
-          Repo groups, SLA rules, workflow templates, false-positive rules, and policies.
-        </p>
-      </div>
+      <PageHeader
+        title="Guardrails"
+        description="Repo groups, SLA rules, workflow templates, false-positive rules, and policies."
+      />
 
       <div className="min-w-0 overflow-x-auto border-b border-border">
         <div className="flex w-max min-w-full gap-1">

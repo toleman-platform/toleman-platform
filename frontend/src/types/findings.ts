@@ -2,8 +2,6 @@
  * Security findings, triage states, queries, enrichment, and SLA rules.
  */
 
-import type { Nullable } from "@/std-lib";
-
 /**
  * Core security finding record identified across repositories and scanners.
  */
@@ -15,14 +13,14 @@ export type Finding = {
   title: string;
   description: string;
   file_path: string;
-  line_start: Nullable<number>;
-  line_end: Nullable<number>;
+  line_start: number | null;
+  line_end: number | null;
   severity: "Critical" | "High" | "Medium" | "Low" | "Informational";
   priority_score: number;
   branch: string;
   state: string;
-  cve_id: Nullable<string>;
-  epss_score: Nullable<number>;
+  cve_id: string | null;
+  epss_score: number | null;
   kev_listed: boolean;
   first_seen: string;
   last_seen: string;
@@ -30,7 +28,7 @@ export type Finding = {
    * Resolved SLA days window (computed via group/severity inheritance).
    * Null when no SLA rule applies to this finding.
    */
-  sla_days: Nullable<number>;
+  sla_days: number | null;
   /** True only when a real SLA applies and the finding is unmitigated past that window */
   sla_violated: boolean;
   /** Fixability classification from advisory metadata */
@@ -74,14 +72,14 @@ export type FixVersionInfo = {
  */
 export type FindingEnrichment = {
   finding_id: number;
-  cve_id: Nullable<string>;
-  cve_description: Nullable<string>;
-  cvss_score: Nullable<number>;
-  cvss_vector: Nullable<string>;
-  cwe_ids: Nullable<string[]>;
-  references: Nullable<string[]>;
-  fix_versions: Nullable<FixVersionInfo[]>;
-  fetched_at: Nullable<string>;
+  cve_id: string | null;
+  cve_description: string | null;
+  cvss_score: number | null;
+  cvss_vector: string | null;
+  cwe_ids: string[] | null;
+  references: string[] | null;
+  fix_versions: FixVersionInfo[] | null;
+  fetched_at: string | null;
 };
 
 /**
@@ -90,7 +88,7 @@ export type FindingEnrichment = {
 export type SlaRule = {
   id: number;
   workspace_id: number;
-  group_id: Nullable<number>;
+  group_id: number | null;
   severity: "Critical" | "High" | "Medium" | "Low" | "Informational";
   days_to_fix: number;
   created_at: string;

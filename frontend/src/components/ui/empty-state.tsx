@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { Icon as IconWrapper } from "@/components/ui/icon";
 
 /**
  * Shared "nothing here yet" state (#77), icon + title + description + an
@@ -11,7 +12,7 @@ import { cn } from "@/lib/utils";
  * so every empty state stays on the app's single icon set.
  */
 function EmptyState({
-  icon: Icon,
+  icon: IconComponent,
   title,
   description,
   action,
@@ -39,7 +40,7 @@ function EmptyState({
       )}
     >
       <div className={cn("flex items-center justify-center rounded-full bg-primary/10 text-accent-strong", bare ? "h-9 w-9" : "h-12 w-12")}>
-        <Icon className={bare ? "h-4 w-4" : "h-6 w-6"} />
+        <IconWrapper icon={IconComponent} size={bare ? "md" : "xl"} />
       </div>
       <div className="flex flex-col gap-1">
         <p className="text-sm font-semibold text-foreground">{title}</p>

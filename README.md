@@ -190,6 +190,8 @@ Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py
 
 The backend's startup hook (`app/core/db.py:init_db`, called from `app/main.py`) runs `alembic upgrade head` automatically against `DATABASE_URL` every time it starts; both `uvicorn app.main:app` and the Docker Compose `backend` service. There's no separate manual migration step for the common case of running the app.
 
+Safe to run from more than one replica at once: `init_db` holds a Postgres session-level advisory lock (`pg_advisory_lock`) for the duration of the upgrade, so a multi-replica deployment (Kubernetes/Helm, `docker compose up --scale backend=N`) has every replica queue up on the same lock instead of racing the same `ALTER TABLE`/`CREATE TYPE` statements against each other on a rolling restart. Whichever replica gets the lock first does the real upgrade; the rest find the schema already at `head` and return immediately.
+
 You only need to touch Alembic directly when you change `app/models/models.py`:
 
 ```bash

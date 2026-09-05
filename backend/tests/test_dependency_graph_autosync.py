@@ -166,7 +166,11 @@ def test_broker_failure_does_not_leave_the_target_stuck_pending(engine, monkeypa
 
         assert sbom_tasks.queue_dependency_graph_sync(session, target) is False
         assert target.dependency_sync_status == "failed"
-        assert "Connection refused" in target.dependency_sync_error
+        # Not the raw exception text: this field is rendered to any
+        # workspace user, so a broker exception's internal detail must not
+        # leak into it.
+        assert "Connection refused" not in target.dependency_sync_error
+        assert target.dependency_sync_error == "could not queue the import; see server logs"
 
 
 def test_lookalike_host_is_not_treated_as_github():
@@ -274,7 +278,10 @@ def test_unexpected_error_is_recorded_as_failed(engine, monkeypatch):
         target = session.get(Target, target_id)
         assert target.dependency_sync_status == "failed"
         assert target.dependency_component_count is None
-        assert "kaboom" in target.dependency_sync_error
+        # Not the raw exception text: rendered to any workspace user, so an
+        # unexpected internal exception must not leak into it.
+        assert "kaboom" not in target.dependency_sync_error
+        assert target.dependency_sync_error == "the dependency import failed unexpectedly; see server logs"
 
 
 def test_refuses_a_session_holding_unflushed_work(engine, monkeypatch):
@@ -306,3 +313,44 @@ def test_refuses_a_session_holding_unflushed_work(engine, monkeypatch):
         with pytest.raises(RuntimeError, match="no other pending inserts or deletes"):
             sbom_tasks.queue_dependency_graph_sync(session, target)
     mock_delay.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 3. Manual recovery clears a stale auto-sync status
+# ---------------------------------------------------------------------------
+
+
+def test_manual_github_sync_clears_a_stale_failed_status(client, engine, monkeypatch):
+    """The auto-sync badge points a failed/unavailable target at the manual
+    "Import from GitHub" button on the SBOM page as its recovery path. A
+    successful call there must clear the stale status/error it is recovering
+    from, or the badge keeps reporting a failure the data no longer has."""
+    import app.api.sbom as sbom_module
+
+    monkeypatch.setattr(sbom_module, "resolve_github_token", lambda *a, **k: None)
+    monkeypatch.setattr(sbom_module, "fetch_dependency_graph", lambda *a, **k: [
+        {"name": "requests", "version": "2.31.0", "package_type": "pypi", "purl": "pkg:pypi/requests@2.31.0"},
+    ])
+    monkeypatch.setattr(sbom_module, "check_and_ingest_malware", lambda *a, **k: {
+        "status": "ok", "malicious_count": 0, "findings_created": 0,
+    })
+
+    client, ws_id = _dev_client(client, engine)
+    with Session(engine) as session:
+        target = Target(
+            workspace_id=ws_id, name="t", repo_url="https://github.com/acme/repo",
+            dependency_sync_status="failed", dependency_sync_error="could not queue the import; see server logs",
+        )
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+        target_id = target.id
+
+    response = client.post(f"/api/sbom/{target_id}/github-sync")
+
+    assert response.status_code == 200
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert target.dependency_sync_status == "ok"
+        assert target.dependency_sync_error is None
+        assert target.dependency_component_count == 1

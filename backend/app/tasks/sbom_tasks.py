@@ -276,7 +276,10 @@ def queue_dependency_graph_sync(session: Session, target: Target) -> bool:
         # dispatch failure and the UI can offer the manual import.
         logger.exception("Could not queue dependency graph sync for target %s", target.id)
         target.dependency_sync_status = "failed"
-        target.dependency_sync_error = f"could not queue the import: {exc}"
+        # Not str(exc): this field is rendered verbatim on the Dependencies
+        # tab to any workspace user, and a broker exception can carry
+        # internal connection details. Full detail goes to the log above.
+        target.dependency_sync_error = "could not queue the import; see server logs"
         target.dependency_sync_at = utcnow()
         session.add(target)
         session.commit()
@@ -329,7 +332,10 @@ def sync_dependency_graph(target_id: int):
             status, error = "unavailable", str(exc)
         except Exception as exc:
             logger.exception("Dependency graph sync failed for target %s", target_id)
-            status, error = "failed", str(exc)
+            # Not str(exc): rendered verbatim to any workspace user on the
+            # Dependencies tab, and an unexpected exception here (DB, network,
+            # etc.) can carry internal detail that has no business there.
+            status, error = "failed", "the dependency import failed unexpectedly; see server logs"
 
         if status != "ok":
             # upsert_components can fail partway through, which leaves the

@@ -258,6 +258,15 @@ def import_github_sbom(
             detail=f"GitHub dependency graph is unavailable for this target: {exc}",
         )
     new_components = upsert_components(session, target_id, target.default_branch, components, source="github")
+    # A manual import is the recovery path the auto-sync badge itself points
+    # users at (#330); without this, a successful retry here left that badge
+    # showing the old failed/unavailable status forever.
+    target.dependency_sync_status = "ok"
+    target.dependency_sync_error = None
+    target.dependency_sync_at = utcnow()
+    target.dependency_component_count = len(components)
+    session.add(target)
+    session.commit()
     malware = _run_malware_check_best_effort(session, target)
     return {
         "target_id": target_id,

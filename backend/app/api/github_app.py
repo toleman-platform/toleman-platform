@@ -282,8 +282,18 @@ def _sync_repos(session: Session) -> int:
     # after the commit that gives the rows their ids. Async on purpose: an
     # org with hundreds of repos would otherwise hold the App install
     # callback open for hundreds of sequential GitHub calls.
-    for target in new_targets:
-        queue_dependency_graph_sync(session, target)
+    #
+    # queue_dependency_graph_sync commits once per target; expire_on_commit
+    # (on by default) would otherwise expire every other Target still
+    # waiting in new_targets after each of those commits, turning a large
+    # import into a SELECT per remaining target just to re-read attributes
+    # this loop already has in memory.
+    session.expire_on_commit = False
+    try:
+        for target in new_targets:
+            queue_dependency_graph_sync(session, target)
+    finally:
+        session.expire_on_commit = True
     return created
 
 

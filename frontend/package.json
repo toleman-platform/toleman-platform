@@ -10,7 +10,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:lint-rules": "node eslint-rules/no-client-value-import-in-server.test.mjs",
-    "lint:boundary": "node eslint-rules/check-boundary.mjs"
+    "lint:boundary": "node eslint-rules/check-boundary.mjs",
+    "verify": "vitest run && eslint && node eslint-rules/check-boundary.mjs && node eslint-rules/no-client-value-import-in-server.test.mjs && tsc --noEmit"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",

@@ -2,6 +2,8 @@
 
 How UI is composed in this app, and where new code belongs.
 
+> **Design Tokens & Visual Foundations**: For colors, typography scales, 4px/8px spatial grid, and accessibility standards, refer to [**`DESIGN_SYSTEM.md`**](DESIGN_SYSTEM.md). Live interactive specimens are available at [`/design-system`](http://localhost:3000/design-system).
+
 ## The three layers
 
 ```
@@ -20,6 +22,12 @@ L3  components/* + app/*           features     FindingsList, TargetsList, AiBom
 states of a request. It knows nothing about findings, targets or scans.
 
 **L3** is where the domain lives. A feature composes L2 and L1 and adds meaning.
+
+**Foundations & Data Layer**:
+- `tokens/*`: Single source of truth for visual tokens (`fonts`, `spacing`, `theme`).
+- `types/*`: Pure TypeScript domain and DTO definitions.
+- `lib/api/*`: Modular, domain-driven API endpoints with tree-shakable exports and legacy `api` facade.
+- `lib/*`: Testable, domain-agnostic utilities (`cn`, `safeHref`, `settleOrNull`, `pollUntilSettled`).
 
 The rule that keeps this honest: **a layer may only import downward.** If an L2 component
 needs to know what a finding is, it is an L3 component wearing the wrong hat.

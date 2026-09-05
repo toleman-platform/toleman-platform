@@ -1,5 +1,6 @@
 import logging
 import subprocess
+from urllib.parse import urlparse
 
 from sqlmodel import Session, select
 
@@ -222,3 +223,137 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             session.add(run)
             session.commit()
             return {"error": run.error, "run_id": run.id}
+
+
+def queue_dependency_graph_sync(session: Session, target: Target) -> bool:
+    """Kick off the automatic Dependency Graph import for a freshly created
+    target (#330); returns whether a task was dispatched.
+
+    A new target had an empty inventory until somebody remembered to click
+    "Import from GitHub". The graph is the cheap primary source (one REST
+    call, no clone), so it is fetched on creation instead.
+
+    Both creation paths go through this one function rather than each
+    building the gate themselves: `create_target` (manual add) and
+    `_sync_repos` (GitHub App import). Targets whose repo_url is not a
+    github.com owner/repo are skipped and left at NULL status, since the
+    fetch needs a slug and "we never tried" is not a sync result.
+
+    Dispatch is async because `_sync_repos` runs this over every repo in an
+    installation; doing the fetches inline would hold the OAuth callback
+    open for as long as the org is large.
+
+    Commits the caller's session. That is not incidental: `sync_dependency_graph`
+    runs in a separate process and reads the row back, so the "pending" write
+    has to be durable before `.delay()` hands the id over, or the worker races
+    an uncommitted status. Both current callers already commit immediately
+    before calling this, so the commit here covers only this function's own
+    write; the guard below keeps that true for the next caller instead of
+    silently flushing work it meant to hold.
+    """
+    if session.new or session.deleted:
+        # Deliberately not `session.dirty`: SQLAlchemy reports an object as
+        # dirty once an attribute has been touched, even when the value did
+        # not actually change, so guarding on it would reject honest callers.
+        # Pending inserts and deletes have no such false positive, and they
+        # are the case worth catching: the flush would make rows visible that
+        # the caller was still assembling.
+        raise RuntimeError(
+            "queue_dependency_graph_sync() commits the session; call it with no other pending inserts or deletes"
+        )
+    if not _is_github_repo(target.repo_url):
+        return False
+    target.dependency_sync_status = "pending"
+    session.add(target)
+    session.commit()
+    try:
+        sync_dependency_graph.delay(target.id)
+    except Exception as exc:
+        # A broker that is down must not fail target creation itself; the
+        # target is a real, usable row whether or not its inventory was
+        # imported. It also must not be left claiming "pending" forever,
+        # since nothing will ever pick it up, so the row records the
+        # dispatch failure and the UI can offer the manual import.
+        logger.exception("Could not queue dependency graph sync for target %s", target.id)
+        target.dependency_sync_status = "failed"
+        # Not str(exc): this field is rendered verbatim on the Dependencies
+        # tab to any workspace user, and a broker exception can carry
+        # internal connection details. Full detail goes to the log above.
+        target.dependency_sync_error = "could not queue the import; see server logs"
+        target.dependency_sync_at = utcnow()
+        session.add(target)
+        session.commit()
+        return False
+    return True
+
+
+def _is_github_repo(repo_url: str) -> bool:
+    """github.com URL that yields an owner/repo slug.
+
+    Checked on the host, not a substring: an attacker-controlled
+    "https://github.com.evil.test/a/b" parses to a perfectly good slug, and
+    a plain `"github.com" in repo_url` test would send the token-bearing
+    fetch at it.
+    """
+    host = (urlparse(repo_url).hostname or "").lower()
+    if host not in ("github.com", "www.github.com"):
+        return False
+    return len(repo_slug_from_url(repo_url).split("/")) == 2
+
+
+@celery_app.task(name="app.tasks.sbom_tasks.sync_dependency_graph")
+def sync_dependency_graph(target_id: int):
+    """Import a target's GitHub Dependency Graph and record the outcome
+    on the Target row (#330).
+
+    Deliberately not the full `run_sbom_generation`: no clone, no scanner,
+    no AIBOM. One GitHub REST call plus the same `upsert_components` merge
+    the manual POST /api/sbom/{id}/github-sync already uses, so a
+    graph-sourced component looks identical however it arrived.
+
+    Every failure lands in the row. DependencyGraphUnavailable is
+    "unavailable" (graph off, no token, private repo); anything else is
+    "failed". Neither is ever written as an ok/0 result, because a target
+    whose inventory could not be read must not read as a target with no
+    dependencies.
+    """
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        if not target:
+            return {"error": "target not found"}
+
+        status, error, count = "ok", None, 0
+        try:
+            token = resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url))
+            components = fetch_dependency_graph(target.repo_url, token)
+            upsert_components(session, target_id, target.default_branch, components, source="github")
+            count = len(components)
+        except DependencyGraphUnavailable as exc:
+            status, error = "unavailable", str(exc)
+        except Exception as exc:
+            logger.exception("Dependency graph sync failed for target %s", target_id)
+            # Not str(exc): rendered verbatim to any workspace user on the
+            # Dependencies tab, and an unexpected exception here (DB, network,
+            # etc.) can carry internal detail that has no business there.
+            status, error = "failed", "the dependency import failed unexpectedly; see server logs"
+
+        if status != "ok":
+            # upsert_components can fail partway through, which leaves the
+            # session in a state where the next statement raises instead of
+            # running. Roll back first so recording the failure is itself
+            # able to commit; a failure nobody can see is the one thing this
+            # task must not produce.
+            session.rollback()
+
+        target = session.get(Target, target_id)
+        if not target:
+            # Deleted while the fetch was in flight; there is no row left to
+            # record the outcome on.
+            return {"target_id": target_id, "status": status, "count": count}
+        target.dependency_sync_status = status
+        target.dependency_sync_error = error
+        target.dependency_sync_at = utcnow()
+        target.dependency_component_count = count if status == "ok" else None
+        session.add(target)
+        session.commit()
+        return {"target_id": target_id, "status": status, "count": count}

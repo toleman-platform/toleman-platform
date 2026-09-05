@@ -1,9 +1,58 @@
-import { api, SbomComponent } from "@/lib/api";
+import { api, SbomComponent, Target } from "@/lib/api";
 import { settleOrNull } from "@/lib/settle";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Package } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { DependencySyncRefresher } from "./dependency-sync-refresher";
+
+// (#330) Outcome of the automatic Dependency Graph import that runs when a
+// target is created. Shown above the table, and above the empty state in
+// particular: an empty inventory because GitHub refused to answer looks
+// exactly like an empty inventory because the repo has no dependencies, and
+// only one of those is good news. A null status is a target that predates
+// the automatic import, so there is nothing to report and nothing is shown.
+function DependencySyncNudge({ target }: { target: Target }) {
+  const status = target.dependency_sync_status;
+  if (!status) return null;
+
+  const text: Record<string, string> = {
+    pending: "Importing dependencies from GitHub...",
+    ok: `${target.dependency_component_count ?? 0} component${target.dependency_component_count === 1 ? "" : "s"} imported from the GitHub dependency graph`,
+    unavailable: "GitHub could not provide a dependency graph for this repo. The inventory below may be incomplete; a private repo needs the graph enabled and a token with access.",
+    failed: "The automatic dependency import failed. Import from GitHub on the SBOM page to retry.",
+  };
+  const tone: Record<string, string> = {
+    pending: "border-border text-muted-foreground",
+    ok: "border-chart-5/40 text-chart-5",
+    unavailable: "border-warning/40 text-warning",
+    failed: "border-destructive/40 text-destructive",
+  };
+
+  // Fallbacks for a status this build does not know about: the backend can
+  // start writing a fifth value before the frontend that renders it ships.
+  // Without them the badge showed a bare status word with no sentence beside
+  // it and no tone, which reads as a rendering bug rather than as a state.
+  // The status itself is still shown in the badge, so nothing is hidden.
+  const description = text[status] ?? "Dependency import reported a status this page does not recognise.";
+  const badgeTone = tone[status] ?? "border-border text-muted-foreground";
+
+  return (
+    <div className="flex items-start gap-2">
+      <Badge variant="outline" className={cn("shrink-0 text-[10px] uppercase", badgeTone)}>
+        {status}
+      </Badge>
+      <p className="text-sm text-muted-foreground">
+        {description}
+        {target.dependency_sync_error && status !== "pending" && (
+          <span className="ml-1 font-mono text-xs">({target.dependency_sync_error})</span>
+        )}
+      </p>
+      {status === "pending" && <DependencySyncRefresher />}
+    </div>
+  );
+}
 
 // (#227) Human label for a component's provenance source. Legacy rows from
 // before trivy SBOM generation was removed keep a neutral label rather than
@@ -41,18 +90,21 @@ function sourceLabel(source?: string): string {
 // (persisted SbomComponent rows for the default branch); no new backend
 // was needed, only a per-target surface for data the global SBOM page was
 // already showing across every target at once.
-export async function TargetDependencies({ targetId }: { targetId: number }) {
+export async function TargetDependencies({ targetId, target }: { targetId: number; target: Target }) {
   const sbom = await settleOrNull(api.getSbom(targetId));
 
   // settleOrNull rather than letting this throw: a target whose SBOM has
   // never been generated is an ordinary state, not a page error.
   if (!sbom || sbom.components.length === 0) {
     return (
-      <EmptyState
-        icon={Package}
-        title="No dependency inventory yet"
-        description="Run an SBOM scan for this target from SBOM & OSS Vulns to populate it."
-      />
+      <div className="flex flex-col gap-3">
+        <DependencySyncNudge target={target} />
+        <EmptyState
+          icon={Package}
+          title="No dependency inventory yet"
+          description="Run an SBOM scan for this target from SBOM & OSS Vulns to populate it."
+        />
+      </div>
     );
   }
 
@@ -61,6 +113,7 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
 
   return (
     <div className="flex flex-col gap-3">
+      <DependencySyncNudge target={target} />
       <p className="text-sm text-muted-foreground">
         {sbom.count} package{sbom.count === 1 ? "" : "s"} resolved for this target
         {newCount > 0 && <> · {newCount} first seen in the latest scan</>}

@@ -169,6 +169,21 @@ class Target(SQLModel, table=True):
     # declared as belonging to it.
     api_base_url: Optional[str] = None
 
+    # (#330) Outcome of the automatic GitHub Dependency Graph import that
+    # runs when a target is created or imported. Persisted per target so
+    # the result survives a reload; a task-result lookup would not.
+    #
+    # None means "never attempted" (targets that predate this, or whose
+    # repo_url is not a github.com repo), which stays distinct from
+    # "unavailable". "unavailable" is GitHub declining to answer (graph off,
+    # private repo with no token, 403/404); it is NOT an empty inventory,
+    # and must never render as clean. "ok" with a count of 0 is the only
+    # thing that means "GitHub says this repo has no dependencies".
+    dependency_sync_status: Optional[str] = None   # pending / ok / unavailable / failed
+    dependency_sync_error: Optional[str] = None
+    dependency_sync_at: Optional[datetime] = None
+    dependency_component_count: Optional[int] = None
+
     # AI/ML repo detection (issue #185), the gate every AI-specific
     # scanner in epic #192 runs behind. Recomputed on each scan by
     # app.core.ai_repo_detection, so a repo becomes an AI repo the day

@@ -19,6 +19,7 @@ from app.core.github_app import (
     resolve_config_for_installation,
 )
 from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, Workspace
+from app.tasks.sbom_tasks import queue_dependency_graph_sync
 
 # GH-02: were hardcoded localhost literals. The manifest's callback/webhook
 # URLs are handed to GitHub, so on any real deployment they must be an
@@ -253,6 +254,7 @@ def _sync_repos(session: Session) -> int:
     installations = session.exec(select(GitHubInstallation)).all()
     existing_urls = {t.repo_url for t in session.exec(select(Target)).all()}
     created = 0
+    new_targets: list[Target] = []
     for installation in installations:
         config = resolve_config_for_installation(session, installation)
         if not config:
@@ -263,17 +265,35 @@ def _sync_repos(session: Session) -> int:
             clone_url = repo["clone_url"]
             if clone_url in existing_urls:
                 continue
-            session.add(Target(
+            target = Target(
                 workspace_id=installation.workspace_id,
                 name=repo["name"],
                 repo_url=clone_url,
                 default_branch=repo.get("default_branch", "main"),
                 label="Prod" if not repo.get("private") else "Internal",
                 criticality_weight=2,
-            ))
+            )
+            session.add(target)
+            new_targets.append(target)
             existing_urls.add(clone_url)
             created += 1
     session.commit()
+    # (#330) Queue the Dependency Graph import for each newly imported repo,
+    # after the commit that gives the rows their ids. Async on purpose: an
+    # org with hundreds of repos would otherwise hold the App install
+    # callback open for hundreds of sequential GitHub calls.
+    #
+    # queue_dependency_graph_sync commits once per target; expire_on_commit
+    # (on by default) would otherwise expire every other Target still
+    # waiting in new_targets after each of those commits, turning a large
+    # import into a SELECT per remaining target just to re-read attributes
+    # this loop already has in memory.
+    session.expire_on_commit = False
+    try:
+        for target in new_targets:
+            queue_dependency_graph_sync(session, target)
+    finally:
+        session.expire_on_commit = True
     return created
 
 

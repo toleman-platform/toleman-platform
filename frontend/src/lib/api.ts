@@ -59,6 +59,8 @@ export type EnforcementMode = "block" | "alert" | "disabled";
 // workspace)" instead of just a raw settable field.
 export type EnforcementModeSource = "target" | "group" | "workspace" | "default";
 
+export type DependencySyncStatus = "pending" | "ok" | "unavailable" | "failed";
+
 export type Target = {
   id: number;
   workspace_id: number;
@@ -98,6 +100,15 @@ export type Target = {
   // enforcement_mode; it trades coverage for speed, so it is switched on
   // one target at a time rather than defaulted from above.
   diff_scoped_pr_scans: boolean;
+  // (#330) Outcome of the automatic GitHub Dependency Graph import that runs
+  // when a target is created. null status = never attempted (a target that
+  // predates this), which is not the same as "unavailable": that one means
+  // GitHub declined to answer, so the inventory is unknown rather than
+  // empty. dependency_component_count is only set for "ok".
+  dependency_sync_status: DependencySyncStatus | null;
+  dependency_sync_error: string | null;
+  dependency_sync_at: string | null;
+  dependency_component_count: number | null;
 };
 
 // GET /api/targets/{id}/pipeline-workflow (issue #66), generated,

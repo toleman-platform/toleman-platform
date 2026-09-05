@@ -31,6 +31,7 @@ from app.models.models import (
     WorkspaceRole,
 )
 from app.tasks.pipeline_tasks import run_pipeline_integration_batch
+from app.tasks.sbom_tasks import queue_dependency_graph_sync
 
 router = APIRouter(prefix="/api/targets", tags=["targets"])
 
@@ -258,6 +259,11 @@ def create_target(
     target = Target(**payload.model_dump())
     session.add(target)
     session.commit()
+    session.refresh(target)
+    # (#330) Fetch the GitHub Dependency Graph in the background so the
+    # target does not sit with an empty inventory until somebody clicks
+    # "Import from GitHub". No-op for a non-github.com repo_url.
+    queue_dependency_graph_sync(session, target)
     session.refresh(target)
     return target
 

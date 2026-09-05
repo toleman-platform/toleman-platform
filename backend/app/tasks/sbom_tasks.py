@@ -1,6 +1,5 @@
 import logging
 import subprocess
-from datetime import datetime
 
 from sqlmodel import Session, select
 
@@ -12,9 +11,9 @@ from app.core.aibom import extract_ai_components, upsert_aibom_components
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components
+from app.core.time import utcnow
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
-from app.scanners.parsers import parse_trivy_sbom
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -56,10 +55,31 @@ def _notify_scan_failure(session: Session, target: Target, tool: str, error: str
 )
 def run_sbom_generation(self, target_id: int, run_id: int):
     """Async counterpart to the previously-synchronous POST
-    /api/sbom/{target_id} handler (#59): clone the target's default branch,
-    run trivy's CycloneDX SBOM scan, upsert the components, and update the
-    SbomRun row the endpoint already created so
+    /api/sbom/{target_id} handler (#59): import the target's GitHub
+    Dependency Graph, clone the default branch for the AIBOM pass, upsert the
+    components, and update the SbomRun row the endpoint already created so
     GET /api/sbom/{target_id}/runs/{run_id} can report completion.
+
+    The dependency graph is required for the *inventory*, not best-effort. It
+    was best-effort while trivy was the second source and could carry a run
+    on its own; with trivy's SBOM path removed it is the only source of a
+    dependency inventory, so a run that cannot read it produced no inventory
+    and is reported failed rather than completed-with-nothing. That
+    distinction is the whole point of the sources_run/sources_failed pair: an
+    empty inventory because GitHub refused to answer must never look like an
+    empty inventory because the repo has no dependencies.
+
+    It is fetched *before* the clone because it needs no checkout, so the
+    failure is known and recorded early. It does not, however, short-circuit
+    the rest of the run. The AIBOM pass (#190) is regexes over checked-out
+    source and does not read the inventory at all, and the malware check
+    (#181) runs over whatever rows are already persisted (an earlier run, or
+    an upload). A repo whose dependency graph is disabled -- the default for
+    private repos -- would otherwise silently lose its AI-component
+    inventory entirely, which is a bigger loss than the one clone that
+    skipping them saves. So the run still clones, still extracts, still
+    checks; only its final status reflects that no inventory source
+    succeeded.
     """
     with Session(engine) as session:
         run = session.get(SbomRun, run_id)
@@ -70,44 +90,38 @@ def run_sbom_generation(self, target_id: int, run_id: int):
         if not target:
             run.status = "failed"
             run.error = "target not found"
-            run.completed_at = datetime.utcnow()
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             return {"error": "target not found", "run_id": run.id}
 
         try:
-            repo_path = runner.clone_repo(
-                target.repo_url, target.default_branch,
-                resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
-                scan_id=f"sbom-{run.id}",
-            )
-            raw = runner.run_tool("trivy-sbom", repo_path)
-            discovered = parse_trivy_sbom(raw)
-            new_components = upsert_components(
-                session, target_id, target.default_branch, discovered, source="trivy"
-            )
+            new_components: list = []
 
-            # (#227, raised by @r0075h3ll) GitHub's Dependency Graph as a
-            # second source. trivy reads dependency manifests and reports
-            # what is pinned there; GitHub reports what those manifests
-            # actually resolve to, including transitive dependencies that
-            # appear in no manifest at all. On this repo's own backend that
-            # was 22 direct pins versus ~98 installed packages, the gap
-            # #239 found from the other direction.
+            # (#227, raised by @r0075h3ll) GitHub's Dependency Graph is the
+            # dependency inventory source. It reports what each manifest
+            # actually resolves to, including transitive dependencies that
+            # appear in no manifest at all; resolution GitHub has already
+            # done server-side, so this needs no checkout and executes
+            # nothing. On this repo's own backend that was 22 direct pins
+            # versus ~98 installed packages, the gap #239 found from the
+            # other direction.
             #
             # This is the right mechanism for *target* repos specifically.
             # #239 closed the same gap for our own CI by resolving
             # requirements.txt into a venv, which deliberately does not
             # generalise: resolving a customer's manifest means running
-            # `pip install` on untrusted input. GitHub has already done the
-            # resolution server-side, so this needs no checkout and executes
-            # nothing.
+            # `pip install` on untrusted input.
             #
-            # Best-effort and explicitly recorded. A repo whose graph is
-            # disabled (the default for private repos) is not a repo with no
-            # dependencies, so the failure is written to sources_failed
-            # rather than swallowed; see DependencyGraphUnavailable.
-            sources_run = ["trivy"]
+            # Required, not best-effort, and explicitly recorded either way.
+            # A repo whose graph is disabled (the default for private repos)
+            # is not a repo with no dependencies, so the failure is written to
+            # sources_failed rather than swallowed; see
+            # DependencyGraphUnavailable. This runs before the clone because
+            # it needs no checkout; a failure here decides the run's final
+            # status (see the status branch at the end) but does not skip the
+            # AIBOM and malware passes, which do not depend on it.
+            sources_run: list[str] = []
             sources_failed: list[str] = []
             try:
                 gh_token = resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url))
@@ -115,7 +129,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 gh_new = upsert_components(
                     session, target_id, target.default_branch, gh_components, source="github"
                 )
-                new_components.extend(c for c in gh_new if c not in new_components)
+                new_components.extend(gh_new)
                 sources_run.append("github")
             except DependencyGraphUnavailable as exc:
                 logger.info(
@@ -126,21 +140,34 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 logger.exception("GitHub dependency graph fetch failed for target %s", target_id)
                 sources_failed.append("github (unexpected error)")
 
-            # Issue #190: extract the AIBOM from the same checkout. Free;
-            # the clone above already happened, and extraction is regexes
-            # over source, no extra tooling. Best-effort: an AIBOM failure
-            # must not fail an otherwise-successful SBOM run.
+            repo_path = runner.clone_repo(
+                target.repo_url, target.default_branch,
+                resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url)) or "",
+                scan_id=f"sbom-{run.id}",
+            )
+
+            # Issue #190: extract the AIBOM from the checkout. The clone above
+            # happens for AIBOM extraction (regexes over source, no extra
+            # tooling) and is deliberately not conditional on the dependency
+            # graph having answered: the AIBOM reads source, not the
+            # inventory, and a repo with no dependency graph still has AI
+            # components worth inventorying. Best-effort in the other
+            # direction too: an AIBOM failure must not fail an otherwise-
+            # successful SBOM run.
             try:
                 ai_components = extract_ai_components(repo_path)
                 upsert_aibom_components(session, target_id, target.default_branch, ai_components)
             except Exception:
                 logger.exception("AIBOM extraction failed for target %s", target_id)
 
-            # Issue #181: run the OSV malicious-package check over the freshly
+            # Issue #181: run the OSV malicious-package check over the
             # persisted inventory. Free (no clone, no subprocess; just OSV
             # HTTP calls against rows we already have) and best-effort: a
             # malware-check failure must not fail an otherwise-successful SBOM
             # run, and its own "failed" status is never reported as clean.
+            # Runs even when this run added nothing, since the rows a previous
+            # run or an upload left behind are still worth re-checking against
+            # a moving malicious-package set.
             try:
                 check_and_ingest_malware(session, target)
             except Exception:
@@ -154,15 +181,26 @@ def run_sbom_generation(self, target_id: int, run_id: int):
                 ).all()
             )
 
-            run.status = "completed"
+            # A run no inventory source carried produced no inventory, so it
+            # is failed rather than completed-with-nothing, however well the
+            # AIBOM and malware passes above went. `count` is still written
+            # either way, so a caller can tell "we could not ask, here is the
+            # inventory an earlier run left" from "there is nothing".
             run.count = all_count
             run.new_count = len(new_components)
             run.new_ids = ",".join(str(c.id) for c in new_components)
             run.sources_run = ",".join(sources_run)
             run.sources_failed = "; ".join(sources_failed)
-            run.completed_at = datetime.utcnow()
+            run.completed_at = utcnow()
+            if sources_run:
+                run.status = "completed"
+            else:
+                run.status = "failed"
+                run.error = f"No SBOM sources succeeded: {'; '.join(sources_failed)}"
             session.add(run)
             session.commit()
+            if not sources_run:
+                return {"error": run.error, "run_id": run.id}
             return {"run_id": run.id, "count": all_count, "new_count": len(new_components)}
         except RETRYABLE_EXCEPTIONS:
             # Transient failure: only mark the run permanently failed once
@@ -171,7 +209,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             if self.request.retries >= self.max_retries:
                 run.status = "failed"
                 run.error = "git clone failed after retries"
-                run.completed_at = datetime.utcnow()
+                run.completed_at = utcnow()
                 session.add(run)
                 session.commit()
             raise
@@ -180,7 +218,7 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             # runner.clone_error_message avoids echoing raw subprocess argv/paths
             # (and, historically, an embedded GitHub token) back into run state.
             run.error = runner.clone_error_message(exc)
-            run.completed_at = datetime.utcnow()
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             return {"error": run.error, "run_id": run.id}

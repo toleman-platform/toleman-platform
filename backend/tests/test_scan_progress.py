@@ -15,7 +15,7 @@ different repo's history must all yield null rather than a plausible guess.
 Same in-memory SQLite + TestClient + session-token-login pattern as
 tests/test_stale_jobs.py.
 """
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +27,7 @@ from app.api.deps import get_session
 from app.core.config import settings
 from app.core.scan_eta import elapsed_seconds, estimate_duration_seconds
 from app.core.security import create_session_token, hash_password
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import (
     Organization,
@@ -94,7 +95,7 @@ def _make_workspace_and_target(engine, name="target") -> tuple[int, int]:
 
 
 def _completed_scan(session, target_id: int, tool: str, seconds: int, age_minutes: int = 0):
-    started = datetime.utcnow() - timedelta(minutes=age_minutes, seconds=seconds)
+    started = utcnow() - timedelta(minutes=age_minutes, seconds=seconds)
     scan = Scan(
         target_id=target_id,
         tool=tool,
@@ -152,7 +153,7 @@ def test_failed_runs_are_not_sampled(engine):
     # usually a clone timeout) not how long the work takes.
     _, target_id = _make_workspace_and_target(engine)
     with Session(engine) as session:
-        started = datetime.utcnow() - timedelta(seconds=900)
+        started = utcnow() - timedelta(seconds=900)
         for _ in range(5):
             session.add(
                 Scan(
@@ -196,7 +197,7 @@ def test_zero_and_negative_durations_are_discarded(engine):
     # that finished instantly.
     _, target_id = _make_workspace_and_target(engine)
     with Session(engine) as session:
-        started = datetime.utcnow() - timedelta(seconds=60)
+        started = utcnow() - timedelta(seconds=60)
         for delta in (0, -5, -10):
             session.add(
                 Scan(
@@ -236,14 +237,14 @@ def test_elapsed_counts_up_while_running(engine):
         tool="semgrep",
         branch="main",
         status="running",
-        started_at=datetime.utcnow() - timedelta(seconds=45),
+        started_at=utcnow() - timedelta(seconds=45),
     )
     assert 44 <= elapsed_seconds(scan) <= 47
 
 
 def test_elapsed_freezes_at_completion(engine):
     _, target_id = _make_workspace_and_target(engine)
-    started = datetime.utcnow() - timedelta(seconds=300)
+    started = utcnow() - timedelta(seconds=300)
     scan = Scan(
         target_id=target_id,
         tool="semgrep",
@@ -271,7 +272,7 @@ def test_get_scan_reports_elapsed_and_eta_while_running(engine, client):
             tool="semgrep",
             branch="main",
             status="running",
-            started_at=datetime.utcnow() - timedelta(seconds=10),
+            started_at=utcnow() - timedelta(seconds=10),
         )
         session.add(running)
         session.commit()
@@ -293,7 +294,7 @@ def test_get_scan_omits_eta_when_history_is_too_thin(engine, client):
             tool="semgrep",
             branch="main",
             status="running",
-            started_at=datetime.utcnow() - timedelta(seconds=5),
+            started_at=utcnow() - timedelta(seconds=5),
         )
         session.add(running)
         session.commit()
@@ -333,7 +334,7 @@ def test_stale_running_scan_reports_failed_with_a_reason(engine, client):
             tool="semgrep",
             branch="main",
             status="running",
-            started_at=datetime.utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
+            started_at=utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
         )
         session.add(scan)
         session.commit()
@@ -361,7 +362,7 @@ def test_active_lists_running_scans_grouped_by_target(engine, client):
                     tool=tool,
                     branch="main",
                     status="running",
-                    started_at=datetime.utcnow() - timedelta(seconds=5),
+                    started_at=utcnow() - timedelta(seconds=5),
                 )
             )
         session.commit()
@@ -392,7 +393,7 @@ def test_active_sweeps_and_excludes_stale_rows(engine, client):
                 tool="semgrep",
                 branch="main",
                 status="running",
-                started_at=datetime.utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
+                started_at=utcnow() - timedelta(seconds=settings.stale_job_timeout_seconds + 60),
             )
         )
         session.commit()
@@ -415,7 +416,7 @@ def test_active_covers_dast_runs_too(engine, client):
                 tool="api-scan",
                 branch="main",
                 status="running",
-                started_at=datetime.utcnow() - timedelta(seconds=5),
+                started_at=utcnow() - timedelta(seconds=5),
             )
         )
         session.commit()
@@ -435,7 +436,7 @@ def test_active_is_workspace_scoped(engine, client):
                 tool="semgrep",
                 branch="main",
                 status="running",
-                started_at=datetime.utcnow() - timedelta(seconds=5),
+                started_at=utcnow() - timedelta(seconds=5),
             )
         )
         session.commit()
@@ -455,7 +456,7 @@ def test_active_shows_scans_in_a_workspace_the_user_belongs_to(engine, client):
                 tool="semgrep",
                 branch="main",
                 status="running",
-                started_at=datetime.utcnow() - timedelta(seconds=5),
+                started_at=utcnow() - timedelta(seconds=5),
             )
         )
         session.commit()

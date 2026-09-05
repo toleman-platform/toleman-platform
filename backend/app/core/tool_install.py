@@ -38,13 +38,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from datetime import datetime
 from typing import Optional
 
 from sqlmodel import Session
 
 from app.core import tool_health_cache
 from app.core.tool_registry import TOOL_REGISTRY
+from app.core.time import utcnow
 
 # A big dependency tree (modelscan pulls tensorflow) is genuinely slow, but
 # an unbounded install would hold a Celery worker indefinitely.
@@ -171,7 +171,7 @@ def perform_install(session: Session, run) -> None:
 
 def _finish(session: Session, run, *, status: str, error: str = "", version: str = "", output: str = "") -> None:
     run.status = status
-    run.completed_at = datetime.utcnow()
+    run.completed_at = utcnow()
     run.error = error
     run.installed_version = version
     run.output_tail = output

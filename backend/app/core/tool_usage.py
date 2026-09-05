@@ -26,15 +26,14 @@ run; returning it would hand the caller a tool name that raises
 
 from sqlmodel import Session, select
 
-from app.core.tool_registry import INTERNAL_TOOL_KEYS, TOOL_REGISTRY, USAGE_SURFACES, default_usage_for
+from app.core.tool_registry import TOOL_REGISTRY, USAGE_SURFACES, default_usage_for
 from app.models.models import WorkspaceToolConfig
 from app.scanners import parsers, runner
 
 
 def runnable_tools() -> set[str]:
-    """Tools with both a real command and a real parser, excluding internal
-    invocation modes (``trivy-sbom``) that are not operator-facing tools."""
-    return (set(runner.TOOL_COMMANDS) & set(parsers.PARSER_MAP)) - set(INTERNAL_TOOL_KEYS)
+    """Tools with both a real command and a real parser."""
+    return set(runner.TOOL_COMMANDS) & set(parsers.PARSER_MAP)
 
 
 def is_nuclei_enabled_for_api_scan(session: Session, workspace_id: int) -> bool:

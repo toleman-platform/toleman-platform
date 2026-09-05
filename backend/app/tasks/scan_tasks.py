@@ -1,6 +1,5 @@
 import logging
 import subprocess
-from datetime import datetime
 
 from sqlmodel import Session
 
@@ -10,6 +9,7 @@ from app.core.github import repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
+from app.core.time import utcnow
 from app.models.models import NotificationEventType, Scan, Target
 from app.scanners import parsers, runner
 from app.tasks.celery_app import celery_app
@@ -124,7 +124,7 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             # evidence the decision was made.
             if tool in AI_ONLY_TOOLS and not effective_is_ai_repo(target):
                 scan.status = "completed"
-                scan.completed_at = datetime.utcnow()
+                scan.completed_at = utcnow()
                 session.add(scan)
                 session.commit()
                 return {"scan_id": scan.id, "ingested": 0, "skipped": "not an AI/ML repo"}

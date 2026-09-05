@@ -4,7 +4,7 @@ and the admin-only management API. Follows the in-memory SQLite + TestClient +
 session-token-login pattern used by tests/test_sbom_import.py.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,6 +17,7 @@ import app.core.github_token as github_token
 from app.api.deps import get_session
 from app.core.crypto import decrypt_secret
 from app.core.security import create_session_token, hash_password
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import (
     GitHubAppConfig,
@@ -126,7 +127,7 @@ def test_resolve_returns_none_when_no_token(session):
 
 def test_resolve_lazily_purges_expired_token(session):
     ws = _workspace(session)
-    _store_token(session, ws.id, plaintext="ghp_expired", expires_at=datetime.utcnow() - timedelta(hours=1))
+    _store_token(session, ws.id, plaintext="ghp_expired", expires_at=utcnow() - timedelta(hours=1))
 
     assert github_token.resolve_github_token(session, ws.id) is None
     assert session.exec(select(GitHubToken).where(GitHubToken.workspace_id == ws.id)).first() is None
@@ -134,7 +135,7 @@ def test_resolve_lazily_purges_expired_token(session):
 
 def test_resolve_returns_unexpired_token(session):
     ws = _workspace(session)
-    _store_token(session, ws.id, plaintext="ghp_future", expires_at=datetime.utcnow() + timedelta(hours=1))
+    _store_token(session, ws.id, plaintext="ghp_future", expires_at=utcnow() + timedelta(hours=1))
 
     assert github_token.resolve_github_token(session, ws.id) == "ghp_future"
 
@@ -166,8 +167,8 @@ def test_delete_github_token(session):
 def test_purge_expired_tokens(session):
     ws1 = _workspace(session, name="ws1")
     ws2 = _workspace(session, name="ws2")
-    _store_token(session, ws1.id, plaintext="ghp_expired", expires_at=datetime.utcnow() - timedelta(hours=1))
-    _store_token(session, ws2.id, plaintext="ghp_future", expires_at=datetime.utcnow() + timedelta(hours=1))
+    _store_token(session, ws1.id, plaintext="ghp_expired", expires_at=utcnow() - timedelta(hours=1))
+    _store_token(session, ws2.id, plaintext="ghp_future", expires_at=utcnow() + timedelta(hours=1))
 
     assert github_token.purge_expired_tokens(session) == 1
     assert session.exec(select(GitHubToken).where(GitHubToken.workspace_id == ws1.id)).first() is None

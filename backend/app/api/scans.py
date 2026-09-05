@@ -80,7 +80,7 @@ def scans_summary(
 
     return {
         str(target_id): {
-            # started_at/completed_at are naive UTC datetimes (datetime.utcnow(),
+            # started_at/completed_at are naive UTC datetimes (utcnow(),
             # see the Scan model); append "Z" explicitly so the frontend's
             # `new Date(...)` (lib/utils.ts's timeAgo) parses this as UTC
             # instead of local time, which would silently skew "last scanned"

@@ -10,7 +10,6 @@ route here and the webhook-driven real-time path (app/api/webhooks.py) run
 the exact same code, not two copies.
 """
 import logging
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
@@ -21,6 +20,7 @@ from app.core.github import github_get, repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, recompute_pr_scan_status, set_commit_status
 from app.core.staleness import mark_stale_if_needed
+from app.core.time import utcnow
 from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User, WorkspaceRole
 
 logger = logging.getLogger(__name__)
@@ -319,7 +319,7 @@ def approve_ignore(
         raise HTTPException(status_code=404, detail="finding not found")
     finding.ignore_status = IgnoreStatus.APPROVED
     finding.ignore_reviewed_by = user.email
-    finding.ignore_reviewed_at = datetime.utcnow()
+    finding.ignore_reviewed_at = utcnow()
     session.add(finding)
     session.commit()
     session.refresh(finding)
@@ -345,7 +345,7 @@ def reject_ignore(
         raise HTTPException(status_code=404, detail="finding not found")
     finding.ignore_status = IgnoreStatus.REJECTED
     finding.ignore_reviewed_by = user.email
-    finding.ignore_reviewed_at = datetime.utcnow()
+    finding.ignore_reviewed_at = utcnow()
     session.add(finding)
     session.commit()
     session.refresh(finding)

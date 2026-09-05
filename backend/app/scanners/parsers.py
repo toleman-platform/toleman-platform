@@ -158,34 +158,6 @@ def parse_trivy_license(raw: dict) -> list[dict]:
     return out
 
 
-def parse_trivy_sbom(raw: dict) -> list[dict]:
-    """Trivy CycloneDX SBOM output (`trivy fs --format cyclonedx`).
-
-    Distinct schema from the JSON-format parsers above: a flat CycloneDX 1.x
-    `components` array rather than Results[].Vulnerabilities[]. Only
-    type == "library" entries are real dependencies, "application"
-    components describe the manifest file itself (e.g. requirements.txt)
-    and aren't a package. Package type/ecosystem (pip, npm, gomod, ...)
-    comes from the CycloneDX property named "aquasecurity:trivy:PkgType".
-    """
-    out = []
-    for c in raw.get("components", []):
-        if c.get("type") != "library":
-            continue
-        package_type = ""
-        for prop in c.get("properties", []) or []:
-            if prop.get("name") == "aquasecurity:trivy:PkgType":
-                package_type = prop.get("value", "")
-                break
-        out.append({
-            "name": c.get("name", ""),
-            "version": c.get("version", ""),
-            "package_type": package_type,
-            "purl": c.get("purl", ""),
-        })
-    return out
-
-
 # Fallback ecosystem-from-purl map for the CycloneDX upload branch below,
 # used only when the `aquasecurity:trivy:PkgType` property is absent (e.g.
 # an SBOM produced by a tool other than Trivy). Deliberately not reused for
@@ -223,8 +195,8 @@ def parse_sbom_upload(raw: dict) -> list[dict]:
     Auto-detects the two supported JSON formats: CycloneDX (a top-level
     `components` array) and SPDX (a top-level `packages` array, or GitHub's
     `sbom` wrapper). CycloneDX package_type comes from the
-    `aquasecurity:trivy:PkgType` property when present (same as
-    parse_trivy_sbom) and otherwise falls back to the purl type; SPDX reuses
+    `aquasecurity:trivy:PkgType` property when present and otherwise falls
+    back to the purl type; SPDX reuses
     app.core.github_dependency_graph.parse_spdx_packages so an uploaded
     GitHub SBOM parses identically to one fetched automatically.
     """
@@ -469,7 +441,6 @@ PARSER_MAP = {
     "noseyparker": parse_noseyparker,
     "trivy": parse_trivy,
     "trivy-license": parse_trivy_license,
-    "trivy-sbom": parse_trivy_sbom,
     "gosec": parse_gosec,
     "checkov": parse_checkov,
     "tfsec": parse_tfsec,

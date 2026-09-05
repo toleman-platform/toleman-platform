@@ -521,10 +521,8 @@ export type SbomComponent = {
   version: string;
   package_type: string;
   purl: string;
-  // (#227) "trivy", "github", or "trivy,github". A component only GitHub's
-  // Dependency Graph reported is by definition transitive; trivy reads
-  // manifests, so anything absent from one but present in the resolved
-  // graph is not pinned anywhere a manifest scan can see.
+  // (#227) "github", "upload", or "github,upload": which source(s)
+  // reported this component.
   source?: string;
   is_new: boolean;
   first_seen: string;
@@ -532,9 +530,9 @@ export type SbomComponent = {
 };
 
 // Issue #121: export-format parity with Reports (CSV/PDF) plus the two real
-// SBOM standards; CycloneDX was already produced (`trivy fs --format
-// cyclonedx`); SPDX JSON is the other one compliance tooling commonly
-// expects. Matches GET /api/sbom/{id}/export's `format` query pattern.
+// SBOM standards. GitHub's Dependency Graph SBOM API returns SPDX JSON;
+// the app's own export and upload paths support both CycloneDX and SPDX
+// JSON. Matches GET /api/sbom/{id}/export's `format` query pattern.
 // (#276) One row per scan for a single target, newest first. Distinct from
 // ScanSummary, which aggregates to one row per (target, tool) so list pages
 // don't pull a year of history; see GET /api/scans/summary's docstring.
@@ -1370,7 +1368,7 @@ export const api = {
   malwareCheck: (targetId: number) =>
     jsonFetch<MalwareCheckResult>(`/api/sbom/${targetId}/malware-check`, { method: "POST" }),
   // Issue #227: standalone import of a target's dependency inventory from
-  // GitHub's Dependency Graph SBOM API, independent of a full trivy scan.
+  // GitHub's Dependency Graph SBOM API, independent of a full SBOM run.
   importGithubSbom: (targetId: number) =>
     jsonFetch<SbomImportResult>(`/api/sbom/${targetId}/github-sync`, { method: "POST" }),
   // Issue #227: import an uploaded CycloneDX/SPDX SBOM document (multipart

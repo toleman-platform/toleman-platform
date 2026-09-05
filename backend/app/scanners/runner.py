@@ -54,7 +54,6 @@ TOOL_COMMANDS = {
     "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", GITLEAKS_REPORT_PLACEHOLDER, "--no-git", "--exit-code", "0"],
     "trivy": lambda path: ["trivy", "fs", "--format", "json", "--quiet", path],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],
-    "trivy-sbom": lambda path: ["trivy", "fs", "--format", "cyclonedx", "--quiet", path],
     "gosec": lambda path: ["gosec", "-fmt=json", "-quiet", "./..."],
     # IaC scanners (issue #75). `--soft-fail`/exit-code-0-on-findings
     # equivalents matter here the same way gitleaks' --exit-code 0 does
@@ -563,7 +562,6 @@ TOOL_SCOPING = {
     "gosec": PACKAGE,
     "trivy": MANIFEST,
     "trivy-license": MANIFEST,
-    "trivy-sbom": MANIFEST,
 }
 
 # Files whose change means the resolved dependency set may have moved, so a
@@ -748,7 +746,6 @@ TOOL_SUCCESS_EXIT_CODES = {
     "noseyparker": {0},
     "trivy": {0},
     "trivy-license": {0},
-    "trivy-sbom": {0},
     "gosec": {0},
     "checkov": {0},         # --soft-fail
     "tfsec": {0},           # --soft-fail
@@ -795,7 +792,7 @@ def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
     # normalizes both, so its empty/error default here is a dict (the more
     # common single-framework case) rather than picking one shape and being
     # wrong half the time.
-    dict_default_tools = ("semgrep", "trivy", "trivy-license", "trivy-sbom", "gosec", "tfsec", "checkov")
+    dict_default_tools = ("semgrep", "trivy", "trivy-license", "gosec", "tfsec", "checkov")
     stdout = proc.stdout.strip()
     if not stdout:
         return {} if tool in dict_default_tools else []

@@ -1,10 +1,9 @@
-"""GitHub Dependency Graph as a second SBOM source (#227, raised by
-@r0075h3ll).
+"""GitHub Dependency Graph as an SBOM source (#227, raised by @r0075h3ll).
 
-The gap this closes is the one #239 found from the other direction. `trivy
-fs` reads dependency *manifests* and reports what is pinned there; GitHub's
-Dependency Graph reports what those manifests actually *resolve to*,
-including transitives that appear in no manifest at all.
+GitHub's Dependency Graph reports what a repo's manifests actually *resolve
+to*, including transitives that appear in no manifest at all. It is the
+primary inventory source now that trivy no longer generates the SBOM (#328);
+the upload path (`source="upload"`) is the other.
 
 #239 closed that for our own CI by resolving requirements.txt into a venv.
 That deliberately does not generalise to customer repos; resolving
@@ -137,17 +136,17 @@ class TestSourceMerging:
         """A component both sources report must end up with both, not
         whichever ran second; the whole point of the second source is
         knowing which found what."""
-        assert _merge_sources("trivy", "github") == "trivy,github"
+        assert _merge_sources("github", "upload") == "github,upload"
 
     def test_order_is_stable_regardless_of_which_ran_first(self):
         """'a,b' and 'b,a' describing the same thing would defeat any query
         or UI grouping on the column."""
-        assert _merge_sources("trivy", "github") == _merge_sources("github", "trivy")
+        assert _merge_sources("github", "upload") == _merge_sources("upload", "github")
 
     def test_repeat_of_the_same_source_does_not_duplicate(self):
-        assert _merge_sources("trivy", "trivy") == "trivy"
+        assert _merge_sources("github", "github") == "github"
 
     def test_an_unknown_source_is_preserved_not_dropped(self):
         """A source added later without updating _SOURCE_ORDER should
         degrade to unordered, not to silently discarded provenance."""
-        assert "snyk" in _merge_sources("trivy,snyk", "github")
+        assert "snyk" in _merge_sources("github,snyk", "upload")

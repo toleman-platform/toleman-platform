@@ -1,12 +1,12 @@
 import logging
 import time
-from datetime import datetime
 
 from sqlmodel import Session, select
 
 from app.core.crypto import SecretDecryptionError
 from app.core.db import engine
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
+from app.core.time import utcnow
 from app.models.models import PipelineIntegrationBatch, PipelineIntegrationBatchItem, PipelineWorkflowTemplate, Target
 from app.tasks.celery_app import celery_app
 
@@ -59,7 +59,7 @@ def run_pipeline_integration_batch(self, batch_id: int):
             if not target:
                 item.status = "failed"
                 item.error = "target not found"
-                item.completed_at = datetime.utcnow()
+                item.completed_at = utcnow()
                 session.add(item)
                 batch.failed += 1
                 session.add(batch)
@@ -71,7 +71,7 @@ def run_pipeline_integration_batch(self, batch_id: int):
                 # silent re-run.
                 item.status = "already_integrated"
                 item.pr_url = target.pipeline_pr_url
-                item.completed_at = datetime.utcnow()
+                item.completed_at = utcnow()
                 session.add(item)
                 batch.already_integrated += 1
                 session.add(batch)
@@ -99,7 +99,7 @@ def run_pipeline_integration_batch(self, batch_id: int):
                 item.status = "succeeded"
                 item.pr_url = result["pr_url"]
                 item.pr_number = result["pr_number"]
-                item.completed_at = datetime.utcnow()
+                item.completed_at = utcnow()
                 session.add(item)
                 batch.succeeded += 1
                 session.add(batch)
@@ -109,7 +109,7 @@ def run_pipeline_integration_batch(self, batch_id: int):
                 item = session.get(PipelineIntegrationBatchItem, item.id)
                 item.status = "failed"
                 item.error = str(exc)
-                item.completed_at = datetime.utcnow()
+                item.completed_at = utcnow()
                 session.add(item)
                 batch.failed += 1
                 session.add(batch)
@@ -129,7 +129,7 @@ def run_pipeline_integration_batch(self, batch_id: int):
                     "for this target cannot be decrypted with the currently configured "
                     "key. Reconnect the GitHub App in Admin > Global Integrations."
                 )
-                item.completed_at = datetime.utcnow()
+                item.completed_at = utcnow()
                 session.add(item)
                 batch.failed += 1
                 session.add(batch)
@@ -143,7 +143,7 @@ def run_pipeline_integration_batch(self, batch_id: int):
                 item = session.get(PipelineIntegrationBatchItem, item.id)
                 item.status = "failed"
                 item.error = f"unexpected error: {exc}"
-                item.completed_at = datetime.utcnow()
+                item.completed_at = utcnow()
                 session.add(item)
                 batch.failed += 1
                 session.add(batch)
@@ -153,7 +153,7 @@ def run_pipeline_integration_batch(self, batch_id: int):
                 time.sleep(INTER_ITEM_DELAY_SECONDS)
 
         batch.status = "completed"
-        batch.completed_at = datetime.utcnow()
+        batch.completed_at = utcnow()
         session.add(batch)
         session.commit()
         return {"batch_id": batch.id, "succeeded": batch.succeeded, "failed": batch.failed, "already_integrated": batch.already_integrated}

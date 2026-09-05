@@ -272,22 +272,6 @@ BUNDLED_TOOLS = frozenset(
     {"semgrep", "semgrep-llm", "gitleaks", "trivy", "trivy-license", "gosec", "modelscan"}
 )
 
-# TOOL_COMMANDS keys that are internal invocation modes rather than tools an
-# operator would ever install, enable or trigger.
-#
-# `trivy-sbom` is trivy run with `--format cyclonedx`, dispatched only by the
-# SBOM pipeline (app/tasks/sbom_tasks.py). It is deliberately absent from the
-# marketplace and from SCAN_TOOLS: surfacing it would list a second "tool"
-# that installs exactly like trivy, and `default_usage_for` would default it
-# to on-demand-enabled, offering an operator a scan whose output is parsed as
-# SBOM components rather than findings.
-#
-# This exists so the registry-coverage test can be strict. Without an
-# explicit escape hatch that test would either fail forever or have to be
-# dropped, and dropping it means a genuinely new scanner can be wired up and
-# never appear in the marketplace an operator uses to install it.
-INTERNAL_TOOL_KEYS = frozenset({"trivy-sbom"})
-
 
 def default_usage_for(tool: str) -> dict:
     """Built-in usage-surface defaults for a tool with no saved

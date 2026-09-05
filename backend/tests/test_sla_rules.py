@@ -7,7 +7,7 @@ sla_violated fields on the findings endpoints + GET /api/dashboard/sla-complianc
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
 used across tests/test_enforcement_mode.py and tests/test_groups.py.
 """
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +18,7 @@ import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.sla import compute_sla_status, resolve_sla_days, resolve_sla_days_with_source
 from app.core.security import create_session_token, hash_password
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import (
     Finding,
@@ -129,7 +130,7 @@ def _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=None
             file_path="a.py",
             severity=severity,
             state=state,
-            first_seen=first_seen or datetime.utcnow(),
+            first_seen=first_seen or utcnow(),
         )
         session.add(f)
         session.commit()
@@ -226,10 +227,10 @@ def test_violation_computed_against_real_first_seen(engine):
     _make_rule(engine, ws_id, None, Severity.HIGH, 5)
 
     old_finding_id = _make_finding(
-        engine, target_id, severity=Severity.HIGH, first_seen=datetime.utcnow() - timedelta(days=10)
+        engine, target_id, severity=Severity.HIGH, first_seen=utcnow() - timedelta(days=10)
     )
     recent_finding_id = _make_finding(
-        engine, target_id, severity=Severity.HIGH, first_seen=datetime.utcnow() - timedelta(days=1)
+        engine, target_id, severity=Severity.HIGH, first_seen=utcnow() - timedelta(days=1)
     )
     with Session(engine) as session:
         old_finding = session.get(Finding, old_finding_id)
@@ -250,7 +251,7 @@ def test_closed_finding_never_in_violation(engine):
         engine,
         target_id,
         severity=Severity.CRITICAL,
-        first_seen=datetime.utcnow() - timedelta(days=100),
+        first_seen=utcnow() - timedelta(days=100),
         state=FindingState.MITIGATED,
     )
     with Session(engine) as session:
@@ -268,7 +269,7 @@ def test_reopened_finding_still_counts_as_open(engine):
         engine,
         target_id,
         severity=Severity.CRITICAL,
-        first_seen=datetime.utcnow() - timedelta(days=100),
+        first_seen=utcnow() - timedelta(days=100),
         state=FindingState.REOPENED,
     )
     with Session(engine) as session:
@@ -337,7 +338,7 @@ def test_findings_endpoint_reports_sla_fields(client, engine):
     target_id = _make_target(engine, ws_id)
     _make_rule(engine, ws_id, None, Severity.CRITICAL, 1)
     finding_id = _make_finding(
-        engine, target_id, severity=Severity.CRITICAL, first_seen=datetime.utcnow() - timedelta(days=5)
+        engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=5)
     )
 
     res = client.get(f"/api/findings/{finding_id}")
@@ -374,9 +375,9 @@ def test_dashboard_sla_compliance(client, engine):
     _make_rule(engine, ws_id, None, Severity.CRITICAL, 1)
     _make_rule(engine, ws_id, None, Severity.LOW, 90)
 
-    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=datetime.utcnow() - timedelta(days=5))  # violated
-    _make_finding(engine, target_id, severity=Severity.LOW, first_seen=datetime.utcnow() - timedelta(days=5))  # compliant
-    _make_finding(engine, target_id, severity=Severity.MEDIUM, first_seen=datetime.utcnow() - timedelta(days=5))  # no rule, excluded
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=5))  # violated
+    _make_finding(engine, target_id, severity=Severity.LOW, first_seen=utcnow() - timedelta(days=5))  # compliant
+    _make_finding(engine, target_id, severity=Severity.MEDIUM, first_seen=utcnow() - timedelta(days=5))  # no rule, excluded
 
     res = client.get("/api/dashboard/sla-compliance")
     assert res.status_code == 200, res.text

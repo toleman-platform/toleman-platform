@@ -7,7 +7,7 @@ fabricated content, matching the pattern already established by
 GET /api/sbom/{target_id}/export and GET /api/sbom/org/export.
 """
 import io
-from datetime import datetime
+from app.core.time import utcnow
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -68,7 +68,7 @@ def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Opt
     mirroring GET /api/dashboard/posture's convention. `ws_ids` scopes the
     org-wide (target_id is None) case to the caller's workspaces (issue #86)."""
     targets = _get_targets(session, target_id, ws_ids)
-    now = datetime.utcnow()
+    now = utcnow()
 
     severity_state_rows: list[dict] = []
     open_age_rows: list[dict] = []
@@ -385,7 +385,7 @@ def posture_report(
     data = build_posture_report(session, target_id, ws_ids)
 
     scope_slug = "org-wide" if target_id is None else data["targets"][0]["name"].replace(" ", "-")
-    date_slug = datetime.utcnow().strftime("%Y%m%d")
+    date_slug = utcnow().strftime("%Y%m%d")
 
     if format == "pdf":
         pdf_bytes = render_pdf(data)

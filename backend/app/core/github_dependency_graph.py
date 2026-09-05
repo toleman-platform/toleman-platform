@@ -67,8 +67,9 @@ def fetch_dependency_graph(repo_url: str, token: str | None = None) -> list[dict
     """Resolved dependencies for a repo, via GitHub's SBOM endpoint.
 
     Returns the same shape upsert_components consumes (name/version/
-    package_type/purl), so GitHub-sourced components merge with trivy's
-    through the existing path rather than needing a parallel one.
+    package_type/purl), so GitHub-sourced components merge with uploaded
+    SBOM components through the existing path rather than needing a parallel
+    one.
 
     Raises DependencyGraphUnavailable when GitHub cannot answer; never
     returns [] to mean that.

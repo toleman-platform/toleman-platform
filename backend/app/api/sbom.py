@@ -3,7 +3,6 @@ import json
 import logging
 import re
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -22,6 +21,7 @@ from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components  # noqa: F401, re-exported, see note below
 from app.scanners.parsers import parse_sbom_upload
 from app.core.staleness import mark_stale_if_needed
+from app.core.time import utcnow
 from app.models.models import AiBomComponent, SbomComponent, SbomRun, Target, User, WorkspaceRole
 from app.tasks.sbom_tasks import run_sbom_generation
 
@@ -68,10 +68,10 @@ def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]
             "version": c.version,
             "package_type": c.package_type,
             "purl": c.purl,
-            # (#227) Which source reported this. "github" alone is the
-            # signal that a package is transitive; trivy reads manifests,
-            # so anything only GitHub's resolved graph knows about is by
-            # definition not pinned in one.
+            # (#227) Which source(s) reported this component: "github",
+            # "upload", or both. Directness is deliberately not inferred
+            # from it; the SPDX relationship data that would say whether a
+            # package is direct or transitive isn't parsed.
             "source": c.source,
             "is_new": c.id in new_ids,
             "first_seen": c.first_seen,
@@ -162,7 +162,7 @@ def export_org_sbom(session: Session = Depends(get_session)):
     repos; a custom schema is reasonable here."""
     ordered, summary, targets, _targets_by_id = _aggregate_org_components(session)
     document = {
-        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "generated_at": utcnow().isoformat() + "Z",
         "targets": [{"id": t.id, "name": t.name} for t in targets],
         "components": [
             {
@@ -189,11 +189,12 @@ def generate_sbom(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Dispatch an async SBOM generation run (#59) instead of cloning+
-    running trivy synchronously inside the request handler, a handful of
-    concurrent requests here used to be enough to exhaust FastAPI's
-    threadpool. Creates a SbomRun row (status="running"), hands the actual
-    clone+scan work to app.tasks.sbom_tasks.run_sbom_generation via
-    .delay(), and returns immediately with the run's id. Poll
+    importing the dependency graph synchronously inside the request handler,
+    a handful of concurrent requests here used to be enough to exhaust
+    FastAPI's threadpool. Creates a SbomRun row (status="running"), hands
+    the actual clone+import work to
+    app.tasks.sbom_tasks.run_sbom_generation via .delay(), and returns
+    immediately with the run's id. Poll
     GET /api/sbom/{target_id}/runs/{run_id} until status leaves "running" to
     get the same components/new_count payload this used to return
     synchronously."""
@@ -238,14 +239,14 @@ def import_github_sbom(
     """Issue #227: import the target's dependency inventory from GitHub's
     Dependency Graph (see app.core.github_dependency_graph: the same
     source app.tasks.sbom_tasks.run_sbom_generation already unions in
-    automatically) independent of a full trivy scan. Runs synchronously (a
-    single GitHub API call, no clone/subprocess), merges the components into
-    the target's persisted SBOM via upsert_components (source="github", so
-    it's tracked the same way as the automatic union), and returns the
-    new_count so the UI can show what changed. A 502 means the dependency
-    graph is unavailable (no token, disabled, or the request was rejected);
-    distinct from an empty import, which is a legitimate "repo has no
-    dependencies" result and is reported as count 0."""
+    automatically) independent of a full SBOM generation run. Runs
+    synchronously (a single GitHub API call, no clone/subprocess), merges
+    the components into the target's persisted SBOM via upsert_components
+    (source="github", so it's tracked the same way as the automatic union),
+    and returns the new_count so the UI can show what changed. A 502 means
+    the dependency graph is unavailable (no token, disabled, or the request
+    was rejected); distinct from an empty import, which is a legitimate
+    "repo has no dependencies" result and is reported as count 0."""
     target = _get_target(target_id, session)
     slug = repo_slug_from_url(target.repo_url)
     token = resolve_github_token(session, target.workspace_id, slug)
@@ -274,8 +275,8 @@ async def upload_sbom(
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
     """Issue #227: import an uploaded SBOM document (CycloneDX JSON or SPDX
-    JSON) into the target's persisted inventory, without a trivy scan or a
-    GitHub connection. Parses the body with parse_sbom_upload, then merges via
+    JSON) into the target's persisted inventory, without a generation run
+    or a GitHub connection. Parses the body with parse_sbom_upload, then merges via
     upsert_components exactly like generate/import. A 400 means the file isn't
     valid JSON or contains no parseable dependency components; a 413 means it
     exceeded MAX_SBOM_UPLOAD_BYTES.
@@ -372,7 +373,7 @@ def _build_cyclonedx_document(target: Target, components: list[SbomComponent]) -
         "serialNumber": f"urn:uuid:{uuid.uuid4()}",
         "version": 1,
         "metadata": {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": utcnow().isoformat() + "Z",
             "component": {"type": "application", "name": target.name},
         },
         "components": [
@@ -402,7 +403,7 @@ def _build_spdx_document(target: Target, components: list[SbomComponent]) -> dic
     persisted component becomes one `packages[]` entry plus a
     DESCRIBES relationship from the document root, same shape a real SPDX
     consumer (e.g. an org's compliance tooling) expects to parse."""
-    now = datetime.utcnow().isoformat() + "Z"
+    now = utcnow().isoformat() + "Z"
     # toleman.local, not toleman.io, the project doesn't own that domain;
     # SPDX only requires this namespace be a unique URI, not a resolvable
     # one, so a non-registrable domain is safe here (#154).
@@ -453,7 +454,7 @@ def _render_sbom_csv(target: Target, components: list[SbomComponent]) -> str:
     writer = safe_csv_writer(buf)
     writer.writerow(["Target", target.name])
     writer.writerow(["Branch", target.default_branch])
-    writer.writerow(["Generated At", datetime.utcnow().isoformat() + "Z"])
+    writer.writerow(["Generated At", utcnow().isoformat() + "Z"])
     writer.writerow([])
     writer.writerow(["Name", "Version", "Package Type", "PURL"])
     for c in components:
@@ -474,7 +475,7 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
     story = [
         Paragraph(f"Toleman SBOM Summary, {target.name}", styles["Title"]),
         Paragraph(f"Branch: {target.default_branch}", styles["Normal"]),
-        Paragraph(f"Generated: {datetime.utcnow().isoformat()}Z", styles["Normal"]),
+        Paragraph(f"Generated: {utcnow().isoformat()}Z", styles["Normal"]),
         Paragraph(f"Components: {len(components)}", styles["Normal"]),
         Spacer(1, 0.25 * inch),
     ]
@@ -587,7 +588,7 @@ def export_aibom(target_id: int, session: Session = Depends(get_session)):
         target_name=target.name,
         repo_url=target.repo_url,
         branch=target.default_branch,
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=utcnow().isoformat() + "Z",
     )
     base = f"aibom-{target.name}-{target.default_branch}"
     return JSONResponse(
@@ -605,8 +606,8 @@ def export_sbom(
     """Downloadable SBOM built from persisted components, the same real
     data shown on the page, not a re-fetch or re-scan. Issue #121: export-
     format parity with Reports (CSV/PDF) plus the two real SBOM standards
-    (CycloneDX was already produced by `trivy fs --format cyclonedx`; SPDX
-    JSON is the other one most compliance tooling expects)."""
+    (CycloneDX, and the SPDX JSON that GitHub's dependency graph and most
+    compliance tooling speak)."""
     target = _get_target(target_id, session)
     components = session.exec(
         select(SbomComponent)

@@ -15,6 +15,7 @@ from app.core.fp_learning import learn_suppression_rule
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
 from app.core.remediation import group_remediations
+from app.core.time import utcnow
 from app.core.fixability import (
     UNKNOWN,
     VALID_FIXABILITY,
@@ -96,7 +97,7 @@ def _maybe_notify_sla_breach(session: Session, finding: Finding, sla_violated: b
     is treated as a fresh breach and notifies again, per the field's
     docstring in app.models.models.Finding."""
     if sla_violated and finding.sla_breach_notified_at is None:
-        finding.sla_breach_notified_at = datetime.utcnow()
+        finding.sla_breach_notified_at = utcnow()
         session.add(finding)
         session.commit()
         # commit() expires every attribute on `finding` by default, without

@@ -5,6 +5,30 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Package } from "lucide-react";
 
+// (#227) Human label for a component's provenance source. Legacy rows from
+// before trivy SBOM generation was removed keep a neutral label rather than
+// being dropped or relabelled as a newer source.
+const SOURCE_LABELS: Record<string, string> = {
+  github: "graph",
+  upload: "upload",
+  // Legacy, no longer produced: rows written while trivy generated the SBOM.
+  trivy: "manifest",
+};
+
+// Labelled per part rather than per whole string. source is a merged set
+// (_merge_sources in app/core/sbom_ingestion.py), and its order follows
+// _SOURCE_ORDER with anything unrecognised appended, so a legacy "trivy" row
+// re-seen by the Dependency Graph import merges to "github,trivy", not
+// "trivy,github". Enumerating whole combinations missed that one and rendered
+// the raw internal string in the table.
+function sourceLabel(source?: string): string {
+  if (!source) return "manifest";
+  return source
+    .split(",")
+    .map((part) => SOURCE_LABELS[part] ?? part)
+    .join(" + ");
+}
+
 // (#276) A per-target dependency inventory, separate from the findings list.
 //
 // The gap this closes: a target's page could only ever answer "what is
@@ -34,19 +58,12 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
 
   const components: SbomComponent[] = sbom.components;
   const newCount = components.filter((c) => c.is_new).length;
-  // (#227) A component only GitHub's Dependency Graph reported is transitive
-  // by definition; trivy reads manifests, so anything absent from one but
-  // present in the resolved graph is not pinned where a manifest scan can
-  // see it. Counting them makes the second source's value visible rather
-  // than silently folding its results into one undifferentiated total.
-  const transitiveOnly = components.filter((c) => c.source === "github").length;
 
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">
         {sbom.count} package{sbom.count === 1 ? "" : "s"} resolved for this target
         {newCount > 0 && <> · {newCount} first seen in the latest scan</>}
-        {transitiveOnly > 0 && <> · {transitiveOnly} transitive (resolved graph only)</>}
       </p>
 
       <Card className="border-border bg-card">
@@ -75,13 +92,7 @@ export async function TargetDependencies({ targetId }: { targetId: number }) {
                     <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{c.version}</td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">{c.package_type}</td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">
-                      {c.source === "github" ? (
-                        <span title="Only in GitHub's resolved dependency graph, not pinned in any manifest, i.e. transitive">
-                          transitive
-                        </span>
-                      ) : (
-                        (c.source ?? "trivy").replace("trivy,github", "manifest + graph")
-                      )}
+                      {sourceLabel(c.source)}
                     </td>
                   </tr>
                 ))}

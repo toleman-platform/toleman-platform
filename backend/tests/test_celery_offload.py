@@ -281,11 +281,12 @@ def test_sbom_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, mon
 
     monkeypatch.setattr(sbom_tasks, "engine", engine)
     monkeypatch.setattr(sbom_tasks.runner, "clone_repo", _fake_clone_repo)
-    monkeypatch.setattr(sbom_tasks.runner, "run_tool", lambda tool, repo_path: {})
     monkeypatch.setattr(
         sbom_tasks,
-        "parse_trivy_sbom",
-        lambda raw: [{"name": "anthropic", "version": "0.121.0", "package_type": "pip", "purl": "pkg:pypi/anthropic@0.121.0"}],
+        "fetch_dependency_graph",
+        lambda repo_url, token=None: [
+            {"name": "anthropic", "version": "0.121.0", "package_type": "pip", "purl": "pkg:pypi/anthropic@0.121.0"}
+        ],
     )
 
     res = client.post(f"/api/sbom/{target_id}")
@@ -323,3 +324,47 @@ def test_scan_dispatch_marks_row_failed_on_clone_error(client, engine, monkeypat
 
     poll = client.get(f"/api/scans/{scan_id}")
     assert poll.json()["status"] == "failed"
+
+
+def test_sbom_dispatch_fails_but_still_runs_the_aibom_pass_when_the_graph_is_unavailable(
+    client, engine, monkeypatch, eager_celery
+):
+    """The dependency graph is the only inventory source now that trivy's
+    SBOM path is gone, so a run that cannot read it produced no inventory and
+    is reported failed, not completed-with-an-empty-inventory.
+
+    It still clones and still extracts the AIBOM (#190). The AIBOM pass is
+    regexes over checked-out source and never reads the inventory, so making
+    it conditional on the dependency graph would silently drop AI-component
+    inventory for every repo whose graph is disabled, which is the default
+    for private repos."""
+    from app.core.github_dependency_graph import DependencyGraphUnavailable
+
+    client, target_id = _dev_client_with_target(client, engine)
+
+    cloned = []
+    extracted = []
+
+    def _record_clone(*args, **kwargs):
+        cloned.append(args)
+        return _fake_clone_repo(*args, **kwargs)
+
+    def _unavailable(repo_url, token=None):
+        raise DependencyGraphUnavailable("dependency graph disabled")
+
+    monkeypatch.setattr(sbom_tasks, "engine", engine)
+    monkeypatch.setattr(sbom_tasks.runner, "clone_repo", _record_clone)
+    monkeypatch.setattr(sbom_tasks, "fetch_dependency_graph", _unavailable)
+    monkeypatch.setattr(
+        sbom_tasks, "extract_ai_components", lambda repo_path: extracted.append(repo_path) or []
+    )
+
+    res = client.post(f"/api/sbom/{target_id}")
+    assert res.status_code == 202
+    run_id = res.json()["run_id"]
+
+    body = client.get(f"/api/sbom/{target_id}/runs/{run_id}").json()
+    assert body["status"] == "failed"
+    assert "dependency graph disabled" in body["error"]
+    assert cloned, "the AIBOM pass needs a checkout, so the clone must still happen"
+    assert extracted, "AIBOM extraction must not be skipped because the graph was unavailable"

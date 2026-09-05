@@ -19,6 +19,7 @@ platform took to give up (often a clone timeout), not how long the work
 takes, and averaging those in would drag every estimate toward the timeout.
 """
 from datetime import datetime
+from app.core.time import utcnow
 from statistics import median
 from typing import Optional
 
@@ -73,7 +74,7 @@ def elapsed_seconds(scan: Scan, now: Optional[datetime] = None) -> int:
     Always available, unlike the estimate; this is what the UI falls back
     to when there is no history to estimate from.
     """
-    end = scan.completed_at or (now or datetime.utcnow())
+    end = scan.completed_at or (now or utcnow())
     return max(0, int((end - scan.started_at).total_seconds()))
 
 

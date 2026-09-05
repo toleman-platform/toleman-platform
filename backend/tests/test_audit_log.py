@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine
 import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import Finding, FindingState, FindingStateLog, Organization, Scan, Severity, Target, User, Workspace
 
@@ -268,9 +269,9 @@ def test_date_range_filter(client, engine):
     finding_id = _make_finding(engine, target_id)
     client.post(f"/api/findings/{finding_id}/triage", params={"to_state": "Accepted Risk"})
 
-    from datetime import datetime, timedelta
-    tomorrow = (datetime.utcnow() + timedelta(days=1)).date().isoformat()
-    yesterday = (datetime.utcnow() - timedelta(days=1)).date().isoformat()
+    from datetime import timedelta
+    tomorrow = (utcnow() + timedelta(days=1)).date().isoformat()
+    yesterday = (utcnow() - timedelta(days=1)).date().isoformat()
 
     resp = client.get("/api/audit/log", params={"date_from": tomorrow})
     assert resp.json()["total"] == 0

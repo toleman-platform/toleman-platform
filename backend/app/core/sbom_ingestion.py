@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.core.time import utcnow
 
 from sqlmodel import Session, select
 
@@ -10,7 +10,7 @@ def upsert_components(
     target_id: int,
     branch: str,
     discovered: list[dict],
-    source: str = "trivy",
+    source: str,
 ) -> list[SbomComponent]:
     """Persist SBOM components (upsert on target+branch+name+version+purl),
     returning the subset that are new since the last run; same net-new
@@ -30,7 +30,7 @@ def upsert_components(
         ).all()
     }
 
-    now = datetime.utcnow()
+    now = utcnow()
     new_components: list[SbomComponent] = []
     for item in discovered:
         key = (item["name"], item["version"], item["purl"])
@@ -38,11 +38,11 @@ def upsert_components(
         if existing_row:
             existing_row.last_seen = now
             existing_row.package_type = item.get("package_type", "")
-            # (#227) Union, not overwrite. A component both trivy and
-            # GitHub's Dependency Graph report should end up "trivy,github"
-            # rather than whichever source happened to run second; the
-            # whole point of the second source is knowing which found what,
-            # and last-writer-wins would erase exactly that.
+            # (#227) Union, not overwrite. A component both GitHub's
+            # Dependency Graph and an uploaded SBOM report should end up
+            # "github,upload" rather than whichever source happened to run
+            # second; the whole point of multiple sources is knowing which
+            # found what, and last-writer-wins would erase exactly that.
             existing_row.source = _merge_sources(existing_row.source, source)
             session.add(existing_row)
         else:
@@ -67,7 +67,7 @@ def upsert_components(
 
 # Stable ordering so the stored value is comparable across runs; "a,b" and
 # "b,a" describing the same thing would defeat any query or UI grouping on it.
-_SOURCE_ORDER = ("trivy", "github")
+_SOURCE_ORDER = ("github", "upload")
 
 
 def _merge_sources(existing: str, incoming: str) -> str:

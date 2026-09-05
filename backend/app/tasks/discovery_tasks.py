@@ -1,6 +1,5 @@
 import logging
 import subprocess
-from datetime import datetime
 
 from sqlmodel import Session, select
 
@@ -9,6 +8,7 @@ from app.core.discovery_ingestion import upsert_endpoints
 from app.core.github import repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core.notifications import dispatch_notification
+from app.core.time import utcnow
 from app.models.models import ApiEndpoint, DiscoveryRun, NotificationEventType, Target
 from app.scanners import runner
 from app.scanners.discovery import discover_endpoints
@@ -66,7 +66,7 @@ def run_discovery(self, target_id: int, run_id: int):
         if not target:
             run.status = "failed"
             run.error = "target not found"
-            run.completed_at = datetime.utcnow()
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             return {"error": "target not found", "run_id": run.id}
@@ -92,7 +92,7 @@ def run_discovery(self, target_id: int, run_id: int):
             run.count = all_count
             run.new_count = len(new_endpoints)
             run.new_ids = ",".join(str(e.id) for e in new_endpoints)
-            run.completed_at = datetime.utcnow()
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             return {"run_id": run.id, "count": all_count, "new_count": len(new_endpoints)}
@@ -103,7 +103,7 @@ def run_discovery(self, target_id: int, run_id: int):
             if self.request.retries >= self.max_retries:
                 run.status = "failed"
                 run.error = "git clone failed after retries"
-                run.completed_at = datetime.utcnow()
+                run.completed_at = utcnow()
                 session.add(run)
                 session.commit()
                 _notify_discovery_failure(session, target, run.error)
@@ -113,7 +113,7 @@ def run_discovery(self, target_id: int, run_id: int):
             # runner.clone_error_message avoids echoing raw subprocess argv/paths
             # (and, historically, an embedded GitHub token) back into run state.
             run.error = runner.clone_error_message(exc)
-            run.completed_at = datetime.utcnow()
+            run.completed_at = utcnow()
             session.add(run)
             session.commit()
             _notify_discovery_failure(session, target, run.error)

@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 from sqlmodel import Session, select
 
 from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, Severity, Target
@@ -12,6 +11,7 @@ from app.core.jira_integration import create_jira_ticket_for_finding, jira_confi
 from app.core.notifications import dispatch_notification
 from app.core.siem_export import send_finding_to_siem
 from app.core.fp_learning import apply_auto_suppression, find_matching_rule
+from app.core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             # epss_score/kev_listed are intentionally left as whatever was set at
             # creation time on rescans, re-fetching per-finding on every rescan
             # isn't worth the network cost; MVP tradeoff, staleness is acceptable.
-            existing.last_seen = datetime.utcnow()
+            existing.last_seen = utcnow()
             existing.scan_id = scan.id
             if existing.state == FindingState.MITIGATED:
                 _transition(session, existing, FindingState.REOPENED, "reappeared in scan")
@@ -238,7 +238,7 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
 
     scan.findings_count = len(parsed)
     scan.status = "completed"
-    scan.completed_at = datetime.utcnow()
+    scan.completed_at = utcnow()
     session.add(scan)
     session.commit()
 
@@ -249,6 +249,6 @@ def _transition(session: Session, finding: Finding, to_state: FindingState, reas
     log = FindingStateLog(finding_id=finding.id, from_state=finding.state, to_state=to_state, reason=reason, actor=actor)
     finding.state = to_state
     if to_state == FindingState.MITIGATED:
-        finding.mitigated_at = datetime.utcnow()
+        finding.mitigated_at = utcnow()
     session.add(finding)
     session.add(log)

@@ -16,7 +16,7 @@ On-Demand Scan already did this correctly by reading GET /api/scans/active
 lacked it: the server is the source of truth for what is in flight.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,6 +26,7 @@ from sqlmodel import Session, SQLModel, create_engine
 import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
+from app.core.time import utcnow
 from app.main import app
 from app.models.models import (
     Organization,
@@ -105,7 +106,7 @@ def _pr_scan(engine, target_id, pr_number=4, status=PRGuardrailStatus.RUNNING, c
             pr_number=pr_number,
             branch="feature",
             status=status,
-            created_at=created_at or datetime.utcnow(),
+            created_at=created_at or utcnow(),
         )
         session.add(scan)
         session.commit()
@@ -148,7 +149,7 @@ def test_a_stale_running_pr_scan_is_swept_not_reported(client, engine):
     it as active renders as permanently in flight, which is indistinguishable
     from a hung platform; and keeps the button disabled forever."""
     target_id, _ = _make_target(engine)
-    scan_id = _pr_scan(engine, target_id, created_at=datetime.utcnow() - timedelta(hours=3))
+    scan_id = _pr_scan(engine, target_id, created_at=utcnow() - timedelta(hours=3))
     client, _ = _login(client, engine)
 
     assert client.get("/api/pr-guardrail/active").json() == {}
@@ -202,7 +203,7 @@ def _install_run(engine, tool="checkov", status="running", started_at=None) -> i
             tool=tool,
             package=tool,
             status=status,
-            started_at=started_at or datetime.utcnow(),
+            started_at=started_at or utcnow(),
         )
         session.add(run)
         session.commit()
@@ -229,7 +230,7 @@ def test_settled_installs_are_not_reported_as_active(client, engine):
 
 
 def test_a_stale_running_install_is_swept_not_reported(client, engine):
-    run_id = _install_run(engine, started_at=datetime.utcnow() - timedelta(hours=3))
+    run_id = _install_run(engine, started_at=utcnow() - timedelta(hours=3))
     client, _ = _login(client, engine)
 
     assert client.get("/api/tools/installs/active").json() == {}

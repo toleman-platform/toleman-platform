@@ -8,9 +8,9 @@ inventories models and datasets alongside the packages.
 
 Format is CycloneDX 1.6, which added first-class machine-learning component
 types. Chosen over SPDX 3.0's AI profile for one practical reason: this
-codebase already emits CycloneDX (`trivy fs --format cyclonedx`, persisted as
-SbomComponent), so an AIBOM extends the pipeline that exists rather than
-introducing a second format and a second parser. SPDX has ISO lineage that
+codebase already exports CycloneDX from its persisted SbomComponent rows, so
+an AIBOM extends the pipeline that exists rather than introducing a second
+format and a second parser. SPDX has ISO lineage that
 carries weight in procurement and is the obvious second target, but building
 both at once would be speculative.
 
@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.ai_repo_detection import SKIP_DIRECTORIES
+from app.core.time import utcnow
 
 CYCLONEDX_SPEC_VERSION = "1.6"
 CYCLONEDX_BOM_FORMAT = "CycloneDX"
@@ -323,8 +324,6 @@ def upsert_aibom_components(
     dependency, now pinned; treating it as a new component would hide exactly
     the change a reader most wants to see.
     """
-    from datetime import datetime
-
     from sqlmodel import select
 
     from app.models.models import AiBomComponent
@@ -338,7 +337,7 @@ def upsert_aibom_components(
         ).all()
     }
 
-    now = datetime.utcnow()
+    now = utcnow()
     new_rows = []
     for component in components:
         key = (component.name, component.component_type)

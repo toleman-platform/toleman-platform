@@ -214,7 +214,7 @@ jobs:
       - name: Bring up the full stack
         run: |
           cp .env.example .env
-          docker compose up --build -d
+          docker compose -f docker-compose.yml up --build -d
 
       - name: Wait for all five services to be up and healthy
         # docker-compose.yml already defines healthchecks for postgres,

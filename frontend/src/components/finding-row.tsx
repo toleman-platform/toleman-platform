@@ -418,7 +418,14 @@ export function FindingRow({
 
         {detailsOpen && (
           <div className="mt-2">
-            {finding.description && <p className="text-xs text-muted-foreground">{finding.description}</p>}
+            {/* whitespace-pre-wrap because descriptions are plain text with real line
+                breaks, not prose that can be reflowed: the osv-malware compromise-scope
+                block (#331) is several paragraphs, and OSV advisory bodies carry their own
+                wrapping. Collapsed by default HTML whitespace, they render as one run-on
+                paragraph with the block's separator inline. */}
+            {finding.description && (
+              <p className="whitespace-pre-wrap text-xs text-muted-foreground">{finding.description}</p>
+            )}
             <FindingEnrichmentPanel finding={finding} />
           </div>
         )}

@@ -227,10 +227,21 @@ COPY --from=builder \
 WORKDIR /app
 COPY --from=builder /app /app
 
+# (BLD-01) Build identity, surfaced by GET /health and the sidebar -- see
+# the same ARG/ENV pair in backend/Dockerfile. Missing here until this
+# image was actually published (#291): nothing failed without it, but
+# every published hardened image would have silently reported
+# version "dev" on /health, indistinguishable from a local build, since
+# these were never declared for this stage to pick up as build-args.
+ARG BUILD_VERSION=dev
+ARG BUILD_COMMIT=""
+
 ENV PATH="/usr/local/bin:$PATH" \
     LD_LIBRARY_PATH="/usr/local/lib" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    BUILD_VERSION=${BUILD_VERSION} \
+    BUILD_COMMIT=${BUILD_COMMIT}
 
 EXPOSE 8000
 

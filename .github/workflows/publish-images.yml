@@ -94,6 +94,55 @@ jobs:
             BUILD_VERSION=${{ github.ref_name }}
             BUILD_COMMIT=${{ github.sha }}
 
+      # backend/Dockerfile.hardened: same image, distroless/cc-debian12
+      # runtime instead of python:3.12-slim. Built and verified (a real
+      # HTTPS git clone + a real semgrep scan both run inside it) since
+      # #158, but never published, only ever built by docker-images.yml's
+      # PR check, so nobody could actually pull the smaller image. Measured
+      # there at 1.22GB -> 1.04GB (roughly 15% smaller pulls/storage) and
+      # 135 -> 75 CRITICAL+HIGH Trivy findings, entirely from dropping the
+      # Debian OS-package layer; see that file's own header comment for the
+      # full measurement and for why it isn't the default yet ("promote
+      # deliberately"). Published under the same repo with a `-hardened`
+      # tag suffix rather than a separate image repo, so it stays discoverable
+      # next to the image it's an alternative to instead of needing its own
+      # docs/tag-strategy section.
+      - name: Backend (hardened) tags
+        id: backend-hardened-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.BACKEND_IMAGE }}
+          # latest=false: metadata-action's own implicit `latest` tag (fired
+          # by type=semver on a release tag) is unsuffixed and would
+          # overwrite the *standard* backend image's `latest` tag, since
+          # both metadata-action calls in this job target the same
+          # BACKEND_IMAGE. The `latest` entry below is an explicit type=raw
+          # tag instead, which still gets the -hardened suffix from this
+          # same flavor block.
+          flavor: |
+            suffix=-hardened
+            latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=edge,enable={{is_default_branch}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
+
+      - name: Build + push backend (hardened)
+        id: backend-hardened-build
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile.hardened
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.backend-hardened-meta.outputs.tags }}
+          labels: ${{ steps.backend-hardened-meta.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ github.ref_name }}
+            BUILD_COMMIT=${{ github.sha }}
+
       - name: Frontend tags
         id: frontend-meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
@@ -146,6 +195,15 @@ jobs:
           subject-digest: ${{ steps.backend-build.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest backend (hardened) provenance
+        id: backend-hardened-attest
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.BACKEND_IMAGE }}
+          subject-digest: ${{ steps.backend-hardened-build.outputs.digest }}
+          push-to-registry: true
+
       - name: Attest frontend provenance
         id: frontend-attest
         continue-on-error: true
@@ -171,6 +229,12 @@ jobs:
             echo '```'
             echo "digest: \`${{ steps.backend-build.outputs.digest }}\`"
             echo
+            echo "**Backend (hardened)** (\`${{ env.BACKEND_IMAGE }}\`)"
+            echo '```'
+            echo "${{ steps.backend-hardened-meta.outputs.tags }}"
+            echo '```'
+            echo "digest: \`${{ steps.backend-hardened-build.outputs.digest }}\`"
+            echo
             echo "**Frontend** (\`${{ env.FRONTEND_IMAGE }}\`)"
             echo '```'
             echo "${{ steps.frontend-meta.outputs.tags }}"
@@ -179,5 +243,5 @@ jobs:
             echo
             echo "platforms: \`${{ env.PLATFORMS }}\`"
             echo
-            echo "provenance attestation: backend \`${{ steps.backend-attest.outcome }}\`, frontend \`${{ steps.frontend-attest.outcome }}\`"
+            echo "provenance attestation: backend \`${{ steps.backend-attest.outcome }}\`, backend-hardened \`${{ steps.backend-hardened-attest.outcome }}\`, frontend \`${{ steps.frontend-attest.outcome }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

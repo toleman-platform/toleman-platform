@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Randomized versatile demo data generator for Toleman.
+"""Randomized versatile demo data generator for local Toleman environments.
+
+``--clean`` removes all generated scan data from the configured local database.
 
 Usage:
     # Run in Docker Compose (pipe script into container):
@@ -9,20 +11,23 @@ Usage:
     cd backend && python scripts/seed_demo_data.py --count 200 --clean
 """
 import argparse
-import hashlib
 import json
 import random
+import secrets
 import sys
-import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 # Ensure app package is discoverable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlmodel import Session, select, delete
+from app.core.config import settings
 from app.core.db import engine
+from app.core.dedup import compute_dedup_hash
+from app.core.scoring import compute_priority_score
 from app.core.security import hash_password
+from app.core.time import utcnow
 from app.models.models import (
     AiBomComponent,
     ApiEndpoint,
@@ -137,9 +142,21 @@ AI_MODELS = [
     ("mistralai/Mistral-7B-Instruct-v0.2", "machine-learning-model", "v0.2", "huggingface", "models/rag_config.json"),
 ]
 
+CVSS_BY_SEVERITY = {
+    Severity.CRITICAL: (9.8, "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"),
+    Severity.HIGH: (8.1, "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H"),
+    Severity.MEDIUM: (6.5, "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:L"),
+    Severity.LOW: (3.7, "CVSS:3.1/AV:L/AC:H/PR:L/UI:R/S:U/C:L/I:L/A:N"),
+    Severity.INFO: (0.0, "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:N/I:N/A:N"),
+}
+
 
 def seed_random_data(session: Session, count: int = 150, clean: bool = False) -> None:
-    now = datetime.utcnow()
+    """Populate a local development database with randomized demo data."""
+    if settings.environment != "local":
+        raise RuntimeError("Demo data can only be seeded in local environments")
+
+    now = utcnow()
     print(f"🎲 Generating {count} randomized versatile records across Toleman...")
 
     if clean:
@@ -148,6 +165,7 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
         session.exec(delete(PRGuardrailFinding))
         session.exec(delete(PRGuardrailScan))
         session.exec(delete(Finding))
+        session.exec(delete(CveEnrichment))
         session.exec(delete(Scan))
         session.exec(delete(SbomComponent))
         session.exec(delete(SbomRun))
@@ -165,19 +183,18 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
         session.refresh(org)
 
     workspaces = {}
-    ws_configs = [
-        ("production", "toleman_key_prod_sec_01"),
-        ("staging", "toleman_key_stag_sec_02"),
-        ("ai-research", "toleman_key_aire_sec_03"),
-    ]
-    for ws_name, key in ws_configs:
+    for ws_name in ("production", "staging", "ai-research"):
         ws = session.exec(select(Workspace).where(Workspace.name == ws_name, Workspace.organization_id == org.id)).first()
         if not ws:
-            ws = Workspace(name=ws_name, organization_id=org.id, api_key=key)
+            ws = Workspace(name=ws_name, organization_id=org.id, api_key=secrets.token_urlsafe(24))
             session.add(ws)
             session.commit()
             session.refresh(ws)
+        else:
+            ws.api_key = secrets.token_urlsafe(24)
+            session.add(ws)
         workspaces[ws_name] = ws
+    session.commit()
 
     ws_prod = workspaces["production"]
     ws_staging = workspaces["staging"]
@@ -190,16 +207,20 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
         ("alex.lead@acme.corp", "Alex Rivera", UserRole.ADMIN),
         ("rachel.qa@acme.corp", "Rachel Vance", UserRole.VIEWER),
     ]
+    demo_password = secrets.token_urlsafe(18)
     for email, name, role in users_data:
         u = session.exec(select(User).where(User.email == email)).first()
         if not u:
-            u = User(email=email, name=name, password_hash=hash_password("changeme123"), role=role)
+            u = User(email=email, name=name, password_hash=hash_password(demo_password), role=role)
             session.add(u)
             session.commit()
             session.refresh(u)
             session.add(WorkspaceMembership(user_id=u.id, workspace_id=ws_prod.id, role=WorkspaceRole.SECURITY_ENGINEER if "sec" in email else WorkspaceRole.DEVELOPER))
             session.add(WorkspaceMembership(user_id=u.id, workspace_id=ws_staging.id, role=WorkspaceRole.DEVELOPER))
             session.add(WorkspaceMembership(user_id=u.id, workspace_id=ws_ai.id, role=WorkspaceRole.DEVELOPER))
+        else:
+            u.password_hash = hash_password(demo_password)
+            session.add(u)
     session.commit()
 
     # 3. Target Groups
@@ -261,7 +282,7 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
     # 5. SLA & Policy Rules
     sla_configs = [(Severity.CRITICAL, 7), (Severity.HIGH, 14), (Severity.MEDIUM, 30), (Severity.LOW, 90)]
     for sev, days in sla_configs:
-        existing = session.exec(select(SlaRule).where(SlaRule.workspace_id == ws_prod.id, SlaRule.severity == sev, SlaRule.group_id == None)).first()
+        existing = session.exec(select(SlaRule).where(SlaRule.workspace_id == ws_prod.id, SlaRule.severity == sev, SlaRule.group_id.is_(None))).first()
         if not existing:
             session.add(SlaRule(workspace_id=ws_prod.id, group_id=None, severity=sev, days_to_fix=days))
 
@@ -278,6 +299,7 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
 
     # 6. Scans across multiple tools
     tools_list = ["semgrep", "gitleaks", "trivy", "gosec", "modelscan", "checkov", "bandit"]
+    scans_by_target_tool = {}
     for tgt in targets:
         for tool in random.sample(tools_list, k=random.randint(2, 4)):
             days_ago = random.randint(1, 45)
@@ -295,6 +317,8 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 error="Git clone failed: connection timeout" if is_failed else "",
             )
             session.add(s)
+            if not is_failed:
+                scans_by_target_tool[(tgt.id, tool)] = s
     session.commit()
 
     # 7. Randomized Diverse Findings
@@ -325,22 +349,38 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
         line_start = random.randint(10, 400)
         line_end = line_start + random.randint(0, 15)
 
-        crit_weight = tgt.criticality_weight
-        sev_weight = {Severity.CRITICAL: 5, Severity.HIGH: 4, Severity.MEDIUM: 3, Severity.LOW: 2, Severity.INFO: 1}[sev]
-        epss_multiplier = (epss or 0.1) * 10
-        kev_bonus = 20 if kev else 0
-        priority = min(99, int(crit_weight * sev_weight * 3 + epss_multiplier + kev_bonus))
+        priority = compute_priority_score(
+            sev, tgt.criticality_weight, epss_score=epss, kev_listed=kev
+        )
 
         days_first_seen = random.randint(1, 80)
         f_seen = now - timedelta(days=days_first_seen, hours=random.randint(1, 20))
         l_seen = now - timedelta(hours=random.randint(1, 24))
-        mit_at = now - timedelta(days=random.randint(1, 10)) if state == FindingState.MITIGATED else None
+        transition_at = f_seen + (l_seen - f_seen) * random.random()
+        mit_at = transition_at if state == FindingState.MITIGATED else None
 
-        dedup_str = f"{tgt.id}:{tool}:{rule_id}:{file_path}:{line_start}:{uuid.uuid4().hex[:8]}"
-        dedup_hash = hashlib.sha256(dedup_str.encode()).hexdigest()
+        dedup_hash = compute_dedup_hash(
+            rule_id, file_path, tool, line_start=line_start
+        )
+
+        scan = scans_by_target_tool.get((tgt.id, tool))
+        if not scan:
+            scan = Scan(
+                target_id=tgt.id,
+                tool=tool,
+                branch=tgt.default_branch,
+                status="completed",
+                started_at=f_seen,
+                completed_at=l_seen,
+                findings_count=1,
+            )
+            session.add(scan)
+            session.flush()
+            scans_by_target_tool[(tgt.id, tool)] = scan
 
         f_obj = Finding(
             target_id=tgt.id,
+            scan_id=scan.id,
             dedup_hash=dedup_hash,
             tool=tool,
             rule_id=rule_id,
@@ -362,6 +402,17 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
             mitigated_at=mit_at,
         )
         session.add(f_obj)
+        if cve_id and not session.exec(
+            select(CveEnrichment).where(CveEnrichment.cve_id == cve_id)
+        ).first():
+            cvss_score, cvss_vector = CVSS_BY_SEVERITY[sev]
+            session.add(CveEnrichment(
+                cve_id=cve_id,
+                nvd_description=title,
+                cvss_score=cvss_score,
+                cvss_vector=cvss_vector,
+                nvd_found=True,
+            ))
         session.commit()
         session.refresh(f_obj)
         created_findings += 1
@@ -373,7 +424,7 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 to_state=state.value,
                 reason="Triage review completed",
                 actor=random.choice(["sarah.sec@acme.corp", "alex.lead@acme.corp"]),
-                created_at=f_seen + timedelta(days=random.randint(1, 5)),
+                created_at=transition_at,
             ))
 
     session.commit()
@@ -439,6 +490,7 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
         pr_statuses = [PRGuardrailStatus.PASSED, PRGuardrailStatus.BLOCKED, PRGuardrailStatus.OVERRIDDEN]
         for pr_num in range(101, 101 + random.randint(2, 5)):
             status = random.choice(pr_statuses)
+            created_at = now - timedelta(days=random.randint(1, 15))
             pr_scan = PRGuardrailScan(
                 target_id=tgt.id,
                 pr_number=pr_num,
@@ -452,8 +504,8 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 tools_run="semgrep,gitleaks,trivy",
                 scan_scope="diff",
                 files_scanned=random.randint(2, 12),
-                created_at=now - timedelta(days=random.randint(1, 15)),
-                completed_at=now - timedelta(days=random.randint(1, 15), minutes=-3),
+                created_at=created_at,
+                completed_at=created_at + timedelta(minutes=random.randint(1, 10)),
             )
             session.add(pr_scan)
             session.commit()
@@ -477,9 +529,10 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
 
 
 def main():
+    """Parse CLI options and seed the configured local database."""
     parser = argparse.ArgumentParser(description="Generate randomized versatile demo data for Toleman")
     parser.add_argument("--count", type=int, default=150, help="Number of findings to generate (default: 150)")
-    parser.add_argument("--clean", action="store_true", help="Wipe existing demo data before seeding")
+    parser.add_argument("--clean", action="store_true", help="Wipe all generated scan data from the local database before seeding")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     args = parser.parse_args()
 

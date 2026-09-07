@@ -1,5 +1,7 @@
 backend/venv/
 backend/.env
+backend/.demo_credentials.json
+.demo_credentials.json
 .env
 backend/__pycache__/
 backend/**/__pycache__/

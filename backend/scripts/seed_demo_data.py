@@ -151,9 +151,6 @@ CVSS_BY_SEVERITY = {
 }
 
 
-DEFAULT_DEMO_PASSWORD = "toleman-local-demo"
-
-
 def seed_random_data(
     session: Session,
     count: int = 150,
@@ -226,7 +223,7 @@ def seed_random_data(
         ("alex.lead@acme.corp", "Alex Rivera", UserRole.ADMIN),
         ("rachel.qa@acme.corp", "Rachel Vance", UserRole.VIEWER),
     ]
-    active_password = demo_password or DEFAULT_DEMO_PASSWORD
+    active_password = demo_password or secrets.token_urlsafe(18)
     password_hash = hash_password(active_password)
     for email, name, role in users_data:
         u = session.exec(select(User).where(User.email == email)).first()
@@ -554,11 +551,19 @@ def seed_random_data(
                     ignore_requested_reason="Development test artifact",
                 ))
     session.commit()
+    creds_file = Path(__file__).resolve().parent.parent / ".demo_credentials.json"
+    creds_data = {
+        "password": active_password,
+        "users": [email for email, _, _ in users_data],
+        "workspaces": {ws_name: ws.api_key for ws_name, ws in workspaces.items()},
+    }
+    creds_file.write_text(json.dumps(creds_data, indent=2))
+
     print("🎉 All randomized data successfully generated and committed!")
-    print("\n🔐 Seeded Demo Accounts (Password: configured or default 'toleman-local-demo'):")
+    print("\n🔐 Seeded Demo Accounts:")
     for email, _, role in users_data:
         print(f"  - {email} ({role.value})")
-    print(f"\n🔑 Configured workspaces: {', '.join(workspaces.keys())}")
+    print(f"\n🔑 Demo credentials saved locally to: {creds_file.name}")
 
 
 def main():
@@ -566,7 +571,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate randomized versatile demo data for Toleman")
     parser.add_argument("--count", type=int, default=150, help="Number of findings to generate (default: 150)")
     parser.add_argument("--clean", action="store_true", help="Wipe all generated scan data from the local database before seeding")
-    parser.add_argument("--password", type=str, default=None, help="Password for seeded demo accounts (default: 'toleman-local-demo')")
+    parser.add_argument("--password", type=str, default=None, help="Password for seeded demo accounts (default: randomly generated)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     args = parser.parse_args()
 

@@ -151,6 +151,9 @@ CVSS_BY_SEVERITY = {
 }
 
 
+DEFAULT_DEMO_PASSWORD = "toleman-local-demo"
+
+
 def seed_random_data(
     session: Session,
     count: int = 150,
@@ -212,7 +215,7 @@ def seed_random_data(
         ("alex.lead@acme.corp", "Alex Rivera", UserRole.ADMIN),
         ("rachel.qa@acme.corp", "Rachel Vance", UserRole.VIEWER),
     ]
-    active_password = demo_password or secrets.token_urlsafe(18)
+    active_password = demo_password or DEFAULT_DEMO_PASSWORD
     password_hash = hash_password(active_password)
     for email, name, role in users_data:
         u = session.exec(select(User).where(User.email == email)).first()
@@ -541,14 +544,10 @@ def seed_random_data(
                 ))
     session.commit()
     print("🎉 All randomized data successfully generated and committed!")
-    print("\n🔐 Seeded Demo Credentials:")
+    print("\n🔐 Seeded Demo Accounts (Password: configured or default 'toleman-local-demo'):")
     for email, _, role in users_data:
-        # codeql[py/clear-text-logging-sensitive-data]
-        print(f"  - {email} ({role.value}) -> password: {active_password}")
-    print("\n🔑 Seeded Workspace API Keys:")
-    for ws_name, ws in workspaces.items():
-        # codeql[py/clear-text-logging-sensitive-data]
-        print(f"  - {ws_name}: {ws.api_key}")
+        print(f"  - {email} ({role.value})")
+    print(f"\n🔑 Configured workspaces: {', '.join(workspaces.keys())}")
 
 
 def main():
@@ -556,7 +555,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate randomized versatile demo data for Toleman")
     parser.add_argument("--count", type=int, default=150, help="Number of findings to generate (default: 150)")
     parser.add_argument("--clean", action="store_true", help="Wipe all generated scan data from the local database before seeding")
-    parser.add_argument("--password", type=str, default=None, help="Password for seeded demo accounts (default: randomly generated)")
+    parser.add_argument("--password", type=str, default=None, help="Password for seeded demo accounts (default: 'toleman-local-demo')")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     args = parser.parse_args()
 

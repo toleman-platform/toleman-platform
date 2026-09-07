@@ -136,8 +136,8 @@ Standardized UI primitives and patterns live in [`src/components/ui/`](src/compo
 - `<Badge variant="...">` — Base badge primitive (`src/components/ui/badge.tsx`)
 - `<Input type="..." />` — Accessible styled text input (`src/components/ui/input.tsx`)
 - `<Tooltip>` / `<TooltipTrigger>` / `<TooltipContent>` — Accessible tooltips (`src/components/ui/tooltip.tsx`)
-- `<EmptyState icon={...} title="..." description="..." action={...} />` — Empty state presentation (`src/components/ui/empty-state.tsx`)
-- `<ErrorState error="..." onRetry={...} />` — Error banner with optional retry trigger (`src/components/ui/error-state.tsx`)
+- `<EmptyState icon={...} title="..." description="..." action={...} secondaryAction={...} bare={...} />` — Empty state presentation (`src/components/ui/empty-state.tsx`)
+- `<ErrorState title="..." description="..." onRetry={...} action={...} />` — Error banner with retry trigger or custom recovery action (`src/components/ui/error-state.tsx`)
 - `<Skeleton className="..." />` — Loading placeholder geometry (`src/components/ui/skeleton.tsx`)
 - `<ConfirmDialog isOpen={...} onConfirm={...} onCancel={...} />` — Modal confirmation dialog (`src/components/ui/confirm-dialog.tsx`)
 

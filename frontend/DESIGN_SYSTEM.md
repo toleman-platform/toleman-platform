@@ -128,10 +128,20 @@ $$\mathbf{R_{outer} = R_{inner} + \text{Padding}}$$
 
 ## 5. Reusable Component Catalog
 
-All standardized UI primitives and patterns live in [`src/components/ui/`](src/components/ui/) and [`src/components/`](src/components/):
+Standardized UI primitives and patterns live in [`src/components/ui/`](src/components/ui/) and [`src/components/`](src/components/):
+
+### Layer 1 Primitives (`src/components/ui/`)
 - `<Button variant="..." size="...">` — Accessible interactive button primitive (`src/components/ui/button.tsx`)
 - `<Card>` / `<CardContent>` — Standard container surface (`src/components/ui/card.tsx`)
 - `<Badge variant="...">` — Base badge primitive (`src/components/ui/badge.tsx`)
+- `<Input type="..." />` — Accessible styled text input (`src/components/ui/input.tsx`)
+- `<Tooltip>` / `<TooltipTrigger>` / `<TooltipContent>` — Accessible tooltips (`src/components/ui/tooltip.tsx`)
+- `<EmptyState icon={...} title="..." description="..." action={...} />` — Empty state presentation (`src/components/ui/empty-state.tsx`)
+- `<ErrorState error="..." onRetry={...} />` — Error banner with optional retry trigger (`src/components/ui/error-state.tsx`)
+- `<Skeleton className="..." />` — Loading placeholder geometry (`src/components/ui/skeleton.tsx`)
+- `<ConfirmDialog isOpen={...} onConfirm={...} onCancel={...} />` — Modal confirmation dialog (`src/components/ui/confirm-dialog.tsx`)
+
+### Layer 2 Interaction Patterns
 - `<StatCard label="..." value={...} hint="..." icon={...} tone="default|attention|critical|positive" unknown={...} unknownHint="..." />` (`src/components/ui/stat-card.tsx`)
 - `<StatGrid columns={2|3|4}>...</StatGrid>` (`src/components/ui/stat-card.tsx`)
 - `<AsyncContent state={...} itemNoun="...">{(data) => ...}</AsyncContent>` (`src/components/ui/async-content.tsx`)

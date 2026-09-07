@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cn, pixelToRem, pxToRem } from "./utils";
+import { cn, pixelToRem, pxToRem, timeAgo } from "./utils";
 
 describe("cn", () => {
   it("joins truthy class names", () => {
@@ -35,4 +35,21 @@ describe("pixelToRem", () => {
     expect(pixelToRem(20, { base: 10 })).toBe("2rem");
   });
 });
+
+describe("timeAgo", () => {
+  it("returns isoTimestamp when timestamp is invalid", () => {
+    expect(timeAgo("not-a-date")).toBe("not-a-date");
+  });
+
+  it("handles recent timestamps", () => {
+    const nowIso = new Date().toISOString();
+    expect(timeAgo(nowIso)).toBe("Just now");
+  });
+
+  it("handles epoch 0 correctly", () => {
+    const epochZero = new Date(0).toISOString();
+    expect(timeAgo(epochZero)).toBe(new Date(0).toLocaleDateString());
+  });
+});
+
 

@@ -21,5 +21,5 @@ export function timeAgo(isoTimestamp: string): string {
   if (diffDay < 7) return `${diffDay} days ago`;
   const diffWeek = Math.floor(diffDay / 7);
   if (diffWeek < 5) return `${diffWeek}w ago`;
-  return then ? new Date(then).toLocaleDateString() : isoTimestamp;
+  return new Date(then).toLocaleDateString();
 }

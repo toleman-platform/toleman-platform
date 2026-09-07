@@ -10,14 +10,15 @@ This block is written and re-added by `next dev`, verify at `node_modules/next/d
 
 # Toleman Platform - Frontend & UI Agent Directives
 
-Refer to [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md), [`COMPONENTS.md`](COMPONENTS.md), and [`REFACTORING_PROGRESS.md`](REFACTORING_PROGRESS.md) for full specifications and current migration status.
+Refer to [`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md) and [`COMPONENTS.md`](COMPONENTS.md) for full specifications.
 
 ## 1. AI Implementation Directive
 When modifying or creating any Toleman UI:
-1. **Inspect before creating**: Reuse Layer 1 primitives (`Button`, `Card`, `Badge`, `Input`, `Tooltip`) and Layer 2 patterns (`PageHeader`, `SeverityChip`, `StatusBadge`, `AlertBanner`, `StatCard`, `StatGrid`, `FilterBar`, `ProgressBar`, `AsyncContent`).
+1. **Inspect before creating**: Reuse Layer 1 primitives (`Button`, `Card`, `Badge`, `Input`, `Tooltip`, `EmptyState`, `ErrorState`) and Layer 2 patterns (`StatCard`, `StatGrid`, `AsyncContent`, `ListRow`, `BulkActionBar`, `CriticalityChip`, `ScanStatusBadge`).
 2. **Never hardcode raw colors or spacing**: Always consume CSS custom property tokens from `@theme inline` in `globals.css`.
 3. **Domain Visual Language**:
-   - **Severity** (`Critical`, `High`, `Medium`, `Low`, `Informational`) uses `<SeverityChip />` with semantic severity palette.
+   - **Severity** (`Critical`, `High`, `Medium`, `Low`, `Informational`) uses semantic severity tokens (`SEVERITY_COLOR`, `SEVERITY_BORDER_COLOR`).
+   - **Criticality** (`Prod`, `Dev`, `Internal`) uses `<CriticalityChip />`.
    - **Risk** (Contextual priority) appears as a tabular monospace score (`Risk 94`).
    - **Status** communicates workflow (neutral for open/closed, accent for in-progress, positive for fixed). Do NOT create rainbow status badges.
    - **Exploitability** (`[KEV]`, `[Exploit Available]`) appears as compact micro-tags.

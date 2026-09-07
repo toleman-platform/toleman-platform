@@ -8,7 +8,6 @@ The Next.js 16 (App Router + Turbopack) dashboard for the **Toleman Security & V
 
 - **[Design System Manual](DESIGN_SYSTEM.md)**: Design tokens, dual-palette colors, scalable typography scale, spatial grid rules of thumb, and WCAG AA contrast rules.
 - **[Component Architecture Guide](COMPONENTS.md)**: Layered component catalog (L1 Primitives, L2 Domain Patterns, L3 Page Views), async state patterns, and boundary lint rules.
-- **Live Design Gallery**: Access `/design-system` on the running dev server for interactive token specimens.
 
 ---
 

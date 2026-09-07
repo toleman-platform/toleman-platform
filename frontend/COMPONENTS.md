@@ -2,7 +2,7 @@
 
 How UI is composed in this app, and where new code belongs.
 
-> **Design Tokens & Visual Foundations**: For colors, typography scales, 4px/8px spatial grid, and accessibility standards, refer to [**`DESIGN_SYSTEM.md`**](DESIGN_SYSTEM.md). Live interactive specimens are available at [`/design-system`](http://localhost:3000/design-system).
+> **Design Tokens & Visual Foundations**: For colors, typography scales, 4px/8px spatial grid, and accessibility standards, refer to [**`DESIGN_SYSTEM.md`**](DESIGN_SYSTEM.md).
 
 ## The three layers
 
@@ -163,10 +163,28 @@ the detail every hand-rolled copy skipped, leaving a half-selected page showing 
 
 ```tsx
 <StatGrid columns={4}>
-  <StatCard label="Open findings" value={String(count)} icon={AlertTriangle}
-            unknown={!lastScan} unknownHint="never scanned, posture unknown" />
+  <StatCard
+    label="Open findings"
+    value={String(count)}
+    hint="Across 12 repositories"
+    icon={AlertTriangle}
+    unknown={!lastScan}
+    unknownHint="never scanned, posture unknown"
+    tone="default"
+  />
 </StatGrid>
 ```
+
+| Prop | Type | Default | Notes |
+|---|---|---|---|
+| `label` | `string` | *(required)* | Headline metric description |
+| `value` | `React.ReactNode` | *(required)* | KPI value (number, string, or badge breakdown) |
+| `hint` | `string` | `undefined` | Secondary line: units, provenance, or contextual explanation |
+| `icon` | `React.ComponentType<{ className?: string }>` | `undefined` | Decorative leading icon inside sunken tile |
+| `unknown` | `boolean` | `false` | Render as "not measured" (`—`) rather than showing `value` |
+| `unknownHint` | `string` | `undefined` | Explanatory copy for the unknown state |
+| `tone` | `"default" \| "attention" \| "critical" \| "positive"` | `"default"` | Metric value color emphasis |
+| `className` | `string` | `undefined` | Custom outer Card style override |
 
 `unknown` is a first-class variant, not decoration. Across this codebase the distinction
 between *measured zero* and *not measured* keeps mattering; an unscanned repository is not a

@@ -2,8 +2,6 @@
 
 The authoritative specification for design tokens, typography, spatial geometry, domain visual language, page composition, and interaction standards across the **Toleman Platform**.
 
-Live interactive specimens are available at [`/design-system`](http://localhost:3000/design-system).
-
 ---
 
 ## 1. Design Philosophy
@@ -50,11 +48,11 @@ Toleman implements a dual-palette architecture where Light mode is an individual
 
 | Severity Tier | Dark Token & Value | Light Token & Value | WCAG Contrast | Component Usage |
 | :--- | :--- | :--- | :---: | :--- |
-| **Critical** | `--destructive: #f87171` | `--destructive: #c0193f` | **6.4:1 (AA)** | `<SeverityChip severity="Critical">`, destructive banners |
-| **High** | `--chart-3: #f2924a` | `--warning: #8a6200` | **5.2:1 (AA)** | `<SeverityChip severity="High">`, SLA warning alerts |
-| **Medium** | `--chart-1: #22c1d9` | `--chart-1: #0a7490` | **5.4:1 (AA)** | `<SeverityChip severity="Medium">` |
-| **Low / Info** | `--chart-2: #4fc3d9` | `--chart-2: #0e6ba8` | **5.5:1 (AA)** | `<SeverityChip severity="Low">`, tool discovery badges |
-| **Success** | `--chart-5: #34b774` | `--success: #047857` | **5.8:1 (AA)** | `<SeverityChip severity="Passed">`, fixed findings, passed PRs |
+| **Critical** | `--destructive: #f0555c` | `--destructive: #c0193f` | **6.4:1 (AA)** | Destructive banners, critical badges (`SEVERITY_COLOR.Critical`) |
+| **High** | `--chart-3: #f2924a` | `--warning: #8a6200` | **5.2:1 (AA)** | SLA warning alerts, high severity badges (`SEVERITY_COLOR.High`) |
+| **Medium** | `--chart-1: #22c1d9` | `--chart-1: #0a7490` | **5.4:1 (AA)** | Medium severity badges (`SEVERITY_COLOR.Medium`) |
+| **Low / Info** | `--chart-2: #4fc3d9` | `--chart-2: #0e6ba8` | **5.5:1 (AA)** | Low / info badges, tool discovery tags |
+| **Success** | `--chart-5: #34b774` | `--success: #047857` | **5.8:1 (AA)** | Fixed findings, passed PR guardrails (`ScanStatusBadge.completed`) |
 
 ---
 
@@ -67,23 +65,23 @@ Toleman implements a dual-palette architecture where Light mode is an individual
 
 | Class | Font Size | Weight | Line Height | Tracking | Application |
 | :--- | :--- | :---: | :---: | :---: | :--- |
-| `.text-display` | `clamp(1.75rem, 1.5rem + 1vw, 2.25rem)` *(28–36px)* | 800 | 1.15 | `-0.025em` | Hero titles, landing overviews |
-| `.text-title` | `clamp(1.25rem, 1.125rem + 0.5vw, 1.5rem)` *(20–24px)* | 700 | 1.25 | `-0.02em` | Page headers (`<PageHeader>`) |
-| `.text-heading` | `1.125rem` *(18px)* | 600 | 1.35 | `-0.015em` | Card titles (`<CardTitle>`) |
-| `.text-subheading`| `0.9375rem` *(15px)* | 600 | 1.4 | `-0.01em` | Widget headers, modal sections |
-| `.text-body` | `0.875rem` *(14px)* | 400 | 1.5 | normal | Paragraphs, documentation text |
-| `.text-body-sm` | `0.8125rem` *(13px)* | 400 | 1.45 | normal | Page subtitle descriptions, help copy |
-| `.text-caption` | `0.75rem` *(12px)* | 500 | 1.4 | normal | Table metadata, line coordinates |
-| `.text-meta` | `0.6875rem` *(11px)* | 500 | `0.875rem` | `+0.01em` | SLA countdowns, timestamp labels |
-| `.text-micro` | `0.625rem` *(10px)* | 600 | `0.75rem` | `+0.04em` | Uppercase pill tags (`ADMIN`, `VERIFIED`) |
-| `.text-code` | `0.8125rem` *(13px)* | 400 | 1.4 | `-0.01em` | Monospace CVEs, hashes, and rule IDs |
+| `.text-display` | `clamp(2rem, 1.75rem + 1vw, 2.5rem)` *(32–40px)* | 800 | 1.15 | `-0.025em` | Hero metrics and high-impact page statistics |
+| `.text-title` | `clamp(1.375rem, 1.25rem + 0.5vw, 1.75rem)` *(22–28px)* | 700 | 1.25 | `-0.02em` | Main page titles and top-level entity headers |
+| `.text-heading` | `1.25rem` *(20px)* | 600 | 1.35 | `-0.015em` | Section headings and modal titles |
+| `.text-subheading`| `1.0625rem` *(17px)* | 600 | 1.4 | `-0.01em` | Card sub-titles and list category headers |
+| `.text-body` | `0.9375rem` *(15px)* | 400 | 1.55 | normal | Primary readable body copy, descriptions, and drawer paragraphs |
+| `.text-body-sm` | `0.875rem` *(14px)* | 400 | 1.5 | normal | Secondary descriptive metadata and compact card copy |
+| `.text-caption` | `0.8125rem` *(13px)* | 500 | 1.45 | normal | Table rows, filter chips, and interactive badges |
+| `.text-meta` | `0.75rem` *(12px)* | 500 | `1rem` | `+0.01em` | Timestamps, secondary subtitles, and auxiliary guidance |
+| `.text-micro` | `0.6875rem` *(11px)* | 600 | `0.875rem` | `+0.04em` | All-caps labels, KEV badges, and shortcut keys (⌘K) |
+| `.text-code` | `0.875rem` *(14px)* | 500 | 1.45 | `-0.01em` | Monospace code snippets, rule IDs, and file coordinates |
 
 ### Tabular Numeral Figures
 Always enforce tabular numerals on dynamic figures, counts, and countdowns to eliminate visual horizontal jitter:
 - `.font-tabular`: `font-variant-numeric: tabular-nums`
-- `.text-metric-xl`: 30px / 700 Wt / tabular (Primary KPI metrics)
-- `.text-metric-lg`: 24px / 700 Wt / tabular (Card stat numbers)
-- `.text-metric-md`: 18px / 700 Wt / tabular (Compact table metrics)
+- `.text-metric-xl`: 34px (`2.125rem`) / 700 Wt / tabular (Primary KPI metrics)
+- `.text-metric-lg`: 26px (`1.625rem`) / 700 Wt / tabular (Card stat numbers)
+- `.text-metric-md`: 20px (`1.25rem`) / 700 Wt / tabular (Compact table metrics)
 
 ---
 
@@ -130,16 +128,17 @@ $$\mathbf{R_{outer} = R_{inner} + \text{Padding}}$$
 
 ## 5. Reusable Component Catalog
 
-All standardized components live in [`src/components/ui/`](src/components/ui/):
-- `<PageHeader title="..." description="..." badge={...} actions={...} />`
-- `<SeverityChip severity="Critical|High|Medium|Low|Info" variant="subtle|dot" count={...} />`
-- `<StatusBadge status="running|completed|failed|blocked|queued|pending" />`
-- `<AlertBanner tone="info|warning|critical|positive" title="...">...</AlertBanner>`
-- `<StatCard label="..." value={...} tone="default|attention|critical|positive" unknown={...} />`
-- `<StatGrid columns={2|3|4}>...</StatGrid>`
-- `<ProgressBar value={...} size="sm|md|lg" />`
-- `<FilterBar searchValue={...} activePills={...} />`
-- `<AsyncContent state={...} itemNoun="findings">{(data) => ...}</AsyncContent>`
+All standardized UI primitives and patterns live in [`src/components/ui/`](src/components/ui/) and [`src/components/`](src/components/):
+- `<Button variant="..." size="...">` — Accessible interactive button primitive (`src/components/ui/button.tsx`)
+- `<Card>` / `<CardContent>` — Standard container surface (`src/components/ui/card.tsx`)
+- `<Badge variant="...">` — Base badge primitive (`src/components/ui/badge.tsx`)
+- `<StatCard label="..." value={...} hint="..." icon={...} tone="default|attention|critical|positive" unknown={...} unknownHint="..." />` (`src/components/ui/stat-card.tsx`)
+- `<StatGrid columns={2|3|4}>...</StatGrid>` (`src/components/ui/stat-card.tsx`)
+- `<AsyncContent state={...} itemNoun="...">{(data) => ...}</AsyncContent>` (`src/components/ui/async-content.tsx`)
+- `<ListRow selectable ...>` / `<ListRows>` / `<SelectAllVisible>` (`src/components/ui/list-row.tsx`)
+- `<BulkActionBar count={...} itemNoun="..." onClear={...} actions={...}>` (`src/components/ui/bulk-action-bar.tsx`)
+- `<CriticalityChip label="Prod|Dev|Internal" />` (`src/components/criticality-chip.tsx`)
+- `<ScanStatusBadge phase="queued|running|completed|failed" tool="..." />` (`src/components/scan-status.tsx`)
 
 ---
 
@@ -194,8 +193,13 @@ The following concepts have distinct meanings and **MUST NOT** be visually confl
 ### Severity
 Represents technical severity of the underlying finding.
 - **Values**: `Critical`, `High`, `Medium`, `Low`, `Informational`
-- **Use**: `<SeverityChip severity="Critical" />`
+- **Use**: Consume semantic tokens via `SEVERITY_COLOR` and `SEVERITY_BORDER_COLOR` (`lib/severity.ts`).
 - **Rule**: Severity colors MUST use the semantic severity palette.
+
+### Criticality
+Represents target asset criticality/environment tier.
+- **Values**: `Prod`, `Dev`, `Internal`
+- **Use**: `<CriticalityChip label="Prod" />` (`components/criticality-chip.tsx`).
 
 ### Risk
 Represents contextual business/security prioritization (CVSS, exploitability, KEV status, EPSS, asset criticality, production/internet exposure).
@@ -206,12 +210,12 @@ Represents contextual business/security prioritization (CVSS, exploitability, KE
 
 ### Status
 Status communicates workflow, not severity.
-- **Values**: `Open`, `Assigned`, `In Progress`, `Fixed`, `Verified`, `Closed`, `Suppressed`, `Risk Accepted`, `False Positive`, `Reopened`
+- **Values**: `Open`, `Accepted Risk`, `False Positive`, `Won't Fix`, `Mitigated`, `Reopened` (finding triage) or `queued`, `running`, `completed`, `failed` (scan phases).
 - **Color Mapping**:
-  - Neutral statuses (`Open`, `Closed`, `Assigned`) → Neutral badges (`bg-secondary text-muted-foreground`)
-  - Active / in-progress (`In Progress`, `Investigating`) → Brand Accent (`text-primary bg-primary/10`)
-  - Successful terminal (`Fixed`, `Verified`) → Positive (`text-chart-5 bg-chart-5/10`)
-  - Problem / exceptional states (`Blocked`, `Reopened`) → Warning / Destructive
+  - Neutral statuses (`False Positive`, `Won't Fix`) → Neutral text/badges (`text-muted-foreground`)
+  - Running / in-progress (`running`) → Brand Accent (`ScanStatusBadge.running`)
+  - Successful terminal (`Mitigated`, `completed`) → Positive (`text-chart-5`)
+  - Problem / exceptional states (`Open`, `failed`, `Reopened`) → Warning / Destructive
 - **Rule**: Do NOT map every status to a unique saturated rainbow color.
 
 ### Exploitability
@@ -456,8 +460,8 @@ Before implementing any page, verify:
 
 When asked to create or modify a Toleman UI:
 1. **Inspect before creating**: Inspect existing Toleman components before writing new ones.
-2. **Reuse Layer 1 Primitives**: Use `<Button>`, `<Card>`, `<Badge>`, `<Input>`, `<Tooltip>`.
-3. **Reuse Layer 2 Patterns**: Use `<PageHeader>`, `<SeverityChip>`, `<StatusBadge>`, `<AlertBanner>`, `<StatCard>`, `<StatGrid>`, `<FilterBar>`, `<AsyncContent>`, `<ListRow>`.
+2. **Reuse Layer 1 Primitives**: Use `<Button>`, `<Card>`, `<Badge>`, `<Input>`, `<Tooltip>`, `<EmptyState>`, `<ErrorState>`.
+3. **Reuse Layer 2 Patterns**: Use `<StatCard>`, `<StatGrid>`, `<AsyncContent>`, `<ListRow>`, `<BulkActionBar>`, `<CriticalityChip>`, `<ScanStatusBadge>`.
 4. **No Page-Local Re-creations**: Never recreate existing primitives with page-local markup.
 5. **Strict Token Adherence**: Never introduce arbitrary spacing, radius, typography, shadow, or color values.
 6. **Preserve Navigation & Density**: Maintain existing density, proximity stacks, and breadcrumb conventions.

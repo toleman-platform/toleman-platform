@@ -23,6 +23,11 @@ from app.models.models import (
 from scripts.seed_demo_data import seed_random_data
 
 
+@pytest.fixture(autouse=True)
+def local_environment(monkeypatch):
+    monkeypatch.setattr(settings, "environment", "local")
+
+
 @pytest.fixture()
 def session():
     engine = create_engine(
@@ -58,6 +63,9 @@ def test_seeded_data_follows_production_invariants(session):
     assert state_logs
     assert pr_scans
 
+    for scan in scans.values():
+        assert scan.findings_count == len([f for f in findings if f.scan_id == scan.id])
+
     for finding in findings:
         scan = scans[finding.scan_id]
         assert (scan.target_id, scan.tool) == (finding.target_id, finding.tool)
@@ -84,7 +92,7 @@ def test_seeded_data_follows_production_invariants(session):
     assert {row.cve_id for row in enrichments} == {
         finding.cve_id for finding in findings if finding.cve_id
     }
-    assert all(row.cvss_score and row.cvss_vector for row in enrichments)
+    assert all(row.cvss_score and row.cvss_vector and row.osv_found and row.fixed_versions for row in enrichments)
     assert all(scan.created_at <= scan.completed_at for scan in pr_scans)
 
 

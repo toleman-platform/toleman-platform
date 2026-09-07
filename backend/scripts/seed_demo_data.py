@@ -325,7 +325,7 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
     created_findings = 0
     state_choices = [FindingState.OPEN] * 70 + [FindingState.MITIGATED] * 10 + [FindingState.FALSE_POSITIVE] * 8 + [FindingState.ACCEPTED_RISK] * 7 + [FindingState.REOPENED] * 5
 
-    for i in range(count):
+    for _ in range(count):
         tmpl = random.choice(VULN_TEMPLATES)
         tgt = random.choice(targets)
         prov_name, prov_slug = random.choice(PROVIDERS)
@@ -372,7 +372,7 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 status="completed",
                 started_at=f_seen,
                 completed_at=l_seen,
-                findings_count=1,
+                findings_count=0,
             )
             session.add(scan)
             session.flush()
@@ -412,6 +412,8 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 cvss_score=cvss_score,
                 cvss_vector=cvss_vector,
                 nvd_found=True,
+                osv_found=True,
+                fixed_versions=json.dumps([{"package": module, "ecosystem": "PyPI", "fixed": f"{ver}.1"}]),
             ))
         session.commit()
         session.refresh(f_obj)
@@ -426,6 +428,12 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 actor=random.choice(["sarah.sec@acme.corp", "alex.lead@acme.corp"]),
                 created_at=transition_at,
             ))
+
+    # Reconcile findings_count across scans
+    for scan in scans_by_target_tool.values():
+        linked_count = len(session.exec(select(Finding).where(Finding.scan_id == scan.id)).all())
+        scan.findings_count = linked_count
+        session.add(scan)
 
     session.commit()
     print(f"✨ Findings generated: {created_findings} records")
@@ -526,6 +534,12 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 ))
     session.commit()
     print("🎉 All randomized data successfully generated and committed!")
+    print("\n🔐 Seeded Demo Credentials:")
+    for email, _, role in users_data:
+        print(f"  - {email} ({role.value}) -> password: {demo_password}")
+    print("\n🔑 Seeded Workspace API Keys:")
+    for ws_name, ws in workspaces.items():
+        print(f"  - {ws_name}: {ws.api_key}")
 
 
 def main():

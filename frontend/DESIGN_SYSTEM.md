@@ -46,9 +46,9 @@ Toleman implements a dual-palette architecture where Light mode is an individual
 
 ### 5-Tier Semantic Severity Matrix
 
-| Severity Tier | Dark Token & Value | Light Token & Value | WCAG Contrast | Component Usage |
+| Severity Tier | Dark Token & Value | Light Token & Value | WCAG Contrast (Min) | Component Usage |
 | :--- | :--- | :--- | :---: | :--- |
-| **Critical** | `--destructive: #f0555c` | `--destructive: #c0193f` | **6.4:1 (AA)** | Destructive banners, critical badges (`SEVERITY_COLOR.Critical`) |
+| **Critical** | `--destructive: #f0555c` | `--destructive: #c0193f` | **5.4:1 (AA)** | Destructive banners, critical badges (`SEVERITY_COLOR.Critical`) |
 | **High** | `--chart-3: #f2924a` | `--warning: #8a6200` | **5.2:1 (AA)** | SLA warning alerts, high severity badges (`SEVERITY_COLOR.High`) |
 | **Medium** | `--chart-1: #22c1d9` | `--chart-1: #0a7490` | **5.4:1 (AA)** | Medium severity badges (`SEVERITY_COLOR.Medium`) |
 | **Low / Info** | `--chart-2: #4fc3d9` | `--chart-2: #0e6ba8` | **5.5:1 (AA)** | Low / info badges, tool discovery tags |

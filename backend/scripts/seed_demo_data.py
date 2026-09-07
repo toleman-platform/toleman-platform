@@ -168,18 +168,29 @@ def seed_random_data(
     print(f"🎲 Generating {count} randomized versatile records across Toleman...")
 
     if clean:
-        print("🧹 Cleaning existing data...")
-        session.exec(delete(FindingStateLog))
-        session.exec(delete(PRGuardrailFinding))
-        session.exec(delete(PRGuardrailScan))
-        session.exec(delete(Finding))
-        session.exec(delete(CveEnrichment))
-        session.exec(delete(Scan))
-        session.exec(delete(SbomComponent))
-        session.exec(delete(SbomRun))
-        session.exec(delete(AiBomComponent))
-        session.exec(delete(ApiEndpoint))
-        session.exec(delete(DiscoveryRun))
+        print("🧹 Cleaning existing demo data for Acme Corp workspaces...")
+        org = session.exec(select(Organization).where(Organization.name == "Acme Corp")).first()
+        if org:
+            ws_ids = session.exec(select(Workspace.id).where(Workspace.organization_id == org.id)).all()
+            if ws_ids:
+                tgt_ids = session.exec(select(Target.id).where(Target.workspace_id.in_(ws_ids))).all()
+                if tgt_ids:
+                    finding_ids = session.exec(select(Finding.id).where(Finding.target_id.in_(tgt_ids))).all()
+                    if finding_ids:
+                        session.exec(delete(FindingStateLog).where(FindingStateLog.finding_id.in_(finding_ids)))
+                        session.exec(delete(Finding).where(Finding.id.in_(finding_ids)))
+
+                    pr_scan_ids = session.exec(select(PRGuardrailScan.id).where(PRGuardrailScan.target_id.in_(tgt_ids))).all()
+                    if pr_scan_ids:
+                        session.exec(delete(PRGuardrailFinding).where(PRGuardrailFinding.pr_scan_id.in_(pr_scan_ids)))
+                        session.exec(delete(PRGuardrailScan).where(PRGuardrailScan.id.in_(pr_scan_ids)))
+
+                    session.exec(delete(Scan).where(Scan.target_id.in_(tgt_ids)))
+                    session.exec(delete(SbomComponent).where(SbomComponent.target_id.in_(tgt_ids)))
+                    session.exec(delete(SbomRun).where(SbomRun.target_id.in_(tgt_ids)))
+                    session.exec(delete(AiBomComponent).where(AiBomComponent.target_id.in_(tgt_ids)))
+                    session.exec(delete(ApiEndpoint).where(ApiEndpoint.target_id.in_(tgt_ids)))
+                    session.exec(delete(DiscoveryRun).where(DiscoveryRun.target_id.in_(tgt_ids)))
         session.commit()
 
     # 1. Organization & Workspaces

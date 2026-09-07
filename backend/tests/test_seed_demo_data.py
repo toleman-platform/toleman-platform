@@ -120,3 +120,62 @@ def test_seed_accepts_custom_password_and_preserves_on_reseed(session):
     users_after = session.exec(select(User)).all()
     assert all(verify_password(custom_pw, user.password_hash) for user in users_after)
 
+
+def test_seed_clean_preserves_non_demo_records(session):
+    # Create non-demo organization, workspace, target, scan, and finding
+    other_org = Organization(name="Other Corp")
+    session.add(other_org)
+    session.commit()
+    session.refresh(other_org)
+
+    other_ws = Workspace(name="other-ws", organization_id=other_org.id, api_key="other_key_123")
+    session.add(other_ws)
+    session.commit()
+    session.refresh(other_ws)
+
+    other_tgt = Target(
+        name="custom-repo",
+        repo_url="https://github.com/custom/repo.git",
+        workspace_id=other_ws.id,
+        default_branch="main",
+    )
+    session.add(other_tgt)
+    session.commit()
+    session.refresh(other_tgt)
+
+    other_scan = Scan(
+        target_id=other_tgt.id,
+        tool="semgrep",
+        branch="main",
+        status="completed",
+    )
+    session.add(other_scan)
+    session.commit()
+    session.refresh(other_scan)
+
+    other_finding = Finding(
+        target_id=other_tgt.id,
+        scan_id=other_scan.id,
+        dedup_hash="other_dedup_hash_1",
+        tool="semgrep",
+        rule_id="custom.rule",
+        title="Custom finding",
+        file_path="custom.py",
+        line_start=1,
+        severity="High",
+        priority_score=100,
+        branch="main",
+    )
+    session.add(other_finding)
+    session.commit()
+
+    # Run seeder with clean=True
+    seed_random_data(session, count=10, clean=True)
+
+    # Non-demo data must still exist
+    assert session.exec(select(Organization).where(Organization.name == "Other Corp")).first() is not None
+    assert session.exec(select(Target).where(Target.id == other_tgt.id)).first() is not None
+    assert session.exec(select(Scan).where(Scan.id == other_scan.id)).first() is not None
+    assert session.exec(select(Finding).where(Finding.id == other_finding.id)).first() is not None
+
+

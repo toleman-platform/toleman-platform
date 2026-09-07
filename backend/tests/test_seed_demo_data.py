@@ -107,3 +107,16 @@ def test_seed_uses_fresh_demo_credentials(session):
     second_keys = {workspace.api_key for workspace in session.exec(select(Workspace)).all()}
 
     assert first_keys.isdisjoint(second_keys)
+
+
+def test_seed_accepts_custom_password_and_preserves_on_reseed(session):
+    custom_pw = "CustomSecret2026!"
+    seed_random_data(session, count=0, clean=True, demo_password=custom_pw)
+    users = session.exec(select(User)).all()
+    assert all(verify_password(custom_pw, user.password_hash) for user in users)
+
+    # Reseed without clean and without password -> user password preserved
+    seed_random_data(session, count=0, clean=False)
+    users_after = session.exec(select(User)).all()
+    assert all(verify_password(custom_pw, user.password_hash) for user in users_after)
+

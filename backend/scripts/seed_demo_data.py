@@ -151,7 +151,12 @@ CVSS_BY_SEVERITY = {
 }
 
 
-def seed_random_data(session: Session, count: int = 150, clean: bool = False) -> None:
+def seed_random_data(
+    session: Session,
+    count: int = 150,
+    clean: bool = False,
+    demo_password: str | None = None,
+) -> None:
     """Populate a local development database with randomized demo data."""
     if settings.environment != "local":
         raise RuntimeError("Demo data can only be seeded in local environments")
@@ -207,19 +212,20 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
         ("alex.lead@acme.corp", "Alex Rivera", UserRole.ADMIN),
         ("rachel.qa@acme.corp", "Rachel Vance", UserRole.VIEWER),
     ]
-    demo_password = secrets.token_urlsafe(18)
+    active_password = demo_password or secrets.token_urlsafe(18)
+    password_hash = hash_password(active_password)
     for email, name, role in users_data:
         u = session.exec(select(User).where(User.email == email)).first()
         if not u:
-            u = User(email=email, name=name, password_hash=hash_password(demo_password), role=role)
+            u = User(email=email, name=name, password_hash=password_hash, role=role)
             session.add(u)
             session.commit()
             session.refresh(u)
             session.add(WorkspaceMembership(user_id=u.id, workspace_id=ws_prod.id, role=WorkspaceRole.SECURITY_ENGINEER if "sec" in email else WorkspaceRole.DEVELOPER))
             session.add(WorkspaceMembership(user_id=u.id, workspace_id=ws_staging.id, role=WorkspaceRole.DEVELOPER))
             session.add(WorkspaceMembership(user_id=u.id, workspace_id=ws_ai.id, role=WorkspaceRole.DEVELOPER))
-        else:
-            u.password_hash = hash_password(demo_password)
+        elif clean or demo_password is not None:
+            u.password_hash = password_hash
             session.add(u)
     session.commit()
 
@@ -429,8 +435,9 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
                 created_at=transition_at,
             ))
 
-    # Reconcile findings_count across scans
-    for scan in scans_by_target_tool.values():
+    # Reconcile findings_count across all scans
+    all_scans = session.exec(select(Scan)).all()
+    for scan in all_scans:
         linked_count = len(session.exec(select(Finding).where(Finding.scan_id == scan.id)).all())
         scan.findings_count = linked_count
         session.add(scan)
@@ -536,9 +543,11 @@ def seed_random_data(session: Session, count: int = 150, clean: bool = False) ->
     print("🎉 All randomized data successfully generated and committed!")
     print("\n🔐 Seeded Demo Credentials:")
     for email, _, role in users_data:
-        print(f"  - {email} ({role.value}) -> password: {demo_password}")
+        # codeql[py/clear-text-logging-sensitive-data]
+        print(f"  - {email} ({role.value}) -> password: {active_password}")
     print("\n🔑 Seeded Workspace API Keys:")
     for ws_name, ws in workspaces.items():
+        # codeql[py/clear-text-logging-sensitive-data]
         print(f"  - {ws_name}: {ws.api_key}")
 
 
@@ -547,6 +556,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate randomized versatile demo data for Toleman")
     parser.add_argument("--count", type=int, default=150, help="Number of findings to generate (default: 150)")
     parser.add_argument("--clean", action="store_true", help="Wipe all generated scan data from the local database before seeding")
+    parser.add_argument("--password", type=str, default=None, help="Password for seeded demo accounts (default: randomly generated)")
     parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     args = parser.parse_args()
 
@@ -554,7 +564,12 @@ def main():
         random.seed(args.seed)
 
     with Session(engine) as session:
-        seed_random_data(session, count=args.count, clean=args.clean)
+        seed_random_data(
+            session,
+            count=args.count,
+            clean=args.clean,
+            demo_password=args.password,
+        )
 
 
 if __name__ == "__main__":

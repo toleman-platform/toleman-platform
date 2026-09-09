@@ -3,14 +3,14 @@
  */
 
 /**
- * Represents a value of type `T` that may also be `null` or `undefined`.
+ * Represents a value of type `T` that may also be `null`.
  *
  * @example
  * ```ts
- * type MaybeString = Nullable<string>; // string | null | undefined
+ * type NullableString = Nullable<string>; // string | null
  * ```
  */
-export type Nullable<T> = T | null | undefined;
+export type Nullable<T> = T | null;
 
 /**
  * Constructs a type consisting of `T` with `null` and `undefined` excluded.

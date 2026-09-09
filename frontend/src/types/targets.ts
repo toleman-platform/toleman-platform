@@ -1,4 +1,5 @@
 import type { RunStatus } from "./common";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Embedded badge representing a Target's Group assignment (e.g. "PCI-scope", "Production").
@@ -24,6 +25,11 @@ export type EnforcementMode = "block" | "alert" | "disabled";
 export type EnforcementModeSource = "target" | "group" | "workspace" | "default";
 
 /**
+ * Status of the automatic GitHub Dependency Graph import on target creation.
+ */
+export type DependencySyncStatus = "pending" | "ok" | "unavailable" | "failed";
+
+/**
  * Code repository or project asset monitored by the platform.
  */
 export type Target = {
@@ -36,16 +42,20 @@ export type Target = {
   criticality_weight: number;
   groups: GroupBadge[];
   pipeline_integrated: boolean;
-  pipeline_pr_url: string | null;
+  pipeline_pr_url: Nullable<string>;
   is_ai_repo: boolean;
   is_ai_repo_signals: string;
-  is_ai_repo_override: boolean | null;
+  is_ai_repo_override: Nullable<boolean>;
   is_ai_repo_effective: boolean;
-  enforcement_mode: EnforcementMode | null;
+  enforcement_mode: Nullable<EnforcementMode>;
   effective_enforcement_mode?: EnforcementMode;
   enforcement_mode_source?: EnforcementModeSource;
-  api_base_url: string | null;
+  api_base_url: Nullable<string>;
   diff_scoped_pr_scans: boolean;
+  dependency_sync_status: Nullable<DependencySyncStatus>;
+  dependency_sync_error: Nullable<string>;
+  dependency_sync_at: Nullable<string>;
+  dependency_component_count: Nullable<number>;
 };
 
 /**
@@ -64,7 +74,7 @@ export type PipelineWorkflow = {
  */
 export type PipelineIntegrateResult = {
   pipeline_integrated: boolean;
-  pipeline_pr_url: string | null;
+  pipeline_pr_url: Nullable<string>;
   pr_number: number;
   branch: string;
 };
@@ -85,12 +95,12 @@ export type PipelineBatchItemStatus =
 export type PipelineBatchItem = {
   target_id: number;
   target_name: string;
-  repo_url: string | null;
+  repo_url: Nullable<string>;
   status: PipelineBatchItemStatus;
   error: string;
-  pr_url: string | null;
-  pr_number: number | null;
-  completed_at: string | null;
+  pr_url: Nullable<string>;
+  pr_number: Nullable<number>;
+  completed_at: Nullable<string>;
 };
 
 /**
@@ -104,10 +114,10 @@ export type PipelineIntegrationBatch = {
   failed: number;
   already_integrated: number;
   started_at: string;
-  completed_at: string | null;
+  completed_at: Nullable<string>;
   items: PipelineBatchItem[];
   scope_label?: string;
-  workflow_template_id?: number | null;
+  workflow_template_id?: Nullable<number>;
 };
 
 /**
@@ -146,7 +156,7 @@ export type Group = {
   name: string;
   color: string;
   target_count: number;
-  enforcement_mode: EnforcementMode | null;
+  enforcement_mode: Nullable<EnforcementMode>;
   effective_enforcement_mode?: EnforcementMode;
   enforcement_mode_source?: EnforcementModeSource;
   created_at: string;
@@ -168,3 +178,4 @@ export type TargetSummaryEntry = {
  * Dictionary mapping target ID strings to TargetSummaryEntry.
  */
 export type TargetSummary = Record<string, TargetSummaryEntry>;
+

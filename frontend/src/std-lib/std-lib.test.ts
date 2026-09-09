@@ -22,18 +22,16 @@ import {
 } from "./index";
 
 describe("std-lib type primitives", () => {
-  it("verifies Nullable<T> allows T, null, and undefined", () => {
+  it("verifies Nullable<T> allows T and null", () => {
     type TestType = Nullable<string>;
 
-    expectTypeOf<TestType>().toEqualTypeOf<string | null | undefined>();
+    expectTypeOf<TestType>().toEqualTypeOf<string | null>();
 
     const a: TestType = "hello";
     const b: TestType = null;
-    const c: TestType = undefined;
 
     expect(a).toBe("hello");
     expect(b).toBeNull();
-    expect(c).toBeUndefined();
   });
 
   it("verifies IsDefinedNotNull<T> excludes both null and undefined", () => {

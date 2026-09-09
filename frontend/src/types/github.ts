@@ -2,6 +2,8 @@
  * GitHub repository integration, commit events, pull requests, and org activity.
  */
 
+import type { Nullable } from "@/std-lib";
+
 /**
  * Git commit event details from repository activity feeds.
  */
@@ -49,7 +51,7 @@ export type PullRequest = {
   author: string;
   state: string;
   created_at: string;
-  merged_at: string | null;
+  merged_at: Nullable<string>;
   url: string;
   scan_status: string;
 };

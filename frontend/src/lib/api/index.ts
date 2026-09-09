@@ -3,6 +3,7 @@
  * and a backward-compatible monolithic `api` facade.
  */
 
+export * from "@/std-lib";
 export * from "./client";
 export * from "./auth";
 export * from "./targets";

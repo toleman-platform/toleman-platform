@@ -1,5 +1,6 @@
 import type { EnforcementMode } from "./targets";
 import type { AiProvider } from "./security";
+import type { Nullable } from "@/std-lib";
 
 /**
  * High-level summary of an organization workspace.
@@ -8,7 +9,7 @@ export type WorkspaceSummary = {
   id: number;
   name: string;
   organization_id: number;
-  enforcement_mode: EnforcementMode | null;
+  enforcement_mode: Nullable<EnforcementMode>;
 };
 
 /**
@@ -43,10 +44,10 @@ export type PlatformConfigView = {
   jira_api_token_set: boolean;
   jira_project_key: string;
   jira_issue_type: string;
-  jira_auto_create_severity: string | null;
+  jira_auto_create_severity: Nullable<string>;
   siem_webhook_url_set: boolean;
-  siem_export_severity: string | null;
-  encryption_key_healthy: boolean | null;
+  siem_export_severity: Nullable<string>;
+  encryption_key_healthy: Nullable<boolean>;
 };
 
 /**
@@ -81,8 +82,8 @@ export type TestConnectionResult = {
  */
 export type GithubTokenView = {
   token_set: boolean;
-  created_at: string | null;
-  expires_at: string | null;
+  created_at: Nullable<string>;
+  expires_at: Nullable<string>;
 };
 
 /**

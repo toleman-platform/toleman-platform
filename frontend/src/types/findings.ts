@@ -64,8 +64,8 @@ export type FindingsQuery = {
  * Remediation metadata for fix versions in open-source packages.
  */
 export type FixVersionInfo = {
-  package: string | null;
-  ecosystem: string | null;
+  package: Nullable<string>;
+  ecosystem: Nullable<string>;
   fixed: string;
 };
 

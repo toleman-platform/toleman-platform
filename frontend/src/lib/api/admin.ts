@@ -21,6 +21,7 @@ import type {
   SearchResults,
   EnforcementMode,
 } from "@/types";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Returns runtime instance identification and database connection info.
@@ -69,7 +70,7 @@ export function workspaces(): Promise<WorkspaceSummary[]> {
  */
 export function updateWorkspace(
   id: number,
-  patch: { enforcement_mode?: EnforcementMode | null; name?: string },
+  patch: { enforcement_mode?: Nullable<EnforcementMode>; name?: string },
 ): Promise<WorkspaceSummary> {
   return jsonFetch<WorkspaceSummary>(`/api/workspaces/${id}`, { method: "PATCH", body: JSON.stringify(patch) });
 }
@@ -214,7 +215,7 @@ export function getGithubToken(workspaceId?: number): Promise<GithubTokenView> {
  */
 export function saveGithubToken(
   token: string,
-  expiresInHours: number | null,
+  expiresInHours: Nullable<number>,
   workspaceId?: number,
 ): Promise<GithubTokenView> {
   return jsonFetch<GithubTokenView>("/api/github-token", {
@@ -249,17 +250,17 @@ export function testGithubToken(token?: string, workspaceId?: number): Promise<T
 export function githubAppStatus(): Promise<{
   apps: GitHubAppInstallation[];
   app_configured: boolean;
-  app_slug: string | null;
+  app_slug: Nullable<string>;
   installed: boolean;
-  account_login: string | null;
+  account_login: Nullable<string>;
   webhook_secret_set: boolean;
 }> {
   return jsonFetch<{
     apps: GitHubAppInstallation[];
     app_configured: boolean;
-    app_slug: string | null;
+    app_slug: Nullable<string>;
     installed: boolean;
-    account_login: string | null;
+    account_login: Nullable<string>;
     webhook_secret_set: boolean;
   }>("/api/github-app/status");
 }
@@ -357,7 +358,7 @@ export function githubBlobUrl(
   repoUrl: string,
   branch: string,
   filePath: string,
-  lineStart?: number | null,
+  lineStart?: Nullable<number>,
 ): string {
   const repoPath = new URL(repoUrl).pathname.replace(/\.git$/, "").replace(/^\//, "");
   const base = `https://github.com/${repoPath}/blob/${branch}/${filePath}`;

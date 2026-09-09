@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   // files needed to run `node server.js` (traced dependencies), instead of
   // requiring the full node_modules tree in the runtime container.
   output: "standalone",
+  // Disable the floating development indicator badge in dev mode
+  devIndicators: false,
 };
 
 export default nextConfig;

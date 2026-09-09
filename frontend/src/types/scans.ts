@@ -1,4 +1,5 @@
 import type { RunStatus } from "./common";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Persisted scan run record capturing an individual scanner execution against a target.
@@ -11,10 +12,10 @@ export type ScanRun = {
   status: RunStatus;
   findings_count: number;
   started_at: string;
-  completed_at: string | null;
+  completed_at: Nullable<string>;
   error_message: string;
   elapsed_seconds: number;
-  eta_seconds: number | null;
+  eta_seconds: Nullable<number>;
 };
 
 /**
@@ -26,7 +27,7 @@ export type ActiveScan = {
   branch: string;
   started_at: string;
   elapsed_seconds: number;
-  eta_seconds: number | null;
+  eta_seconds: Nullable<number>;
 };
 
 /**
@@ -54,7 +55,7 @@ export type ActivePrScans = Record<string, ActivePrScan>;
  * High-level summary of latest scanner activity per target.
  */
 export type ScanSummaryEntry = {
-  last_scan_at: string | null;
+  last_scan_at: Nullable<string>;
   tools: string[];
 };
 
@@ -72,7 +73,7 @@ export type ScanHistoryEntry = {
   branch: string;
   status: string;
   started_at: string;
-  completed_at: string | null;
+  completed_at: Nullable<string>;
   findings_count: number;
   error: string;
 };
@@ -90,8 +91,8 @@ export type ToolRegistryEntry = {
   docs_url: string;
   integrated: boolean;
   installed: boolean;
-  version: string | null;
-  response_ms: number | null;
+  version: Nullable<string>;
+  response_ms: Nullable<number>;
   checked_in: "api" | "worker";
   installable: boolean;
   bundled: boolean;
@@ -106,7 +107,7 @@ export type ToolInstallRun = {
   package: string;
   status: RunStatus;
   started_at: string;
-  completed_at: string | null;
+  completed_at: Nullable<string>;
   installed_version: string;
   error: string;
   output_tail: string;
@@ -132,7 +133,7 @@ export type PrGuardrailFindingSummary = {
   rule_id: string;
   title: string;
   file_path: string;
-  line_start: number | null;
+  line_start: Nullable<number>;
   severity: string;
 };
 
@@ -143,7 +144,7 @@ export type PrGuardrailScanResult = {
   pr_scan_id: number;
   status: "passed" | "blocked" | "error";
   new_findings_count: number;
-  highest_new_severity: string | null;
+  highest_new_severity: Nullable<string>;
   new_findings: PrGuardrailFindingSummary[];
 };
 
@@ -162,13 +163,13 @@ export type PrGuardrailFinding = {
   rule_id: string;
   title: string;
   file_path: string;
-  line_start: number | null;
+  line_start: Nullable<number>;
   severity: string;
   ignore_status: IgnoreStatus;
   ignore_requested_by: string;
   ignore_requested_reason: string;
   ignore_reviewed_by: string;
-  ignore_reviewed_at: string | null;
+  ignore_reviewed_at: Nullable<string>;
 };
 
 /**
@@ -181,7 +182,7 @@ export type PrGuardrailLogEntry = {
   branch: string;
   status: "running" | "passed" | "blocked" | "error" | "overridden";
   new_findings_count: number;
-  highest_new_severity: string | null;
+  highest_new_severity: Nullable<string>;
   new_endpoints_count: number;
   tools_run: string[];
   tools_failed: string[];
@@ -191,10 +192,10 @@ export type PrGuardrailLogEntry = {
   status_delivery_error: string;
   override_reason: string;
   created_at: string;
-  completed_at: string | null;
-  pr_url: string | null;
+  completed_at: Nullable<string>;
+  pr_url: Nullable<string>;
   target_id?: number;
-  target_name?: string | null;
+  target_name?: Nullable<string>;
 };
 
 /**

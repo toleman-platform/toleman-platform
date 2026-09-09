@@ -7,6 +7,7 @@ import type {
   SlaRule,
   SlaComplianceData,
 } from "@/types";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Retrieves a paginated and filtered list of findings.
@@ -75,7 +76,7 @@ export function slaRules(workspaceId?: number): Promise<SlaRule[]> {
  */
 export function createSlaRule(r: {
   workspace_id: number;
-  group_id: number | null;
+  group_id: Nullable<number>;
   severity: string;
   days_to_fix: number;
 }): Promise<SlaRule> {

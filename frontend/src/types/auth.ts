@@ -2,6 +2,8 @@
  * Authentication, User Management, API Tokens, and Audit Logging types.
  */
 
+import type { Nullable } from "@/std-lib";
+
 /**
  * Authenticated user profile returned by /api/auth/me and user admin APIs.
  */
@@ -54,8 +56,8 @@ export type ApiToken = {
   token_prefix: string;
   scope: ApiTokenScope;
   created_at: string;
-  last_used_at: string | null;
-  revoked_at: string | null;
+  last_used_at: Nullable<string>;
+  revoked_at: Nullable<string>;
 };
 
 /**
@@ -63,7 +65,7 @@ export type ApiToken = {
  */
 export type AuditEventExpandItem = {
   finding_id: number;
-  title: string | null;
+  title: Nullable<string>;
   from_state: string;
   to_state: string;
   timestamp: string;
@@ -79,7 +81,7 @@ export type AuditEvent = {
   summary: string;
   reason: string;
   grouped_count: number;
-  expand: AuditEventExpandItem[] | null;
+  expand: Nullable<AuditEventExpandItem[]>;
 };
 
 /**

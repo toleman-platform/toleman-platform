@@ -22,16 +22,18 @@ import { useAsyncData } from "./use-async-data";
  * yank the user somewhere they did not ask to be, and there is no effect to
  * get the ordering wrong in.
  */
+import type { Nullable } from "@/std-lib";
+
 export type UseWorkspacePickerResult = {
-  workspaces: WorkspaceSummary[] | null;
-  workspaceId: number | null;
-  setWorkspaceId: (id: number | null) => void;
+  workspaces: Nullable<WorkspaceSummary[]>;
+  workspaceId: Nullable<number>;
+  setWorkspaceId: (id: Nullable<number>) => void;
   /** True until the workspace list itself has resolved. Distinct from the
    * scoped fetch that hangs off `workspaceId`. */
   isLoading: boolean;
   /** Non-null when the workspace list failed. Callers must surface it: an
    * empty picker is otherwise read as "no workspaces exist". */
-  error: Error | null;
+  error: Nullable<Error>;
   reload: () => void;
 };
 

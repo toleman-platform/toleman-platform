@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { Sidebar } from "@/components/sidebar";
-import { AuthUser, fetchWithConnectionRetry } from "@/lib/api";
+import { AuthUser, fetchWithConnectionRetry, type Nullable } from "@/lib/api";
 // Plain module, not theme-toggle.tsx; see @/lib/theme for why a Server
 // Component must not import these from a "use client" file.
 import { THEME_COOKIE_KEY, type Theme } from "@/lib/theme";
@@ -11,7 +11,7 @@ import { THEME_COOKIE_KEY, type Theme } from "@/lib/theme";
 // NEXT_PUBLIC_API_URL.
 const API_URL = process.env.API_INTERNAL_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-async function getCurrentUser(): Promise<AuthUser | null> {
+async function getCurrentUser(): Promise<Nullable<AuthUser>> {
   const cookieStore = await cookies();
   const session = cookieStore.get("toleman_session");
   if (!session) return null;

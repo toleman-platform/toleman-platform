@@ -14,6 +14,7 @@ import type {
   PrGuardrailOrgLog,
   PrGuardrailFinding,
 } from "@/types";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Dispatches an on-demand scan for a specific scanner tool against a target.
@@ -74,9 +75,9 @@ export function scanHistory(
  * Health check endpoint for core built-in scanner binaries.
  */
 export function toolsHealth(): Promise<
-  { tool: string; installed: boolean; version: string | null; response_ms: number | null }[]
+  { tool: string; installed: boolean; version: Nullable<string>; response_ms: Nullable<number> }[]
 > {
-  return jsonFetch<{ tool: string; installed: boolean; version: string | null; response_ms: number | null }[]>(
+  return jsonFetch<{ tool: string; installed: boolean; version: Nullable<string>; response_ms: Nullable<number> }[]>(
     "/api/tools/health",
   );
 }

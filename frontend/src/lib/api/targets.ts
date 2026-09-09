@@ -12,6 +12,7 @@ import type {
   PipelineWorkflowStep,
   RunStatus,
 } from "@/types";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Lists all target repositories, optionally filtered by group ID.
@@ -100,7 +101,7 @@ export function createGroup(g: { workspace_id: number; name: string; color?: str
  */
 export function updateGroup(
   id: number,
-  patch: { name?: string; color?: string; enforcement_mode?: EnforcementMode | null },
+  patch: { name?: string; color?: string; enforcement_mode?: Nullable<EnforcementMode> },
 ): Promise<Group> {
   return jsonFetch<Group>(`/api/groups/${id}`, {
     method: "PATCH",

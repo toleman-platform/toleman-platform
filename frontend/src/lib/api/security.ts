@@ -18,6 +18,7 @@ import type {
   FalsePositiveRule,
   FpRuleStats,
 } from "@/types";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Retrieves the AI Bill of Materials (AIBOM) for a target repository.
@@ -69,8 +70,8 @@ export function runApiScan(
 /**
  * Fetches the most recent API scan result for a target.
  */
-export function getLatestApiScan(targetId: number): Promise<{ target_id: number; scan: ScanRun | null }> {
-  return jsonFetch<{ target_id: number; scan: ScanRun | null }>(`/api/api-scan/${targetId}/latest`);
+export function getLatestApiScan(targetId: number): Promise<{ target_id: number; scan: Nullable<ScanRun> }> {
+  return jsonFetch<{ target_id: number; scan: Nullable<ScanRun> }>(`/api/api-scan/${targetId}/latest`);
 }
 
 /**
@@ -162,7 +163,7 @@ export async function exportOrgSbom(): Promise<Blob> {
 /**
  * Exports security posture report as CSV or PDF.
  */
-export async function exportPostureReport(targetId: number | null, format: "csv" | "pdf"): Promise<Blob> {
+export async function exportPostureReport(targetId: Nullable<number>, format: "csv" | "pdf"): Promise<Blob> {
   const params = new URLSearchParams({ format });
   if (targetId !== null && targetId !== 0) {
     params.set("target_id", String(targetId));

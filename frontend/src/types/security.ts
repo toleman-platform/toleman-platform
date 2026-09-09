@@ -1,4 +1,5 @@
 import type { RunStatus } from "./common";
+import type { Nullable } from "@/std-lib";
 
 /**
  * Supported Large Language Model / AI provider backends.
@@ -20,7 +21,7 @@ export type AiRecentAnalysis = {
   finding_id: number;
   title: string;
   severity: "Critical" | "High" | "Medium" | "Low" | "Informational";
-  cve_id: string | null;
+  cve_id: Nullable<string>;
   target_id: number;
   target_name: string;
   state: string;
@@ -85,7 +86,7 @@ export type DiscoveryRunResult = {
   new_count: number;
   error: string;
   started_at: string;
-  completed_at: string | null;
+  completed_at: Nullable<string>;
   endpoints?: Endpoint[];
 };
 
@@ -115,7 +116,7 @@ export type SbomRunResult = {
   new_count: number;
   error: string;
   started_at: string;
-  completed_at: string | null;
+  completed_at: Nullable<string>;
   components?: SbomComponent[];
 };
 
@@ -192,13 +193,13 @@ export type FalsePositiveRule = {
   workspace_id: number;
   rule_id: string;
   tool: string;
-  file_path_pattern: string | null;
-  source_finding_id: number | null;
+  file_path_pattern: Nullable<string>;
+  source_finding_id: Nullable<number>;
   created_by: string;
   created_at: string;
   active: boolean;
   match_count: number;
-  last_matched_at: string | null;
+  last_matched_at: Nullable<string>;
 };
 
 /**

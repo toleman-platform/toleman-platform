@@ -2,6 +2,8 @@
  * Dashboard metrics, configurable widget layout, and aggregated health scores.
  */
 
+import type { Nullable } from "@/std-lib";
+
 /**
  * High-level counts of total, open, and mitigated findings across an organization or scope.
  */
@@ -25,9 +27,9 @@ export type SecurityScoreComponent = {
  */
 export type SecurityScore = {
   score: number;
-  grade: "A" | "B" | "C" | "D" | "F" | null;
+  grade: Nullable<"A" | "B" | "C" | "D" | "F">;
   target_count: number;
-  weakest_component: "findings" | "sla" | "coverage" | "fp_rate" | "trend" | null;
+  weakest_component: Nullable<"findings" | "sla" | "coverage" | "fp_rate" | "trend">;
   components: {
     findings: SecurityScoreComponent & {
       open_findings: number;
@@ -38,7 +40,7 @@ export type SecurityScore = {
       with_sla: number;
       in_violation: number;
       compliant: number;
-      note: string | null;
+      note: Nullable<string>;
     };
     coverage: SecurityScoreComponent & {
       scanned_targets: number;
@@ -119,9 +121,9 @@ export type CveTimelineItem = {
   severity: string;
   state: string;
   target_id: number;
-  target_name: string | null;
+  target_name: Nullable<string>;
   first_seen: string;
-  epss_score: number | null;
+  epss_score: Nullable<number>;
   kev_listed: boolean;
 };
 
@@ -154,10 +156,10 @@ export type RecentFindingItem = {
   state: string;
   tool: string;
   target_id: number;
-  target_name: string | null;
+  target_name: Nullable<string>;
   file_path: string;
   first_seen: string;
-  sla_days: number | null;
+  sla_days: Nullable<number>;
   sla_violated: boolean;
   fixability?: "fixable" | "no_known_fix" | "unknown";
 };
@@ -179,7 +181,7 @@ export type LiveScanActivityItem = {
   branch: string;
   started_at: string;
   elapsed_seconds: number;
-  eta_seconds: number | null;
+  eta_seconds: Nullable<number>;
 };
 
 export type LiveScanActivityData = {
@@ -201,7 +203,7 @@ export type GuardrailActivityItem = {
   pr_title: string;
   status: string;
   new_findings_count: number;
-  highest_new_severity: string | null;
+  highest_new_severity: Nullable<string>;
   created_at: string;
 };
 

@@ -16,6 +16,17 @@ class Settings(BaseSettings):
     # Set True in any production/HTTPS deployment so the session cookie is
     # only ever sent over TLS. Defaults to False so local http:// dev works.
     cookie_secure: bool = False
+    # Set when the frontend and this API are deployed on different
+    # subdomains of the same parent domain (e.g. app.example.com and
+    # api.example.com) so the session cookie is shared between them --
+    # without this, a cookie set by the API defaults to that exact host
+    # only, and the frontend's own server (which reads the cookie directly
+    # for server-rendered pages, not just the browser's fetch calls) never
+    # sees it, silently bouncing every "logged in" user back to the login
+    # page after a successful login. Leave unset for same-origin/local
+    # deployments, where the default host-only scoping is exactly right.
+    # Example: ".example.com" (leading dot optional on modern browsers).
+    cookie_domain: str = ""
     # toleman.local, not toleman.io, the project doesn't own that domain
     # and shipping it as a public-repo default could mislead someone into
     # thinking it's a real, owned address (#154).

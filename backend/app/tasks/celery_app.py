@@ -1,7 +1,11 @@
+import logging
 from datetime import timedelta
 
 from celery import Celery
+from celery.signals import worker_ready
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # `celery -A app.tasks.celery_app worker ...` (docker-compose's celery-worker
 # service, #60) only imports THIS module; none of app.main's router imports
@@ -75,3 +79,32 @@ celery_app.conf.beat_schedule = {
         "schedule": timedelta(hours=24),
     },
 }
+
+
+@worker_ready.connect
+def _queue_missing_baseline_scans(**kwargs):
+    """Beat records a fresh timedelta schedule's creation time as its last
+    run and only fires once a full interval has elapsed *after that* -- it
+    does not treat the first tick as immediately due. So the 24h entry
+    above alone leaves any target with no baseline yet (GH-07) stuck that
+    way for up to 24h after every deploy that (re)starts Beat, not
+    "shortly", regardless of PR activity against it in the meantime.
+    worker_ready fires once when this process finishes bootstrapping and is
+    genuinely ready to accept tasks; queuing the catch-up pass here (scoped
+    to targets that still have zero completed scans, see
+    queue_full_scan_for_targets_missing_a_baseline's docstring) closes that
+    gap without waiting on Beat's own timing, and is a no-op on any restart
+    where nothing is actually missing a baseline.
+
+    Imported lazily: scan_tasks imports celery_app at module level, so a
+    top-level import back here would be circular.
+    """
+    from sqlmodel import Session
+    from app.core.db import engine
+    from app.tasks.scan_tasks import queue_full_scan_for_targets_missing_a_baseline
+
+    try:
+        with Session(engine) as session:
+            queue_full_scan_for_targets_missing_a_baseline(session)
+    except Exception:
+        logger.exception("baseline catch-up pass failed on worker startup")

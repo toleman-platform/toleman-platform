@@ -170,11 +170,11 @@ export function ConnectGithubCard() {
                         settings page can. A "Manage on GitHub" link is the
                         honest affordance here; an in-app edit form would
                         imply Toleman can do this itself, which it can't. */}
-                    <a href={safeHref(`https://github.com/settings/apps/${appEntry.app_slug}`)} target="_blank" rel="noreferrer">
-                      <Button size="sm" variant="outline">
+                    <Button asChild size="sm" variant="outline">
+                      <a href={safeHref(`https://github.com/settings/apps/${appEntry.app_slug}`)} target="_blank" rel="noreferrer">
                         Manage on GitHub
-                      </Button>
-                    </a>
+                      </a>
+                    </Button>
                     <Button
                       size="sm"
                       variant="outline"

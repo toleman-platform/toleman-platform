@@ -342,13 +342,13 @@ export function TargetsList({
     setSelected(checked ? new Set(visible.map((t) => t.id)) : new Set());
   }
 
-  async function addPipelineBulk(force = false, targetIds?: number[]) {
+  async function addPipelineBulk(force = false, targetIds?: number[], workflowTemplateId?: number) {
     const ids = targetIds ?? Array.from(selected);
     if (ids.length === 0) return;
     setSubmitting(true);
     setBatchError(null);
     try {
-      const res = await api.bulkPipelineIntegrate(ids, force);
+      const res = await api.bulkPipelineIntegrate(ids, force, workflowTemplateId);
       setBatch({
         batch_id: res.batch_id,
         status: res.status,
@@ -361,6 +361,7 @@ export function TargetsList({
         started_at: new Date().toISOString(),
         completed_at: null,
         items: [],
+        workflow_template_id: workflowTemplateId ?? null,
       });
       setSelected(new Set());
     } catch (e) {
@@ -690,7 +691,7 @@ export function TargetsList({
                   const skippedIds = batch.items
                     .filter((i) => i.status === "skipped_webhook_reachable")
                     .map((i) => i.target_id);
-                  addPipelineBulk(true, skippedIds);
+                  addPipelineBulk(true, skippedIds, batch.workflow_template_id ?? undefined);
                 }}
               >
                 Integrate skipped anyway

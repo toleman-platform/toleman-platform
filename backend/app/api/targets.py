@@ -14,7 +14,7 @@ from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
 from app.core.ai_repo_status import effective_is_ai_repo
 from app.api.github_app import BACKEND_URL
-from app.core.github_app import webhook_reachable
+from app.core.github_app import target_has_pr_guardrail_coverage
 from app.core.security_score import OPEN_STATES
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import (
@@ -398,18 +398,23 @@ def integrate_pipeline(
     GitHub every page load.
 
     (#245's double-scan gap) Server-side PR Guardrail (the webhook path)
-    already scans every PR for free once GitHub can reach this backend;
-    Pipeline Integration adds a second, Actions-based scan of the same PRs
-    on top of it, and ARCHITECTURE.md's own framing is that the Actions
-    path exists for the case where the webhook path *can't* work, not as a
-    second implementation to run alongside it. So on a first-time
-    integration (not a re-run -- see the pipeline_integrated check below)
-    where webhook_reachable() is already true, this 409s instead of
-    silently doubling every PR's scan count; `force=true` proceeds anyway
-    for an operator who wants the redundancy on purpose (e.g. as a
-    fallback in case the webhook path breaks later)."""
+    already scans every PR for free once GitHub can reach this backend AND
+    a working, enabled installation actually covers this target's repo
+    (app.core.github_app.target_has_pr_guardrail_coverage -- webhook
+    reachability alone isn't proof of that: this target's repo might have
+    no installation, that installation's webhook_secret might not be set,
+    or PR Guardrail might be explicitly disabled for this target). Pipeline
+    Integration adds a second, Actions-based scan of the same PRs on top of
+    it, and ARCHITECTURE.md's own framing is that the Actions path exists
+    for the case where the webhook path *can't* work, not as a second
+    implementation to run alongside it. So on a first-time integration (not
+    a re-run -- see the pipeline_integrated check below) where real
+    coverage already exists, this 409s instead of silently doubling every
+    PR's scan count; `force=true` proceeds anyway for an operator who wants
+    the redundancy on purpose (e.g. as a fallback in case the webhook path
+    breaks later)."""
     target = _get_target_scoped(target_id, session, user)
-    if not target.pipeline_integrated and webhook_reachable(BACKEND_URL) and not force:
+    if not target.pipeline_integrated and target_has_pr_guardrail_coverage(session, target, BACKEND_URL) and not force:
         raise HTTPException(
             status_code=409,
             detail=(
@@ -445,6 +450,13 @@ class BulkPipelineIntegrateRequest(BaseModel):
     # whole selection or it doesn't -- see run_pipeline_integration_batch's
     # docstring for the per-item skip this defaults to.
     force: bool = False
+    # Custom Workflow Builder (#35), same field as MassPipelineRolloutRequest's
+    # below. Lets the frontend's "Integrate skipped anyway" retry (targets-list.tsx,
+    # re-POSTing the original mass rollout's skipped items through this
+    # manual-selection endpoint with force=true) carry the original rollout's
+    # template through instead of silently falling back to #66's fixed
+    # default scanner set.
+    workflow_template_id: int | None = None
 
 
 def _caller_can_integrate(session: Session, user: User, target: Target) -> bool:
@@ -501,8 +513,20 @@ def bulk_pipeline_integrate(
     if not eligible_ids:
         raise HTTPException(status_code=403, detail="no accessible targets with sufficient role in the selection")
 
+    template = None
+    if payload.workflow_template_id is not None:
+        template = session.get(PipelineWorkflowTemplate, payload.workflow_template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="pipeline workflow template not found")
+        if ws_ids is not None and template.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="pipeline workflow template not found")
+
     batch = PipelineIntegrationBatch(
-        created_by_user_id=user.id, total=len(eligible_ids), status="running", force=payload.force
+        created_by_user_id=user.id,
+        total=len(eligible_ids),
+        status="running",
+        force=payload.force,
+        workflow_template_id=template.id if template else None,
     )
     session.add(batch)
     session.commit()

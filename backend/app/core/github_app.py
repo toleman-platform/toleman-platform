@@ -6,7 +6,7 @@ import jwt
 from sqlmodel import Session, select
 
 from app.core.crypto import decrypt_secret
-from app.models.models import GitHubAppConfig, GitHubInstallation
+from app.models.models import GitHubAppConfig, GitHubInstallation, Target
 
 
 def webhook_reachable(backend_url: str) -> bool:
@@ -229,3 +229,57 @@ def resolve_installation_for_repo(session: Session, workspace_id: int, repo_slug
             if installation.account_login.lower() == owner.lower():
                 return installation
     return installations[0]
+
+
+def target_has_pr_guardrail_coverage(session: Session, target: Target, backend_url: str) -> bool:
+    """Whether server-side PR Guardrail actually scans `target`'s PRs today
+    -- not just whether the infrastructure *could* work in general.
+
+    webhook_reachable(backend_url) alone is necessary but not sufficient,
+    and treating it as sufficient (#245's original double-scan fix) was
+    itself a bug: it would block or skip Pipeline Integration for a target
+    whose webhook path doesn't actually work, leaving that target with
+    *zero* PR scanning coverage from either path -- worse than the
+    original double-scan problem this exists to prevent. Three more real
+    gaps checked here, each independently able to mean "the webhook fires
+    but nothing scans this target's PRs":
+
+      - No GitHub App installation resolves for this target's repo at all
+        (a manually-added target, or one whose org was never actually
+        installed on).
+      - That installation's App has no webhook_secret configured yet
+        (app/api/webhooks.py's _verify_signature rejects every delivery
+        with a 401 until one is set -- connect-github-card.tsx's own "No
+        webhook secret set" warning is this exact state).
+      - The target's own *effective* enforcement_mode (inherited from its
+        group(s)/workspace, see app.core.enforcement) resolves to
+        "disabled" -- PR Guardrail is explicitly turned off for this
+        target specifically, regardless of whether the webhook plumbing
+        underneath it works.
+
+    Imports enforcement/github lazily to avoid a circular import: neither
+    currently imports this module, but this function is reachable from
+    app.tasks.pipeline_tasks (a Celery task module) and keeping the
+    dependency direction explicit here, not assumed, matches how
+    webhook_reachable's own docstring already reasons about this module's
+    callers.
+    """
+    from app.core.enforcement import resolve_enforcement_mode_with_source
+    from app.core.github import repo_slug_from_url
+
+    if not webhook_reachable(backend_url):
+        return False
+
+    slug = repo_slug_from_url(target.repo_url)
+    installation = resolve_installation_for_repo(session, target.workspace_id, slug)
+    if not installation:
+        return False
+    config = resolve_config_for_installation(session, installation)
+    if not config or not config.webhook_secret:
+        return False
+
+    mode, _source = resolve_enforcement_mode_with_source(session, target)
+    if mode == "disabled":
+        return False
+
+    return True

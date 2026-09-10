@@ -1298,10 +1298,10 @@ export const api = {
   // Issue #68: multi-select "Add Pipeline", dispatches a Celery batch and
   // returns immediately (#59-style async job); poll
   // getPipelineIntegrationBatch(batch_id) until status leaves "running".
-  bulkPipelineIntegrate: (targetIds: number[], force = false) =>
+  bulkPipelineIntegrate: (targetIds: number[], force = false, workflowTemplateId?: number) =>
     jsonFetch<{ batch_id: number; total: number; status: RunStatus }>("/api/targets/bulk-pipeline-integrate", {
       method: "POST",
-      body: JSON.stringify({ target_ids: targetIds, force }),
+      body: JSON.stringify({ target_ids: targetIds, force, workflow_template_id: workflowTemplateId }),
     }),
   getPipelineIntegrationBatch: (batchId: number) =>
     jsonFetch<PipelineIntegrationBatch>(`/api/targets/bulk-pipeline-integrate/${batchId}`),

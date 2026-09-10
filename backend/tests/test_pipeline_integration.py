@@ -16,7 +16,18 @@ from app.core.pipeline_pr import PipelinePrError
 from app.core.pipeline_workflow import generate_workflow_yaml
 from app.core.security import create_session_token, hash_password
 from app.main import app
-from app.models.models import Finding, FindingState, Organization, Severity, Target, User, UserRole, Workspace
+from app.models.models import (
+    Finding,
+    FindingState,
+    GitHubAppConfig,
+    GitHubInstallation,
+    Organization,
+    Severity,
+    Target,
+    User,
+    UserRole,
+    Workspace,
+)
 
 
 @pytest.fixture()
@@ -67,6 +78,40 @@ def _make_target(session, name="gotest", repo_url="https://github.com/geekshiv/g
     session.commit()
     session.refresh(target)
     return target
+
+
+def _make_installation(
+    session, workspace_id: int, account_login: str = "geekshiv", webhook_secret: str = "whsec"
+) -> GitHubInstallation:
+    """A GitHub App installation + its owning config, set up so
+    app.core.github_app.target_has_pr_guardrail_coverage resolves real
+    coverage for a target under ``workspace_id`` whose repo owner matches
+    ``account_login`` -- the #245 double-scan block only fires once an
+    installation genuinely covers the target, not just because the backend
+    URL happens to be reachable."""
+    config = GitHubAppConfig(
+        app_id="1",
+        slug="toleman-test",
+        client_id="client",
+        client_secret="secret",
+        private_key_pem="pem",
+        webhook_secret=webhook_secret,
+        html_url="https://github.com/apps/toleman-test",
+    )
+    session.add(config)
+    session.commit()
+    session.refresh(config)
+    installation = GitHubInstallation(
+        installation_id=1,
+        account_login=account_login,
+        account_type="Organization",
+        workspace_id=workspace_id,
+        github_app_config_id=config.id,
+    )
+    session.add(installation)
+    session.commit()
+    session.refresh(installation)
+    return installation
 
 
 # --- GitHub App manifest: `workflows` permission --------------------------
@@ -238,13 +283,15 @@ def test_pipeline_integrate_requires_developer_role(client, engine):
 
 def test_pipeline_integrate_blocks_when_webhook_already_reachable(client, engine, monkeypatch):
     """Server-side PR Guardrail already scans every PR once GitHub can
-    reach this backend; opening the Actions-based Pipeline Integration PR
+    reach this backend AND a working, enabled installation actually covers
+    this target's repo; opening the Actions-based Pipeline Integration PR
     too would double-scan every PR from then on. First-time integration
     (target.pipeline_integrated is still False) must not proceed silently."""
     client = _login(client, engine)
     with Session(engine) as session:
         target = _make_target(session)
         target_id = target.id
+        _make_installation(session, target.workspace_id)
 
     monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
     called = {}
@@ -271,6 +318,7 @@ def test_pipeline_integrate_force_bypasses_the_block(client, engine, monkeypatch
     with Session(engine) as session:
         target = _make_target(session)
         target_id = target.id
+        _make_installation(session, target.workspace_id)
 
     monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
 
@@ -322,6 +370,86 @@ def test_pipeline_integrate_not_blocked_when_webhook_unreachable(client, engine,
 
     def fake_open_pipeline_pr(session, target):
         return {"pr_url": "https://github.com/geekshiv/gotest/pull/9", "pr_number": 9, "branch": "b"}
+
+    monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(f"/api/targets/{target_id}/pipeline-integrate")
+    assert res.status_code == 200
+
+
+# --- CodeRabbit review of #390: webhook_reachable() alone isn't proof PR
+# Guardrail actually covers a target -- app.core.github_app.
+# target_has_pr_guardrail_coverage also requires a resolvable installation,
+# a configured webhook_secret, and enforcement_mode != "disabled". Getting
+# this wrong the other way (treating reachability alone as sufficient) would
+# block/skip Pipeline Integration for a target with *zero* real PR coverage
+# from either path -- worse than the original double-scan gap. ------------
+
+
+def test_pipeline_integrate_not_blocked_when_no_installation_resolves(client, engine, monkeypatch):
+    """Backend reachable, but no GitHub App installation covers this
+    target's repo at all (manually-added target, or an org that was never
+    actually installed on): real coverage is absent, so Pipeline
+    Integration must not be blocked."""
+    client = _login(client, engine)
+    with Session(engine) as session:
+        # No GitHubInstallation row at all for this target's workspace --
+        # resolve_installation_for_repo only falls back to a workspace's
+        # sole installation when one actually exists, so an empty workspace
+        # genuinely resolves to "no coverage" rather than a guess.
+        target = _make_target(session)
+        target_id = target.id
+
+    monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/geekshiv/gotest/pull/10", "pr_number": 10, "branch": "b"}
+
+    monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(f"/api/targets/{target_id}/pipeline-integrate")
+    assert res.status_code == 200
+
+
+def test_pipeline_integrate_not_blocked_when_no_webhook_secret_set(client, engine, monkeypatch):
+    """An installation resolves, but its App has no webhook_secret
+    configured yet -- every webhook delivery 401s, so nothing actually
+    scans this target's PRs server-side. Must not be blocked."""
+    client = _login(client, engine)
+    with Session(engine) as session:
+        target = _make_target(session)
+        target_id = target.id
+        _make_installation(session, target.workspace_id, webhook_secret="")
+
+    monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/geekshiv/gotest/pull/11", "pr_number": 11, "branch": "b"}
+
+    monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(f"/api/targets/{target_id}/pipeline-integrate")
+    assert res.status_code == 200
+
+
+def test_pipeline_integrate_not_blocked_when_enforcement_disabled(client, engine, monkeypatch):
+    """A resolvable, fully-configured installation exists, but this
+    target's effective enforcement_mode is "disabled" -- PR Guardrail is
+    explicitly turned off for it, regardless of whether the webhook
+    plumbing underneath works. Must not be blocked."""
+    client = _login(client, engine)
+    with Session(engine) as session:
+        target = _make_target(session)
+        target.enforcement_mode = "disabled"
+        session.add(target)
+        session.commit()
+        target_id = target.id
+        _make_installation(session, target.workspace_id)
+
+    monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/geekshiv/gotest/pull/12", "pr_number": 12, "branch": "b"}
 
     monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
 

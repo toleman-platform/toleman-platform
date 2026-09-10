@@ -117,7 +117,7 @@ _SEMGREP_JOB = """
           TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
           if [ -n "$TOLEMAN_API_URL" ] && [ -f semgrep.sarif ]; then
-            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=${{ github.ref_name }}" \\
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=semgrep&branch=$GITHUB_REF_NAME" \\
               -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @semgrep.sarif \\
               || echo "Toleman ingest push failed; TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"
@@ -150,7 +150,7 @@ _GITLEAKS_JOB = """
           TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
           if [ -n "$TOLEMAN_API_URL" ] && [ -f gitleaks.sarif ]; then
-            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=${{ github.ref_name }}" \\
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=gitleaks&branch=$GITHUB_REF_NAME" \\
               -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @gitleaks.sarif \\
               || echo "Toleman ingest push failed; TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"
@@ -182,7 +182,7 @@ _TRIVY_JOB = """
           TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
           if [ -n "$TOLEMAN_API_URL" ] && [ -f trivy.sarif ]; then
-            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=${{ github.ref_name }}" \\
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=trivy&branch=$GITHUB_REF_NAME" \\
               -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @trivy.sarif \\
               || echo "Toleman ingest push failed; TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"
@@ -224,7 +224,7 @@ _GOSEC_JOB = """
           TOLEMAN_API_KEY: ${{ secrets.TOLEMAN_API_KEY }}
         run: |
           if [ -n "$TOLEMAN_API_URL" ] && [ -f gosec.sarif ]; then
-            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=gosec&branch=${{ github.ref_name }}" \\
+            curl -sS -X POST "$TOLEMAN_API_URL/api/ingest/__TARGET_ID__?tool=gosec&branch=$GITHUB_REF_NAME" \\
               -H "X-API-Key: $TOLEMAN_API_KEY" -H "Content-Type: application/json" \\
               --data-binary @gosec.sarif \\
               || echo "Toleman ingest push failed; TOLEMAN_API_URL must be a publicly reachable Toleman deployment, not localhost"

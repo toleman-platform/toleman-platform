@@ -12,6 +12,15 @@ so on a target's first PR scan (when nothing is known) the entire
 repository looked new. An evaluator's PR touching one file was reported as
 adding four endpoints across files it never touched. First-run noise, in the
 most visible artefact the tool produces.
+
+GH-07: the same bug, unfixed, in the finding diff GH-06 was modelled on.
+compute_net_new() excludes findings whose dedup_hash is already Open on the
+default branch; on a target whose default branch has never been scanned,
+that "already Open" set is empty for the same reason it would be empty on a
+branch that was scanned and found clean. A PR against a freshly-registered
+repo -- necessarily the first PR that GitHub App ever sees -- got every
+pre-existing finding across the whole repository reported and blocked as
+introduced by that one PR, even in files it never touched.
 """
 
 import httpx
@@ -20,7 +29,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.core import pr_guardrail_executor
-from app.models.models import ApiEndpoint, Organization, PRGuardrailScan, Target, Workspace
+from app.models.models import ApiEndpoint, Organization, PRGuardrailScan, Scan, Target, Workspace
 
 
 @pytest.fixture()
@@ -250,3 +259,82 @@ def test_another_targets_baseline_does_not_count_as_this_ones(engine, target_id,
     with Session(engine) as session:
         target = session.get(Target, target_id)
         assert pr_guardrail_executor._diff_new_endpoints(session, target, "/tmp/repo") == []
+
+
+# ---------------------------------------------------------------------------
+# GH-07: no finding baseline is not "every finding is new"
+# ---------------------------------------------------------------------------
+
+
+def test_no_scan_at_all_means_no_baseline(engine, target_id):
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert pr_guardrail_executor._has_baseline_scan(session, target) is False
+
+
+def test_a_completed_scan_on_the_default_branch_is_a_baseline(engine, target_id):
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        session.add(Scan(target_id=target.id, tool="semgrep", branch=target.default_branch, status="completed"))
+        session.commit()
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert pr_guardrail_executor._has_baseline_scan(session, target) is True
+
+
+def test_a_still_running_scan_is_not_a_baseline_yet(engine, target_id):
+    """An in-flight scan hasn't produced any Finding rows yet; treating it as
+    a baseline would make the diff run against results that don't exist."""
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        session.add(Scan(target_id=target.id, tool="semgrep", branch=target.default_branch, status="running"))
+        session.commit()
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert pr_guardrail_executor._has_baseline_scan(session, target) is False
+
+
+def test_a_scan_of_a_different_branch_is_not_a_baseline(engine, target_id):
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        session.add(Scan(target_id=target.id, tool="semgrep", branch="some-feature-branch", status="completed"))
+        session.commit()
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert pr_guardrail_executor._has_baseline_scan(session, target) is False
+
+
+def test_another_targets_scan_does_not_count_as_this_ones_baseline(engine, target_id):
+    with Session(engine) as session:
+        other = Target(workspace_id=1, name="other", repo_url="https://github.com/acme/other")
+        session.add(other)
+        session.commit()
+        session.refresh(other)
+        session.add(Scan(target_id=other.id, tool="semgrep", branch=other.default_branch, status="completed"))
+        session.commit()
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert pr_guardrail_executor._has_baseline_scan(session, target) is False
+
+
+def test_render_comment_flags_missing_baseline_instead_of_a_clean_all_clear():
+    body = pr_guardrail_executor.render_comment(
+        [], [], PRGuardrailScan(id=1, target_id=1, pr_number=1, branch="f").status,
+        target_id=1, pr_scan_id=1, baseline_missing=True,
+    )
+    assert "No baseline scan yet" in body
+    assert "vs the default branch. ✅" not in body
+
+
+def test_render_comment_without_baseline_missing_is_unchanged():
+    """Default False must reproduce the pre-GH-07 output for existing callers."""
+    body = pr_guardrail_executor.render_comment(
+        [], [], PRGuardrailScan(id=1, target_id=1, pr_number=1, branch="f").status,
+        target_id=1, pr_scan_id=1,
+    )
+    assert "No baseline scan yet" not in body
+    assert "vs the default branch. ✅" in body

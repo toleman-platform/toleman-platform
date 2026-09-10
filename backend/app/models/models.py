@@ -744,6 +744,17 @@ class PRGuardrailScan(SQLModel, table=True):
     # History can show "the decision never reached GitHub" next to the
     # decision itself.
     status_delivery_error: str = ""
+    # (GH-07) True when this scan's finding diff had no completed baseline
+    # scan of the target's default branch to compare against. Same "no
+    # baseline is not zero, it's unknown" distinction GH-06 already applies
+    # to the endpoint diff (see _diff_new_endpoints): an empty existing_hashes
+    # set because the default branch was never scanned looks identical, at
+    # the query level, to one that's empty because everything was fixed.
+    # Diffing against it anyway reports the whole repository's pre-existing
+    # state as introduced by whichever PR happens to be scanned first.
+    # Persisted (not just logged) so the PR comment and PR History can say
+    # plainly that this scan's "no findings" is not yet a real diff.
+    baseline_missing: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     completed_at: datetime | None = None
 

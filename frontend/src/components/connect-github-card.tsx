@@ -8,7 +8,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Github, CheckCircle2, XCircle } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { Github, CheckCircle2, XCircle, Trash2 } from "lucide-react";
 
 type GithubAppStatus = {
   apps: GitHubAppInstallation[];
@@ -29,9 +30,28 @@ export function ConnectGithubCard() {
   const [error, setError] = useState<string | null>(null);
   const [webhookSecrets, setWebhookSecrets] = useState<Record<number, string>>({});
   const [savingSecretFor, setSavingSecretFor] = useState<number | null>(null);
+  // Deleting a registered App drops its private key/client secret and every
+  // installation row under it -- same destructive-confirmation pattern as
+  // workspace-roles.tsx's role removal, not a bare button with no warning.
+  const [pendingDelete, setPendingDelete] = useState<GitHubAppInstallation | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   function refresh() {
     api.githubAppStatus().then(setStatus);
+  }
+
+  async function confirmDelete() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    try {
+      await api.deleteGithubApp(pendingDelete.id);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to delete GitHub App");
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
+    }
   }
 
   useEffect(refresh, []);
@@ -109,6 +129,7 @@ export function ConnectGithubCard() {
   }
 
   return (
+    <>
     <Card className="border-border bg-card">
       <CardContent className="flex flex-col gap-4 px-4 py-4">
         <div className="flex items-center gap-3">
@@ -138,11 +159,21 @@ export function ConnectGithubCard() {
                   <div className="text-sm font-medium text-foreground">
                     <code>{appEntry.app_slug}</code>
                   </div>
-                  <a href={safeHref(`https://github.com/apps/${appEntry.app_slug}/installations/new`)} target="_blank" rel="noreferrer">
-                    <Button size="sm" variant="outline">
-                      Add installation
+                  <div className="flex items-center gap-2">
+                    <a href={safeHref(`https://github.com/apps/${appEntry.app_slug}/installations/new`)} target="_blank" rel="noreferrer">
+                      <Button size="sm" variant="outline">
+                        Add installation
+                      </Button>
+                    </a>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => setPendingDelete(appEntry)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
-                  </a>
+                  </div>
                 </div>
 
                 {appEntry.installations.length === 0 ? (
@@ -237,5 +268,26 @@ export function ConnectGithubCard() {
         </div>
       </CardContent>
     </Card>
+
+    <ConfirmDialog
+      open={pendingDelete !== null}
+      title="Delete GitHub App"
+      description={
+        pendingDelete ? (
+          <>
+            Delete <span className="font-medium text-foreground">{pendingDelete.app_slug}</span> and every
+            installation under it? This only removes Toleman&apos;s record of the App -- it stays installed on
+            GitHub&apos;s side until removed from GitHub&apos;s own settings. Repos already synced from it are
+            not removed.
+          </>
+        ) : null
+      }
+      confirmLabel="Delete"
+      tone="destructive"
+      loading={deleting}
+      onConfirm={confirmDelete}
+      onCancel={() => setPendingDelete(null)}
+    />
+    </>
   );
 }

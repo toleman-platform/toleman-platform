@@ -251,9 +251,10 @@ class TestChangedFiles:
             def json(self):
                 return self._data
 
-        def fake_get(path):
+        def fake_get(path, token=""):
             idx = calls["n"]
             calls["n"] += 1
+            calls.setdefault("tokens", []).append(token)
             return Res(pages[idx] if idx < len(pages) else [])
 
         monkeypatch.setattr(executor, "github_get", fake_get)
@@ -266,10 +267,18 @@ class TestChangedFiles:
         ]])
         assert executor._changed_files("o/r", 1) == ["kept.py"]
 
+    def test_token_is_threaded_through(self, monkeypatch):
+        """Regression: this call used to run unauthenticated, which 404s on
+        a private repo and silently falls back to a full scan instead of
+        surfacing the auth failure."""
+        calls = self._fake_github_get(monkeypatch, [[]])
+        executor._changed_files("o/r", 1, "tok-123")
+        assert calls["tokens"] == ["tok-123"]
+
     def test_api_failure_returns_none_not_empty(self, monkeypatch):
         """None means "fall back to a full scan". An empty list would mean
         "nothing changed", which would scan nothing and pass."""
-        def boom(path):
+        def boom(path, token=""):
             raise RuntimeError("GitHub is down")
 
         monkeypatch.setattr(executor, "github_get", boom)

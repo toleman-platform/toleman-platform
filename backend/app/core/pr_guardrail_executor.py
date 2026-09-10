@@ -126,7 +126,7 @@ def _run_guardrail_tools(
 MAX_DIFF_SCOPED_FILES = 300
 
 
-def _changed_files(slug: str, pr_number: int) -> list[str] | None:
+def _changed_files(slug: str, pr_number: int, token: str = "") -> list[str] | None:
     """Repo-relative paths the PR adds or modifies.
 
     Returns None when the list can't be established, which the caller must
@@ -135,12 +135,18 @@ def _changed_files(slug: str, pr_number: int) -> list[str] | None:
     Deleted files are excluded: there is no file left to scan, and their
     findings disappear from the head branch anyway. Renames report only the
     new path, which is what exists in the checkout.
+
+    ``token`` should be the caller's already-resolved
+    ``resolve_github_token(...)`` credential; without it this call runs
+    unauthenticated and 404s on any private repo, which the except-branch
+    below would silently read as "fall back to a full scan" rather than the
+    auth failure it actually is.
     """
     paths: list[str] = []
     page = 1
     while True:
         try:
-            res = github_get(f"/repos/{slug}/pulls/{pr_number}/files?per_page=100&page={page}")
+            res = github_get(f"/repos/{slug}/pulls/{pr_number}/files?per_page=100&page={page}", token=token)
             res.raise_for_status()
             batch = res.json()
         except Exception:
@@ -679,7 +685,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         # each other in the PR comment or the audit trail.
         scan_paths: list[str] | None = None
         if target.diff_scoped_pr_scans:
-            changed = _changed_files(slug, pr_number)
+            changed = _changed_files(slug, pr_number, resolve_github_token(session, target.workspace_id, slug) or "")
             if changed is None:
                 logger.info("pr guardrail: full scan for %s#%s (changed files unavailable)", slug, pr_number)
             elif len(changed) > MAX_DIFF_SCOPED_FILES:

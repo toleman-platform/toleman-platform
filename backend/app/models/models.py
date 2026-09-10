@@ -482,6 +482,17 @@ class GitHubAppConfig(SQLModel, table=True):
     webhook_secret: str
     html_url: str
     setup_token: Optional[str] = Field(default=None, unique=True, index=True)
+    # Which GitHub account owns this App -- "User" (github.com/settings/apps/
+    # {slug}) or "Organization" (github.com/organizations/{owner_login}/
+    # settings/apps/{slug}). GitHub's manifest-conversion response includes
+    # this (`data["owner"]`); an App created for an org (manifest-data's own
+    # `org` param) is owned by that org, not by the user who clicked through
+    # the flow, so the two URL shapes aren't interchangeable -- the
+    # connect-github-card.tsx "Manage on GitHub" link 404s if it guesses
+    # wrong. Nullable for rows created before this column existed; those are
+    # backfilled lazily via GET /app (see app.api.github_app.status).
+    owner_login: Optional[str] = None
+    owner_type: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
 
 

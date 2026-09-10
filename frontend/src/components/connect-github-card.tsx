@@ -169,9 +169,11 @@ export function ConnectGithubCard() {
                         webhook event subscriptions -- only the App's own
                         settings page can. A "Manage on GitHub" link is the
                         honest affordance here; an in-app edit form would
-                        imply Toleman can do this itself, which it can't. */}
+                        imply Toleman can do this itself, which it can't.
+                        manage_url is server-computed (org- vs personal-owned
+                        Apps live under different URL shapes; guessing 404s). */}
                     <Button asChild size="sm" variant="outline">
-                      <a href={safeHref(`https://github.com/settings/apps/${appEntry.app_slug}`)} target="_blank" rel="noreferrer">
+                      <a href={safeHref(appEntry.manage_url)} target="_blank" rel="noreferrer">
                         Manage on GitHub
                       </a>
                     </Button>

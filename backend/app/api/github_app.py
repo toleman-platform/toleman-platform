@@ -11,7 +11,9 @@ from app.api.deps import get_session
 from app.core.config import settings
 from app.core.crypto import encrypt_secret
 from app.core.github_app import (
+    app_management_url,
     build_manifest,
+    fetch_app_owner,
     get_installation_account,
     get_installation_token,
     list_installation_repos,
@@ -84,6 +86,17 @@ def status(session: Session = Depends(get_session)):
 
     apps = []
     for config in configs:
+        # Backfill for GitHubAppConfig rows created before owner_login/
+        # owner_type existed (see their docstring) -- without this,
+        # app_management_url below guesses "personal account" for an
+        # org-owned App and 404s.
+        if config.owner_login is None:
+            owner = fetch_app_owner(config)
+            if owner:
+                config.owner_login, config.owner_type = owner
+                session.add(config)
+                session.commit()
+
         config_installations = [
             i for i in installations
             if i.github_app_config_id == config.id
@@ -94,6 +107,7 @@ def status(session: Session = Depends(get_session)):
             "app_id": config.app_id,
             "app_slug": config.slug,
             "html_url": config.html_url,
+            "manage_url": app_management_url(config),
             "webhook_secret_set": bool(config.webhook_secret),
             "installations": [
                 {
@@ -165,6 +179,7 @@ def callback(code: str, state: str | None = None, session: Session = Depends(get
     res.raise_for_status()
     data = res.json()
 
+    owner = data.get("owner") or {}
     config = GitHubAppConfig(
         app_id=str(data["id"]),
         slug=data["slug"],
@@ -177,6 +192,10 @@ def callback(code: str, state: str | None = None, session: Session = Depends(get
         # this App's setup_token so /setup-callback can resolve back to this
         # exact row (#34) every time this App is installed/reconfigured.
         setup_token=state,
+        # Which account owns this App -- see GitHubAppConfig.owner_login's
+        # docstring for why "Manage on GitHub" needs this.
+        owner_login=owner.get("login"),
+        owner_type=owner.get("type"),
     )
     session.add(config)
     session.commit()

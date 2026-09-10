@@ -71,12 +71,16 @@ def _make_workspace(session) -> Workspace:
     return ws
 
 
-def _make_config(session, app_id, slug, webhook_secret="", setup_token=None) -> GitHubAppConfig:
+def _make_config(
+    session, app_id, slug, webhook_secret="", setup_token=None, owner_login=None, owner_type=None
+) -> GitHubAppConfig:
     cfg = GitHubAppConfig(
         app_id=app_id, slug=slug, client_id="cid", client_secret="csecret",
         private_key_pem="pem", webhook_secret=encrypt_secret(webhook_secret) if webhook_secret else "",
         html_url=f"https://github.com/apps/{slug}",
         setup_token=setup_token,
+        owner_login=owner_login,
+        owner_type=owner_type,
     )
     session.add(cfg)
     session.commit()
@@ -192,6 +196,50 @@ def test_status_empty_when_nothing_configured(client, engine):
     assert data["apps"] == []
     assert data["app_configured"] is False
     assert data["installed"] is False
+
+
+# --- "Manage on GitHub" link (manage_url) ---------------------------------
+#
+# Org-owned and personal-account-owned Apps live at different GitHub
+# settings URLs; connect-github-card.tsx 404'd because it guessed the
+# personal-account shape for an App actually owned by an org. manage_url is
+# now computed server-side from GitHubAppConfig.owner_login/owner_type.
+
+
+def test_status_manage_url_for_org_owned_app(client, engine):
+    _login(client, engine)
+    with Session(engine) as session:
+        _make_config(session, "1", "app-org", owner_login="acme-corp", owner_type="Organization")
+
+    res = client.get("/api/github-app/status")
+    manage_url = res.json()["apps"][0]["manage_url"]
+    assert manage_url == "https://github.com/organizations/acme-corp/settings/apps/app-org"
+
+
+def test_status_manage_url_for_personal_app(client, engine):
+    _login(client, engine)
+    with Session(engine) as session:
+        _make_config(session, "1", "app-personal", owner_login="someuser", owner_type="User")
+
+    res = client.get("/api/github-app/status")
+    manage_url = res.json()["apps"][0]["manage_url"]
+    assert manage_url == "https://github.com/settings/apps/app-personal"
+
+
+def test_status_manage_url_falls_back_to_personal_shape_when_owner_unknown(client, engine):
+    """A GitHubAppConfig row from before owner_login/owner_type existed (or
+    whose lazy backfill via GET /app failed -- see fetch_app_owner) has no
+    owner info at all. manage_url must still return *something* clickable
+    rather than crash the status read; the old (pre-fix) behavior is the
+    only guess available until a successful backfill."""
+    _login(client, engine)
+    with Session(engine) as session:
+        _make_config(session, "1", "app-unknown")
+
+    res = client.get("/api/github-app/status")
+    assert res.status_code == 200
+    manage_url = res.json()["apps"][0]["manage_url"]
+    assert manage_url == "https://github.com/settings/apps/app-unknown"
 
 
 # --- webhook signature verification across multiple Apps -----------------

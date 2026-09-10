@@ -781,6 +781,12 @@ export type GitHubAppInstallation = {
   app_id: string;
   app_slug: string;
   html_url: string;
+  // Server-computed: github.com/settings/apps/{slug} for a personal App,
+  // github.com/organizations/{owner}/settings/apps/{slug} for an org-owned
+  // one. Built server-side (app.core.github_app.app_management_url) rather
+  // than guessed from app_slug here, since guessing personal-only 404s for
+  // an org-owned App.
+  manage_url: string;
   webhook_secret_set: boolean;
   installations: GitHubAppInstalledAccount[];
 };

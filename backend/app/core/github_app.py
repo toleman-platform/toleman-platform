@@ -138,6 +138,46 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
     }
 
 
+def app_management_url(config: GitHubAppConfig) -> str:
+    """Where this App's owner edits its permissions/webhook event
+    subscriptions -- GitHub has no API for that, only this settings page
+    (see connect-github-card.tsx's "Manage on GitHub" link). Organization-
+    owned Apps live under a different URL shape than personal ones
+    (``manifest_data``'s own ``org`` param decides which one an App is
+    created as); guessing personal-only 404s for an org-owned App."""
+    if config.owner_type == "Organization" and config.owner_login:
+        return f"https://github.com/organizations/{config.owner_login}/settings/apps/{config.slug}"
+    return f"https://github.com/settings/apps/{config.slug}"
+
+
+def fetch_app_owner(config: GitHubAppConfig) -> tuple[str, str] | None:
+    """GET /app (authenticated as the App itself via JWT) returns the App's
+    owner login/type -- used to backfill GitHubAppConfig rows created before
+    ``owner_login``/``owner_type`` existed. Returns None on any failure
+    (network, revoked/rotated credentials, or a private_key_pem that can't
+    sign a JWT at all -- e.g. a test fixture's placeholder string, not a
+    real PEM); this is best-effort enrichment on a status read, not
+    something that should break the page, so a failure here just means the
+    "Manage on GitHub" link keeps guessing personal-account-owned until a
+    later read succeeds. Broad `except Exception` deliberately: JWT signing
+    failures aren't httpx errors, and nothing here should ever 500 a status
+    read (same reasoning as this module's other best-effort GitHub API
+    calls, e.g. app.core.ingestion's SIEM/Jira sends)."""
+    try:
+        app_jwt = generate_app_jwt(config)
+        res = httpx.get(
+            "https://api.github.com/app",
+            headers={"Authorization": f"Bearer {app_jwt}", "Accept": "application/vnd.github+json"},
+            timeout=15,
+        )
+        res.raise_for_status()
+        owner = res.json().get("owner") or {}
+        login, owner_type = owner.get("login"), owner.get("type")
+        return (login, owner_type) if login and owner_type else None
+    except Exception:
+        return None
+
+
 def generate_app_jwt(config: GitHubAppConfig) -> str:
     now = int(time.time())
     payload = {"iat": now - 60, "exp": now + 9 * 60, "iss": config.app_id}

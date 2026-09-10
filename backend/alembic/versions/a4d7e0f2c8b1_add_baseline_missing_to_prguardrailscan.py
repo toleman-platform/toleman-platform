@@ -14,7 +14,7 @@ reason, so the PR comment and PR History can say plainly that "no findings"
 here is not yet a real diff against the default branch.
 
 Revision ID: a4d7e0f2c8b1
-Revises: 9f7506526474
+Revises: b4c9e1d7f206
 Create Date: 2026-09-10
 
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "a4d7e0f2c8b1"
-down_revision: Union[str, None] = "9f7506526474"
+down_revision: Union[str, None] = "b4c9e1d7f206"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

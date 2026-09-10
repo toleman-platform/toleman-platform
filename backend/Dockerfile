@@ -199,9 +199,24 @@ ENV BUILD_VERSION=${BUILD_VERSION} \
 # ownership is explicit and does not depend on the umask of whoever created
 # it first. A deployment that overrides SCAN_WORKDIR to somewhere outside
 # /tmp must chown that path itself.
+#
+# site-packages and /usr/local/bin are chowned too, not just left
+# root-owned: app/core/tool_install.py's one-click scanner install
+# (#216) runs `pip install <package>` as this user at runtime, and its own
+# docstring says installs land "into the running container's site-packages".
+# Without this, pip can't write there, silently falls back to a `--user`
+# install under $HOME/.local (a bare warning, not a failure), and the
+# resulting console script lands in $HOME/.local/bin, which is not on PATH
+# anywhere in this image. Every install then "succeeds" but
+# _installed_version()'s version_cmd can never find the binary, so
+# tool_install.py reports it as failed ("pip succeeded but the tool did not
+# report a version when run") regardless of which package was requested.
+# Chowning both paths keeps installs going to the normal, already-on-PATH
+# location instead.
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin toleman \
     && mkdir -p /tmp/toleman-scans /home/toleman/.cache \
-    && chown -R toleman:toleman /app /tmp/toleman-scans /home/toleman
+    && chown -R toleman:toleman /app /tmp/toleman-scans /home/toleman \
+        /usr/local/lib/python3.12/site-packages /usr/local/bin
 
 ENV HOME=/home/toleman \
     XDG_CACHE_HOME=/home/toleman/.cache

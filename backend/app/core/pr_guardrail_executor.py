@@ -404,6 +404,16 @@ def render_comment(
     whole-repo case for the same reason, so a caller that doesn't know about
     diff scoping renders exactly what it used to.
 
+    `tools_skipped` (a tool ToolNotApplicable'd out, e.g. gosec on a repo
+    with no Go files) is still recorded on the PRGuardrailScan row and still
+    excluded from the "Scanned with" line below, but is no longer rendered
+    as its own note in the comment body (previously "Not run for this PR:
+    ..."): on a platform whose targets are mostly non-Go/non-Terraform, that
+    note was a near-permanent, low-information fixture on every PR rather
+    than something that changes a reader's judgment of the result -- unlike
+    `tools_failed` below, which stays rendered because it means something
+    that should have run didn't.
+
     `baseline_missing` (GH-07) defaults to False so callers/tests predating
     the baseline check render exactly what they used to; True means the
     finding diff was skipped because the target's default branch has never
@@ -437,13 +447,6 @@ def render_comment(
             f"🔍 **Diff-scoped scan**, only the {files_scanned} file(s) changed in this PR were "
             "examined, not the whole repository. Pre-existing issues elsewhere in the codebase "
             "would not appear here."
-        )
-        lines.append("")
-
-    if tools_skipped:
-        lines.append(
-            "ℹ️ **Not run for this PR:** "
-            + "; ".join(f"`{tool}` ({reason})" for tool, reason in sorted(tools_skipped.items()))
         )
         lines.append("")
 

@@ -187,10 +187,10 @@ def test_a_tool_disabled_for_this_workspace_does_not_run(engine, monkeypatch):
     assert result["status"] == PRGuardrailStatus.PASSED
 
 
-def test_a_failing_tool_never_reports_a_clean_pass(engine, monkeypatch):
-    """The core honesty rule: if an assigned tool did not run, the PR was not
-    fully checked, and neither the commit status nor the comment may say it
-    was clean."""
+def test_a_failing_tool_never_reports_a_clean_pass_in_the_comment(engine, monkeypatch):
+    """The PR comment must never render a partial scan as a plain all-clear:
+    the failed tool is named and the tick is withheld, regardless of what
+    the commit status ends up being (see the two tests below for that)."""
     target_id = _make_target(engine)
     ran, statuses, comments = _wire_boundaries(
         monkeypatch,
@@ -202,11 +202,6 @@ def test_a_failing_tool_never_reports_a_clean_pass(engine, monkeypatch):
         target = session.get(Target, target_id)
         result = pr_guardrail_executor.execute_pr_guardrail_scan(target, 4, session)
 
-    state, description = statuses[-1]
-    assert state == "error", "a scan with a failed tool must not post success"
-    assert "gitleaks" in description
-    assert "not fully scanned" in description
-
     body = comments[-1]
     assert "gitleaks" in body
     assert "not fully scanned" in body.lower()
@@ -217,6 +212,51 @@ def test_a_failing_tool_never_reports_a_clean_pass(engine, monkeypatch):
         assert scan.tools_failed == "gitleaks"
         assert "gitleaks" not in scan.tools_run.split(",")
         assert "semgrep" in scan.tools_run.split(",")
+
+
+def test_a_failed_tool_with_nothing_blocking_does_not_fail_the_required_check(engine, monkeypatch):
+    """A failed tool alongside zero net-new findings from the tools that did
+    run is *incomplete*, not *broken* -- the PR comment still says so (see
+    above), but the commit status (what actually gates merge as a required
+    check) must not block on it. Without this, a workspace whose
+    pr_guardrail assignment includes even one tool this deployment can never
+    run (e.g. not installed) would fail every PR forever regardless of
+    content, making the required check useless as a merge gate."""
+    target_id = _make_target(engine)
+    _, statuses, _ = _wire_boundaries(
+        monkeypatch,
+        {"semgrep": [], "gitleaks": [], "trivy": [], "gosec": []},
+        failing_tools=("gitleaks",),
+    )
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        pr_guardrail_executor.execute_pr_guardrail_scan(target, 4, session)
+
+    state, description = statuses[-1]
+    assert state == "success", "incomplete coverage with nothing blocking found must not fail the required check"
+    assert "gitleaks" in description
+    assert "failed to run" in description
+
+
+def test_a_real_blocking_finding_still_fails_even_with_a_failed_tool(engine, monkeypatch):
+    """The reverse must also hold: a genuine blocking finding from a tool
+    that DID run is never masked by an unrelated tool's failure. Known
+    danger always outranks incomplete coverage."""
+    target_id = _make_target(engine)
+    _, statuses, _ = _wire_boundaries(
+        monkeypatch,
+        {"semgrep": [_finding("sql-injection")], "gitleaks": [], "trivy": [], "gosec": []},
+        failing_tools=("gitleaks",),
+    )
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        pr_guardrail_executor.execute_pr_guardrail_scan(target, 4, session)
+
+    state, description = statuses[-1]
+    assert state == "failure", "a real blocking finding must still fail, even alongside a failed tool"
+    assert "1 net-new finding" in description
 
 
 def test_one_failing_tool_does_not_discard_the_others_findings(engine, monkeypatch):

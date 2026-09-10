@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from celery import Celery
 from app.core.config import settings
 
@@ -58,3 +60,18 @@ celery_app.conf.task_routes = {
 # chance instead of leaving the scan stuck in "running" forever.
 celery_app.conf.task_acks_late = True
 celery_app.conf.task_reject_on_worker_lost = True
+
+# Refreshes every target's default-branch baseline daily (app.tasks.scan_tasks
+# .run_scheduled_full_scans) so PR Guardrail always has something real to diff
+# against (GH-07) instead of relying on someone having clicked Scan manually,
+# and so posture pages don't quietly go stale between manual runs. Requires
+# `celery -A app.tasks.celery_app beat` (or `worker -B`, see docker-compose.yml's
+# celery-worker command) actually running somewhere; a worker with no beat
+# process never fires entries in this schedule, it just sits registered and
+# unused.
+celery_app.conf.beat_schedule = {
+    "run-scheduled-full-scans": {
+        "task": "app.tasks.scan_tasks.run_scheduled_full_scans",
+        "schedule": timedelta(hours=24),
+    },
+}

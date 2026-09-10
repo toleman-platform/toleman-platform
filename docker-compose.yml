@@ -101,7 +101,15 @@ services:
       context: ./backend
     image: toleman-backend:local
     restart: unless-stopped
-    command: celery -A app.tasks.celery_app worker -Q scans --loglevel=info
+    # -B embeds Celery Beat (the scheduler for celery_app.conf.beat_schedule,
+    # e.g. the daily full-scan refresh) in this same worker process rather
+    # than running it as a separate service. Safe here specifically because
+    # this deployment runs exactly one celery-worker replica: -B with more
+    # than one worker process sharing a schedule fires every scheduled task
+    # once per replica, not once total. Scaling celery-worker beyond one
+    # replica needs a dedicated `celery beat` service (drop -B from every
+    # worker) instead of this shortcut.
+    command: celery -A app.tasks.celery_app worker -B -Q scans --loglevel=info
     depends_on:
       postgres:
         condition: service_healthy

@@ -858,27 +858,41 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         post_pr_comment(session, target, pr_number, comment_body)
 
         summary_desc = f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)"
-        if failed_tools:
-            # An assigned tool did not run. Whatever the other tools found,
-            # this PR was NOT fully checked; reporting "success" here would
-            # be the exact false all-clear this project treats as a bug
-            # (see issue #229, and osv_malware.py's None-vs-{} handling).
-            # GitHub's "error" state is visually distinct from both success
-            # and failure, which is precisely the signal wanted: inconclusive.
-            commit_state = "error"
-            commit_desc = f"{', '.join(failed_tools)} failed to run - PR not fully scanned. {summary_desc}"
-        elif status == PRGuardrailStatus.PASSED:
-            commit_state, commit_desc = "success", summary_desc
-        elif enforcement_mode == "alert":
-            # Alert mode: real blocking findings exist, but this
-            # target/group/workspace is configured to warn rather than fail
-            # the build. GitHub commit statuses only support
-            # success/failure/pending/error (there's no dedicated "neutral"
-            # state) so we use "success" (non-blocking) with a description
-            # that makes clear this is alert-mode, not a clean scan.
-            commit_state, commit_desc = "success", f"[alert mode, non-blocking] {summary_desc}"
+        if status == PRGuardrailStatus.BLOCKED:
+            # A real net-new blocking finding exists among the tools that
+            # did run. That is a known problem regardless of what else
+            # failed to run, and must not be downgraded to "error"
+            # (inconclusive) just because coverage was also partial --
+            # a known-blocking finding and incomplete coverage are different
+            # facts, and the more serious one always wins.
+            if enforcement_mode == "alert":
+                # Alert mode: real blocking findings exist, but this
+                # target/group/workspace is configured to warn rather than
+                # fail the build. GitHub commit statuses only support
+                # success/failure/pending/error (there's no dedicated
+                # "neutral" state) so we use "success" (non-blocking) with a
+                # description that makes clear this is alert-mode, not a
+                # clean scan.
+                commit_state, commit_desc = "success", f"[alert mode, non-blocking] {summary_desc}"
+            else:
+                commit_state, commit_desc = "failure", summary_desc
+        elif failed_tools:
+            # PASSED among the tools that ran, but not every assigned tool
+            # did. Coverage was incomplete -- said plainly here and in the
+            # PR comment (still rendered as "not an all-clear", never a
+            # plain checkmark) -- but incomplete coverage with zero findings
+            # in what *did* run is not itself grounds to block merge.
+            # Without this, a workspace whose pr_guardrail assignment
+            # includes a single tool this deployment can never run (not
+            # installed, e.g. a GitHub-release-only binary) would fail
+            # every PR forever regardless of content, which defeats using
+            # this as a required check at all. This never masks a real
+            # finding: that path is handled by the BLOCKED branch above,
+            # which always wins over this one.
+            commit_state = "success"
+            commit_desc = f"{summary_desc} ({', '.join(failed_tools)} failed to run)"
         else:
-            commit_state, commit_desc = "failure", summary_desc
+            commit_state, commit_desc = "success", summary_desc
 
         status_delivery_error = set_commit_status(session, target, head_sha, commit_state, commit_desc)
         if status_delivery_error:

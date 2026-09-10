@@ -222,3 +222,47 @@ def run_scheduled_full_scans():
                 queue_full_scan(session, target)
             except Exception:
                 logger.exception("scheduled full scan dispatch failed for target %s", target.id)
+
+
+def _has_completed_scan(session: Session, target: Target) -> bool:
+    """Mirrors app.core.pr_guardrail_executor._has_baseline_scan's query
+    (kept separate rather than imported: that module doesn't otherwise
+    depend on this one, and this is one filtered SELECT, not logic worth a
+    cross-module dependency for)."""
+    return (
+        session.exec(
+            select(Scan.id).where(
+                Scan.target_id == target.id,
+                Scan.branch == target.default_branch,
+                Scan.status == "completed",
+            )
+        ).first()
+        is not None
+    )
+
+
+def queue_full_scan_for_targets_missing_a_baseline(session: Session) -> list[int]:
+    """Startup catch-up (see the worker_ready handler in app.tasks.celery_app):
+    every target with zero completed Scan rows gets one queued right now.
+
+    This exists because of a real gap in run_scheduled_full_scans' 24h
+    beat_schedule entry: Celery Beat does not treat a fresh interval
+    schedule's first tick as immediately due. It records the schedule's
+    creation time as the last run and only fires once a full interval has
+    elapsed *after that* -- so on a deploy that starts Beat for the first
+    time, a target with no baseline yet (GH-07) stays that way for up to
+    24h, not "shortly", no matter how many PRs get opened against it in the
+    meantime. Scoped to targets missing a baseline (not every target, the
+    way the scheduled task is) so a routine restart doesn't re-scan
+    everything that's already current -- this is a one-time catch-up, not
+    a second schedule.
+    """
+    queued: list[int] = []
+    for target in session.exec(select(Target)).all():
+        if _has_completed_scan(session, target):
+            continue
+        try:
+            queued.extend(queue_full_scan(session, target))
+        except Exception:
+            logger.exception("baseline catch-up scan dispatch failed for target %s", target.id)
+    return queued

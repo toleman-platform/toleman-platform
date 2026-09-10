@@ -453,8 +453,10 @@ export function GlobalIntegrations() {
           {githubTestResult && !githubError && <p className="text-xs text-chart-5">{githubTestResult}</p>}
           {githubError && <p className="text-xs text-destructive">{githubError}</p>}
           <p className="text-xs text-muted-foreground">
-            Use a fine-grained, repo-scoped, read-only PAT. Stored encrypted per workspace (Admin-only), never echoed
-            back, and auto-purged once it expires. Test Connection makes a real authenticated call to GitHub.
+            Use a fine-grained, repo-scoped PAT with <strong>Contents: Read-only</strong> permission (
+            <strong>Metadata: Read-only</strong> is included automatically) &mdash; no other permissions are needed.
+            Stored encrypted per workspace (Admin-only), never echoed back, and auto-purged once it expires. Test
+            Connection makes a real authenticated call to GitHub.
           </p>
         </CardContent>
       </Card>

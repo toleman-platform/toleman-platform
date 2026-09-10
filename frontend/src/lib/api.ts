@@ -1457,6 +1457,10 @@ export const api = {
     jsonFetch<AuthUser>(`/api/admin/users/${id}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
   deleteUser: (id: number) => jsonFetch<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
   workspaces: () => jsonFetch<WorkspaceSummary[]>("/api/workspaces"),
+  // Admin-only: creates the workspace (and its organization, find-or-create
+  // by name, or the deployment's existing/default one when omitted).
+  createWorkspace: (body: { name: string; organization_name?: string }) =>
+    jsonFetch<WorkspaceSummary>("/api/workspaces", { method: "POST", body: JSON.stringify(body) }),
   // Issue #62: workspace-level enforcement-mode fallback setting. Issue
   // #224: also accepts `name` for renaming a workspace from the new
   // Workspaces management page.

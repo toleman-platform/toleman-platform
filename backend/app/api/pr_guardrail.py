@@ -18,7 +18,12 @@ from app.api.auth import accessible_workspace_ids, current_user, require_securit
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.github_token import resolve_github_token
-from app.core.pr_guardrail_executor import execute_pr_guardrail_scan, recompute_pr_scan_status, set_commit_status
+from app.core.pr_guardrail_executor import (
+    execute_pr_guardrail_scan,
+    recompute_pr_scan_status,
+    set_commit_status,
+    submit_ignore_request,
+)
 from app.core.staleness import mark_stale_if_needed
 from app.core.time import utcnow
 from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User, WorkspaceRole
@@ -285,14 +290,7 @@ def request_ignore(
     if not reason:
         raise HTTPException(status_code=400, detail="reason is required")
 
-    finding.ignore_status = IgnoreStatus.REQUESTED
-    finding.ignore_requested_by = user.email
-    finding.ignore_requested_reason = reason
-    finding.ignore_reviewed_by = ""
-    finding.ignore_reviewed_at = None
-    session.add(finding)
-    session.commit()
-    session.refresh(finding)
+    submit_ignore_request(session, finding, requested_by=user.email, reason=reason)
     return _finding_out(finding)
 
 

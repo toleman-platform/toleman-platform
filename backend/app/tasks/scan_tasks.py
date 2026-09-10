@@ -202,6 +202,25 @@ def queue_full_scan(session: Session, target: Target) -> list[int]:
     return scan_ids
 
 
+@celery_app.task(name="app.tasks.scan_tasks.queue_full_scan_for_target_task")
+def queue_full_scan_for_target_task(target_id: int) -> list[int]:
+    """Celery-task wrapper around queue_full_scan for callers that only have
+    a target_id and no open Session -- currently just the `push`-to-default-
+    branch webhook handler (app/api/webhooks.py), which needs a fast,
+    fire-and-forget dispatch the same way run_pr_guardrail_scan_task already
+    is for the pull_request webhook.
+
+    Silently a no-op if the target has since been deleted (matches
+    queue_full_scan's own workspace-has-nothing-enabled no-op, not an error
+    case worth surfacing back to a webhook delivery that already returned
+    200)."""
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        if not target:
+            return []
+        return queue_full_scan(session, target)
+
+
 @celery_app.task(name="app.tasks.scan_tasks.run_scheduled_full_scans")
 def run_scheduled_full_scans():
     """Beat-scheduled (celery_app.conf.beat_schedule, every 24h): refresh

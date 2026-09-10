@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, Check, Pencil, X } from "lucide-react";
+import { Building2, Check, Pencil, Plus, X } from "lucide-react";
 import { api, workspaceDisplayName } from "@/lib/api";
 import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
 import { cn } from "@/lib/utils";
@@ -115,16 +115,83 @@ function RenamableWorkspaceRow({
   );
 }
 
+function CreateWorkspaceForm({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (workspaceId: number) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function create() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const ws = await api.createWorkspace({ name: trimmed });
+      onCreated(ws.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to create workspace");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 px-3 py-3">
+      <Input
+        autoFocus
+        className="h-8 bg-secondary"
+        placeholder="Workspace name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") create();
+          if (e.key === "Escape") onCancel();
+        }}
+      />
+      <div className="flex items-center gap-2">
+        <Button size="sm" disabled={creating || !name.trim()} onClick={create}>
+          {creating ? "Creating..." : "Create"}
+        </Button>
+        <Button size="sm" variant="outline" disabled={creating} onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+      {error && <span className="text-xs text-destructive">{error}</span>}
+    </div>
+  );
+}
+
 export default function WorkspacesPage() {
   const { workspaces, workspaceId, setWorkspaceId, isLoading, error, reload } = useWorkspacePicker();
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+
+  function handleCreated(newWorkspaceId: number) {
+    setCreatingWorkspace(false);
+    reload();
+    setWorkspaceId(newWorkspaceId);
+  }
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Workspaces</h1>
-        <p className="text-sm text-muted-foreground">
-          Rename a workspace, manage its CI-ingestion API key, and assign per-workspace roles.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Workspaces</h1>
+          <p className="text-sm text-muted-foreground">
+            Create a workspace, rename one, manage its CI-ingestion API key, and assign per-workspace roles.
+          </p>
+        </div>
+        {!creatingWorkspace && (
+          <Button size="sm" onClick={() => setCreatingWorkspace(true)} className="shrink-0">
+            <Plus className="h-4 w-4" />
+            New workspace
+          </Button>
+        )}
       </div>
 
       {error && <p className="text-xs text-destructive">{error.message}</p>}
@@ -132,17 +199,22 @@ export default function WorkspacesPage() {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
         <Card className="border-border bg-card">
           <CardContent className="flex flex-col divide-y divide-border px-0 py-0">
+            {creatingWorkspace && (
+              <CreateWorkspaceForm onCreated={handleCreated} onCancel={() => setCreatingWorkspace(false)} />
+            )}
             {isLoading ? (
               <div className="px-3 py-2">
                 <SkeletonList count={3} />
               </div>
             ) : !workspaces || workspaces.length === 0 ? (
-              <EmptyState
-                icon={Building2}
-                title="No workspaces yet"
-                description="Connect a target first to create a workspace."
-                bare
-              />
+              !creatingWorkspace && (
+                <EmptyState
+                  icon={Building2}
+                  title="No workspaces yet"
+                  description="Create a workspace to get started."
+                  bare
+                />
+              )
             ) : (
               workspaces.map((w) => (
                 <RenamableWorkspaceRow

@@ -12,6 +12,23 @@ from app.models.models import Organization, User, Workspace, WorkspaceRole
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
 
 
+class CreateWorkspaceRequest(BaseModel):
+    name: str
+    # Optional; find-or-create by name. Omitted = reuse the first existing
+    # Organization (or create one named "Default" for a brand-new
+    # deployment) -- Organization has no dedicated UI anywhere in this
+    # product yet, so a create form only asks for it when the caller
+    # actually wants a second one.
+    organization_name: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("name must not be blank")
+        return v.strip()
+
+
 class UpdateWorkspaceRequest(BaseModel):
     # PR Guardrail enforcement mode override (issue #62), the workspace-level
     # fallback below any group/target override. Explicit null clears it,
@@ -62,6 +79,48 @@ def list_workspaces(session: Session = Depends(get_session), user: User = Depend
             return []
         query = query.where(Workspace.id.in_(ws_ids))
     return session.exec(query).all()
+
+
+@router.post("")
+def create_workspace(
+    payload: CreateWorkspaceRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_admin),
+):
+    """Real create path for a new workspace (as opposed to /bootstrap,
+    which is explicitly a local/dev helper never called by the frontend).
+    The Workspaces management page (#224) had a list/rename/roles/API-key
+    surface but no way to add a workspace at all -- its own empty state
+    said "connect a target first", but POST /api/targets requires an
+    existing workspace_id, a dead end for a brand-new deployment. Gated to
+    admin, same bar as /bootstrap: creating a workspace (and its org, when
+    one doesn't already exist) is a platform-level action, not something
+    scoped to a workspace a caller is already a member of.
+    """
+    org_name = (payload.organization_name or "").strip()
+    if org_name:
+        org = session.exec(select(Organization).where(Organization.name == org_name)).first()
+    else:
+        org = session.exec(select(Organization).order_by(Organization.id)).first()
+    if not org:
+        org = Organization(name=org_name or "Default")
+        session.add(org)
+        session.commit()
+        session.refresh(org)
+
+    existing = session.exec(
+        select(Workspace).where(Workspace.name == payload.name, Workspace.organization_id == org.id)
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=409, detail=f"workspace '{payload.name}' already exists in this organization"
+        )
+
+    ws = Workspace(organization_id=org.id, name=payload.name, api_key=secrets.token_urlsafe(24))
+    session.add(ws)
+    session.commit()
+    session.refresh(ws)
+    return ws
 
 
 @router.patch("/{workspace_id}")

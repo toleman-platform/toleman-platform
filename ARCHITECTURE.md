@@ -33,7 +33,7 @@ frontend/src/lib/poll.ts        shared polling helper for async job status (scan
 | Router | Mount | Auth | Covers |
 |---|---|---|---|
 | `auth` | `/api/auth` | — | login/logout/me, session cookie issuance |
-| `workspaces` | `/api/workspaces` | login (bootstrap: admin) | org/workspace creation, API key |
+| `workspaces` | `/api/workspaces` | login (create/bootstrap: admin) | org/workspace creation, API key. `POST` is the real create path the Workspaces page's "New workspace" button calls (find-or-creates the org by `organization_name`, or reuses the deployment's existing/first org, or creates one named "Default"); `POST /bootstrap` remains a separate local/dev helper (curl-only, never called by the frontend) predating it |
 | `admin_workspace_roles` | `/api/admin/workspace-roles` | admin | assign `WorkspaceMembership` |
 | `targets` | `/api/targets` | login, workspace-scoped reads | repo CRUD, pipeline integration (`/{id}/pipeline-workflow` generate, `/{id}/pipeline-integrate` opens a real PR, #66; `POST /bulk-pipeline-integrate` + `GET /bulk-pipeline-integrate/{batch_id}` multi-select async batch wrapper, #68) |
 | `findings` | `/api/findings` | login, workspace-scoped reads | list/triage/history/bulk-triage/no-AI enrichment (`/{id}/enrichment`, #71); list/get responses also carry resolved `sla_days`/`sla_violated` (#70) |

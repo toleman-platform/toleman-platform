@@ -149,6 +149,7 @@ def login(payload: LoginRequest, request: Request, response: Response, session: 
         samesite="lax",
         max_age=60 * 60 * 24 * 7,
         path="/",
+        domain=settings.cookie_domain or None,
     )
     return UserOut(id=user.id, email=user.email, name=user.name, role=user.role)
 
@@ -165,7 +166,7 @@ def logout(
     user.token_version += 1
     session.add(user)
     session.commit()
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(SESSION_COOKIE, path="/", domain=settings.cookie_domain or None)
     return {"ok": True}
 
 
@@ -226,6 +227,7 @@ def change_password(
         samesite="lax",
         max_age=60 * 60 * 24 * 7,
         path="/",
+        domain=settings.cookie_domain or None,
     )
     return {"ok": True}
 

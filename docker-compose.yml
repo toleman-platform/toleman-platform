@@ -67,6 +67,7 @@ services:
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@toleman.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}
@@ -119,6 +120,7 @@ services:
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@toleman.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
       ADMIN_NAME: ${ADMIN_NAME:-Admin}

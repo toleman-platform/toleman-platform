@@ -15,6 +15,10 @@ frontend/.env.local
 # scripts/backup-postgres.sh's default output directory -- a database dump
 # is real user data and secrets, never something to commit.
 /backups/
+
+# deploy/README.md's Cloudflare Origin CA certificate + private key, placed
+# here on the VPS only -- never committed.
+/deploy/certs/
 KT.md
 CLAUDE.md
 .claude/worktrees/

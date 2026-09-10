@@ -20,6 +20,7 @@ from app.core.github_app import (
 )
 from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, User, Workspace
 from app.tasks.sbom_tasks import queue_dependency_graph_sync
+from app.tasks.scan_tasks import queue_full_scan
 
 # GH-02: were hardcoded localhost literals. The manifest's callback/webhook
 # URLs are handed to GitHub, so on any real deployment they must be an
@@ -288,10 +289,19 @@ def _sync_repos(session: Session) -> int:
     # waiting in new_targets after each of those commits, turning a large
     # import into a SELECT per remaining target just to re-read attributes
     # this loop already has in memory.
+    #
+    # GH-07: also queue a full scan of the default branch here, same reason
+    # and same async-dispatch shape. Without this, a freshly-synced repo sat
+    # with no completed Scan at all until someone happened to click Scan on
+    # it -- "no baseline yet" was correct but permanent, and every PR against
+    # it kept getting PR Guardrail's honest-but-useless non-answer instead of
+    # a real diff. queue_full_scan also commits per target/tool; same
+    # expire_on_commit guard applies.
     session.expire_on_commit = False
     try:
         for target in new_targets:
             queue_dependency_graph_sync(session, target)
+            queue_full_scan(session, target)
     finally:
         session.expire_on_commit = True
     return created

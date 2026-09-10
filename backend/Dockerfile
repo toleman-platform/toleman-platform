@@ -1,12 +1,21 @@
 # Toleman backend image: FastAPI API server AND Celery worker share this image
 # (docker-compose.yml runs the same image with a different command for the
-# celery-worker service). Bundles the 5 scanner CLIs the platform wraps
-# (Semgrep, Trivy, Gitleaks, gosec, Nuclei) so native scans work out of the
-# box; see backend/app/scanners/runner.py for how they're invoked. Nuclei is
-# the one exception to "scans a repo checkout": it drives Active API
-# Scanning (#72) against already-discovered live endpoints instead, via
+# celery-worker service). Bundles 6 of the scanner CLIs the platform wraps
+# (Semgrep, Trivy, Gitleaks, gosec, Checkov, Nuclei) so native scans work out
+# of the box; see backend/app/scanners/runner.py for how they're invoked.
+# Nuclei is the one exception to "scans a repo checkout": it drives Active
+# API Scanning (#72) against already-discovered live endpoints instead, via
 # app.scanners.runner.run_nuclei(); see app.core.tool_registry's #232
 # comment for the rest of that story.
+#
+# tfsec and noseyparker are NOT bundled here: both ship only as a GitHub
+# release binary (no PyPI package), and this Dockerfile's own standard for
+# that class of download (see the Gitleaks/Trivy/gosec/Nuclei blocks below)
+# is a version-pinned asset URL plus a checksum verified against that
+# project's own published checksums file -- not a curl-pipe-bash installer
+# script. Adding them means doing that properly, not skipping the
+# verification step for two more tools; left for a follow-up with real
+# checksums pinned, rather than merged half-done here.
 #
 # Pinned to Python 3.12 exactly: 3.9 is too old for this codebase, and 3.14
 # breaks pydantic-core/psycopg wheel builds (see README "Architecture
@@ -206,8 +215,9 @@ RUN set -eux; \
 # Tracked, alongside a HIGH in protobuf blocked the same way, in #265.
 COPY requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt semgrep "setuptools>=78.1.1,<81" \
-    && semgrep --version
+    && pip install -r requirements.txt semgrep checkov "setuptools>=78.1.1,<81" \
+    && semgrep --version \
+    && checkov --version
 
 COPY . .
 

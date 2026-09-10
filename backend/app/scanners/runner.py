@@ -669,6 +669,19 @@ def run_tool(tool: str, repo_path: Path, paths: list[str] | None = None) -> dict
     if paths is not None:
         return _run_tool_scoped(tool, repo_path, paths)
 
+    # gosec's ./... walk fails outright (nonzero exit, no packages found)
+    # on a repo with no Go source at all -- unlike the diff-scoped PACKAGE
+    # strategy above, which already guards this via go_packages_for(), a
+    # full/whole-repo scan (paths=None: scheduled scans, default-branch
+    # baselines, and any PR Guardrail scan for a target that isn't
+    # diff-scoped) had no equivalent guard. Every non-Go target's full scan
+    # reported gosec as *failed*, indistinguishable from a broken install,
+    # when the honest answer is "this repo has nothing for gosec to look
+    # at" -- the same skip this codebase already gives modelscan/semgrep-llm
+    # on a non-AI/ML repo (see scan_tasks.AI_ONLY_TOOLS).
+    if tool == "gosec" and next(repo_path.rglob("*.go"), None) is None:
+        raise ToolNotApplicable("no Go files in this repository")
+
     cmd = TOOL_COMMANDS[tool](str(repo_path))
     return _execute(tool, cmd, repo_path)
 

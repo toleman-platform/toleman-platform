@@ -137,6 +137,31 @@ class TestPerToolScoping:
         runner.run_tool("semgrep", tmp_path)
         assert seen["cmd"] == runner.TOOL_COMMANDS["semgrep"](str(tmp_path))
 
+    def test_gosec_full_scan_skips_a_repo_with_no_go_source(self, tmp_path, monkeypatch):
+        """GH-07 follow-up: unlike the diff-scoped PACKAGE strategy above
+        (test_gosec_skips_when_no_go_changed), the unscoped (paths=None)
+        path had no equivalent guard -- gosec's `./...` walk fails outright
+        on a repo with zero Go packages, so every full/scheduled/PR Guardrail
+        scan of a non-Go target reported gosec as *failed*, not skipped."""
+        (tmp_path / "app.py").write_text("print('hi')\n")
+        monkeypatch.setattr(runner, "_execute", lambda *a, **k: pytest.fail("gosec must not run"))
+        with pytest.raises(ToolNotApplicable):
+            runner.run_tool("gosec", tmp_path)
+
+    def test_gosec_full_scan_still_runs_a_real_go_repo(self, tmp_path, monkeypatch):
+        (tmp_path / "main.go").write_text("package main\n")
+        seen = {}
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p: seen.setdefault("cmd", c) or {})
+        runner.run_tool("gosec", tmp_path)
+        assert seen["cmd"] == runner.TOOL_COMMANDS["gosec"](str(tmp_path))
+
+    def test_gosec_full_scan_finds_go_source_in_a_subdirectory(self, tmp_path, monkeypatch):
+        nested = tmp_path / "cmd" / "server"
+        nested.mkdir(parents=True)
+        (nested / "main.go").write_text("package main\n")
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p: {})
+        runner.run_tool("gosec", tmp_path)  # must not raise
+
 
 class TestSkippedIsNotPassed:
     """The core honesty property."""

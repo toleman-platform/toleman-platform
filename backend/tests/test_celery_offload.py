@@ -251,6 +251,36 @@ def test_scan_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, mon
     assert body["completed_at"] is not None
 
 
+def test_scan_dispatch_completes_not_failed_when_tool_not_applicable(client, engine, monkeypatch, eager_celery):
+    """GH-07 follow-up: a tool that raises ToolNotApplicable (e.g. gosec on
+    a repo with no Go source) found nothing to look at, which is a real
+    completed result -- not the same failure mode as a broken scanner. Before
+    this, run_scan had no except branch for it, so it fell into the generic
+    Exception handler and the scan row landed on "failed" for a tool that
+    was never going to find anything here in the first place."""
+    client, target_id = _dev_client_with_target(client, engine)
+
+    monkeypatch.setattr(scan_tasks, "engine", engine)
+    monkeypatch.setattr(scan_tasks.runner, "clone_repo", _fake_clone_repo)
+
+    def _not_applicable(tool, repo_path):
+        from app.scanners.runner import ToolNotApplicable
+        raise ToolNotApplicable("no Go files in this repository")
+
+    monkeypatch.setattr(scan_tasks.runner, "run_tool", _not_applicable)
+
+    res = client.post("/api/scans/run", params={"target_id": target_id, "tool": "gosec"})
+    assert res.status_code == 202
+    scan_id = res.json()["scan_id"]
+
+    poll = client.get(f"/api/scans/{scan_id}")
+    assert poll.status_code == 200
+    body = poll.json()
+    assert body["status"] == "completed"
+    assert body["findings_count"] == 0
+    assert body["completed_at"] is not None
+
+
 def test_discovery_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, monkeypatch, eager_celery):
     client, target_id = _dev_client_with_target(client, engine)
 

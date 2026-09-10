@@ -1,7 +1,7 @@
 import logging
 import subprocess
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.db import engine
 from app.core.ai_repo_status import effective_is_ai_repo, refresh_ai_repo_status
@@ -10,6 +10,7 @@ from app.core.github_token import resolve_github_token
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
 from app.core.time import utcnow
+from app.core.tool_usage import tools_for_surface
 from app.models.models import NotificationEventType, Scan, Target
 from app.scanners import parsers, runner
 from app.tasks.celery_app import celery_app
@@ -135,6 +136,17 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                 item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
             count = ingest_findings(session, target, scan, tool=tool, branch=target.default_branch, parsed=parsed)
             return {"scan_id": scan.id, "ingested": count}
+        except runner.ToolNotApplicable as exc:
+            # Same distinction AI_ONLY_TOOLS draws above: nothing here for
+            # this tool to look at (e.g. gosec on a repo with no Go source)
+            # is a real completed result, not a failure. Recording it as
+            # "failed" would put a permanently-red row in this target's scan
+            # history for a tool that will never have anything to find here.
+            scan.status = "completed"
+            scan.completed_at = utcnow()
+            session.add(scan)
+            session.commit()
+            return {"scan_id": scan.id, "ingested": 0, "skipped": str(exc)}
         except RETRYABLE_EXCEPTIONS:
             # Transient failure: only mark the scan permanently failed once retries are
             # exhausted. Otherwise let it propagate so Celery's autoretry_for schedules
@@ -157,3 +169,56 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             session.commit()
             _notify_scan_failure(session, target, tool, error_message)
             return {"error": error_message, "scan_id": scan.id}
+
+
+def queue_full_scan(session: Session, target: Target) -> list[int]:
+    """Dispatch one Scan per tool this target's workspace has enabled for
+    on_demand_scan, against `target`'s default branch. Returns the
+    dispatched Scan ids.
+
+    Two callers: GitHub App sync (app.api.github_app._sync_repos), so a
+    newly-imported repo gets a real baseline instead of sitting with no
+    completed scan until someone happens to click a button on it (the exact
+    "no baseline yet" gap GH-07 had to special-case rather than actually
+    close); and run_scheduled_full_scans below, so that baseline doesn't
+    just go stale the moment it's created.
+
+    Empty tools list (workspace has nothing enabled for on_demand_scan) is
+    a legitimate, silent no-op here, same as the buttons this mirrors
+    (frontend/scan-buttons.tsx) simply not rendering for a disabled tool;
+    this never falls back to a default tool the way PR Guardrail's
+    _resolve_guardrail_tools does; a target-level scan choosing to run
+    nothing it wasn't asked to run is not the same failure mode as a PR
+    check silently checking nothing.
+    """
+    scan_ids: list[int] = []
+    for tool in tools_for_surface(session, target.workspace_id, "on_demand_scan"):
+        scan = Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
+        session.add(scan)
+        session.commit()
+        session.refresh(scan)
+        run_scan.delay(target_id=target.id, tool=tool, scan_id=scan.id)
+        scan_ids.append(scan.id)
+    return scan_ids
+
+
+@celery_app.task(name="app.tasks.scan_tasks.run_scheduled_full_scans")
+def run_scheduled_full_scans():
+    """Beat-scheduled (celery_app.conf.beat_schedule, every 24h): refresh
+    every target's default-branch baseline.
+
+    Without this, "no baseline yet" (GH-07's fix) is a real but *permanent*
+    state for any target nobody happens to click Scan on, and an existing
+    baseline only ever reflects whatever the repo looked like on the one day
+    someone last ran it manually -- posture pages and PR Guardrail diffs both
+    quietly drift out of date. This dispatches queue_full_scan per target;
+    each per-tool Scan still runs (and can still fail/retry) independently
+    via run_scan, so one target's clone failure can't block another's.
+    """
+    with Session(engine) as session:
+        targets = session.exec(select(Target)).all()
+        for target in targets:
+            try:
+                queue_full_scan(session, target)
+            except Exception:
+                logger.exception("scheduled full scan dispatch failed for target %s", target.id)

@@ -169,6 +169,16 @@ def test_scheduled_full_scan_task_is_registered_in_beat_schedule():
     assert entry["task"] == "app.tasks.scan_tasks.run_scheduled_full_scans"
 
 
+def test_repo_sync_task_is_registered_in_beat_schedule():
+    """The reliable backstop for installation_repositories (see
+    celery_app.py's comment): that webhook event turned out not to be
+    something this deployment could actually get GitHub to deliver, so a
+    periodic poll is the real guarantee that a newly-granted repo gets a
+    Target within a bounded time regardless."""
+    entry = celery_app.conf.beat_schedule["sync-github-repos"]
+    assert entry["task"] == "app.tasks.github_sync_tasks.sync_repos_task"
+
+
 # ---------------------------------------------------------------------------
 # Startup catch-up: Beat's 24h schedule alone leaves a target with no
 # baseline stuck that way for up to 24h after every deploy (a fresh
@@ -318,5 +328,43 @@ def test_worker_ready_handler_does_not_raise_if_the_catch_up_pass_blows_up(monke
         raise RuntimeError("kaboom")
 
     monkeypatch.setattr(scan_tasks, "queue_full_scan_for_targets_missing_a_baseline", _boom)
+
+    celery_app_module._queue_missing_baseline_scans()  # must not raise
+
+
+def test_worker_ready_also_triggers_a_repo_sync(monkeypatch):
+    """Same first-tick gap as the baseline catch-up above, for
+    sync-github-repos: without this, a fresh deploy waits up to 24h for the
+    first repo-sync pass."""
+    import app.tasks.celery_app as celery_app_module
+    import app.tasks.github_sync_tasks as github_sync_tasks_module
+
+    monkeypatch.setattr(
+        scan_tasks, "queue_full_scan_for_targets_missing_a_baseline", lambda session: []
+    )
+    called = {}
+    monkeypatch.setattr(
+        github_sync_tasks_module, "sync_repos_task", lambda: called.setdefault("ran", True)
+    )
+
+    celery_app_module._queue_missing_baseline_scans()
+
+    assert called.get("ran") is True
+
+
+def test_worker_ready_handler_does_not_raise_if_the_repo_sync_pass_blows_up(monkeypatch):
+    """Same never-crash-the-worker guarantee as the baseline catch-up, for
+    the repo-sync catch-up."""
+    import app.tasks.celery_app as celery_app_module
+    import app.tasks.github_sync_tasks as github_sync_tasks_module
+
+    monkeypatch.setattr(
+        scan_tasks, "queue_full_scan_for_targets_missing_a_baseline", lambda session: []
+    )
+
+    def _boom():
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(github_sync_tasks_module, "sync_repos_task", _boom)
 
     celery_app_module._queue_missing_baseline_scans()  # must not raise

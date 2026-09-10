@@ -13,6 +13,8 @@ from app.core.enforcement import VALID_ENFORCEMENT_MODES, resolve_enforcement_mo
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
 from app.core.ai_repo_status import effective_is_ai_repo
+from app.api.github_app import BACKEND_URL
+from app.core.github_app import target_has_pr_guardrail_coverage
 from app.core.security_score import OPEN_STATES
 from app.core.staleness import mark_stale_if_needed
 from app.models.models import (
@@ -385,6 +387,7 @@ def get_pipeline_workflow(target_id: int, session: Session = Depends(get_session
 @router.post("/{target_id}/pipeline-integrate")
 def integrate_pipeline(
     target_id: int,
+    force: bool = False,
     session: Session = Depends(get_session),
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
@@ -392,8 +395,35 @@ def integrate_pipeline(
     GitHub App's installation token) adding the generated
     .github/workflows/toleman-scan.yml, and records the outcome on the Target
     row so the frontend can show integration status without re-hitting
-    GitHub every page load."""
+    GitHub every page load.
+
+    (#245's double-scan gap) Server-side PR Guardrail (the webhook path)
+    already scans every PR for free once GitHub can reach this backend AND
+    a working, enabled installation actually covers this target's repo
+    (app.core.github_app.target_has_pr_guardrail_coverage -- webhook
+    reachability alone isn't proof of that: this target's repo might have
+    no installation, that installation's webhook_secret might not be set,
+    or PR Guardrail might be explicitly disabled for this target). Pipeline
+    Integration adds a second, Actions-based scan of the same PRs on top of
+    it, and ARCHITECTURE.md's own framing is that the Actions path exists
+    for the case where the webhook path *can't* work, not as a second
+    implementation to run alongside it. So on a first-time integration (not
+    a re-run -- see the pipeline_integrated check below) where real
+    coverage already exists, this 409s instead of silently doubling every
+    PR's scan count; `force=true` proceeds anyway for an operator who wants
+    the redundancy on purpose (e.g. as a fallback in case the webhook path
+    breaks later)."""
     target = _get_target_scoped(target_id, session, user)
+    if not target.pipeline_integrated and target_has_pr_guardrail_coverage(session, target, BACKEND_URL) and not force:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Server-side PR Guardrail already scans every PR for this deployment "
+                "(GitHub can reach this backend's webhook). Adding Pipeline Integration "
+                "too will scan every PR twice, once server-side and once in GitHub "
+                "Actions. Pass force=true to integrate anyway."
+            ),
+        )
     try:
         result = open_pipeline_pr(session, target)
     except PipelinePrError as exc:
@@ -414,6 +444,19 @@ def integrate_pipeline(
 
 class BulkPipelineIntegrateRequest(BaseModel):
     target_ids: list[int]
+    # (#245's double-scan gap) Same escape hatch as the single-target
+    # POST .../pipeline-integrate's force=true; batch-level rather than
+    # per-target since a rollout either accepts the redundancy across the
+    # whole selection or it doesn't -- see run_pipeline_integration_batch's
+    # docstring for the per-item skip this defaults to.
+    force: bool = False
+    # Custom Workflow Builder (#35), same field as MassPipelineRolloutRequest's
+    # below. Lets the frontend's "Integrate skipped anyway" retry (targets-list.tsx,
+    # re-POSTing the original mass rollout's skipped items through this
+    # manual-selection endpoint with force=true) carry the original rollout's
+    # template through instead of silently falling back to #66's fixed
+    # default scanner set.
+    workflow_template_id: int | None = None
 
 
 def _caller_can_integrate(session: Session, user: User, target: Target) -> bool:
@@ -470,7 +513,21 @@ def bulk_pipeline_integrate(
     if not eligible_ids:
         raise HTTPException(status_code=403, detail="no accessible targets with sufficient role in the selection")
 
-    batch = PipelineIntegrationBatch(created_by_user_id=user.id, total=len(eligible_ids), status="running")
+    template = None
+    if payload.workflow_template_id is not None:
+        template = session.get(PipelineWorkflowTemplate, payload.workflow_template_id)
+        if not template:
+            raise HTTPException(status_code=404, detail="pipeline workflow template not found")
+        if ws_ids is not None and template.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="pipeline workflow template not found")
+
+    batch = PipelineIntegrationBatch(
+        created_by_user_id=user.id,
+        total=len(eligible_ids),
+        status="running",
+        force=payload.force,
+        workflow_template_id=template.id if template else None,
+    )
     session.add(batch)
     session.commit()
     session.refresh(batch)
@@ -535,6 +592,12 @@ def get_bulk_pipeline_integrate_batch(
         "succeeded": batch.succeeded,
         "failed": batch.failed,
         "already_integrated": batch.already_integrated,
+        # #245's double-scan gap: how many items run_pipeline_integration_batch
+        # skipped because server-side PR Guardrail already covers this
+        # deployment's PRs, and whether this batch opted into the
+        # redundancy anyway (force=true on the request that created it).
+        "skipped_webhook_reachable": batch.skipped_webhook_reachable,
+        "force": batch.force,
         "started_at": batch.started_at,
         "completed_at": batch.completed_at,
         "items": item_payload,
@@ -558,6 +621,9 @@ class MassPipelineRolloutRequest(BaseModel):
     workspace_id: int | None = None
     group_id: int | None = None
     workflow_template_id: int | None = None
+    # (#245's double-scan gap) Same escape hatch as bulk_pipeline_integrate's;
+    # see BulkPipelineIntegrateRequest.force.
+    force: bool = False
 
     @field_validator("scope")
     @classmethod
@@ -638,6 +704,7 @@ def mass_pipeline_rollout(
         status="running",
         scope_label=scope_label,
         workflow_template_id=template.id if template else None,
+        force=payload.force,
     )
     session.add(batch)
     session.commit()

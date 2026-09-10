@@ -808,6 +808,17 @@ class PipelineIntegrationBatch(SQLModel, table=True):
     succeeded: int = 0
     failed: int = 0
     already_integrated: int = 0
+    # #245's double-scan gap: server-side PR Guardrail already scans every
+    # PR once GitHub can reach this backend (app.api.github_app.
+    # webhook_reachable), so Pipeline Integration adds a redundant second
+    # scan of the same PRs on top of it. `force` is the batch-level opt-in
+    # to that redundancy anyway (set from the request; see
+    # BulkPipelineIntegrateRequest.force / MassPipelineRolloutRequest.force);
+    # `skipped_webhook_reachable` counts items run_pipeline_integration_batch
+    # skipped for this reason instead of a failure or a success, mirroring
+    # `already_integrated` above.
+    force: bool = False
+    skipped_webhook_reachable: int = 0
     started_at: datetime = Field(default_factory=utcnow)
     completed_at: Optional[datetime] = None
     # Issue #35 (Mass CI/CD Rollout Engine): this batch table, originally

@@ -133,7 +133,16 @@ export type PipelineIntegrateResult = {
 // dispatches a Celery task (#59-style async job) and returns immediately;
 // poll GET /api/targets/bulk-pipeline-integrate/{batch_id} until status
 // leaves "running".
-export type PipelineBatchItemStatus = "pending" | "running" | "succeeded" | "failed" | "already_integrated";
+export type PipelineBatchItemStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "already_integrated"
+  // #245's double-scan gap: server-side PR Guardrail already scans every PR
+  // once GitHub can reach this deployment's backend, so this item was
+  // skipped rather than opening a redundant Actions-based integration PR.
+  | "skipped_webhook_reachable";
 
 export type PipelineBatchItem = {
   target_id: number;
@@ -153,6 +162,8 @@ export type PipelineIntegrationBatch = {
   succeeded: number;
   failed: number;
   already_integrated: number;
+  skipped_webhook_reachable: number;
+  force: boolean;
   started_at: string;
   completed_at: string | null;
   items: PipelineBatchItem[];
@@ -1279,17 +1290,18 @@ export const api = {
   // a real PR against the target's GitHub repo adding it.
   pipelineWorkflow: (targetId: number) =>
     jsonFetch<PipelineWorkflow>(`/api/targets/${targetId}/pipeline-workflow`),
-  integratePipeline: (targetId: number) =>
-    jsonFetch<PipelineIntegrateResult | { error: string }>(`/api/targets/${targetId}/pipeline-integrate`, {
-      method: "POST",
-    }),
+  integratePipeline: (targetId: number, force = false) =>
+    jsonFetch<PipelineIntegrateResult | { error: string }>(
+      `/api/targets/${targetId}/pipeline-integrate${force ? "?force=true" : ""}`,
+      { method: "POST" }
+    ),
   // Issue #68: multi-select "Add Pipeline", dispatches a Celery batch and
   // returns immediately (#59-style async job); poll
   // getPipelineIntegrationBatch(batch_id) until status leaves "running".
-  bulkPipelineIntegrate: (targetIds: number[]) =>
+  bulkPipelineIntegrate: (targetIds: number[], force = false, workflowTemplateId?: number) =>
     jsonFetch<{ batch_id: number; total: number; status: RunStatus }>("/api/targets/bulk-pipeline-integrate", {
       method: "POST",
-      body: JSON.stringify({ target_ids: targetIds }),
+      body: JSON.stringify({ target_ids: targetIds, force, workflow_template_id: workflowTemplateId }),
     }),
   getPipelineIntegrationBatch: (batchId: number) =>
     jsonFetch<PipelineIntegrationBatch>(`/api/targets/bulk-pipeline-integrate/${batchId}`),
@@ -1303,6 +1315,7 @@ export const api = {
     workspace_id?: number;
     group_id?: number;
     workflow_template_id?: number;
+    force?: boolean;
   }) =>
     jsonFetch<{ batch_id: number; total: number; status: RunStatus; scope_label: string }>(
       "/api/targets/mass-pipeline-rollout",

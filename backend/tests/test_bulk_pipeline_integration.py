@@ -30,6 +30,8 @@ from app.core.pipeline_pr import PipelinePrError
 from app.core.security import create_session_token, hash_password
 from app.main import app
 from app.models.models import (
+    GitHubAppConfig,
+    GitHubInstallation,
     Organization,
     PipelineIntegrationBatch,
     PipelineIntegrationBatchItem,
@@ -106,6 +108,37 @@ def _make_target(engine, workspace_id: int, name="target", pipeline_integrated=F
         session.commit()
         session.refresh(target)
         return target.id
+
+
+def _make_installation(
+    engine, workspace_id: int, account_login: str = "acme", webhook_secret: str = "whsec"
+) -> None:
+    """A GitHub App installation + its owning config covering `account_login`
+    under `workspace_id`, so app.core.github_app.target_has_pr_guardrail_coverage
+    resolves real coverage (not just backend reachability -- see #245's
+    double-scan gap and CodeRabbit's follow-up review of #390)."""
+    with Session(engine) as session:
+        config = GitHubAppConfig(
+            app_id="1",
+            slug="toleman-test",
+            client_id="client",
+            client_secret="secret",
+            private_key_pem="pem",
+            webhook_secret=webhook_secret,
+            html_url="https://github.com/apps/toleman-test",
+        )
+        session.add(config)
+        session.commit()
+        session.refresh(config)
+        installation = GitHubInstallation(
+            installation_id=1,
+            account_login=account_login,
+            account_type="Organization",
+            workspace_id=workspace_id,
+            github_app_config_id=config.id,
+        )
+        session.add(installation)
+        session.commit()
 
 
 def _assign(engine, user_id: int, workspace_id: int, role: WorkspaceRole):
@@ -304,6 +337,114 @@ def test_batch_processes_all_targets_and_reports_mixed_outcomes(client, engine, 
 
         fail_target = session.get(Target, fail_id)
         assert fail_target.pipeline_integrated is False
+
+
+# --- #245's double-scan gap ------------------------------------------------
+
+
+def test_batch_skips_targets_when_webhook_already_reachable(client, engine, monkeypatch, eager_celery):
+    """Server-side PR Guardrail already scans every PR once GitHub can
+    reach this backend; without force=true, a bulk batch must skip
+    first-time targets rather than open a redundant Actions-based
+    integration PR for each of them."""
+    ws = _make_workspace(engine)
+    target_id = _make_target(engine, ws, name="skip-me")
+    _make_installation(engine, ws)
+
+    client, uid = _login(client, engine, role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws, WorkspaceRole.DEVELOPER)
+
+    monkeypatch.setattr(pipeline_tasks, "engine", engine)
+    monkeypatch.setattr(pipeline_tasks, "INTER_ITEM_DELAY_SECONDS", 0)
+    monkeypatch.setattr(pipeline_tasks.settings, "public_api_url", "https://api.toleman.example.com")
+
+    called = {}
+
+    def fake_open_pipeline_pr(session, target):
+        called["ran"] = True
+        return {"pr_url": "x", "pr_number": 1, "branch": "b"}
+
+    monkeypatch.setattr(pipeline_tasks, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post("/api/targets/bulk-pipeline-integrate", json={"target_ids": [target_id]})
+    assert res.status_code == 202
+    batch_id = res.json()["batch_id"]
+
+    poll = client.get(f"/api/targets/bulk-pipeline-integrate/{batch_id}")
+    body = poll.json()
+    assert body["status"] == "completed"
+    assert body["skipped_webhook_reachable"] == 1
+    assert body["succeeded"] == 0
+    assert body["items"][0]["status"] == "skipped_webhook_reachable"
+    assert "ran" not in called
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert target.pipeline_integrated is False
+
+
+def test_batch_force_bypasses_the_skip(client, engine, monkeypatch, eager_celery):
+    ws = _make_workspace(engine)
+    target_id = _make_target(engine, ws, name="force-me")
+    _make_installation(engine, ws)
+
+    client, uid = _login(client, engine, role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws, WorkspaceRole.DEVELOPER)
+
+    monkeypatch.setattr(pipeline_tasks, "engine", engine)
+    monkeypatch.setattr(pipeline_tasks, "INTER_ITEM_DELAY_SECONDS", 0)
+    monkeypatch.setattr(pipeline_tasks.settings, "public_api_url", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/acme/force-me/pull/3", "pr_number": 3, "branch": "b"}
+
+    monkeypatch.setattr(pipeline_tasks, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(
+        "/api/targets/bulk-pipeline-integrate", json={"target_ids": [target_id], "force": True}
+    )
+    batch_id = res.json()["batch_id"]
+
+    poll = client.get(f"/api/targets/bulk-pipeline-integrate/{batch_id}")
+    body = poll.json()
+    assert body["status"] == "completed"
+    assert body["force"] is True
+    assert body["skipped_webhook_reachable"] == 0
+    assert body["succeeded"] == 1
+
+
+def test_batch_not_skipped_when_no_installation_resolves(client, engine, monkeypatch, eager_celery):
+    """CodeRabbit review of #390: backend reachability alone isn't proof PR
+    Guardrail covers this target -- no GitHub App installation resolves for
+    its repo at all here, so real coverage is absent and the batch must run
+    the item rather than skip it (skipping would leave this target with
+    zero PR coverage from either path). No GitHubInstallation row exists
+    for this workspace at all -- resolve_installation_for_repo only falls
+    back to a workspace's sole installation when one actually exists, so an
+    empty workspace genuinely resolves to "no coverage"."""
+    ws = _make_workspace(engine)
+    target_id = _make_target(engine, ws, name="no-installation")
+
+    client, uid = _login(client, engine, role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws, WorkspaceRole.DEVELOPER)
+
+    monkeypatch.setattr(pipeline_tasks, "engine", engine)
+    monkeypatch.setattr(pipeline_tasks, "INTER_ITEM_DELAY_SECONDS", 0)
+    monkeypatch.setattr(pipeline_tasks.settings, "public_api_url", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/acme/no-installation/pull/4", "pr_number": 4, "branch": "b"}
+
+    monkeypatch.setattr(pipeline_tasks, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post("/api/targets/bulk-pipeline-integrate", json={"target_ids": [target_id]})
+    batch_id = res.json()["batch_id"]
+
+    poll = client.get(f"/api/targets/bulk-pipeline-integrate/{batch_id}")
+    body = poll.json()
+    assert body["status"] == "completed"
+    assert body["skipped_webhook_reachable"] == 0
+    assert body["succeeded"] == 1
 
 
 def test_batch_reports_actionable_message_on_encryption_key_mismatch(client, engine, monkeypatch, eager_celery):

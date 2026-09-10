@@ -352,3 +352,74 @@ def test_api_scan_end_to_end_eager_creates_findings(engine, monkeypatch):
             assert findings[0].file_path == "https://api.example.com/admin"
     finally:
         celery_app.conf.task_always_eager = False
+
+
+def test_api_scan_missing_nuclei_binary_records_scan_error(engine, monkeypatch):
+    """A FileNotFoundError from run_nuclei (binary not installed) must land
+    in Scan.error, not just a notification/task-return-value that GET
+    /api/api-scan/{id}/latest (and therefore the frontend) never sees."""
+    celery_app.conf.task_always_eager = True
+    try:
+        target_id = _make_target(engine)
+        _add_endpoint(engine, target_id, "/admin")
+
+        def _raise_missing_binary(urls):
+            raise FileNotFoundError(2, "No such file or directory", "nuclei")
+
+        monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", _raise_missing_binary)
+
+        import app.core.db as db_module
+
+        monkeypatch.setattr(db_module, "engine", engine)
+        monkeypatch.setattr(api_scan_tasks, "engine", engine)
+
+        with Session(engine) as session:
+            target = session.get(Target, target_id)
+            scan = Scan(target_id=target_id, tool="api-scan", branch=target.default_branch, status="running")
+            session.add(scan)
+            session.commit()
+            session.refresh(scan)
+            scan_id = scan.id
+
+        result = api_scan_tasks.run_api_scan.apply(kwargs={"target_id": target_id, "scan_id": scan_id}).get()
+        assert "error" in result
+
+        with Session(engine) as session:
+            scan = session.get(Scan, scan_id)
+            assert scan.status == "failed"
+            assert scan.error
+            assert "nuclei" in scan.error
+    finally:
+        celery_app.conf.task_always_eager = False
+
+
+def test_api_scan_no_scannable_endpoints_records_scan_error(engine, monkeypatch):
+    """build_scan_urls returning nothing (e.g. every discovered route pivots
+    off the configured host) must also populate Scan.error."""
+    celery_app.conf.task_always_eager = True
+    try:
+        target_id = _make_target(engine, api_base_url="https://api.example.com")
+        # No endpoints added: build_scan_urls has nothing to build URLs from.
+
+        import app.core.db as db_module
+
+        monkeypatch.setattr(db_module, "engine", engine)
+        monkeypatch.setattr(api_scan_tasks, "engine", engine)
+
+        with Session(engine) as session:
+            target = session.get(Target, target_id)
+            scan = Scan(target_id=target_id, tool="api-scan", branch=target.default_branch, status="running")
+            session.add(scan)
+            session.commit()
+            session.refresh(scan)
+            scan_id = scan.id
+
+        result = api_scan_tasks.run_api_scan.apply(kwargs={"target_id": target_id, "scan_id": scan_id}).get()
+        assert "error" in result
+
+        with Session(engine) as session:
+            scan = session.get(Scan, scan_id)
+            assert scan.status == "failed"
+            assert "no scannable endpoints" in scan.error
+    finally:
+        celery_app.conf.task_always_eager = False

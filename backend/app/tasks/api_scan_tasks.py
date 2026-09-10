@@ -74,10 +74,11 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
         try:
             urls, endpoints = build_scan_urls(session, target, endpoint_ids)
             if not urls:
+                error = "no scannable endpoints (check api_base_url and that endpoints are discovered)"
                 scan.status = "failed"
+                scan.error = error
                 session.add(scan)
                 session.commit()
-                error = "no scannable endpoints (check api_base_url and that endpoints are discovered)"
                 _notify_api_scan_failure(session, target, error)
                 return {"error": error, "scan_id": scan.id}
 
@@ -89,19 +90,28 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
             return {"scan_id": scan.id, "ingested": count, "endpoints_scanned": len(endpoints)}
         except RETRYABLE_EXCEPTIONS:
             if self.request.retries >= self.max_retries:
+                error = "nuclei scan timed out after retries"
                 scan.status = "failed"
+                scan.error = error
                 session.add(scan)
                 session.commit()
-                _notify_api_scan_failure(session, target, "nuclei scan timed out after retries")
+                _notify_api_scan_failure(session, target, error)
             raise
         except (ApiScanConfigError, FileNotFoundError) as exc:
+            error = (
+                f"nuclei binary not found ({exc}); it is not bundled in the backend image yet"
+                if isinstance(exc, FileNotFoundError)
+                else str(exc)
+            )
             scan.status = "failed"
+            scan.error = error
             session.add(scan)
             session.commit()
-            _notify_api_scan_failure(session, target, str(exc))
-            return {"error": str(exc), "scan_id": scan.id}
+            _notify_api_scan_failure(session, target, error)
+            return {"error": error, "scan_id": scan.id}
         except Exception as exc:
             scan.status = "failed"
+            scan.error = str(exc)
             session.add(scan)
             session.commit()
             _notify_api_scan_failure(session, target, str(exc))

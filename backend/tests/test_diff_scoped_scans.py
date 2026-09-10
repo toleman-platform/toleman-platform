@@ -235,15 +235,19 @@ class TestCommentTellsTheTruth:
         assert "✅" in body
         assert "Diff-scoped" not in body
 
-    def test_skipped_tools_are_named_with_their_reason(self):
+    def test_skipped_tools_are_not_rendered_as_a_note(self):
+        """A ToolNotApplicable skip (e.g. gosec on a non-Go repo) is a
+        near-permanent, expected fact for most targets on this platform, not
+        something a reader needs told on every PR -- unlike tools_failed
+        (a tool that should have run and couldn't), which still renders."""
         body = executor.render_comment(
             [], [], PRGuardrailStatus.PASSED, 1, 1,
             tools_run=["semgrep"],
             tools_skipped={"trivy": "no dependency manifest changed"},
             scan_scope="diff", files_scanned=2,
         )
-        assert "trivy" in body
-        assert "no dependency manifest changed" in body
+        assert "Not run for this PR" not in body
+        assert "no dependency manifest changed" not in body
 
     def test_skipped_tool_never_appears_as_scanned_with(self):
         body = executor.render_comment(

@@ -1,21 +1,25 @@
 # Toleman backend image: FastAPI API server AND Celery worker share this image
 # (docker-compose.yml runs the same image with a different command for the
-# celery-worker service). Bundles 6 of the scanner CLIs the platform wraps
-# (Semgrep, Trivy, Gitleaks, gosec, Checkov, Nuclei) so native scans work out
-# of the box; see backend/app/scanners/runner.py for how they're invoked.
-# Nuclei is the one exception to "scans a repo checkout": it drives Active
-# API Scanning (#72) against already-discovered live endpoints instead, via
-# app.scanners.runner.run_nuclei(); see app.core.tool_registry's #232
-# comment for the rest of that story.
+# celery-worker service). Bundles 7 of the scanner CLIs the platform wraps
+# (Semgrep, Trivy, Gitleaks, gosec, Checkov, tfsec, Nuclei) so native scans
+# work out of the box; see backend/app/scanners/runner.py for how they're
+# invoked. Nuclei is the one exception to "scans a repo checkout": it drives
+# Active API Scanning (#72) against already-discovered live endpoints
+# instead, via app.scanners.runner.run_nuclei(); see app.core.tool_registry's
+# #232 comment for the rest of that story.
 #
-# tfsec and noseyparker are NOT bundled here: both ship only as a GitHub
-# release binary (no PyPI package), and this Dockerfile's own standard for
-# that class of download (see the Gitleaks/Trivy/gosec/Nuclei blocks below)
-# is a version-pinned asset URL plus a checksum verified against that
-# project's own published checksums file -- not a curl-pipe-bash installer
-# script. Adding them means doing that properly, not skipping the
-# verification step for two more tools; left for a follow-up with real
-# checksums pinned, rather than merged half-done here.
+# noseyparker is NOT bundled here (#385): it ships only as a GitHub release
+# binary (no PyPI package), and this Dockerfile's own standard for that class
+# of download (see the Gitleaks/Trivy/gosec/tfsec/Nuclei blocks below) is a
+# version-pinned asset URL plus a checksum verified against that project's
+# own published checksums file -- not a curl-pipe-bash installer script, and
+# not a hash we computed ourselves from a single download and are calling
+# "verified". noseyparker's own release-artifacts.yml workflow publishes no
+# checksums file at all (checked directly, not just failed to find one), so
+# that standard can't be met for it the way it was just met for tfsec.
+# Bundling it anyway needs either upstream adding one, or a deliberate,
+# documented decision to lower the bar for this one tool -- not something to
+# decide unilaterally here.
 #
 # Pinned to Python 3.12 exactly: 3.9 is too old for this codebase, and 3.14
 # breaks pydantic-core/psycopg wheel builds (see README "Architecture
@@ -32,6 +36,7 @@ ARG GITLEAKS_VERSION=8.21.2
 ARG TRIVY_VERSION=0.73.0
 ARG GOSEC_VERSION=2.28.0
 ARG NUCLEI_VERSION=3.11.1
+ARG TFSEC_VERSION=1.28.14
 
 # (BLD-04, revised) Checksums of the release *assets* downloaded below, per
 # architecture, taken from each project's published checksums file for the
@@ -49,6 +54,11 @@ ARG GOSEC_SHA256_ARM64=63259681b6e4b9e7a24d4e187b485e75d3844d28d512b0c97dc831e51
 # the other three above.
 ARG NUCLEI_SHA256_AMD64=ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6
 ARG NUCLEI_SHA256_ARM64=8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07
+# From tfsec_checksums.txt at the v1.28.14 release tag; amd64 verified
+# against the actual downloaded binary (sha256sum) before pinning, same as
+# the other four above.
+ARG TFSEC_SHA256_AMD64=a32d0799bbefababaa4fcd814da9f4d251cd932789590b99d1d5fcb89ace6f68
+ARG TFSEC_SHA256_ARM64=7b872b0e8f398abebc21ab78f6c0535029ff649f0d18f0f3454a01bece3006a2
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -137,6 +147,37 @@ RUN set -eux; \
     tar xz -C /usr/local/bin -f /tmp/gosec.tar.gz gosec; \
     rm -f /tmp/gosec.tar.gz; \
     gosec --version
+
+# --- tfsec (Terraform IaC scanner) -----------------------------------------
+# (#385) Was assigned to pr_guardrail's default tool set but never actually
+# present in this image, so every scan reported it "failed to run" -- same
+# gap #381 closed for checkov. Same asset-download-plus-checksum treatment
+# as gitleaks/trivy/gosec above: tfsec ships a single raw binary per arch (no
+# tar/zip wrapper), verified against tfsec_checksums.txt at the tag pinned
+# below, the same file this repo's own release process publishes for every
+# tag (fetched and verified against the real downloaded binary before
+# pinning here).
+#
+# v1.28.14 is tfsec's last release: the project has folded into Trivy's own
+# IaC scanning going forward (upstream says so on startup), so there will be
+# no newer tag to bump to here. Kept bundled anyway since pr_guardrail still
+# assigns it by name and a maintained, still-functional binary beats a
+# permanent "failed to run".
+#
+# To bump (if a new release ever appears): change the ARG and take the new
+# sum from
+#   https://github.com/aquasecurity/tfsec/releases/download/vX.Y.Z/tfsec_checksums.txt
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) TFSEC_ARCH=amd64; TFSEC_SHA256="${TFSEC_SHA256_AMD64}" ;; \
+        arm64) TFSEC_ARCH=arm64; TFSEC_SHA256="${TFSEC_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -sSL -o /usr/local/bin/tfsec \
+        "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/tfsec-linux-${TFSEC_ARCH}"; \
+    echo "${TFSEC_SHA256}  /usr/local/bin/tfsec" | sha256sum -c -; \
+    chmod +x /usr/local/bin/tfsec; \
+    tfsec --version
 
 # --- Nuclei (active API scanning against live endpoints, #72) -------------
 # Was never bundled here even though app/scanners/runner.py has always

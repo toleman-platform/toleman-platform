@@ -74,7 +74,6 @@ class TestStalenessFooter:
         )
         assert "Diff-scoped scan" in body
         assert "Scanned with: semgrep" in body
-        assert "no dependency manifest changed" in body
         assert "may have changed since" in body
 
     def test_footer_is_last(self):

@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.api.auth import current_user
+from app.api.auth import current_user, require_admin
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.crypto import encrypt_secret
@@ -18,7 +18,7 @@ from app.core.github_app import (
     list_installation_repos,
     resolve_config_for_installation,
 )
-from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, Workspace
+from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, User, Workspace
 from app.tasks.sbom_tasks import queue_dependency_graph_sync
 
 # GH-02: were hardcoded localhost literals. The manifest's callback/webhook
@@ -301,3 +301,32 @@ def _sync_repos(session: Session) -> int:
 def sync_now(session: Session = Depends(get_session)):
     created = _sync_repos(session)
     return {"created": created}
+
+
+@router.delete("/{config_id}")
+def delete_app_config(
+    config_id: int,
+    session: Session = Depends(get_session),
+    _admin: User = Depends(require_admin),
+):
+    """Removes a registered GitHub App and any installation rows tied to it.
+
+    Admin-only: this drops the App's stored private key/client secret and
+    every installation record under it, the same blast radius as the
+    workspace-role removal this mirrors. Does not revoke or uninstall the
+    App on GitHub's side -- that still has to happen in GitHub's own
+    settings -- this only clears Toleman's record of it, so a stale or
+    misconfigured App can be removed and re-registered instead of
+    accumulating dead rows forever.
+    """
+    config = session.get(GitHubAppConfig, config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="GitHub App not found")
+    installations = session.exec(
+        select(GitHubInstallation).where(GitHubInstallation.github_app_config_id == config_id)
+    ).all()
+    for installation in installations:
+        session.delete(installation)
+    session.delete(config)
+    session.commit()
+    return {"ok": True}

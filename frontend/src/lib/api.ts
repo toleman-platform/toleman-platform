@@ -1511,6 +1511,8 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ webhook_secret, config_id }),
     }),
+  deleteGithubApp: (configId: number) =>
+    jsonFetch<{ ok: boolean }>(`/api/github-app/${configId}`, { method: "DELETE" }),
   getConfig: () => jsonFetch<PlatformConfigView>("/api/config"),
   updateConfig: (payload: UpdateConfigPayload) =>
     jsonFetch<PlatformConfigView>("/api/config", { method: "POST", body: JSON.stringify(payload) }),

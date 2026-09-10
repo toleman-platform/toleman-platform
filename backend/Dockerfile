@@ -213,9 +213,30 @@ RUN set -eux; \
 # Not worked around here: forcing it past 81 would silently break semgrep,
 # which is a worse outcome than one open MEDIUM with a documented reason.
 # Tracked, alongside a HIGH in protobuf blocked the same way, in #265.
+#
+# `checkov` is pinned to an exact version, unlike bare `semgrep` above,
+# because of what it costs the resolver rather than what it installs:
+# checkov's own published metadata already pins almost its entire transitive
+# tree exactly or to a narrow range (boto3==1.35.49, dpath==2.1.3, and
+# similar for a dozen more), so an unpinned `checkov` forces pip to walk its
+# release history looking for a version whose *fully-pinned* tree also
+# satisfies requirements.txt and semgrep at the same time, backtracking
+# through a full dependency resolve per candidate. .github/workflows/
+# docker-images.yml builds this image with `--no-cache` on every PR by
+# design (see that file), so this resolve is never cached and was observed
+# taking 10+ minutes on an otherwise ~1-minute build. Pinning collapses it to
+# one resolve. Checked against requirements.txt for conflicts before
+# pinning: checkov==3.3.17's own ranges (jsonschema<5,>=4.17;
+# pydantic<3,>=2; gitpython<4,>=3.1.30; pyyaml<7,>=6) all already contain
+# this file's pins.
+#
+# To bump: pick a checkov release, diff its requires_dist (`curl -s
+# https://pypi.org/pypi/checkov/<version>/json | python3 -c "import
+# json,sys; print(chr(10).join(json.load(sys.stdin)['info']
+# ['requires_dist']))"`) against requirements.txt's pins before landing it.
 COPY requirements.txt .
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt semgrep checkov "setuptools>=78.1.1,<81" \
+    && pip install -r requirements.txt semgrep checkov==3.3.17 "setuptools>=78.1.1,<81" \
     && semgrep --version \
     && checkov --version
 

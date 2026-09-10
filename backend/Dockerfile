@@ -1,8 +1,12 @@
 # Toleman backend image: FastAPI API server AND Celery worker share this image
 # (docker-compose.yml runs the same image with a different command for the
-# celery-worker service). Bundles the 4 scanner CLIs the platform wraps
-# (Semgrep, Trivy, Gitleaks, gosec) so native scans work out of the box;
-# see backend/app/scanners/runner.py for how they're invoked.
+# celery-worker service). Bundles the 5 scanner CLIs the platform wraps
+# (Semgrep, Trivy, Gitleaks, gosec, Nuclei) so native scans work out of the
+# box; see backend/app/scanners/runner.py for how they're invoked. Nuclei is
+# the one exception to "scans a repo checkout": it drives Active API
+# Scanning (#72) against already-discovered live endpoints instead, via
+# app.scanners.runner.run_nuclei(); see app.core.tool_registry's #232
+# comment for the rest of that story.
 #
 # Pinned to Python 3.12 exactly: 3.9 is too old for this codebase, and 3.14
 # breaks pydantic-core/psycopg wheel builds (see README "Architecture
@@ -18,6 +22,7 @@ FROM python:3.12-slim AS base
 ARG GITLEAKS_VERSION=8.21.2
 ARG TRIVY_VERSION=0.73.0
 ARG GOSEC_VERSION=2.28.0
+ARG NUCLEI_VERSION=3.11.1
 
 # (BLD-04, revised) Checksums of the release *assets* downloaded below, per
 # architecture, taken from each project's published checksums file for the
@@ -30,6 +35,11 @@ ARG TRIVY_SHA256_AMD64=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383
 ARG TRIVY_SHA256_ARM64=13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
 ARG GOSEC_SHA256_AMD64=d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff
 ARG GOSEC_SHA256_ARM64=63259681b6e4b9e7a24d4e187b485e75d3844d28d512b0c97dc831e51d374720
+# From nuclei_3.11.1_checksums.txt at the v3.11.1 release tag, downloaded and
+# verified against the actual asset (sha256sum) before pinning here, same as
+# the other three above.
+ARG NUCLEI_SHA256_AMD64=ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6
+ARG NUCLEI_SHA256_ARM64=8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4203bec07
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -38,12 +48,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # git: needed at runtime by app/scanners/runner.py (clone_repo shells out to
-# `git clone`). curl/tar/ca-certificates: needed here at build time to fetch
-# the scanner binaries below.
+# `git clone`). curl/tar/unzip/ca-certificates: needed here at build time to
+# fetch and unpack the scanner binaries below (nuclei ships as a .zip, the
+# other three as .tar.gz, hence both tar and unzip).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         tar \
+        unzip \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -116,6 +128,33 @@ RUN set -eux; \
     tar xz -C /usr/local/bin -f /tmp/gosec.tar.gz gosec; \
     rm -f /tmp/gosec.tar.gz; \
     gosec --version
+
+# --- Nuclei (active API scanning against live endpoints, #72) -------------
+# Was never bundled here even though app/scanners/runner.py has always
+# shelled out to it unconditionally for Active API Scanning; every such scan
+# failed with FileNotFoundError until this was added (see #373's
+# api_scan_tasks.py fix, which at least started reporting that clearly
+# instead of a bare "failed"). Same asset-download-plus-checksum treatment
+# as gitleaks/trivy/gosec above, except nuclei ships as a .zip rather than
+# a .tar.gz, and the binary sits inside it alongside README/LICENSE files,
+# hence `unzip -o -j` (junk the paths, no subdirectory to worry about) rather
+# than `tar xz`.
+#
+# To bump: change the ARG and take the new sums from
+#   https://github.com/projectdiscovery/nuclei/releases/download/vX.Y.Z/nuclei_X.Y.Z_checksums.txt
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) NUCLEI_ARCH=amd64; NUCLEI_SHA256="${NUCLEI_SHA256_AMD64}" ;; \
+        arm64) NUCLEI_ARCH=arm64; NUCLEI_SHA256="${NUCLEI_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -sSL -o /tmp/nuclei.zip \
+        "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${NUCLEI_ARCH}.zip"; \
+    echo "${NUCLEI_SHA256}  /tmp/nuclei.zip" | sha256sum -c -; \
+    unzip -o -j /tmp/nuclei.zip nuclei -d /usr/local/bin; \
+    chmod +x /usr/local/bin/nuclei; \
+    rm -f /tmp/nuclei.zip; \
+    nuclei -version
 
 # --- Python dependencies + Semgrep (SAST) -----------------------------
 # Semgrep isn't in requirements.txt (it's a standalone CLI, same as the other

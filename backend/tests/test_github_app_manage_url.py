@@ -127,7 +127,11 @@ def test_callback_persists_owner_login_and_type(client, engine, monkeypatch):
         "slug": "toleman-devsecops-abc",
         "client_id": "cid",
         "client_secret": "csecret",
-        "pem": "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+        # Deliberately not shaped like a real PEM block -- callback() only
+        # encrypts+stores this opaque string, never parses it as a key, so
+        # a placeholder is enough, and a PEM-header-shaped fake still trips
+        # secret scanners on the diff even though it's fake.
+        "pem": "test-fixture-not-a-real-key",
         "webhook_secret": "whsec",
         "html_url": "https://github.com/apps/toleman-devsecops-abc",
         "owner": {"login": "acme-corp", "type": "Organization"},
@@ -159,7 +163,11 @@ def test_callback_persists_none_owner_fields_when_github_omits_it(client, engine
         "slug": "toleman-devsecops-def",
         "client_id": "cid",
         "client_secret": "csecret",
-        "pem": "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+        # Deliberately not shaped like a real PEM block -- callback() only
+        # encrypts+stores this opaque string, never parses it as a key, so
+        # a placeholder is enough, and a PEM-header-shaped fake still trips
+        # secret scanners on the diff even though it's fake.
+        "pem": "test-fixture-not-a-real-key",
         "webhook_secret": "whsec",
         "html_url": "https://github.com/apps/toleman-devsecops-def",
     }

@@ -85,6 +85,27 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.scan_tasks.run_scheduled_full_scans",
         "schedule": timedelta(hours=24),
     },
+    # (#385's webhook UX work, revised) The installation_repositories webhook
+    # event was meant to be the only trigger for this -- a repo added to an
+    # already-installed App, via GitHub's own "Configure" screen, getting a
+    # Target the moment access changes. In practice that event turned out to
+    # be unreliable to actually get delivered: it did not appear as a
+    # selectable option on this App's own "Permissions & events" settings
+    # page even after granting every permission GitHub's docs say it
+    # requires (Issues, for issue_comment, was confirmed fixable the same
+    # way; installation_repositories was not), and GitHub's own community
+    # forum has open reports of this exact event misbehaving. Rather than
+    # leave repo-sync depending on a webhook subscription this deployment
+    # cannot reliably configure, this periodic poll is the guarantee: every
+    # newly-granted repo gets a Target within 24h regardless of whether the
+    # webhook event ever fires. The webhook handler (app/api/webhooks.py)
+    # stays in place too -- if it does fire somewhere, that installation
+    # gets the near-real-time behavior for free; this schedule is the floor
+    # every installation gets either way.
+    "sync-github-repos": {
+        "task": "app.tasks.github_sync_tasks.sync_repos_task",
+        "schedule": timedelta(hours=24),
+    },
 }
 
 
@@ -115,3 +136,15 @@ def _queue_missing_baseline_scans(**kwargs):
             queue_full_scan_for_targets_missing_a_baseline(session)
     except Exception:
         logger.exception("baseline catch-up pass failed on worker startup")
+
+    # Same first-tick gap as above, for sync-github-repos: a fresh deploy
+    # would otherwise wait up to 24h for the first repo-sync pass. Not
+    # scoped like the baseline catch-up above (nothing to scope it by --
+    # _sync_repos itself is already a no-op for every repo already
+    # tracked), so this is just "run it now too."
+    try:
+        from app.tasks.github_sync_tasks import sync_repos_task
+
+        sync_repos_task()
+    except Exception:
+        logger.exception("repo-sync catch-up pass failed on worker startup")

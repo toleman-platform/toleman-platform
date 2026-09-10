@@ -101,12 +101,12 @@ _SEMGREP_JOB = """
   semgrep:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Semgrep
         run: pip install semgrep
       - name: Run Semgrep
         run: semgrep scan --config=auto --sarif --output=semgrep.sarif || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: semgrep-results
           path: semgrep.sarif
@@ -130,7 +130,7 @@ _GITLEAKS_JOB = """
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: Install Gitleaks
@@ -139,7 +139,7 @@ _GITLEAKS_JOB = """
       - name: Run Gitleaks
         run: |
           ./gitleaks detect --source . --report-format sarif --report-path gitleaks.sarif --no-git --exit-code 0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gitleaks-results
           path: gitleaks.sarif
@@ -163,15 +163,15 @@ _TRIVY_JOB = """
   trivy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Run Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
           scan-type: fs
           format: sarif
           output: trivy.sarif
           scan-ref: .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trivy-results
           path: trivy.sarif
@@ -195,8 +195,8 @@ _GOSEC_JOB = """
   gosec:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
         with:
           go-version: "stable"
       - name: Install gosec
@@ -213,7 +213,7 @@ _GOSEC_JOB = """
           with open('$GITHUB_STEP_SUMMARY', 'a') as f:
               f.write(f'{len(results)} findings\\n')
           " || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gosec-results
           path: gosec.sarif

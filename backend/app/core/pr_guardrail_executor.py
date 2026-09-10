@@ -29,6 +29,7 @@ from app.models.models import (
     PRGuardrailFinding,
     PRGuardrailScan,
     PRGuardrailStatus,
+    Scan,
     Target,
 )
 from app.core.tool_usage import tools_for_surface
@@ -215,6 +216,31 @@ def _persist_findings(session: Session, pr_scan_id: int, net_new: list[dict]) ->
     return rows
 
 
+def _has_baseline_scan(session: Session, target: Target) -> bool:
+    """Whether the target's default branch has ever had a completed Scan
+    persisted (GH-07).
+
+    ``existing_hashes`` in ``execute_pr_guardrail_scan`` is drawn from
+    Finding rows on ``target.default_branch``; on a target whose default
+    branch has never actually been scanned, that set is empty for the same
+    reason it would be empty on a branch that was scanned and found clean.
+    Those two must not be treated the same -- one means "nothing to diff
+    against", the other means "diffed and matched". This is checked against
+    Scan (what actually ran), not against Finding directly, so a default
+    branch scan that legitimately found nothing still counts as a baseline.
+    """
+    return (
+        session.exec(
+            select(Scan.id).where(
+                Scan.target_id == target.id,
+                Scan.branch == target.default_branch,
+                Scan.status == "completed",
+            )
+        ).first()
+        is not None
+    )
+
+
 def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dict]:
     """Real static-analysis route discovery on the PR branch, diffed against
     what's already persisted for the target's default branch; same
@@ -367,6 +393,7 @@ def render_comment(
     tools_skipped: dict[str, str] | None = None,
     scan_scope: str = "full",
     files_scanned: int = 0,
+    baseline_missing: bool = False,
     scanned_at: datetime | None = None,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
@@ -377,9 +404,29 @@ def render_comment(
     whole-repo case for the same reason, so a caller that doesn't know about
     diff scoping renders exactly what it used to.
 
+    `baseline_missing` (GH-07) defaults to False so callers/tests predating
+    the baseline check render exactly what they used to; True means the
+    finding diff was skipped because the target's default branch has never
+    had a completed scan, so "no net-new findings" here is not yet a real
+    diff against anything.
+
     `scanned_at` (#271) is when this scan ran. None omits the staleness
     footer entirely, same backwards-compatible default as everything above."""
     lines = [COMMENT_MARKER, "**Toleman PR Guardrail**", "", _severity_badge(status), ""]
+
+    if baseline_missing:
+        # Rendered ahead of the scope note and any findings: a reader must
+        # not walk away thinking a clean-looking result here means this PR
+        # (or the repo behind it) was actually compared to anything. Once
+        # the target's default branch has a completed scan, later PRs get a
+        # real diff and this note stops appearing.
+        lines.append(
+            "ℹ️ **No baseline scan yet.** This target's default branch has never been "
+            "scanned, so there is nothing to diff this PR against; pre-existing findings "
+            "are not shown here. Run a scan of the default branch in Toleman to enable "
+            "real diffs on future PRs."
+        )
+        lines.append("")
 
     if scan_scope == "diff":
         # Stated up front, above the result. A reader who takes "no findings"
@@ -412,7 +459,14 @@ def render_comment(
         lines.append("")
 
     if not findings and not new_endpoints:
-        if tools_failed:
+        if baseline_missing:
+            # Not "✅" and not "vs the default branch": there was no default
+            # branch scan to diff against, see the note above. Contradicting
+            # that note with a clean-looking checkmark here is exactly the
+            # false all-clear this codebase's own tools_failed/scan_scope
+            # branches already avoid.
+            lines.append("No findings to report; see the baseline note above.")
+        elif tools_failed:
             lines.append(
                 "No net-new findings from the tools that completed. "
                 "This is **not** an all-clear; see the warning above."
@@ -723,17 +777,31 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
                 line_start=item.get("line_start"),
             )
 
-        existing_hashes = set(
-            session.exec(
-                select(Finding.dedup_hash).where(
-                    Finding.target_id == target.id,
-                    Finding.branch == target.default_branch,
-                    Finding.state == FindingState.OPEN,
-                )
-            ).all()
-        )
-
-        net_new = compute_net_new(parsed, existing_hashes)
+        baseline_missing = not _has_baseline_scan(session, target)
+        if baseline_missing:
+            # (GH-07, mirrors _diff_new_endpoints' GH-06 fix) No completed
+            # scan of the default branch exists to diff against; treating an
+            # empty existing_hashes as "diffed clean" here would report this
+            # PR as introducing the repository's entire pre-existing finding
+            # set, on whichever PR happens to be scanned first.
+            logger.info(
+                "PR guardrail: no completed baseline scan for target %s branch %s, "
+                "skipping the finding diff for this scan rather than reporting the "
+                "whole repo as net-new",
+                target.id, target.default_branch,
+            )
+            net_new = []
+        else:
+            existing_hashes = set(
+                session.exec(
+                    select(Finding.dedup_hash).where(
+                        Finding.target_id == target.id,
+                        Finding.branch == target.default_branch,
+                        Finding.state == FindingState.OPEN,
+                    )
+                ).all()
+            )
+            net_new = compute_net_new(parsed, existing_hashes)
 
         # Policy-as-code (ROADMAP Sprint 4): apply the target's workspace
         # active policy rules (org-level suppression + severity threshold
@@ -755,6 +823,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         pr_scan.new_findings_count = len(net_new)
         pr_scan.highest_new_severity = highest_severity(net_new)
         pr_scan.new_endpoints_count = len(new_endpoints)
+        pr_scan.baseline_missing = baseline_missing
         # Skipped tools are excluded as firmly as failed ones. tools_run is
         # the record of what actually examined this PR; a tool that never ran
         # must not appear in it (#243).
@@ -780,6 +849,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
             tools_skipped=skipped_tools,
             scan_scope=pr_scan.scan_scope,
             files_scanned=pr_scan.files_scanned,
+            baseline_missing=baseline_missing,
             # (#271) completed_at is set just above this call; falling back
             # to now() keeps the footer honest rather than omitting it if
             # that ordering ever changes.

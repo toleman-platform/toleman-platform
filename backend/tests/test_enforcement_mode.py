@@ -24,6 +24,7 @@ from app.models.models import (
     Group,
     Organization,
     PRGuardrailStatus,
+    Scan,
     Target,
     TargetGroup,
     User,
@@ -94,6 +95,12 @@ def _make_target(engine, workspace_id, enforcement_mode=None) -> int:
         session.add(t)
         session.commit()
         session.refresh(t)
+        # The execute_pr_guardrail_scan wiring tests below feed in findings
+        # and assert on blocking; that diff (GH-07) needs an established
+        # baseline, without a completed default-branch scan on record it
+        # skips the diff rather than treating every mocked finding as new.
+        session.add(Scan(target_id=t.id, tool="semgrep", branch=t.default_branch, status="completed"))
+        session.commit()
         return t.id
 
 

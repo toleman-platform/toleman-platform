@@ -20,6 +20,7 @@ from app.models.models import (
     Organization,
     PRGuardrailScan,
     PRGuardrailStatus,
+    Scan,
     Target,
     Workspace,
     WorkspaceToolConfig,
@@ -47,6 +48,12 @@ def _make_target(engine) -> int:
         session.add(t)
         session.commit()
         session.refresh(t)
+        # These tests exercise the net-new diff itself, so they need an
+        # established baseline (GH-07): without a completed default-branch
+        # scan on record, execute_pr_guardrail_scan can't tell "nothing
+        # known yet" from "diffed and clean" and skips the diff entirely.
+        session.add(Scan(target_id=t.id, tool="semgrep", branch=t.default_branch, status="completed"))
+        session.commit()
         return t.id
 
 

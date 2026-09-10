@@ -22,6 +22,14 @@ import { Scan as ScanIcon } from "lucide-react";
 // the same batch 429.
 const DISPATCH_SPACING_MS = 700;
 
+const TOOL_SELECT_CLASS =
+  "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
+
+// "" means "all tools" (the pre-existing behavior: every tool the target has
+// history for, falling back to the full default set). A specific value runs
+// only that one tool instead of the whole sequence.
+const ALL_TOOLS_VALUE = "";
+
 // Dispatch outcome only. Whether the work is actually *running* now comes
 // from GET /api/scans/active (useActiveScans) rather than being inferred
 // here: the old "done" state was set the moment the POST returned, so a row
@@ -58,7 +66,13 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
   const { activeScans, isTargetScanning, refresh: refreshActiveScans } = useActiveScans();
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [confirmIds, setConfirmIds] = useState<number[] | null>(null);
+  const [confirmTool, setConfirmTool] = useState<string>(ALL_TOOLS_VALUE);
   const [confirming, setConfirming] = useState(false);
+  // Per-row tool choice, keyed by target id; unset entries default to "all
+  // tools". Kept separate from the bulk-bar choice below so picking a tool
+  // for one row doesn't affect what a multi-select scan runs.
+  const [rowTool, setRowTool] = useState<Record<number, string>>({});
+  const [bulkTool, setBulkTool] = useState<string>(ALL_TOOLS_VALUE);
 
   const search = (searchParams.get("search") ?? "").trim().toLowerCase();
   const criticality = searchParams.get("criticality") ?? "";
@@ -111,7 +125,9 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
     return known.length > 0 ? known : SCAN_TOOLS;
   }
 
-  async function runScansFor(ids: number[]) {
+  // tool === ALL_TOOLS_VALUE keeps the original "every known tool for this
+  // target" behavior; a specific tool dispatches only that one.
+  async function runScansFor(ids: number[], tool: string) {
     setScanMessage(null);
     setDispatchState((prev) => {
       const next = { ...prev };
@@ -123,7 +139,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
     let failed = 0;
     for (const id of ids) {
       let targetFailed = false;
-      for (const t of toolsForTarget(id)) {
+      const toolsToRun = tool === ALL_TOOLS_VALUE ? toolsForTarget(id) : [tool];
+      for (const t of toolsToRun) {
         try {
           const res = await api.runScan(id, t);
           if ("error" in res) {
@@ -152,12 +169,13 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
     router.refresh();
   }
 
-  function requestScan(ids: number[]) {
+  function requestScan(ids: number[], tool: string) {
     const prodIds = ids.filter((id) => targets.find((t) => t.id === id)?.label === "Prod");
     if (prodIds.length > 0) {
       setConfirmIds(ids);
+      setConfirmTool(tool);
     } else {
-      void runScansFor(ids);
+      void runScansFor(ids, tool);
     }
   }
 
@@ -165,7 +183,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
     if (!confirmIds) return;
     setConfirming(true);
     try {
-      await runScansFor(confirmIds);
+      await runScansFor(confirmIds, confirmTool);
     } finally {
       setConfirming(false);
       setConfirmIds(null);
@@ -220,11 +238,24 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
               <> · {selectedProdCount} Prod{selectedNonProdCount > 0 ? `, ${selectedNonProdCount} other` : ""}</>
             )}
           </span>
+          <select
+            aria-label="Tool to run on selected targets"
+            className={TOOL_SELECT_CLASS}
+            value={bulkTool}
+            onChange={(e) => setBulkTool(e.target.value)}
+          >
+            <option value={ALL_TOOLS_VALUE}>All tools</option>
+            {SCAN_TOOLS.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
           <Button
             size="sm"
             variant={selectedProdCount > 0 ? "destructive" : "default"}
             className="h-7 text-xs"
-            onClick={() => requestScan(Array.from(selected))}
+            onClick={() => requestScan(Array.from(selected), bulkTool)}
           >
             Scan Selected&hellip;
           </Button>
@@ -308,15 +339,32 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                       only diluted what `destructive` means everywhere else in
                       the app. The bulk-action button keeps the destructive
                       variant: one click there fires N scans at once. */}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 shrink-0 text-xs"
-                    disabled={busy}
-                    onClick={() => requestScan([t.id])}
-                  >
-                    {busy ? "Scanning..." : state === "dispatched" ? "Scan again" : "Scan"}
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <select
+                      aria-label={`Tool to run on ${t.name}`}
+                      className={TOOL_SELECT_CLASS}
+                      disabled={busy}
+                      value={rowTool[t.id] ?? ALL_TOOLS_VALUE}
+                      onChange={(e) => setRowTool((prev) => ({ ...prev, [t.id]: e.target.value }))}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <option value={ALL_TOOLS_VALUE}>All tools</option>
+                      {toolsForTarget(t.id).map((opt) => (
+                        <option key={opt} value={opt}>
+                          {opt}
+                        </option>
+                      ))}
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs"
+                      disabled={busy}
+                      onClick={() => requestScan([t.id], rowTool[t.id] ?? ALL_TOOLS_VALUE)}
+                    >
+                      {busy ? "Scanning..." : state === "dispatched" ? "Scan again" : "Scan"}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             );
@@ -333,7 +381,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
         title={`Scan includes ${confirmProdCount} Prod target${confirmProdCount === 1 ? "" : "s"}`}
         description={
           <>
-            You&apos;re about to trigger a native scan against{" "}
+            You&apos;re about to trigger a native{confirmTool !== ALL_TOOLS_VALUE ? ` ${confirmTool}` : ""} scan
+            against{" "}
             {confirmTargets.map((t, i) => (
               <span key={t.id}>
                 {i > 0 && (i === confirmTargets.length - 1 ? " and " : ", ")}

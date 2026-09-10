@@ -306,6 +306,78 @@ def test_batch_processes_all_targets_and_reports_mixed_outcomes(client, engine, 
         assert fail_target.pipeline_integrated is False
 
 
+# --- #245's double-scan gap ------------------------------------------------
+
+
+def test_batch_skips_targets_when_webhook_already_reachable(client, engine, monkeypatch, eager_celery):
+    """Server-side PR Guardrail already scans every PR once GitHub can
+    reach this backend; without force=true, a bulk batch must skip
+    first-time targets rather than open a redundant Actions-based
+    integration PR for each of them."""
+    ws = _make_workspace(engine)
+    target_id = _make_target(engine, ws, name="skip-me")
+
+    client, uid = _login(client, engine, role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws, WorkspaceRole.DEVELOPER)
+
+    monkeypatch.setattr(pipeline_tasks, "engine", engine)
+    monkeypatch.setattr(pipeline_tasks, "INTER_ITEM_DELAY_SECONDS", 0)
+    monkeypatch.setattr(pipeline_tasks.settings, "public_api_url", "https://api.toleman.example.com")
+
+    called = {}
+
+    def fake_open_pipeline_pr(session, target):
+        called["ran"] = True
+        return {"pr_url": "x", "pr_number": 1, "branch": "b"}
+
+    monkeypatch.setattr(pipeline_tasks, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post("/api/targets/bulk-pipeline-integrate", json={"target_ids": [target_id]})
+    assert res.status_code == 202
+    batch_id = res.json()["batch_id"]
+
+    poll = client.get(f"/api/targets/bulk-pipeline-integrate/{batch_id}")
+    body = poll.json()
+    assert body["status"] == "completed"
+    assert body["skipped_webhook_reachable"] == 1
+    assert body["succeeded"] == 0
+    assert body["items"][0]["status"] == "skipped_webhook_reachable"
+    assert "ran" not in called
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        assert target.pipeline_integrated is False
+
+
+def test_batch_force_bypasses_the_skip(client, engine, monkeypatch, eager_celery):
+    ws = _make_workspace(engine)
+    target_id = _make_target(engine, ws, name="force-me")
+
+    client, uid = _login(client, engine, role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws, WorkspaceRole.DEVELOPER)
+
+    monkeypatch.setattr(pipeline_tasks, "engine", engine)
+    monkeypatch.setattr(pipeline_tasks, "INTER_ITEM_DELAY_SECONDS", 0)
+    monkeypatch.setattr(pipeline_tasks.settings, "public_api_url", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/acme/force-me/pull/3", "pr_number": 3, "branch": "b"}
+
+    monkeypatch.setattr(pipeline_tasks, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(
+        "/api/targets/bulk-pipeline-integrate", json={"target_ids": [target_id], "force": True}
+    )
+    batch_id = res.json()["batch_id"]
+
+    poll = client.get(f"/api/targets/bulk-pipeline-integrate/{batch_id}")
+    body = poll.json()
+    assert body["status"] == "completed"
+    assert body["force"] is True
+    assert body["skipped_webhook_reachable"] == 0
+    assert body["succeeded"] == 1
+
+
 def test_batch_reports_actionable_message_on_encryption_key_mismatch(client, engine, monkeypatch, eager_celery):
     """If the GitHub App credentials can't be decrypted (PLATFORM_ENCRYPTION_KEY
     mismatch - see app.core.crypto), the item should get a clear, actionable

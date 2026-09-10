@@ -44,6 +44,9 @@ const ITEM_STATUS_LABEL: Record<string, string> = {
   succeeded: "PR opened",
   failed: "Failed",
   already_integrated: "Already integrated",
+  // #245's double-scan gap: skipped because server-side PR Guardrail
+  // already covers this deployment's PRs, not a failure.
+  skipped_webhook_reachable: "Skipped (already scanned server-side)",
 };
 
 function itemBadgeClass(status: string): string {
@@ -51,6 +54,7 @@ function itemBadgeClass(status: string): string {
     case "succeeded":
       return "border-chart-5/40 text-chart-5";
     case "already_integrated":
+    case "skipped_webhook_reachable":
       return "border-chart-2/40 text-chart-2";
     case "failed":
       return "border-destructive/40 text-destructive";
@@ -338,12 +342,13 @@ export function TargetsList({
     setSelected(checked ? new Set(visible.map((t) => t.id)) : new Set());
   }
 
-  async function addPipelineBulk() {
-    if (selected.size === 0) return;
+  async function addPipelineBulk(force = false, targetIds?: number[]) {
+    const ids = targetIds ?? Array.from(selected);
+    if (ids.length === 0) return;
     setSubmitting(true);
     setBatchError(null);
     try {
-      const res = await api.bulkPipelineIntegrate(Array.from(selected));
+      const res = await api.bulkPipelineIntegrate(ids, force);
       setBatch({
         batch_id: res.batch_id,
         status: res.status,
@@ -351,6 +356,8 @@ export function TargetsList({
         succeeded: 0,
         failed: 0,
         already_integrated: 0,
+        skipped_webhook_reachable: 0,
+        force,
         started_at: new Date().toISOString(),
         completed_at: null,
         items: [],
@@ -385,6 +392,9 @@ export function TargetsList({
   const [chosenMassTemplateId, setMassTemplateId] = useState<number | "">("");
   const [massSubmitting, setMassSubmitting] = useState(false);
   const [massError, setMassError] = useState<string | null>(null);
+  // #245's double-scan gap: opt-in to integrating targets that already get
+  // scanned server-side, instead of the backend silently skipping them.
+  const [massForce, setMassForce] = useState(false);
 
   // Fetched only once the dialog opens, and everything below it derives from
   // the selection rather than being cleared by a cascade of effects. The
@@ -440,6 +450,7 @@ export function TargetsList({
         workspace_id: massScope === "workspace" || massScope === "group" ? (massWorkspaceId as number) : undefined,
         group_id: massScope === "group" ? (massGroupId as number) : undefined,
         workflow_template_id: massTemplateId === "" ? undefined : (massTemplateId as number),
+        force: massForce,
       });
       setBatch({
         batch_id: res.batch_id,
@@ -448,6 +459,8 @@ export function TargetsList({
         succeeded: 0,
         failed: 0,
         already_integrated: 0,
+        skipped_webhook_reachable: 0,
+        force: massForce,
         started_at: new Date().toISOString(),
         completed_at: null,
         items: [],
@@ -611,6 +624,15 @@ export function TargetsList({
               {massSubmitting ? "Starting..." : "Start Rollout"}
             </Button>
           </div>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              id="mass-rollout-force"
+              checked={massForce}
+              onChange={(e) => setMassForce(e.target.checked)}
+            />
+            Integrate even repos server-side PR Guardrail already scans (double-scans their PRs)
+          </label>
           {(massError ?? massWorkspacesError?.message) && (
             <p className="text-xs text-destructive">{massError ?? massWorkspacesError?.message}</p>
           )}
@@ -620,7 +642,7 @@ export function TargetsList({
       {selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/50 p-3">
           <span className="text-xs font-medium text-foreground">{selected.size} selected</span>
-          <Button size="sm" disabled={submitting} onClick={addPipelineBulk} className="h-7 text-xs">
+          <Button size="sm" disabled={submitting} onClick={() => addPipelineBulk()} className="h-7 text-xs">
             {submitting ? "Starting..." : `Add Pipeline to ${selected.size} repo${selected.size === 1 ? "" : "s"}`}
           </Button>
           <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground underline">
@@ -639,8 +661,8 @@ export function TargetsList({
                 <>Adding pipeline to {batch.total} repos...</>
               ) : (
                 <>
-                  Done: {batch.succeeded} succeeded, {batch.already_integrated} already integrated, {batch.failed}{" "}
-                  failed
+                  Done: {batch.succeeded} succeeded, {batch.already_integrated} already integrated,{" "}
+                  {batch.skipped_webhook_reachable} skipped (already scanned server-side), {batch.failed} failed
                 </>
               )}
               {/* Issue #35: only set for a scope-based Mass Rollout batch --
@@ -653,6 +675,28 @@ export function TargetsList({
               {batch.status === "running" ? "hide" : "close"}
             </button>
           </div>
+          {batch.status === "completed" && !batch.force && batch.skipped_webhook_reachable > 0 && (
+            <div className="flex items-center gap-2 rounded-md border border-border bg-secondary/50 p-2">
+              <p className="text-xs text-muted-foreground">
+                Skipped repos already get scanned by server-side PR Guardrail; integrating them too would
+                double-scan every PR.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 shrink-0 text-[11px]"
+                disabled={submitting}
+                onClick={() => {
+                  const skippedIds = batch.items
+                    .filter((i) => i.status === "skipped_webhook_reachable")
+                    .map((i) => i.target_id);
+                  addPipelineBulk(true, skippedIds);
+                }}
+              >
+                Integrate skipped anyway
+              </Button>
+            </div>
+          )}
           {batch.items.length > 0 && (
             <ul className="flex flex-col gap-1">
               {batch.items.map((item) => (

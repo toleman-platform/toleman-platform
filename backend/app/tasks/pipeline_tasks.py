@@ -3,8 +3,10 @@ import time
 
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.core.crypto import SecretDecryptionError
 from app.core.db import engine
+from app.core.github_app import webhook_reachable
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.time import utcnow
 from app.models.models import PipelineIntegrationBatch, PipelineIntegrationBatchItem, PipelineWorkflowTemplate, Target
@@ -74,6 +76,22 @@ def run_pipeline_integration_batch(self, batch_id: int):
                 item.completed_at = utcnow()
                 session.add(item)
                 batch.already_integrated += 1
+                session.add(batch)
+                session.commit()
+                continue
+
+            if not batch.force and webhook_reachable(settings.public_api_url.rstrip("/")):
+                # #245's double-scan gap, same check as the single-target
+                # POST .../pipeline-integrate's 409 (app.api.targets.
+                # integrate_pipeline): server-side PR Guardrail already
+                # scans every PR here, so integrating this target too would
+                # just double every PR's scan count. Skip + report rather
+                # than fail the item outright, same treatment as
+                # already_integrated above.
+                item.status = "skipped_webhook_reachable"
+                item.completed_at = utcnow()
+                session.add(item)
+                batch.skipped_webhook_reachable += 1
                 session.add(batch)
                 session.commit()
                 continue

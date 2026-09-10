@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, PipelineWorkflow } from "@/lib/api";
+import { api, ApiError, PipelineWorkflow } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +29,12 @@ export function PipelineIntegration({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [integrating, setIntegrating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #245's double-scan gap: the backend 409s a first-time integration when
+  // server-side PR Guardrail already covers this deployment's PRs, rather
+  // than silently doubling every PR's scan count. Distinct from a plain
+  // error: the operator gets a real choice (force anyway), not just a
+  // dead end.
+  const [blockedByWebhook, setBlockedByWebhook] = useState(false);
 
   async function togglePreview() {
     if (showPreview) {
@@ -49,11 +55,12 @@ export function PipelineIntegration({
     }
   }
 
-  async function integrate() {
+  async function integrate(force = false) {
     setIntegrating(true);
     setError(null);
+    setBlockedByWebhook(false);
     try {
-      const res = await api.integratePipeline(targetId);
+      const res = await api.integratePipeline(targetId, force);
       if ("error" in res) {
         setError(res.error);
         return;
@@ -62,7 +69,12 @@ export function PipelineIntegration({
       setPrUrl(res.pipeline_pr_url);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to open pipeline integration PR");
+      if (e instanceof ApiError && e.status === 409) {
+        setBlockedByWebhook(true);
+        setError(e.message);
+      } else {
+        setError(e instanceof Error ? e.message : "failed to open pipeline integration PR");
+      }
     } finally {
       setIntegrating(false);
     }
@@ -104,13 +116,28 @@ export function PipelineIntegration({
           <Button size="sm" variant="outline" onClick={togglePreview}>
             {showPreview ? "Hide preview" : "Preview workflow"}
           </Button>
-          <Button size="sm" onClick={integrate} disabled={integrating}>
+          <Button size="sm" onClick={() => integrate()} disabled={integrating}>
             {integrating ? "Opening PR..." : integrated ? "Re-run integration" : "Add Pipeline"}
           </Button>
         </div>
       </div>
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && (
+        <div className="flex flex-col gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-2">
+          <p className="text-xs text-destructive">{error}</p>
+          {blockedByWebhook && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => integrate(true)}
+              disabled={integrating}
+              className="self-start"
+            >
+              {integrating ? "Opening PR..." : "Integrate anyway"}
+            </Button>
+          )}
+        </div>
+      )}
 
       {showPreview && (
         <div className="flex flex-col gap-2">

@@ -1,4 +1,5 @@
 import time
+from urllib.parse import urlparse
 
 import httpx
 import jwt
@@ -6,6 +7,29 @@ from sqlmodel import Session, select
 
 from app.core.crypto import decrypt_secret
 from app.models.models import GitHubAppConfig, GitHubInstallation
+
+
+def webhook_reachable(backend_url: str) -> bool:
+    """Whether GitHub can plausibly reach the given backend URL's webhook
+    endpoint -- i.e. it isn't a localhost address. Takes the URL as a
+    parameter rather than reading settings.public_api_url itself, same
+    convention as build_manifest's own app_url/backend_url params just
+    below: keeps this testable by callers without needing to monkeypatch a
+    module-level settings read, and lets the api layer's own BACKEND_URL
+    constant (app.api.github_app) stay the single source callers pass
+    through.
+
+    A core-level function (no FastAPI dependency) so both the api layer
+    (manifest_data's own "will this App's webhook even work" warning,
+    GH-03) and task modules (app.tasks.pipeline_tasks' #245 double-scan
+    check, without pulling a FastAPI router module into the Celery
+    worker's import graph) can use the same answer.
+
+    Surfaced rather than blocked at App-creation time: creating the App is
+    still worth doing while a tunnel or domain is being set up, since
+    on-demand scanning works regardless."""
+    parsed = urlparse(backend_url)
+    return (parsed.hostname or "") not in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
 
 
 def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token: str) -> dict:

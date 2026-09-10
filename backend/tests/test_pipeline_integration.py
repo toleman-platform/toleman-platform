@@ -230,3 +230,100 @@ def test_pipeline_integrate_requires_developer_role(client, engine):
 
     res = client.post(f"/api/targets/{target_id}/pipeline-integrate")
     assert res.status_code == 403
+
+
+# --- #245's double-scan gap: Pipeline Integration vs. server-side PR
+# Guardrail scanning the same PRs twice when both are enabled -------------
+
+
+def test_pipeline_integrate_blocks_when_webhook_already_reachable(client, engine, monkeypatch):
+    """Server-side PR Guardrail already scans every PR once GitHub can
+    reach this backend; opening the Actions-based Pipeline Integration PR
+    too would double-scan every PR from then on. First-time integration
+    (target.pipeline_integrated is still False) must not proceed silently."""
+    client = _login(client, engine)
+    with Session(engine) as session:
+        target = _make_target(session)
+        target_id = target.id
+
+    monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
+    called = {}
+
+    def fake_open_pipeline_pr(session, target):
+        called["ran"] = True
+        return {"pr_url": "x", "pr_number": 1, "branch": "b"}
+
+    monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(f"/api/targets/{target_id}/pipeline-integrate")
+    assert res.status_code == 409
+    assert "twice" in res.json()["detail"]
+    assert "force=true" in res.json()["detail"]
+    assert "ran" not in called
+
+    with Session(engine) as session:
+        refreshed = session.get(Target, target_id)
+        assert refreshed.pipeline_integrated is False
+
+
+def test_pipeline_integrate_force_bypasses_the_block(client, engine, monkeypatch):
+    client = _login(client, engine)
+    with Session(engine) as session:
+        target = _make_target(session)
+        target_id = target.id
+
+    monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/geekshiv/gotest/pull/7", "pr_number": 7, "branch": "b"}
+
+    monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(f"/api/targets/{target_id}/pipeline-integrate?force=true")
+    assert res.status_code == 200
+    assert res.json()["pipeline_integrated"] is True
+
+
+def test_pipeline_integrate_reintegration_is_never_blocked(client, engine, monkeypatch):
+    """The block only applies to a target's *first* integration. A repeat
+    click (already pipeline_integrated) is a deliberate re-run, not the
+    moment double-scanning gets turned on -- that decision was already
+    made (with or without force) the first time."""
+    client = _login(client, engine)
+    with Session(engine) as session:
+        target = _make_target(session)
+        target.pipeline_integrated = True
+        target.pipeline_pr_url = "https://github.com/geekshiv/gotest/pull/1"
+        session.add(target)
+        session.commit()
+        target_id = target.id
+
+    monkeypatch.setattr(targets_module, "BACKEND_URL", "https://api.toleman.example.com")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/geekshiv/gotest/pull/8", "pr_number": 8, "branch": "b"}
+
+    monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(f"/api/targets/{target_id}/pipeline-integrate")
+    assert res.status_code == 200
+
+
+def test_pipeline_integrate_not_blocked_when_webhook_unreachable(client, engine, monkeypatch):
+    """No block at all when the webhook path can't actually work (a
+    localhost deployment) -- that's exactly the case Pipeline Integration
+    exists for, not a redundant second implementation."""
+    client = _login(client, engine)
+    with Session(engine) as session:
+        target = _make_target(session)
+        target_id = target.id
+
+    monkeypatch.setattr(targets_module, "BACKEND_URL", "http://localhost:8000")
+
+    def fake_open_pipeline_pr(session, target):
+        return {"pr_url": "https://github.com/geekshiv/gotest/pull/9", "pr_number": 9, "branch": "b"}
+
+    monkeypatch.setattr(targets_module, "open_pipeline_pr", fake_open_pipeline_pr)
+
+    res = client.post(f"/api/targets/{target_id}/pipeline-integrate")
+    assert res.status_code == 200

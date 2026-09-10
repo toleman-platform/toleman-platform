@@ -1,7 +1,7 @@
 import hashlib
 import hmac
 
-from app.api.webhooks import TRIGGERING_ACTIONS
+from app.api.webhooks import PR_TRIGGERING_ACTIONS
 
 
 def _sign(secret: str, body: bytes) -> str:
@@ -31,8 +31,8 @@ def test_signature_mismatch_for_tampered_body():
 
 
 def test_triggering_actions_cover_the_realtime_scan_cases():
-    assert "opened" in TRIGGERING_ACTIONS
-    assert "reopened" in TRIGGERING_ACTIONS
-    assert "synchronize" in TRIGGERING_ACTIONS
-    assert "closed" not in TRIGGERING_ACTIONS
-    assert "labeled" not in TRIGGERING_ACTIONS
+    assert "opened" in PR_TRIGGERING_ACTIONS
+    assert "reopened" in PR_TRIGGERING_ACTIONS
+    assert "synchronize" in PR_TRIGGERING_ACTIONS
+    assert "closed" not in PR_TRIGGERING_ACTIONS
+    assert "labeled" not in PR_TRIGGERING_ACTIONS

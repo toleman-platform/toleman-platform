@@ -24,7 +24,19 @@ def _manifest(app_url="https://toleman.example.com", backend_url="https://api.to
 
 
 def test_app_subscribes_to_pull_request_events():
-    assert _manifest()["default_events"] == ["pull_request"]
+    events = _manifest()["default_events"]
+    assert "pull_request" in events
+
+
+def test_app_also_subscribes_to_push_installation_repos_and_issue_comment():
+    """(#385's webhook UX work) push re-scans a target's default branch on
+    merge, installation_repositories auto-syncs Targets when repo access
+    changes on an existing installation, issue_comment carries the
+    `@toleman ignore finding=<id> <reason>` command. None needed a new
+    permission scope -- see build_manifest's own comment -- so this is a
+    default_events-only change."""
+    events = _manifest()["default_events"]
+    assert set(events) == {"pull_request", "push", "installation_repositories", "issue_comment"}
 
 
 def test_hook_attributes_point_at_the_real_webhook_route():
@@ -95,5 +107,5 @@ def test_manifest_data_still_returns_a_usable_manifest_when_unreachable(monkeypa
     monkeypatch.setattr(github_app, "BACKEND_URL", "http://localhost:8000")
     result = github_app.manifest_data()
 
-    assert result["manifest"]["default_events"] == ["pull_request"]
+    assert "pull_request" in result["manifest"]["default_events"]
     assert result["post_url"].startswith("https://github.com/")

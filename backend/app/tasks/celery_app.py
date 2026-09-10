@@ -25,6 +25,7 @@ celery_app = Celery(
         "app.tasks.pipeline_tasks",
         "app.tasks.api_scan_tasks",
         "app.tasks.tool_install_tasks",
+        "app.tasks.github_sync_tasks",
     ],
 )
 celery_app.conf.task_routes = {
@@ -55,6 +56,12 @@ celery_app.conf.task_routes = {
     # eventually reported it failed with a timeout that had nothing to do
     # with the real cause.
     "app.tasks.tool_install_tasks.*": {"queue": "scans"},
+    # github_sync_tasks (#385's webhook UX work): re-runs the same
+    # _sync_repos a fresh App install or the manual "Sync now" button
+    # already trigger, just dispatched from the installation_repositories
+    # webhook instead. Same queue, for the same reason api_scan_tasks is:
+    # off the request thread, behind the one worker this deployment runs.
+    "app.tasks.github_sync_tasks.*": {"queue": "scans"},
 }
 
 # task_acks_late + reject_on_worker_lost: if a worker dies mid-scan (OOM, pod

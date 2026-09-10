@@ -632,6 +632,60 @@ def post_pr_comment(session: Session, target: Target, pr_number: int, body: str)
         logger.warning("PR guardrail: exception posting PR comment", exc_info=True)
 
 
+def reply_to_pr(session: Session, target: Target, pr_number: int, body: str) -> None:
+    """Post a plain new comment on a PR. Best-effort: never raises, same as
+    post_pr_comment.
+
+    Deliberately NOT post_pr_comment: that function finds-and-updates the
+    one comment carrying COMMENT_MARKER (the main scan-result comment) via
+    PATCH, so calling it here would overwrite the actual scan summary with
+    whatever unrelated reply this is -- e.g. an ignore-request confirmation.
+    This always POSTs a fresh comment instead."""
+    slug = repo_slug_from_url(target.repo_url)
+    try:
+        token = _get_installation_token_or_none(session, target)
+        if not token:
+            logger.warning("PR guardrail: no GitHub App installed, skipping PR reply")
+            return
+        res = httpx.post(
+            f"https://api.github.com/repos/{slug}/issues/{pr_number}/comments",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            json={"body": body},
+            timeout=15,
+        )
+        if res.status_code >= 300:
+            logger.warning("PR guardrail: failed to post PR reply: %s %s", res.status_code, res.text[:300])
+    except Exception:
+        logger.warning("PR guardrail: exception posting PR reply", exc_info=True)
+
+
+def submit_ignore_request(session: Session, finding: PRGuardrailFinding, requested_by: str, reason: str) -> None:
+    """Record a request to ignore `finding`; shared by the "Request ignore"
+    UI button (app/api/pr_guardrail.py's request_ignore) and the
+    `@toleman ignore finding=<id> <reason>` PR-comment command (#385's
+    webhook UX work) so the two entry points can't drift.
+
+    This only ever creates a REQUESTED row -- approve_ignore/reject_ignore
+    still require an authenticated Toleman user with require_security_reviewer,
+    same as before either entry point existed. A comment can ask, same as
+    clicking the UI button asks; neither can approve.
+
+    `requested_by` is a free-text identifier, not necessarily a Toleman
+    user's email (see PRGuardrailFinding.ignore_requested_by: a plain str
+    column, nothing downstream parses it as an email) -- the webhook path
+    passes "github:<login>" for exactly this reason, so it's visibly
+    distinct from a Toleman-authenticated request without needing a new
+    column or a Toleman account for every GitHub commenter."""
+    finding.ignore_status = IgnoreStatus.REQUESTED
+    finding.ignore_requested_by = requested_by
+    finding.ignore_requested_reason = reason
+    finding.ignore_reviewed_by = ""
+    finding.ignore_reviewed_at = None
+    session.add(finding)
+    session.commit()
+    session.refresh(finding)
+
+
 def set_commit_status(session: Session, target: Target, sha: str, state: str, description: str) -> str:
     """Post the commit status. Never raises; returns "" on success or a short
     human-readable reason on failure.

@@ -76,12 +76,37 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         # manifest that declares hook_attributes. The only missing piece was
         # the subscription itself.
         #
+        # push/installation_repositories/issue_comment added later, closing
+        # three real gaps found while explaining this App's behavior in a
+        # support session (none needed a new permission scope, so no
+        # existing installation's owner has to re-approve anything -- unlike
+        # workflows:write above, only setup_on_update-covered changes need
+        # that):
+        #   - push: without it, nothing tells Toleman a PR merged. A
+        #     target's own generated toleman-scan.yml (if TOLEMAN_API_URL/
+        #     TOLEMAN_API_KEY are configured on it) already re-scans on push
+        #     and posts back via /api/ingest, but that path is entirely
+        #     opt-in per target repo; this makes "the dashboard reflects a
+        #     merged fix" not depend on a target repo's own secrets being
+        #     set up. See the push branch in app/api/webhooks.py.
+        #   - installation_repositories: without it, adding a repo to an
+        #     existing installation (via GitHub's own "Configure" screen,
+        #     not through Toleman) creates no Target until someone remembers
+        #     the manual "Sync now" button (POST /api/github-app/sync).
+        #   - issue_comment: lets `@toleman ignore finding=<id> <reason>` on
+        #     a PR create the same IgnoreStatus.REQUESTED row the "Request
+        #     ignore" UI button does (app/api/pr_guardrail.py's
+        #     request_ignore, refactored so both share
+        #     pr_guardrail_executor.submit_ignore_request) -- still goes to
+        #     the security team for approval either way, never
+        #     auto-approved from a comment.
+        #
         # backend_url must be reachable *from GitHub*; see
         # settings.public_api_url. A localhost value produces an App whose
         # deliveries can never arrive; build_manifest's caller warns about
         # that rather than failing, since creating the App is still useful
         # for on-demand scanning while a tunnel/domain is set up.
-        "default_events": ["pull_request"],
+        "default_events": ["pull_request", "push", "installation_repositories", "issue_comment"],
         "hook_attributes": {
             "url": f"{backend_url}/api/webhooks/github",
             "active": True,

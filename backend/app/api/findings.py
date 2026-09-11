@@ -15,6 +15,7 @@ from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
 from app.core.remediation import group_remediations
 from app.core.time import utcnow
+from app.core.tool_registry import UNKNOWN_TOOL_CATEGORY, all_categories, all_known_tools, tool_category, tools_in_category
 from app.core.triage import apply_triage
 from app.core.fixability import (
     UNKNOWN,
@@ -57,6 +58,11 @@ class FindingOut(Finding):
     # "unknown" means we have not established either way; it is NOT a softer
     # way of saying no_known_fix. See app.core.fixability.
     fixability: str = UNKNOWN
+    # Vulnerability-type grouping/filter (Code/SAST, Secret, OSS/SCA,
+    # License, IaC, AI/ML, ...), derived from `tool` via
+    # app.core.tool_registry.tool_category, not a stored column, so it can
+    # never drift from the registry Tool Marketplace itself reads.
+    category: str = ""
 
 
 def _to_finding_out(session: Session, finding: Finding, fixability: str | None = None) -> FindingOut:
@@ -71,6 +77,7 @@ def _to_finding_out(session: Session, finding: Finding, fixability: str | None =
         sla_days=sla_days,
         sla_violated=sla_violated,
         fixability=fixability,
+        category=tool_category(finding.tool),
     )
 
 
@@ -171,6 +178,7 @@ def list_findings(
     state: FindingState | None = None,
     severity: Severity | None = None,
     tool: str | None = None,
+    category: str | None = None,
     fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
     environment: str | None = None,
     owner: str | None = None,
@@ -209,6 +217,16 @@ def list_findings(
         query = query.where(Finding.severity == severity)
     if tool is not None:
         query = query.where(Finding.tool == tool)
+    if category is not None:
+        # category is purely derived from tool (app.core.tool_registry.
+        # tool_category), so filtering is just the reverse lookup at the SQL
+        # level; "Other" is every tool tool_category() doesn't recognize
+        # (notably including a CI pipeline's free-form `tool` on POST
+        # /api/ingest/{target_id}), so it's a NOT IN rather than an IN.
+        if category == UNKNOWN_TOOL_CATEGORY:
+            query = query.where(Finding.tool.not_in(all_known_tools()))
+        else:
+            query = query.where(Finding.tool.in_(tools_in_category(category)))
     if environment is not None or owner is not None:
         # (#251) Filter findings by the owning target's metadata. Needs the
         # Target join, which only happens above when ws_ids is not None (an
@@ -285,6 +303,18 @@ def list_tool_facets(session: Session = Depends(get_session), user: User = Depen
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     rows = session.exec(query).all()
     return sorted(rows)
+
+
+@router.get("/facets/categories")
+def list_category_facets(user: User = Depends(current_user)) -> list[str]:
+    """Every vulnerability-type category a finding could be grouped under
+    (Code/SAST, Secret, OSS/SCA, License, IaC, AI/ML, ...), for populating
+    the Findings page's category filter. A pure function of TOOL_REGISTRY
+    (app.core.tool_registry.all_categories) plus "Other", not a per-caller
+    DB query like /facets/tools: the possible categories don't depend on
+    which findings exist or which workspace the caller can see, only on
+    what Toleman's tools are registered as."""
+    return all_categories()
 
 
 @router.get("/remediations")

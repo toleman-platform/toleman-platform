@@ -241,6 +241,12 @@ export type Finding = {
   // established either way; NOT a softer way of saying no_known_fix; most
   // SAST and secrets findings carry no CVE to look up).
   fixability?: "fixable" | "no_known_fix" | "unknown";
+  // Vulnerability-type grouping (Code/SAST, Secret, OSS/SCA, License, IaC,
+  // AI/ML, ...), derived server-side from `tool` via
+  // app.core.tool_registry.tool_category -- the same category vocabulary
+  // Tool Marketplace already shows. "Other" for a tool Toleman's registry
+  // doesn't recognize (e.g. a CI pipeline's free-form SARIF upload).
+  category: string;
 };
 
 // Issue #75: one entry from GET /api/tools/registry; every OSS scanner
@@ -445,6 +451,7 @@ export type FindingsQuery = {
   state?: string;
   severity?: string;
   tool?: string;
+  category?: string;
   // (#246) "fixable" | "no_known_fix" | "unknown". Filters to what can
   // actually be closed today.
   fixability?: string;
@@ -1191,6 +1198,7 @@ export const api = {
     if (query.state) params.set("state", query.state);
     if (query.severity) params.set("severity", query.severity);
     if (query.tool) params.set("tool", query.tool);
+    if (query.category) params.set("category", query.category);
     if (query.fixability) params.set("fixability", query.fixability);
     if (query.search) params.set("search", query.search);
     if (query.page) params.set("page", String(query.page));
@@ -1246,6 +1254,7 @@ export const api = {
       body: JSON.stringify({ finding_ids: findingIds, to_state: toState, reason }),
     }),
   findingTools: () => jsonFetch<string[]>("/api/findings/facets/tools"),
+  findingCategories: () => jsonFetch<string[]>("/api/findings/facets/categories"),
   summary: () => jsonFetch<Summary>("/api/dashboard/summary"),
   stats: () =>
     jsonFetch<{ open: number; by_severity: Record<string, number>; by_tool: Record<string, number> }>(

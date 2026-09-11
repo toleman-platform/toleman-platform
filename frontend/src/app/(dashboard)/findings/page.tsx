@@ -23,6 +23,7 @@ export default async function FindingsPage({
   const sp = await searchParams;
   const severity = firstValue(sp.severity);
   const tool = firstValue(sp.tool);
+  const category = firstValue(sp.category);
   const fixability = firstValue(sp.fixability);
   const state = firstValue(sp.state);
   const search = firstValue(sp.search);
@@ -34,10 +35,11 @@ export default async function FindingsPage({
   const page = pageRaw && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
   const pageSize = pageSizeFromParams(sp.page_size);
 
-  const [findingsResult, targets, tools, groups] = await Promise.all([
-    settleOrNull(api.findings({ severity, tool, state, search, target_id, group_id, fixability, page, page_size: pageSize })),
+  const [findingsResult, targets, tools, categories, groups] = await Promise.all([
+    settleOrNull(api.findings({ severity, tool, category, state, search, target_id, group_id, fixability, page, page_size: pageSize })),
     api.targets().catch(() => []),
     api.findingTools().catch(() => []),
+    api.findingCategories().catch(() => []),
     api.groups().catch(() => []),
   ]);
   const result = findingsResult ?? { items: [], total: 0 };
@@ -48,7 +50,7 @@ export default async function FindingsPage({
         <h1 className="text-2xl font-bold text-foreground">All Findings</h1>
         <p className="text-sm text-muted-foreground">{result.total} findings across all targets</p>
       </div>
-      <FindingsFilterBar targets={targets} tools={tools} groups={groups} />
+      <FindingsFilterBar targets={targets} tools={tools} categories={categories} groups={groups} />
       {findingsResult === null ? (
         <ErrorState
           description="The findings list couldn't be loaded from the API."

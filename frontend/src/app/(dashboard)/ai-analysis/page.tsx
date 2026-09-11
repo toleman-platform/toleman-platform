@@ -136,6 +136,7 @@ export default function AiAnalysisPage() {
       last_seen: "",
       sla_days: null,
       sla_violated: false,
+      category: "",
     });
     setAnalysis(null);
     setError(null);

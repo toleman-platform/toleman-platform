@@ -306,6 +306,70 @@ def default_usage_for(tool: str) -> dict:
     }
 
 
+# Real Finding.tool values that never appear in TOOL_REGISTRY at all, so
+# tool_category() below still needs to know about them:
+#   * "api-scan" -- app/tasks/api_scan_tasks.py deliberately tags every
+#     nuclei-sourced finding "api-scan", not "nuclei" (nuclei itself is
+#     registered above for Tool Marketplace/health-check purposes, but no
+#     Finding row is ever persisted with tool="nuclei").
+#   * "osv-malware" -- app/core/osv_malware_ingestion.py writes malicious-
+#     package Finding rows directly, bypassing app.core.ingestion.ingest_findings
+#     (and therefore this registry) entirely.
+_EXTRA_TOOL_CATEGORIES = {
+    "api-scan": "API/DAST",
+    "osv-malware": "Malicious Package",
+}
+
+# The category a Finding's tool is grouped/filtered under (Findings page)
+# when it matches neither TOOL_REGISTRY nor _EXTRA_TOOL_CATEGORIES above --
+# notably, `POST /api/ingest/{target_id}` (a CI pipeline's own SARIF upload)
+# accepts any caller-supplied `tool` string, so this is a real, reachable
+# case, not just future-proofing.
+UNKNOWN_TOOL_CATEGORY = "Other"
+
+
+def tool_category(tool: str) -> str:
+    """The vulnerability-type category (Findings page grouping/filter, issue
+    tracker request) for a Finding's `tool` string. Sourced from
+    TOOL_REGISTRY's own per-tool `category` -- the same vocabulary Tool
+    Marketplace already shows users ("SAST", "SCA", "Secrets", "IaC",
+    "License", "API/DAST", "AI/ML") -- rather than a second, drifting
+    category list; plus the handful of real Finding.tool values that never
+    appear in TOOL_REGISTRY at all (see _EXTRA_TOOL_CATEGORIES)."""
+    for entry in TOOL_REGISTRY:
+        if entry["tool"] == tool:
+            return entry["category"]
+    return _EXTRA_TOOL_CATEGORIES.get(tool, UNKNOWN_TOOL_CATEGORY)
+
+
+def all_known_tools() -> list[str]:
+    """Every tool name tool_category() maps to a real (non-"Other")
+    category. Used to build the SQL exclusion for filtering Findings by the
+    "Other" category itself: NOT IN this set, rather than hand-maintaining a
+    second list."""
+    return [entry["tool"] for entry in TOOL_REGISTRY] + list(_EXTRA_TOOL_CATEGORIES.keys())
+
+
+def tools_in_category(category: str) -> list[str]:
+    """Tool names belonging to `category`, for filtering Findings by
+    category at the SQL level (Finding.tool.in_(...)) -- category is purely
+    derived from tool, so there is nothing to store or join, just the
+    reverse of tool_category(). Empty list for "Other" (see
+    all_known_tools()/UNKNOWN_TOOL_CATEGORY instead: that one needs a NOT
+    IN, not an IN)."""
+    tools = [entry["tool"] for entry in TOOL_REGISTRY if entry["category"] == category]
+    tools += [t for t, c in _EXTRA_TOOL_CATEGORIES.items() if c == category]
+    return tools
+
+
+def all_categories() -> list[str]:
+    """Every category a Finding could be grouped under, sorted, for the
+    Findings page's filter dropdown."""
+    cats = {entry["category"] for entry in TOOL_REGISTRY} | set(_EXTRA_TOOL_CATEGORIES.values())
+    cats.add(UNKNOWN_TOOL_CATEGORY)
+    return sorted(cats)
+
+
 def registry_with_integration_status() -> list[dict]:
     """Registry entries plus a computed `integrated` flag; True only when
     the tool has a real TOOL_COMMANDS entry (i.e. Toleman can actually execute

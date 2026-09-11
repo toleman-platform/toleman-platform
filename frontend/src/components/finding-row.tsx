@@ -330,6 +330,20 @@ export function FindingRow({
                 >
                   {finding.severity}
                 </Badge>
+                {/* Vulnerability-type category (Code/SAST, Secret, OSS/SCA,
+                    License, IaC, AI/ML, ...), same vocabulary Tool
+                    Marketplace already shows. Deliberately one neutral style
+                    for every category rather than a color per category --
+                    this is a taxonomy tag, not a workflow status, so it does
+                    not compete visually with the severity badge. */}
+                {finding.category && (
+                  <Badge
+                    variant="outline"
+                    className="shrink-0 px-2 py-0.5 text-xs font-medium text-muted-foreground"
+                  >
+                    {finding.category}
+                  </Badge>
+                )}
                 {finding.kev_listed && (
                   <Badge
                     variant="outline"

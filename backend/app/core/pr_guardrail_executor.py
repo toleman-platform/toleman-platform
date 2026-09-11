@@ -347,7 +347,7 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
         if f.line_start:
             loc += f":{f.line_start}"
         ref_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{f.id}"
-        ignore_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&ignore_finding={f.id}"
+        ignore_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}&ignore_finding={f.id}"
         lines.append(
             f"| {f.severity} | `{f.rule_id}` | {f.title} | `{loc}` | "
             f"[view]({ref_link}) &middot; [request ignore]({ignore_link}) |"

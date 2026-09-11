@@ -178,10 +178,14 @@ class SuggestFixResponse(BaseModel):
 
 
 class RaiseFixPrRequest(BaseModel):
+    """strategy="mcp_client" covers a caller (typically Claude Code via the
+    MCP server) that read the flagged file itself and wrote its own fix --
+    see app.core.autofix's module docstring -- rather than replaying a
+    patch a prior suggest-fix call returned."""
     file_path: str
     new_content: str
     ref: str
-    strategy: Literal["ai", "deterministic_sca"]
+    strategy: Literal["ai", "deterministic_sca", "mcp_client"]
     explanation: str = ""
 
 

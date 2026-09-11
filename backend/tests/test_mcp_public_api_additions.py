@@ -207,6 +207,58 @@ def test_public_raise_pr_opens_pr_for_the_supplied_patch(client, engine, monkeyp
     assert captured["patch"].new_content == "x==2.0\n"
 
 
+def test_public_raise_pr_accepts_mcp_client_strategy(client, engine, monkeypatch):
+    """strategy="mcp_client" is for a caller (Claude Code via this MCP
+    server) that read the flagged file itself and wrote its own fix,
+    rather than replaying a patch a prior suggest-fix call returned --
+    see app.core.autofix's module docstring. open_fix_pr doesn't care who
+    generated the content; the only thing gating this is the Literal on
+    RaiseFixPrRequest.strategy accepting the value at all."""
+    ws_id, target_id = _make_workspace_and_target(engine)
+    client, uid = _login(client, engine)
+    _assign(engine, uid, ws_id)
+    token = _make_token_for_user(engine, uid, scope=ApiTokenScope.READ_WRITE)
+    finding_id = _make_finding(engine, target_id)
+
+    captured = {}
+
+    def fake_open_fix_pr(session, target, finding, patch):
+        captured["patch"] = patch
+        return {"pr_url": "https://github.com/acme/repo/pull/2", "pr_number": 2, "branch": "toleman/fix-2"}
+
+    monkeypatch.setattr(public_api_module, "open_fix_pr", fake_open_fix_pr)
+
+    res = client.post(
+        f"/api/public/v1/findings/{finding_id}/raise-pr",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "file_path": "requirements.txt",
+            "new_content": "starlette==0.41.0\n",
+            "ref": "main",
+            "strategy": "mcp_client",
+            "explanation": "Read requirements.txt directly and bumped starlette.",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["pr_number"] == 2
+    assert captured["patch"].strategy == "mcp_client"
+
+
+def test_public_raise_pr_rejects_unknown_strategy(client, engine):
+    ws_id, target_id = _make_workspace_and_target(engine)
+    client, uid = _login(client, engine)
+    _assign(engine, uid, ws_id)
+    token = _make_token_for_user(engine, uid, scope=ApiTokenScope.READ_WRITE)
+    finding_id = _make_finding(engine, target_id)
+
+    res = client.post(
+        f"/api/public/v1/findings/{finding_id}/raise-pr",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"file_path": "requirements.txt", "new_content": "x==2.0\n", "ref": "main", "strategy": "made_up"},
+    )
+    assert res.status_code == 422
+
+
 def test_public_raise_pr_rejects_file_path_mismatch(client, engine):
     ws_id, target_id = _make_workspace_and_target(engine)
     client, uid = _login(client, engine)

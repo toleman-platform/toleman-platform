@@ -177,7 +177,18 @@ def suggest_fix(ctx: Context, finding_id: int) -> dict:
     patch could be built and verified against the file as it actually
     exists in the repo, a diff to review. Never writes anywhere: call
     raise_fix_pr with the exact fields this returns to actually open a PR
-    for it. Requires only a read-scoped token."""
+    for it. Requires only a read-scoped token.
+
+    If `diff` comes back None (no AI provider configured on Toleman and no
+    deterministic patch applied -- common for SAST findings when nothing's
+    set up under Admin > Global Integrations), you don't need Toleman's own
+    AI at all: read `recommendation` plus the finding's file_path/
+    line_start/line_end (get_finding) and the target's repo_url/
+    default_branch (get_target/list_targets), fix the flagged code yourself
+    -- you already have the repo, if this is a Claude Code session working
+    in it -- and call raise_fix_pr with strategy="mcp_client" and the full
+    corrected file content. Toleman still opens the PR (it holds the GitHub
+    App installation token); only the patch generation moves to you."""
     with _client(_resolve_token(ctx)) as c:
         r = c.post(f"/findings/{finding_id}/suggest-fix")
         r.raise_for_status()
@@ -194,10 +205,22 @@ def raise_fix_pr(
     strategy: str,
     explanation: str = "",
 ) -> dict:
-    """Opens a PR for the *exact* patch a prior suggest_fix call returned --
-    pass its file_path/new_content/ref/strategy/explanation back verbatim,
-    so what gets committed is guaranteed to match the diff already
-    reviewed, not a freshly (and possibly differently) regenerated one.
+    """Opens a PR for a patch to `file_path` (which must match the
+    finding's own file_path) on branch `ref`, committing `new_content` as
+    that file's full new contents. Two ways to call this:
+
+    1. Usual case: pass file_path/new_content/ref/strategy/explanation back
+       *exactly* as a prior suggest_fix call returned them (strategy will
+       be "ai" or "deterministic_sca"), so what's committed is guaranteed
+       to match the diff already reviewed, not a freshly (and possibly
+       differently) regenerated one.
+    2. suggest_fix came back with diff=None (no Toleman AI provider
+       configured, no deterministic patch available): read the file
+       yourself, write the full corrected content, and call this with
+       strategy="mcp_client" -- Toleman still opens the PR via its GitHub
+       App installation token, it just isn't the one that generated the
+       patch.
+
     Requires a read_write-scoped token, since this writes a branch/PR to
     the target's real GitHub repo."""
     with _client(_resolve_token(ctx)) as c:

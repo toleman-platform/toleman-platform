@@ -136,6 +136,26 @@ def test_raise_fix_pr_sends_the_exact_patch_fields():
 
 
 @respx.mock
+def test_raise_fix_pr_accepts_mcp_client_strategy():
+    """strategy is a plain str here (the backend's Literal is what actually
+    gates the allowed values) -- this documents that "mcp_client" passes
+    through unchanged, for the case where suggest_fix returned no diff and
+    the calling agent (e.g. Claude Code, with the repo already checked out)
+    read the flagged file and wrote the fix itself."""
+    route = respx.post("http://localhost:8000/api/public/v1/findings/12/raise-pr").mock(
+        return_value=httpx.Response(200, json={"pr_url": "https://github.com/a/b/pull/2", "pr_number": 2, "branch": "toleman/fix-2"})
+    )
+    result = server.raise_fix_pr(
+        STDIO_CTX, 12, file_path="app.py", new_content="fixed content\n", ref="main",
+        strategy="mcp_client", explanation="Read app.py directly and fixed the flagged line.",
+    )
+    assert result["pr_number"] == 2
+    import json
+    body = json.loads(route.calls.last.request.content)
+    assert body["strategy"] == "mcp_client"
+
+
+@respx.mock
 def test_raise_fix_pr_propagates_502_as_http_error():
     respx.post("http://localhost:8000/api/public/v1/findings/12/raise-pr").mock(
         return_value=httpx.Response(502, json={"detail": "no GitHub App installed"})

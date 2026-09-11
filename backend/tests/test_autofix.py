@@ -405,6 +405,15 @@ def test_suggest_fix_endpoint_does_not_require_developer_role(client, engine):
     assert resp.status_code == 200
 
 
+def test_strategy_label_covers_every_known_strategy():
+    assert autofix._strategy_label("ai") == "an AI-generated"
+    assert autofix._strategy_label("deterministic_sca") == "a deterministic dependency-upgrade"
+    assert autofix._strategy_label("mcp_client") == "an MCP-client-generated"
+    # Unknown strategy degrades to a grammatically-valid generic label
+    # rather than raising -- open_fix_pr should never fail on this alone.
+    assert autofix._strategy_label("something_new") == "a"
+
+
 # ---------------------------------------------------------------------------
 # POST /api/findings/{id}/raise-pr: opens the PR for a caller-supplied patch
 # ---------------------------------------------------------------------------
@@ -438,6 +447,50 @@ def test_raise_pr_endpoint_opens_pr_for_the_supplied_patch(client, engine, monke
     assert body == {"pr_url": "https://github.com/a/b/pull/1", "pr_number": 1, "branch": "toleman/fix-1"}
     assert captured["patch"].new_content == "starlette==0.40.0\n"
     assert captured["patch"].strategy == "deterministic_sca"
+
+
+def test_raise_pr_endpoint_accepts_mcp_client_strategy(client, engine, monkeypatch):
+    """strategy="mcp_client" is for a caller (an MCP client, typically
+    Claude Code, when suggest-fix returned no diff) that read the flagged
+    file itself and wrote its own fix rather than replaying a patch
+    suggest-fix produced -- open_fix_pr doesn't care who generated
+    new_content, so this just needs to pass RaiseFixPrRequest's Literal."""
+    _login(client, engine)
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id, tool="trivy", file_path="requirements.txt")
+
+    captured = {}
+
+    def fake_open_fix_pr(session, target, finding, patch):
+        captured["patch"] = patch
+        return {"pr_url": "https://github.com/a/b/pull/2", "pr_number": 2, "branch": "toleman/fix-2"}
+
+    monkeypatch.setattr("app.api.findings.open_fix_pr", fake_open_fix_pr)
+
+    resp = client.post(
+        f"/api/findings/{finding_id}/raise-pr",
+        json={
+            "file_path": "requirements.txt",
+            "new_content": "starlette==0.41.0\n",
+            "ref": "main",
+            "strategy": "mcp_client",
+            "explanation": "Read requirements.txt directly and bumped starlette.",
+        },
+    )
+    assert resp.status_code == 200
+    assert captured["patch"].strategy == "mcp_client"
+
+
+def test_raise_pr_endpoint_rejects_unknown_strategy(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id, tool="trivy", file_path="requirements.txt")
+
+    resp = client.post(
+        f"/api/findings/{finding_id}/raise-pr",
+        json={"file_path": "requirements.txt", "new_content": "x", "ref": "main", "strategy": "made_up"},
+    )
+    assert resp.status_code == 422
 
 
 def test_raise_pr_endpoint_rejects_file_path_mismatch(client, engine):

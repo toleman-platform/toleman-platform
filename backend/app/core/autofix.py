@@ -28,6 +28,16 @@ Reading the *current* file content, to build a correct patch in
 which also accepts a plain PAT -- independent of whether the GitHub App is
 installed, so a patch/diff can still be produced even when a PR cannot be
 opened.
+
+`open_fix_pr` doesn't care who or what produced `patch.new_content` -- it
+just commits it. `raise-pr`/raise_fix_pr accepts any Patch regardless of
+strategy, which is what lets an MCP client (see mcp-server/server.py) that
+already holds the repo -- typically Claude Code -- read the flagged file
+itself and generate the fix when `suggest_fix` came back with no diff (no
+Toleman AI provider configured and no deterministic patch available), then
+call raise_fix_pr with strategy="mcp_client" to still get a PR opened
+through Toleman's installation token. See STRATEGY_LABELS for the full set
+this labels in the PR body.
 """
 import base64
 import difflib
@@ -65,8 +75,26 @@ class Patch:
     old_content: str
     new_content: str
     ref: str  # branch the content was read from; also the PR base
-    strategy: str  # "ai" | "deterministic_sca"
+    strategy: str  # "ai" | "deterministic_sca" | "mcp_client"
     explanation: str
+
+
+# Labels the PR body under open_fix_pr uses to say how a patch was produced.
+# "mcp_client" (issue #108 follow-up): an MCP client -- typically Claude Code,
+# already holding the repo and able to read the flagged file directly -- read
+# suggest_fix's recommendation, wrote the fix itself (no Toleman AI provider
+# involved at all), and called raise_fix_pr with this strategy. Distinct from
+# "ai", which means *Toleman's own* configured provider (app.core.ai_provider)
+# generated the patch server-side.
+STRATEGY_LABELS = {
+    "ai": "an AI-generated",
+    "deterministic_sca": "a deterministic dependency-upgrade",
+    "mcp_client": "an MCP-client-generated",
+}
+
+
+def _strategy_label(strategy: str) -> str:
+    return STRATEGY_LABELS.get(strategy, "a")
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +514,7 @@ def open_fix_pr(session: Session, target: Target, finding: Finding, patch: Patch
             f"failed to write {patch.file_path} on GitHub: {put_res.status_code} {put_res.text[:200]}"
         )
 
-    strategy_label = "AI-generated" if patch.strategy == "ai" else "a deterministic dependency upgrade"
+    strategy_label = _strategy_label(patch.strategy)
     pr_body = (
         f"Automated fix for finding #{finding.id}: **{finding.title}** "
         f"({finding.severity}, `{finding.tool}` / `{finding.rule_id}`).\n\n"

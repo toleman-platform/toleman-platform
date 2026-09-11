@@ -23,7 +23,7 @@ package and this project's pinned FastAPI/SQLModel versions).
 | `get_scan_status` | read | A scan's status/result |
 | `trigger_scan` | read/write | Trigger a native scan against a target |
 | `suggest_fix` | read | Fix recommendation (+ diff, where possible) for a finding; never writes anywhere |
-| `raise_fix_pr` | read/write | Opens a PR for the exact patch a prior `suggest_fix` call returned |
+| `raise_fix_pr` | read/write | Opens a PR for the exact patch a prior `suggest_fix` call returned, or one you generated yourself |
 | `check_code_for_vulnerabilities` | read | Scan a code snippet for vulnerabilities *before* it's written to a real file/commit |
 
 `suggest_fix` + `raise_fix_pr` are deliberately two calls, not one: review
@@ -31,6 +31,22 @@ the recommendation/diff first, then explicitly open the PR for that *exact*
 patch, never a freshly (and possibly differently) regenerated one. See
 `app/api/findings.py`'s `FindingSuggestFixResponse` docstring in the main
 backend for the full reasoning; the public API mirrors it exactly.
+
+### When Toleman has no AI provider configured
+
+`suggest_fix` still always returns a recommendation, but `diff` comes back
+`None` for anything beyond a deterministic dependency-version bump (Admin >
+Global Integrations has no provider set, or the AI declined to produce a
+clean patch). You don't need Toleman's own AI to fix these: an MCP client
+that already holds the repo -- Claude Code, most commonly -- can read the
+flagged file itself (`get_finding` has `file_path`/`line_start`/`line_end`;
+`list_targets`/`get_target` have the target's `repo_url`/`default_branch`),
+write the fix, and call `raise_fix_pr` with `strategy="mcp_client"` and the
+corrected file's full content. Toleman still opens the PR through its own
+GitHub App installation token -- only patch *generation* moved to the
+client, not PR creation. The PR body labels it accordingly ("an
+MCP-client-generated patch") so it's clear in GitHub which findings got an
+AI-provider patch vs. a client-generated one.
 
 ## Two ways to run it
 

@@ -192,13 +192,17 @@ class FindingSuggestFixResponse(BaseModel):
 
 
 class RaiseFixPrRequest(BaseModel):
-    """The exact patch fields FindingSuggestFixResponse returned -- sent
-    back verbatim so the PR committed is exactly the diff the caller
-    reviewed, not a freshly (and possibly differently) regenerated one."""
+    """Usually the exact patch fields FindingSuggestFixResponse returned --
+    sent back verbatim so the PR committed is exactly the diff the caller
+    reviewed, not a freshly (and possibly differently) regenerated one.
+    strategy="mcp_client" is the exception: a caller that already read the
+    flagged file itself (an MCP client, typically Claude Code, when
+    suggest-fix returned no diff) and wrote its own fix, rather than
+    replaying a patch suggest-fix produced."""
     file_path: str
     new_content: str
     ref: str
-    strategy: Literal["ai", "deterministic_sca"]
+    strategy: Literal["ai", "deterministic_sca", "mcp_client"]
     explanation: str = ""
 
 

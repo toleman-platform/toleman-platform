@@ -71,8 +71,23 @@ function OverrideAction({ entry, onOverridden }: { entry: PrGuardrailLogEntry; o
   );
 }
 
-function RequestIgnoreAction({ finding, onRequested }: { finding: PrGuardrailFinding; onRequested: () => void }) {
-  const [open, setOpen] = useState(false);
+function RequestIgnoreAction({
+  finding,
+  onRequested,
+  autoOpen = false,
+}: {
+  finding: PrGuardrailFinding;
+  onRequested: () => void;
+  autoOpen?: boolean;
+}) {
+  // Deep-linking (#385): a PR comment's "request ignore" link lands here
+  // with this finding's id already known, so it opens straight into the
+  // reason field instead of requiring a second click to find and press
+  // this same button. `finding` and `autoOpen` are both only available once
+  // the findings fetch resolves (ScanFindings below doesn't render this row
+  // until then), so the initial useState value is enough -- no effect
+  // needed to catch a value that arrives after mount.
+  const [open, setOpen] = useState(autoOpen);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -116,7 +131,15 @@ function RequestIgnoreAction({ finding, onRequested }: { finding: PrGuardrailFin
   );
 }
 
-function PrGuardrailFindingRow({ finding, onChanged }: { finding: PrGuardrailFinding; onChanged: () => void }) {
+function PrGuardrailFindingRow({
+  finding,
+  onChanged,
+  autoOpenIgnoreFindingId,
+}: {
+  finding: PrGuardrailFinding;
+  onChanged: () => void;
+  autoOpenIgnoreFindingId?: number | null;
+}) {
   return (
     <div className="rounded-md border border-border bg-secondary/40 px-3 py-2">
       <div className="flex items-start justify-between gap-3">
@@ -151,13 +174,17 @@ function PrGuardrailFindingRow({ finding, onChanged }: { finding: PrGuardrailFin
         </Badge>
       </div>
       <div className="mt-2">
-        <RequestIgnoreAction finding={finding} onRequested={onChanged} />
+        <RequestIgnoreAction
+          finding={finding}
+          onRequested={onChanged}
+          autoOpen={finding.id === autoOpenIgnoreFindingId}
+        />
       </div>
     </div>
   );
 }
 
-function ScanFindings({ scanId }: { scanId: number }) {
+function ScanFindings({ scanId, autoOpenIgnoreFindingId }: { scanId: number; autoOpenIgnoreFindingId?: number | null }) {
   const {
     data: findings,
     error,
@@ -173,7 +200,12 @@ function ScanFindings({ scanId }: { scanId: number }) {
   return (
     <div className="flex flex-col gap-2">
       {findings.map((f) => (
-        <PrGuardrailFindingRow key={f.id} finding={f} onChanged={refresh} />
+        <PrGuardrailFindingRow
+          key={f.id}
+          finding={f}
+          onChanged={refresh}
+          autoOpenIgnoreFindingId={autoOpenIgnoreFindingId}
+        />
       ))}
     </div>
   );
@@ -208,9 +240,29 @@ function OrgStatsBar({ stats }: { stats: PrGuardrailOrgStats }) {
   );
 }
 
-export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
+export function PrGuardrailLog({
+  targetId,
+  initialScanId = null,
+  initialIgnoreFindingId = null,
+}: {
+  targetId: number | null;
+  // Deep-linking (#385): pr_guardrail_executor.py's "view"/"request ignore"
+  // PR-comment links carry pr_scan_id/ignore_finding query params that used
+  // to go nowhere -- the page landed with everything collapsed and no
+  // target selected, same finding the user just clicked "view" or "request
+  // ignore" on buried behind a manual re-search. These seed which scan
+  // entry opens and which finding's ignore dialog auto-opens.
+  initialScanId?: number | null;
+  initialIgnoreFindingId?: number | null;
+}) {
   const isOrgWide = targetId === ALL_TARGETS;
-  const [expanded, setExpanded] = useState<number | null>(null);
+  // Seeded once from the prop at mount, same "initial value only" pattern
+  // as PrHistoryPage's own chosenTargetId -- a later manual expand/collapse
+  // is real state after that, not something a log refetch (e.g. after
+  // submitting an ignore request) should stomp back over. If initialScanId
+  // doesn't match any entry once the log loads, isExpanded below is just
+  // never true for anything; no validation needed against unloaded data.
+  const [expanded, setExpanded] = useState<number | null>(initialScanId);
 
   // The org-wide view carries aggregate stats; the per-repo one has none.
   // Returning both from a single fetcher keeps them in lockstep; the two
@@ -361,7 +413,10 @@ export function PrGuardrailLog({ targetId }: { targetId: number | null }) {
 
                 {isExpanded && (
                   <div className="mt-3 border-t border-border pt-3">
-                    <ScanFindings scanId={entry.id} />
+                    <ScanFindings
+                      scanId={entry.id}
+                      autoOpenIgnoreFindingId={entry.id === initialScanId ? initialIgnoreFindingId : null}
+                    />
                   </div>
                 )}
               </CardContent>

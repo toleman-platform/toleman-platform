@@ -12,7 +12,7 @@ the exact same code, not two copies.
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.api.auth import accessible_workspace_ids, current_user, require_security_reviewer, require_workspace_role
 from app.api.deps import get_session
@@ -321,32 +321,49 @@ def request_ignore(
     return _finding_out(finding)
 
 
+DEFAULT_PAGE_SIZE = 25
+MAX_PAGE_SIZE = 200
+
+
 @router.get("/ignore-requests/pending")
 def list_pending_ignore_requests(
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
     user: User = Depends(require_security_reviewer),
 ):
-    """The security team's approval queue."""
-    findings = session.exec(
-        select(PRGuardrailFinding).where(PRGuardrailFinding.ignore_status == IgnoreStatus.REQUESTED)
-    ).all()
-    return [_finding_out(f) for f in findings]
+    """The security team's approval queue, paginated (a workspace running PR
+    Guardrail for a while can accumulate well past one screenful of pending
+    requests)."""
+    base_query = select(PRGuardrailFinding).where(PRGuardrailFinding.ignore_status == IgnoreStatus.REQUESTED)
+    total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
+    page = max(page, 1)
+    page_size = max(min(page_size, MAX_PAGE_SIZE), 1)
+    findings = session.exec(base_query.offset((page - 1) * page_size).limit(page_size)).all()
+    return {"items": [_finding_out(f) for f in findings], "total": total}
 
 
 @router.get("/ignore-requests/history")
 def list_ignore_request_history(
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
     user: User = Depends(require_security_reviewer),
 ):
     """Already-decided ignore requests (approved or rejected), most recently
     reviewed first -- the Approval Queue's own record of what it has already
-    ruled on, alongside the still-pending list above."""
+    ruled on, alongside the still-pending list above. Paginated for the same
+    reason the pending list is: this only grows over a workspace's lifetime."""
+    base_query = select(PRGuardrailFinding).where(
+        PRGuardrailFinding.ignore_status.in_([IgnoreStatus.APPROVED, IgnoreStatus.REJECTED])
+    )
+    total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
+    page = max(page, 1)
+    page_size = max(min(page_size, MAX_PAGE_SIZE), 1)
     findings = session.exec(
-        select(PRGuardrailFinding)
-        .where(PRGuardrailFinding.ignore_status.in_([IgnoreStatus.APPROVED, IgnoreStatus.REJECTED]))
-        .order_by(PRGuardrailFinding.ignore_reviewed_at.desc())
+        base_query.order_by(PRGuardrailFinding.ignore_reviewed_at.desc()).offset((page - 1) * page_size).limit(page_size)
     ).all()
-    return [_finding_out(f) for f in findings]
+    return {"items": [_finding_out(f) for f in findings], "total": total}
 
 
 def _sync_approved_ignore_to_main_findings(

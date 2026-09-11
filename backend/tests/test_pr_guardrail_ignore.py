@@ -218,8 +218,10 @@ def test_pending_queue_only_shows_requested(client, engine):
     sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER, email="sec2@example.com")
     res = sec_client.get("/api/pr-guardrail/ignore-requests/pending")
     assert res.status_code == 200
-    ids = [f["id"] for f in res.json()]
+    body = res.json()
+    ids = [f["id"] for f in body["items"]]
     assert finding_id in ids
+    assert body["total"] == len(ids)
 
 
 def test_history_shows_approved_and_rejected_but_not_pending(client, engine):
@@ -240,7 +242,7 @@ def test_history_shows_approved_and_rejected_but_not_pending(client, engine):
 
     res = sec_client.get("/api/pr-guardrail/ignore-requests/history")
     assert res.status_code == 200
-    body = res.json()
+    body = res.json()["items"]
     ids = {f["id"] for f in body}
     assert ids == {approved_id, rejected_id}
     statuses = {f["id"]: f["ignore_status"] for f in body}
@@ -257,7 +259,7 @@ def test_history_most_recently_reviewed_first(client, engine):
 
     res = sec_client.get("/api/pr-guardrail/ignore-requests/history")
     assert res.status_code == 200
-    ids_in_order = [f["id"] for f in res.json()]
+    ids_in_order = [f["id"] for f in res.json()["items"]]
     assert ids_in_order[0] == second_id
     assert ids_in_order[1] == first_id
 
@@ -266,6 +268,47 @@ def test_only_security_reviewers_can_read_history(client, engine):
     client = _login(client, engine, role=UserRole.USER)
     res = client.get("/api/pr-guardrail/ignore-requests/history")
     assert res.status_code == 403
+
+
+def test_history_is_paginated(client, engine):
+    ids = []
+    for _ in range(3):
+        _, fid = _make_pr_scan_and_finding(engine)
+        ids.append(fid)
+    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    for fid in ids:
+        sec_client.post(f"/api/pr-guardrail/findings/{fid}/approve-ignore")
+
+    res = sec_client.get("/api/pr-guardrail/ignore-requests/history?page=1&page_size=2")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 2
+
+    res = sec_client.get("/api/pr-guardrail/ignore-requests/history?page=2&page_size=2")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 1
+    # Most-recently-reviewed-first ordering is preserved across the page
+    # boundary, not just within a page.
+    assert body["items"][0]["id"] == ids[0]
+
+
+def test_pending_queue_is_paginated(client, engine):
+    ids = []
+    dev_client = _login(client, engine, role=UserRole.DEVELOPER)
+    for _ in range(3):
+        _, fid = _make_pr_scan_and_finding(engine)
+        dev_client.post(f"/api/pr-guardrail/findings/{fid}/request-ignore", json={"reason": "fp"})
+        ids.append(fid)
+
+    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER, email="sec3@example.com")
+    res = sec_client.get("/api/pr-guardrail/ignore-requests/pending?page=1&page_size=2")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total"] == 3
+    assert len(body["items"]) == 2
 
 
 def test_list_findings_for_a_scan(client, engine):

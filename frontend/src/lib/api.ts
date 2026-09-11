@@ -851,7 +851,7 @@ export type PrGuardrailScanResult = {
   highest_new_severity: string | null;
   new_findings: PrGuardrailFindingSummary[];
 };
-export type IgnoreStatus = "none" | "requested" | "approved" | "rejected";
+export type IgnoreStatus = "none" | "requested" | "approved" | "rejected" | "revoked";
 export type PrGuardrailFindingPage = { items: PrGuardrailFinding[]; total: number };
 export type PrGuardrailFinding = {
   id: number;

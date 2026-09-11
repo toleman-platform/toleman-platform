@@ -54,6 +54,10 @@ export const IGNORE_STATUS_COLOR: Record<string, string> = {
   requested: "border-chart-1/20 bg-chart-1/10 text-chart-1",
   approved: "border-chart-5/20 bg-chart-5/10 text-chart-5",
   rejected: "border-destructive/20 bg-destructive/10 text-destructive",
+  // An approval later undone (app/api/pr_guardrail.py's revoke_ignore) --
+  // neutral, same treatment as "none", since it's an inactive/settled state
+  // like rejected, not something currently blocking anyone's attention.
+  revoked: "border-border bg-muted text-muted-foreground",
 };
 
 export const STATE_COLOR: Record<string, string> = {

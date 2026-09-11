@@ -7,10 +7,19 @@ Every input is queried live from real data; no fabricated/mocked inputs
 ("no mock data" applies to what ships, not just to how it's verified):
 
   - findings_score  (weight FINDINGS_WEIGHT): open (Open/Reopened),
-    default-branch findings, weighted by SEVERITY_WEIGHT (same convention as
-    core/scoring.py's priority score), normalized by the number of in-scope
-    targets so a large org isn't unfairly penalized next to a single repo.
-    See `_findings_score` for the exact curve/constant.
+    default-branch findings. Each finding's contribution is SEVERITY_WEIGHT
+    x its own target's `criticality_weight` (1-5, same factors
+    core/scoring.py's per-finding priority score multiplies, so "a Critical
+    in a Prod target hurts the org score more than the same Critical in a
+    Dev target" holds for the composite score too, not just sort order) x a
+    per-category risk multiplier (CATEGORY_RISK_WEIGHT below -- a License
+    finding is a legal/compliance signal, not an exploitability one, so a
+    scanner grading it "Critical" for licensing reasons shouldn't move this
+    score the way an actually-exploitable Critical does). Normalized by the
+    *sum* of in-scope targets' criticality_weight, not a plain target count,
+    so an org that has never set criticality (every target defaults to 1)
+    sees identical numbers to before this weighting existed. See
+    `_findings_score`/`_finding_risk_weight` for the exact curve/constant.
   - sla_score       (weight SLA_WEIGHT): reuses
     app.core.sla.compute_sla_status per open/reopened default-branch finding
     (#70's real resolution + violation logic, not recomputed); % of
@@ -38,7 +47,10 @@ Every input is queried live from real data; no fabricated/mocked inputs
     weighted-severity total *right now* against the same total
     reconstructed as of TREND_WINDOW_DAYS ago, using the real
     FindingStateLog audit trail to determine whether each finding was open
-    at that past timestamp; real week-over-week, not a guess. Stable or
+    at that past timestamp; real week-over-week, not a guess. Uses the same
+    per-finding weight (severity x target criticality x category risk) as
+    findings_score, so a worsening trend and a dropping findings_score
+    can't tell contradictory stories about the same findings. Stable or
     improving -> 100; worsening -> penalized proportionally to the percent
     increase, capped at 0.
 
@@ -52,6 +64,7 @@ from sqlmodel import Session, select
 
 from app.core.sla import CLOSED_STATES, compute_sla_status
 from app.core.time import utcnow
+from app.core.tool_registry import tool_category
 from app.models.models import (
     Finding,
     FindingState,
@@ -74,6 +87,23 @@ from app.models.models import (
 # out at 0. Chosen so a handful of untriaged Criticals per repo visibly
 # tanks the score without a single Low finding anywhere zeroing it out.
 SEVERITY_POINTS_TO_ZERO = 20.0
+
+# Per-category multiplier on a finding's contribution to findings_score/
+# trend_score: severity already says how bad a finding is *within* its
+# category, this says how much a category's worst case should move a
+# security *posture* score at all. Deliberately narrow -- only License is
+# called out, at a fraction of full weight, because it's a legal/compliance
+# signal (a scanner can grade a copyleft license "Critical" for licensing
+# reasons that have nothing to do with exploitability) rather than a
+# security risk in the same sense as an exploitable code vuln, a leaked
+# secret, or a vulnerable dependency. Every other category (including ones
+# added to the registry later) defaults to DEFAULT_CATEGORY_RISK_WEIGHT via
+# `.get`, so severity alone keeps doing the differentiating work there,
+# unchanged from before this multiplier existed.
+CATEGORY_RISK_WEIGHT = {
+    "License": 0.3,
+}
+DEFAULT_CATEGORY_RISK_WEIGHT = 1.0
 
 # "Scanned recently" window for coverage.
 COVERAGE_WINDOW_DAYS = 30
@@ -107,15 +137,39 @@ def _default_branch_findings(session: Session, target_ids: list[int], targets_by
     return [f for f in rows if targets_by_id.get(f.target_id) and f.branch == targets_by_id[f.target_id].default_branch]
 
 
-def _findings_score(open_default_branch: list[Finding], target_count: int) -> dict:
-    weighted_sum = sum(SEVERITY_WEIGHT[f.severity] for f in open_default_branch)
-    avg_per_target = weighted_sum / max(1, target_count)
+def _finding_risk_weight(finding: Finding, target: Target | None) -> float:
+    """A single finding's contribution to findings_score/trend_score:
+    SEVERITY_WEIGHT x the owning target's criticality_weight (1-5, clamped
+    same as core/scoring.py's compute_priority_score) x CATEGORY_RISK_WEIGHT
+    for its vulnerability-type category. `target` is only ever None for a
+    finding whose target didn't resolve into targets_by_id, which shouldn't
+    happen for anything _default_branch_findings already returned; falls
+    back to criticality 1 (neutral) rather than raising, since a missing
+    target is exactly the kind of data inconsistency this score should
+    degrade gracefully on, not crash on."""
+    criticality = max(1, min(5, target.criticality_weight)) if target else 1
+    category_weight = CATEGORY_RISK_WEIGHT.get(tool_category(finding.tool), DEFAULT_CATEGORY_RISK_WEIGHT)
+    return SEVERITY_WEIGHT[finding.severity] * criticality * category_weight
+
+
+def _total_criticality(targets_by_id: dict[int, Target]) -> float:
+    """Sum of in-scope targets' criticality_weight (clamped 1-5), the
+    denominator findings_score/trend_score normalize by instead of a plain
+    target count. Every target defaults to criticality_weight=1, so for an
+    org that has never customized it this equals target_count exactly --
+    identical numbers to before per-target criticality weighting existed."""
+    return sum(max(1, min(5, t.criticality_weight)) for t in targets_by_id.values())
+
+
+def _findings_score(open_default_branch: list[Finding], targets_by_id: dict[int, Target], total_criticality: float) -> dict:
+    weighted_sum = sum(_finding_risk_weight(f, targets_by_id.get(f.target_id)) for f in open_default_branch)
+    avg_per_target = weighted_sum / max(1, total_criticality)
     score = max(0.0, 100.0 - (avg_per_target / SEVERITY_POINTS_TO_ZERO) * 100.0)
     return {
         "score": round(score, 1),
         "weight": FINDINGS_WEIGHT,
         "open_findings": len(open_default_branch),
-        "weighted_severity_sum": weighted_sum,
+        "weighted_severity_sum": round(weighted_sum, 2),
         "avg_weighted_severity_per_target": round(avg_per_target, 2),
     }
 
@@ -205,6 +259,7 @@ def _weighted_open_sum_at(
     as_of: datetime,
     findings: list[Finding],
     logs_by_finding: dict[int, list[FindingStateLog]],
+    targets_by_id: dict[int, Target],
 ) -> float:
     total = 0.0
     for f in findings:
@@ -214,7 +269,11 @@ def _weighted_open_sum_at(
         if state not in CLOSED_STATES:
             # Anything not a recognized closed/terminal state (i.e. Open or
             # Reopened) counts as open, mirroring app.core.sla.CLOSED_STATES.
-            total += SEVERITY_WEIGHT[f.severity]
+            # Same per-finding weight as findings_score (severity x target
+            # criticality x category risk), using the target's *current*
+            # criticality_weight -- that field isn't itself versioned over
+            # time, only the finding's state is being reconstructed here.
+            total += _finding_risk_weight(f, targets_by_id.get(f.target_id))
     return total
 
 
@@ -237,8 +296,8 @@ def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[in
     now = utcnow()
     prior_as_of = now - timedelta(days=TREND_WINDOW_DAYS)
 
-    current_sum = _weighted_open_sum_at(now, findings, logs_by_finding)
-    prior_sum = _weighted_open_sum_at(prior_as_of, findings, logs_by_finding)
+    current_sum = _weighted_open_sum_at(now, findings, logs_by_finding, targets_by_id)
+    prior_sum = _weighted_open_sum_at(prior_as_of, findings, logs_by_finding, targets_by_id)
 
     if current_sum <= prior_sum:
         score = 100.0
@@ -274,7 +333,7 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     open_default_branch = [f for f in _default_branch_findings(session, target_ids, targets_by_id) if f.state in OPEN_STATES]
 
     components = {
-        "findings": _findings_score(open_default_branch, len(target_ids)),
+        "findings": _findings_score(open_default_branch, targets_by_id, _total_criticality(targets_by_id)),
         "sla": _sla_score(session, open_default_branch),
         "coverage": _coverage_score(session, target_ids),
         "fp_rate": _fp_rate_score(session, target_ids),

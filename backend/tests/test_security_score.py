@@ -86,9 +86,15 @@ def _make_workspace(engine, name="ws") -> int:
         return ws.id
 
 
-def _make_target(engine, workspace_id, default_branch="main") -> int:
+def _make_target(engine, workspace_id, default_branch="main", criticality_weight=1) -> int:
     with Session(engine) as session:
-        t = Target(workspace_id=workspace_id, name="repo", repo_url="https://github.com/acme/repo", default_branch=default_branch)
+        t = Target(
+            workspace_id=workspace_id,
+            name="repo",
+            repo_url="https://github.com/acme/repo",
+            default_branch=default_branch,
+            criticality_weight=criticality_weight,
+        )
         session.add(t)
         session.commit()
         session.refresh(t)
@@ -126,12 +132,13 @@ def _make_finding(
     first_seen=None,
     state=FindingState.OPEN,
     branch="main",
+    tool="semgrep",
 ) -> int:
     with Session(engine) as session:
         f = Finding(
             target_id=target_id,
             dedup_hash=f"hash-{id(object())}",
-            tool="semgrep",
+            tool=tool,
             rule_id="r1",
             title="t1",
             file_path="a.py",
@@ -219,6 +226,65 @@ def test_findings_component_hand_calculated(engine):
     assert f["weighted_severity_sum"] == 9
     assert f["open_findings"] == 2
     assert f["score"] == 55.0
+
+
+def test_findings_component_weights_by_target_criticality(engine):
+    """One Prod target (criticality_weight=5) with an open Critical, one Dev
+    target (criticality_weight=1) with an open Critical: weighted_sum =
+    5*5 + 5*1 = 30, total_criticality = 5+1 = 6, avg_per_target = 5.0 ->
+    score = 100 - (5/20)*100 = 75.0. The same two findings at uniform
+    criticality (1 each) would instead average 5.0 too by coincidence here,
+    so also assert the raw weighted_sum reflects the 5x multiplier -- that's
+    the part a plain target-count average couldn't show."""
+    ws_id = _make_workspace(engine)
+    prod_target = _make_target(engine, ws_id, criticality_weight=5)
+    dev_target = _make_target(engine, ws_id, criticality_weight=1)
+    _make_finding(engine, prod_target, severity=Severity.CRITICAL)
+    _make_finding(engine, dev_target, severity=Severity.CRITICAL)
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [prod_target, dev_target])
+
+    f = result["components"]["findings"]
+    assert f["weighted_severity_sum"] == 30.0
+    assert f["avg_weighted_severity_per_target"] == 5.0
+    assert f["score"] == 75.0
+
+
+def test_findings_component_same_criticality_everywhere_is_unaffected(engine):
+    """Sanity check that per-target criticality weighting is a genuine
+    no-op for an org that never configured it (every target defaults to
+    criticality_weight=1): this must reproduce
+    test_findings_component_hand_calculated's numbers exactly."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _make_finding(engine, target_id, severity=Severity.CRITICAL)
+    _make_finding(engine, target_id, severity=Severity.HIGH)
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    f = result["components"]["findings"]
+    assert f["weighted_severity_sum"] == 9
+    assert f["score"] == 55.0
+
+
+def test_findings_component_discounts_license_findings(engine):
+    """A License-category finding (tool="trivy-license") graded Critical by
+    the scanner for legal/compliance reasons should not tank the score the
+    same way an actually-exploitable Critical would: weighted contribution
+    is SEVERITY_WEIGHT(5) x criticality(1) x CATEGORY_RISK_WEIGHT["License"]
+    (0.3) = 1.5, not 5."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, tool="trivy-license")
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    f = result["components"]["findings"]
+    assert f["weighted_severity_sum"] == pytest.approx(1.5)
+    assert f["score"] == pytest.approx(92.5)
 
 
 def test_findings_component_ignores_non_default_branch(engine):
@@ -344,6 +410,28 @@ def test_trend_component_improving_after_mitigation(engine):
     assert trend["current_weighted_sum"] == 0.0
     assert trend["direction"] == "improving"
     assert trend["score"] == 100.0
+
+
+def test_trend_component_uses_the_same_per_finding_weight_as_findings_score(engine):
+    """The trend component must weight findings identically to
+    findings_score (target criticality x category risk), not the plain
+    SEVERITY_WEIGHT it used before that weighting existed -- otherwise the
+    two components could tell contradictory stories about the same
+    findings. A Critical (weight 5) in a criticality_weight=5 Prod target,
+    first_seen 2 days ago (inside the 7-day window): current_weighted_sum
+    should be 25 (5*5*1.0 category), not the flat 5 a pre-criticality-
+    weighting trend component would have reported."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id, criticality_weight=5)
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=2))
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    trend = result["components"]["trend"]
+    assert trend["prior_weighted_sum"] == 0.0
+    assert trend["current_weighted_sum"] == 25.0
+    assert trend["direction"] == "worsening"
 
 
 def test_weakest_component_reported(engine):

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ExternalLink, ShieldQuestion } from "lucide-react";
 import { api, ApiError, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
@@ -19,6 +19,14 @@ import { ALL_TARGETS } from "@/components/target-picker";
 function isSessionError(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;
 }
+
+// Fixed reason for the one-click "request ignore" link (#393): the whole
+// point of that path is no dashboard visit and nothing to type, so there is
+// no user-authored text to put here. A reviewer seeing this in the Approval
+// Queue knows exactly what it means and can still ask the requester for
+// more context in the PR itself if needed -- same non-binding "still needs
+// approval" contract as every other ignore-request entry point.
+const LINK_IGNORE_REASON = "Requested via PR comment link";
 
 export const LOG_STATUS_COLOR: Record<string, string> = {
   running: "border-chart-1/20 bg-chart-1/10 text-chart-1",
@@ -74,22 +82,23 @@ function OverrideAction({ entry, onOverridden }: { entry: PrGuardrailLogEntry; o
 function RequestIgnoreAction({
   finding,
   onRequested,
-  autoOpen = false,
+  autoSubmit = false,
 }: {
   finding: PrGuardrailFinding;
   onRequested: () => void;
-  autoOpen?: boolean;
+  autoSubmit?: boolean;
 }) {
-  // Deep-linking (#385): a PR comment's "request ignore" link lands here
-  // with this finding's id already known, so it opens straight into the
-  // reason field instead of requiring a second click to find and press
-  // this same button. `finding` and `autoOpen` are both only available once
-  // the findings fetch resolves (ScanFindings below doesn't render this row
-  // until then), so the initial useState value is enough -- no effect
-  // needed to catch a value that arrives after mount.
-  const [open, setOpen] = useState(autoOpen);
+  const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Deep-linking (#385/#393): a PR comment's "request ignore" link is a
+  // one-click action by design -- no dashboard form, nothing to type -- so
+  // it fires the request itself with a fixed reason (LINK_IGNORE_REASON)
+  // rather than opening the manual reason field for a second step. autoError
+  // is what falls this row back to that manual button+dialog if the
+  // one-click request itself fails, so there's still a way to retry (with a
+  // real typed reason) rather than a dead end.
+  const [autoError, setAutoError] = useState<string | null>(null);
 
   async function submit() {
     setSubmitting(true);
@@ -103,13 +112,39 @@ function RequestIgnoreAction({
     }
   }
 
+  useEffect(() => {
+    // Skips if this finding was already requested/approved/rejected by the
+    // time this mounts (a stale or re-clicked link): submit_ignore_request
+    // resets ignore_reviewed_by/at on every call, so firing again here
+    // would silently wipe out a security reviewer's already-made decision.
+    if (!autoSubmit || finding.ignore_status !== "none") return;
+    api.requestIgnoreFinding(finding.id, LINK_IGNORE_REASON).then(onRequested, (e) => {
+      setAutoError(e instanceof Error ? e.message : "failed to request ignore");
+    });
+    // Intentionally fires once per mount only -- this row is keyed by
+    // finding.id (see ScanFindings below), so a legitimate change to which
+    // finding this is would remount rather than re-run this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (finding.ignore_status !== "none") return null;
+
+  if (autoSubmit && !autoError) {
+    return <span className="text-xs text-muted-foreground">Requesting ignore...</span>;
+  }
 
   if (!open) {
     return (
-      <button onClick={() => setOpen(true)} className="text-xs text-muted-foreground underline hover:text-foreground">
-        Request Ignore
-      </button>
+      <div className="flex flex-col items-start gap-1">
+        {autoError && (
+          <span className="text-xs text-destructive">
+            One-click ignore request failed ({autoError}) -- request manually below instead.
+          </span>
+        )}
+        <button onClick={() => setOpen(true)} className="text-xs text-muted-foreground underline hover:text-foreground">
+          Request Ignore
+        </button>
+      </div>
     );
   }
 
@@ -134,11 +169,11 @@ function RequestIgnoreAction({
 function PrGuardrailFindingRow({
   finding,
   onChanged,
-  autoOpenIgnoreFindingId,
+  linkIgnoreFindingId,
 }: {
   finding: PrGuardrailFinding;
   onChanged: () => void;
-  autoOpenIgnoreFindingId?: number | null;
+  linkIgnoreFindingId?: number | null;
 }) {
   return (
     <div className="rounded-md border border-border bg-secondary/40 px-3 py-2">
@@ -177,14 +212,14 @@ function PrGuardrailFindingRow({
         <RequestIgnoreAction
           finding={finding}
           onRequested={onChanged}
-          autoOpen={finding.id === autoOpenIgnoreFindingId}
+          autoSubmit={finding.id === linkIgnoreFindingId}
         />
       </div>
     </div>
   );
 }
 
-function ScanFindings({ scanId, autoOpenIgnoreFindingId }: { scanId: number; autoOpenIgnoreFindingId?: number | null }) {
+function ScanFindings({ scanId, linkIgnoreFindingId }: { scanId: number; linkIgnoreFindingId?: number | null }) {
   const {
     data: findings,
     error,
@@ -204,7 +239,7 @@ function ScanFindings({ scanId, autoOpenIgnoreFindingId }: { scanId: number; aut
           key={f.id}
           finding={f}
           onChanged={refresh}
-          autoOpenIgnoreFindingId={autoOpenIgnoreFindingId}
+          linkIgnoreFindingId={linkIgnoreFindingId}
         />
       ))}
     </div>
@@ -246,12 +281,15 @@ export function PrGuardrailLog({
   initialIgnoreFindingId = null,
 }: {
   targetId: number | null;
-  // Deep-linking (#385): pr_guardrail_executor.py's "view"/"request ignore"
-  // PR-comment links carry pr_scan_id/ignore_finding query params that used
-  // to go nowhere -- the page landed with everything collapsed and no
-  // target selected, same finding the user just clicked "view" or "request
-  // ignore" on buried behind a manual re-search. These seed which scan
-  // entry opens and which finding's ignore dialog auto-opens.
+  // Deep-linking (#385/#393): pr_guardrail_executor.py's "view"/"request
+  // ignore" PR-comment links carry pr_scan_id/ignore_finding query params
+  // that used to go nowhere -- the page landed with everything collapsed
+  // and no target selected, same finding the user just clicked "view" or
+  // "request ignore" on buried behind a manual re-search. initialScanId
+  // seeds which scan entry opens; initialIgnoreFindingId is which finding's
+  // ignore request fires automatically -- "request ignore" is a one-click
+  // action with a fixed reason, not a form to fill in (see
+  // LINK_IGNORE_REASON/RequestIgnoreAction's autoSubmit).
   initialScanId?: number | null;
   initialIgnoreFindingId?: number | null;
 }) {
@@ -282,6 +320,26 @@ export function PrGuardrailLog({
   );
   const log = data?.log ?? [];
   const stats = data?.stats ?? null;
+
+  // Adaptive live-refresh, same interval convention as useActiveScans/
+  // useActivePrScans ("the server is the source of truth for what is in
+  // flight"). The backend creates a scan's row with status="running" the
+  // moment a scan starts -- including the server-side webhook path (#245),
+  // which nobody on this page necessarily triggered -- but useAsyncData
+  // above only ever fetches once. Without this, a scan that started while
+  // this page was already open never appeared as running, only showing up
+  // (as already-finished) after a manual reload. Poll fast while something
+  // here is actually running, back off hard otherwise, since the only thing
+  // being watched for then is a scan someone else's webhook just started.
+  const hasRunningEntry = log.some((entry) => entry.status === "running");
+  useEffect(() => {
+    // Matches useAsyncData's own `enabled` gate above -- refetch() has no
+    // such guard itself, so without this check the interval would keep
+    // polling with a null/invalid targetId after the target picker clears.
+    if (targetId === null) return;
+    const timer = setInterval(refresh, hasRunningEntry ? 3000 : 20000);
+    return () => clearInterval(timer);
+  }, [refresh, hasRunningEntry, targetId]);
 
   // A 401 means the GitHub session lapsed, which has its own reconnect
   // affordance; it is not a generic page error.
@@ -415,7 +473,7 @@ export function PrGuardrailLog({
                   <div className="mt-3 border-t border-border pt-3">
                     <ScanFindings
                       scanId={entry.id}
-                      autoOpenIgnoreFindingId={entry.id === initialScanId ? initialIgnoreFindingId : null}
+                      linkIgnoreFindingId={entry.id === initialScanId ? initialIgnoreFindingId : null}
                     />
                   </div>
                 )}

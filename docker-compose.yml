@@ -138,6 +138,27 @@ services:
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
       EXTRA_CORS_ORIGINS: ${EXTRA_CORS_ORIGINS:-}
 
+  # Remote MCP server (issue #108): lets an MCP client (Claude Code, Claude
+  # Desktop, any other MCP-compatible tool) connect over HTTP and act on
+  # this Toleman instance -- see mcp-server/README.md's "Remote
+  # (streamable-http)" section. A separate image from `backend` on purpose
+  # (see mcp-server/server.py's module docstring): the `mcp` package needs
+  # newer starlette/pydantic than this project's core web/ORM stack pins.
+  # No fixed API token here -- it's multi-tenant, every connecting client
+  # supplies its own personal access token as a Bearer header on the MCP
+  # connection itself (see server.py's _resolve_token).
+  mcp-server:
+    build:
+      context: ./mcp-server
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      TOLEMAN_API_URL: http://backend:8000
+    ports:
+      - "8080:8080"
+
   frontend:
     build:
       context: ./frontend

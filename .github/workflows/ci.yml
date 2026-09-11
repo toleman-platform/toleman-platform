@@ -204,9 +204,10 @@ jobs:
     # docker-compose.yml parses (compose-config above) and that each image
     # builds in isolation (docker-images.yml). Neither of those starts the
     # containers together, so nothing had ever proven postgres, redis,
-    # backend, celery-worker and frontend actually come up and talk to each
-    # other. A GitHub-hosted `ubuntu-latest` runner is exactly the "plain
-    # VM" case: no Docker Desktop, no pre-pulled layers, real network egress.
+    # backend, celery-worker, frontend and mcp-server actually come up and
+    # talk to each other. A GitHub-hosted `ubuntu-latest` runner is exactly
+    # the "plain VM" case: no Docker Desktop, no pre-pulled layers, real
+    # network egress.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -216,7 +217,7 @@ jobs:
           cp .env.example .env
           docker compose -f docker-compose.yml up --build -d
 
-      - name: Wait for all five services to be up and healthy
+      - name: Wait for all six services to be up and healthy
         # docker-compose.yml already defines healthchecks for postgres,
         # redis and backend; `docker compose ps` surfaces them without
         # re-implementing the polling logic that would just be a worse copy
@@ -244,7 +245,7 @@ jobs:
             if check_output="$(docker compose ps --all --format json | python3 -c "
           import json, sys
 
-          expected = {'postgres', 'redis', 'backend', 'celery-worker', 'frontend'}
+          expected = {'postgres', 'redis', 'backend', 'celery-worker', 'frontend', 'mcp-server'}
           must_be_healthy = {'postgres', 'redis', 'backend'}
           rows = {row['Service']: row for row in
                   (json.loads(line) for line in sys.stdin if line.strip())}
@@ -264,7 +265,7 @@ jobs:
               print('not yet healthy:', ', '.join(sorted(unhealthy)))
               sys.exit(2)
 
-          print('all five services running, postgres/redis/backend healthy')
+          print('all six services running, postgres/redis/backend healthy')
           ")"; then
               status=0
             else

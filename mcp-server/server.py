@@ -1,4 +1,7 @@
-"""Toleman MCP server (issue #108).
+"""Toleman MCP server (issue #108; suggest_fix/raise_fix_pr/
+check_code_for_vulnerabilities added as a #108 follow-up so a connected
+agent can fix vulnerabilities, not just read about them, and catch a new
+one *while it's being written* instead of only after a real scan finds it).
 
 A thin translation layer between MCP tool calls and Toleman's public API
 (/api/public/v1/*, issue #109); deliberately NOT embedded in the main
@@ -12,54 +15,99 @@ venv sidesteps that conflict entirely rather than forcing a much larger,
 riskier upgrade of the backend's core web/ORM stack just to satisfy one
 optional integration.
 
-Runs over stdio (the standard transport for MCP servers launched by a
-client like Claude Desktop/Code, not a long-running network service);
-authenticates to Toleman using a personal access token (see
-toleman-docs Public API Reference), exactly like any other public-API
-client.
+Two transports, chosen by TOLEMAN_MCP_TRANSPORT:
 
-A note on `mcp`'s own CVEs (checked at pin time, mcp==1.23.0): every
-currently-known advisory against this package (GHSA-9h52-p55h-vw2f fixed
-in 1.23.0; GHSA-jpw9-pfvf-9f58, GHSA-vj7q-gjh5-988w still open as of
-1.23.0/latest 1.x) is scoped to the HTTP/SSE/WebSocket transport code
-paths and the experimental task-handler feature; none of which this
-server invokes, since `mcp.run(transport="stdio")` below is the only
-entry point exercised. `2.0.0` has none of these open, but requires
-starlette/pydantic versions incompatible with this project (see above),
-so isn't a real option yet. Re-check this comment before bumping to a
-new 1.x release or when 2.0.0 stabilizes and its dependency floor is
-re-evaluated.
+  "stdio" (default) -- the standard transport for an MCP client (Claude
+  Desktop/Code) to launch this as a local subprocess. One token for the
+  whole process lifetime, read from TOLEMAN_API_TOKEN at startup.
+
+  "streamable-http" -- runs as a persistent network service any MCP
+  client can connect to directly (no local install), e.g. behind Caddy at
+  https://toleman-api.<domain>/mcp/. Genuinely multi-tenant: many different
+  callers, each with their own token, can be connected at once, so there
+  is no single fixed token here. Every tool call instead reads its own
+  `Authorization: Bearer <token>` straight off the incoming HTTP request
+  (`ctx.request_context.request.headers`, populated by the `mcp` package's
+  Streamable HTTP transport per request) and uses that -- exactly the
+  token a caller authenticated their MCP connection with, same as any
+  other public-API client. `stateless_http=True` because there is no
+  reason for this server to pin a caller to one worker/session: every
+  request already carries everything it needs (its own bearer token) to
+  be handled independently.
+
+A note on `mcp`'s own CVEs (checked at pin time, mcp==1.30.0, via
+`pip-audit`): none open against this package at this version. Re-check
+before bumping -- unlike the original stdio-only version of this file,
+the HTTP transport is now a real code path here, not something
+Streamable-HTTP-specific CVEs could be waved off as irrelevant to.
 """
 import os
+import time
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
+TRANSPORT = os.environ.get("TOLEMAN_MCP_TRANSPORT", "stdio")
 TOLEMAN_API_URL = os.environ.get("TOLEMAN_API_URL", "http://localhost:8000").rstrip("/")
+# Only meaningful for stdio: the one token this whole process authenticates
+# as. Streamable-HTTP mode is multi-tenant (see module docstring) and reads
+# a token per-request instead, so it's fine -- expected, even -- for this to
+# be unset when TRANSPORT != "stdio".
 TOLEMAN_API_TOKEN = os.environ.get("TOLEMAN_API_TOKEN")
 
-if not TOLEMAN_API_TOKEN:
+if TRANSPORT == "stdio" and not TOLEMAN_API_TOKEN:
     raise RuntimeError(
-        "TOLEMAN_API_TOKEN is required, create a personal access token at "
+        "TOLEMAN_API_TOKEN is required for stdio mode, create a personal access token at "
         "Settings > Workspace > API Tokens in your Toleman instance and set it "
         "as an env var for this server."
     )
 
-mcp = FastMCP("toleman")
+mcp = FastMCP(
+    "toleman",
+    host=os.environ.get("TOLEMAN_MCP_HOST", "127.0.0.1"),
+    port=int(os.environ.get("TOLEMAN_MCP_PORT", "8080")),
+    stateless_http=True,
+)
 
 
-def _client() -> httpx.Client:
+def _resolve_token(ctx: Context) -> str:
+    """The token this call authenticates to Toleman's public API with.
+
+    In streamable-http mode, read straight off the incoming request's own
+    Authorization header -- see the module docstring for why there's no
+    single server-wide token in that mode. In stdio mode there's no HTTP
+    request at all (`ctx.request_context.request` is None), so this falls
+    back to the one token the whole process was started with.
+    """
+    request_context = ctx.request_context
+    request = request_context.request if request_context is not None else None
+    if request is not None:
+        auth_header = request.headers.get("authorization", "")
+        if not auth_header.lower().startswith("bearer "):
+            raise ToolError(
+                "This MCP connection is missing an `Authorization: Bearer <token>` header -- "
+                "create a personal access token in Toleman (Settings > Workspace > API Tokens) "
+                "and pass it when connecting."
+            )
+        return auth_header.split(" ", 1)[1].strip()
+    if not TOLEMAN_API_TOKEN:
+        raise ToolError("TOLEMAN_API_TOKEN is required when running over stdio.")
+    return TOLEMAN_API_TOKEN
+
+
+def _client(token: str) -> httpx.Client:
     return httpx.Client(
         base_url=f"{TOLEMAN_API_URL}/api/public/v1",
-        headers={"Authorization": f"Bearer {TOLEMAN_API_TOKEN}"},
+        headers={"Authorization": f"Bearer {token}"},
         timeout=30.0,
     )
 
 
 @mcp.tool()
-def list_targets() -> list[dict]:
+def list_targets(ctx: Context) -> list[dict]:
     """List every target (scanned repo) in workspaces this token can access."""
-    with _client() as c:
+    with _client(_resolve_token(ctx)) as c:
         r = c.get("/targets")
         r.raise_for_status()
         return r.json()
@@ -67,6 +115,7 @@ def list_targets() -> list[dict]:
 
 @mcp.tool()
 def list_findings(
+    ctx: Context,
     target_id: int | None = None,
     severity: str | None = None,
     state: str | None = None,
@@ -83,42 +132,138 @@ def list_findings(
         params["severity"] = severity
     if state is not None:
         params["state"] = state
-    with _client() as c:
+    with _client(_resolve_token(ctx)) as c:
         r = c.get("/findings", params=params)
         r.raise_for_status()
         return r.json()
 
 
 @mcp.tool()
-def get_finding(finding_id: int) -> dict:
+def get_finding(ctx: Context, finding_id: int) -> dict:
     """Get full detail for a single finding by id."""
-    with _client() as c:
+    with _client(_resolve_token(ctx)) as c:
         r = c.get(f"/findings/{finding_id}")
         r.raise_for_status()
         return r.json()
 
 
 @mcp.tool()
-def get_scan_status(scan_id: int) -> dict:
+def get_scan_status(ctx: Context, scan_id: int) -> dict:
     """Get a scan's current status (running/completed/failed) and, once
     settled, its findings count and any error message."""
-    with _client() as c:
+    with _client(_resolve_token(ctx)) as c:
         r = c.get(f"/scans/{scan_id}")
         r.raise_for_status()
         return r.json()
 
 
 @mcp.tool()
-def trigger_scan(target_id: int, tool: str) -> dict:
+def trigger_scan(ctx: Context, target_id: int, tool: str) -> dict:
     """Trigger a native scan (semgrep/trivy/gitleaks/gosec) against a
     target. Requires a read_write-scoped token; a read-only token gets
     a clear permission error, not a silent no-op. Returns immediately with
     a scan_id; poll get_scan_status(scan_id) for the result."""
-    with _client() as c:
+    with _client(_resolve_token(ctx)) as c:
         r = c.post("/scans", params={"target_id": target_id, "tool": tool})
         r.raise_for_status()
         return r.json()
 
 
+@mcp.tool()
+def suggest_fix(ctx: Context, finding_id: int) -> dict:
+    """Get a fix recommendation for an existing finding -- AI-generated
+    when Toleman has a provider configured, deterministic (OSV upgrade
+    version, category-specific guidance) otherwise -- and, where a real
+    patch could be built and verified against the file as it actually
+    exists in the repo, a diff to review. Never writes anywhere: call
+    raise_fix_pr with the exact fields this returns to actually open a PR
+    for it. Requires only a read-scoped token."""
+    with _client(_resolve_token(ctx)) as c:
+        r = c.post(f"/findings/{finding_id}/suggest-fix")
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool()
+def raise_fix_pr(
+    ctx: Context,
+    finding_id: int,
+    file_path: str,
+    new_content: str,
+    ref: str,
+    strategy: str,
+    explanation: str = "",
+) -> dict:
+    """Opens a PR for the *exact* patch a prior suggest_fix call returned --
+    pass its file_path/new_content/ref/strategy/explanation back verbatim,
+    so what gets committed is guaranteed to match the diff already
+    reviewed, not a freshly (and possibly differently) regenerated one.
+    Requires a read_write-scoped token, since this writes a branch/PR to
+    the target's real GitHub repo."""
+    with _client(_resolve_token(ctx)) as c:
+        r = c.post(
+            f"/findings/{finding_id}/raise-pr",
+            json={
+                "file_path": file_path,
+                "new_content": new_content,
+                "ref": ref,
+                "strategy": strategy,
+                "explanation": explanation,
+            },
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+@mcp.tool()
+def check_code_for_vulnerabilities(
+    ctx: Context,
+    filename: str,
+    content: str,
+    tools: list[str] | None = None,
+    timeout_seconds: int = 30,
+) -> dict:
+    """Scan a code snippet for vulnerabilities BEFORE it's written to a
+    real file or committed -- call this while drafting code, to catch a
+    problem as it's introduced rather than waiting for a later scan of the
+    finished repo to find it. `filename` only needs a realistic extension
+    (e.g. "app.py"), it does not need to exist anywhere.
+
+    Runs semgrep (SAST) + gitleaks (secrets) by default -- the common
+    "did I just write something dangerous" case; pass `tools` (any of
+    semgrep, semgrep-llm, gitleaks, checkov, tfsec, trivy-license, gosec)
+    for something more specific, e.g. ["checkov", "tfsec"] for a Terraform
+    snippet. Blocks until the scan completes or `timeout_seconds` elapses
+    (usually a couple of seconds; semgrep's rule fetch on a cold cache is
+    the one thing that can make it slower). Returns {"findings": [...]} --
+    an empty list means clean, not "not checked." Requires only a
+    read-scoped token; nothing here is persisted as a real Finding or
+    tied to any target."""
+    token = _resolve_token(ctx)
+    with _client(token) as c:
+        payload: dict = {"filename": filename, "content": content}
+        if tools is not None:
+            payload["tools"] = tools
+        r = c.post("/scan-snippet", json=payload)
+        r.raise_for_status()
+        run_id = r.json()["run_id"]
+
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            poll = c.get(f"/scan-snippet/{run_id}")
+            poll.raise_for_status()
+            body = poll.json()
+            if body["status"] == "completed":
+                return {"findings": body["findings"]}
+            if body["status"] == "failed":
+                raise ToolError(f"snippet scan failed: {body['error']}")
+            if time.monotonic() >= deadline:
+                raise ToolError(
+                    f"snippet scan timed out after {timeout_seconds}s (run_id={run_id}); "
+                    "it may still be running -- try again in a moment"
+                )
+            time.sleep(1)
+
+
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run(transport="streamable-http" if TRANSPORT == "streamable-http" else "stdio")

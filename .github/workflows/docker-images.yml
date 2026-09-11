@@ -49,6 +49,9 @@ jobs:
           - name: frontend
             context: frontend
             dockerfile: frontend/Dockerfile
+          - name: mcp-server
+            context: mcp-server
+            dockerfile: mcp-server/Dockerfile
     name: build-${{ matrix.name }}
     env:
       TRIVY_VERSION: 0.73.0

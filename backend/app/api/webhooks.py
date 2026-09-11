@@ -19,7 +19,10 @@ Four event types handled, each independent of the others:
     synchronously, right here, before dispatching the scan task (#401),
     so the dashboard has something to show as "running" from the moment
     the webhook lands rather than only once the task's own GitHub-API PR
-    fetch happens to complete.
+    fetch happens to complete; also posts a "pending" commit status for
+    the same reason on GitHub's own PR checks list, which #401 didn't
+    touch and had the identical gap (no entry at all until the scan
+    finished, not just an unclear one).
   - push: re-scan a target's default branch so the dashboard reflects a
     merged fix without depending on that target's own generated
     toleman-scan.yml having TOLEMAN_API_URL/TOLEMAN_API_KEY configured.
@@ -50,7 +53,8 @@ from sqlmodel import Session, select
 from app.core.crypto import decrypt_secret
 from app.core.db import engine
 from app.core.github_app import resolve_config_for_installation
-from app.core.pr_guardrail_executor import reply_to_pr, submit_ignore_request
+from app.core.enforcement import resolve_enforcement_mode
+from app.core.pr_guardrail_executor import reply_to_pr, set_commit_status, submit_ignore_request
 from app.models.models import GitHubAppConfig, GitHubInstallation, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target
 
 logger = logging.getLogger(__name__)
@@ -135,6 +139,14 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
         logger.info("webhook: no target registered for %s, ignoring", repo_clone_url)
         return {"ok": True, "skipped": "no matching target"}
 
+    # "disabled" means no clone, no PRGuardrailScan row, no PR comment, no
+    # commit status at all (see execute_pr_guardrail_scan's own docstring);
+    # checked here too, before any of that gets created, so a disabled
+    # target never gets a placeholder row or a "pending" commit status that
+    # nothing will ever follow up to resolve.
+    if resolve_enforcement_mode(session, target) == "disabled":
+        return {"ok": True, "skipped": "enforcement_mode=disabled"}
+
     # A placeholder row, created synchronously right here rather than only
     # once the dispatched task gets around to its own GitHub-API PR fetch
     # inside execute_pr_guardrail_scan: that fetch, plus however long the
@@ -157,6 +169,20 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
     session.add(pr_scan)
     session.commit()
     session.refresh(pr_scan)
+
+    # #401 only closed the gap on Toleman's own dashboard; GitHub's native
+    # PR checks list had the exact same gap and this didn't touch it --
+    # set_commit_status was (and, for the final result, still is) only ever
+    # called once the scan finishes, so "toleman/pr-guardrail" never
+    # appeared in that list at all until it was already done, indistinguishable
+    # from the check not existing. A "pending" status here, posted with the
+    # same commit + context the final success/failure status uses, makes it
+    # show up immediately as in-progress instead. Best-effort like every
+    # other commit-status call: a failure here must not block dispatching
+    # the actual scan.
+    head_sha = (pr.get("head") or {}).get("sha")
+    if head_sha:
+        set_commit_status(session, target, head_sha, "pending", "Scanning...")
 
     from app.tasks.pr_guardrail_tasks import run_pr_guardrail_scan_task
 

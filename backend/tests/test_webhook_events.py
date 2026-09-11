@@ -123,11 +123,11 @@ class TestPullRequestHandler:
     scan task -- not leave the dashboard with nothing to show as "running"
     until the task gets around to its own GitHub-API PR fetch."""
 
-    def _payload(self, action="opened", pr_number=7, title="Add feature", head_ref="feature-x"):
+    def _payload(self, action="opened", pr_number=7, title="Add feature", head_ref="feature-x", head_sha="deadbeef"):
         return {
             "action": action,
             "number": pr_number,
-            "pull_request": {"title": title, "head": {"ref": head_ref}},
+            "pull_request": {"title": title, "head": {"ref": head_ref, "sha": head_sha}},
             "repository": {"clone_url": "https://github.com/acme/repo"},
         }
 
@@ -192,6 +192,48 @@ class TestPullRequestHandler:
             webhooks._handle_pull_request(session, payload)
             assert session.exec(select(PRGuardrailScan)).all() == []
         assert calls == []
+
+    def test_opened_posts_a_pending_commit_status_immediately(self, engine, target_id, monkeypatch):
+        """GitHub's own PR checks list had the identical gap #401 fixed for
+        Toleman's dashboard: set_commit_status was only ever called once the
+        scan finished, so "toleman/pr-guardrail" never appeared in that list
+        at all until it was already done -- indistinguishable from the check
+        not existing."""
+        from app.tasks import pr_guardrail_tasks
+
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: None)
+        status_calls = []
+        monkeypatch.setattr(webhooks, "set_commit_status", lambda *a, **k: status_calls.append(a))
+
+        with Session(engine) as session:
+            target = session.get(Target, target_id)
+            webhooks._handle_pull_request(session, self._payload(head_sha="cafef00d"))
+            assert status_calls == [(session, target, "cafef00d", "pending", "Scanning...")]
+
+    def test_disabled_enforcement_mode_skips_placeholder_and_pending_status(self, engine, target_id, monkeypatch):
+        """"disabled" means no clone, no PRGuardrailScan row, no PR comment,
+        no commit status at all -- a disabled target must not get a
+        placeholder row or a "pending" status that nothing will ever
+        resolve."""
+        from app.tasks import pr_guardrail_tasks
+
+        with Session(engine) as session:
+            target = session.get(Target, target_id)
+            target.enforcement_mode = "disabled"
+            session.add(target)
+            session.commit()
+
+        dispatch_calls = []
+        status_calls = []
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: dispatch_calls.append(a))
+        monkeypatch.setattr(webhooks, "set_commit_status", lambda *a, **k: status_calls.append(a))
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, self._payload())
+            assert result == {"ok": True, "skipped": "enforcement_mode=disabled"}
+            assert session.exec(select(PRGuardrailScan)).all() == []
+        assert dispatch_calls == []
+        assert status_calls == []
 
 
 class TestPullRequestMergedHandler:

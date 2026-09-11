@@ -142,7 +142,7 @@ def test_render_comment_per_finding_gfm_table_structure():
     assert "SQL Injection" in body
     assert "`db.py:88`" in body
     assert "finding-42" in body
-    assert "ignore_finding=42" in body
+    assert "/ignore-request/9/42" in body
 
 
 def test_render_comment_badge_blocked_vs_passed():

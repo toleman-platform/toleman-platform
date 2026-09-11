@@ -347,7 +347,14 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
         if f.line_start:
             loc += f":{f.line_start}"
         ref_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{f.id}"
-        ignore_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}&ignore_finding={f.id}"
+        # A dedicated, minimal page (frontend/src/app/ignore-request/...), not
+        # /pr-history: that page carries the full dashboard layout (sidebar,
+        # a live GitHub-PRs fetch, the whole PR Audit log for the target),
+        # all of it irrelevant to this one action and slow to clear before
+        # the user sees anything. This route does the one API call it needs
+        # and shows the result -- "Requested" or whatever the finding's
+        # state already is -- with nothing else in the way.
+        ignore_link = f"{FRONTEND_URL}/ignore-request/{pr_scan_id}/{f.id}"
         lines.append(
             f"| {f.severity} | `{f.rule_id}` | {f.title} | `{loc}` | "
             f"[view]({ref_link}) &middot; [request ignore]({ignore_link}) |"

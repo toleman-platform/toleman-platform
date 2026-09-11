@@ -460,6 +460,14 @@ export type FindingsQuery = {
   page_size?: number;
 };
 
+// Per-category finding counts for the Findings page's category tabs
+// (GET /api/findings/facets/categories) -- takes the same filters as
+// FindingsQuery minus category/page/page_size, since a tab's count must
+// reflect every OTHER active filter, and category is the one dimension
+// being counted across rather than filtered by.
+export type CategoryFacetsQuery = Omit<FindingsQuery, "category" | "page" | "page_size">;
+export type CategoryFacet = { category: string; count: number };
+
 export type AuthUser = { id: number; email: string; name: string; role: string };
 
 // Issue #73: notification preferences. `slack` posts to the single
@@ -1254,7 +1262,17 @@ export const api = {
       body: JSON.stringify({ finding_ids: findingIds, to_state: toState, reason }),
     }),
   findingTools: () => jsonFetch<string[]>("/api/findings/facets/tools"),
-  findingCategories: () => jsonFetch<string[]>("/api/findings/facets/categories"),
+  findingCategories: (query: CategoryFacetsQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.target_id) params.set("target_id", String(query.target_id));
+    if (query.group_id) params.set("group_id", String(query.group_id));
+    if (query.state) params.set("state", query.state);
+    if (query.severity) params.set("severity", query.severity);
+    if (query.tool) params.set("tool", query.tool);
+    if (query.fixability) params.set("fixability", query.fixability);
+    if (query.search) params.set("search", query.search);
+    return jsonFetch<CategoryFacet[]>(`/api/findings/facets/categories?${params.toString()}`);
+  },
   summary: () => jsonFetch<Summary>("/api/dashboard/summary"),
   stats: () =>
     jsonFetch<{ open: number; by_severity: Record<string, number>; by_tool: Record<string, number> }>(

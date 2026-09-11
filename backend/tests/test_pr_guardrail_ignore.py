@@ -137,13 +137,12 @@ def test_render_comment_includes_ref_and_ignore_links():
     )
     body = render_comment([finding], [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
     assert "finding-42" in body
-    assert "ignore_finding=42" in body
-    # The ignore link must carry pr_scan_id too, not just target_id --
-    # pr-history's PrGuardrailLog only auto-expands (and so only ever mounts
-    # the auto-submit effect for) the scan named by pr_scan_id; a link
-    # missing it lands on the page with nothing expanded and the one-click
-    # request never fires, indistinguishable from the link just not working.
-    assert "pr_scan_id=9&ignore_finding=42" in body
+    # The ignore link points at the dedicated /ignore-request page (not
+    # /pr-history): that page carries the full dashboard layout and several
+    # fetches unrelated to this one action, slow to clear before the click
+    # shows any result at all. /ignore-request/{pr_scan_id}/{finding_id}
+    # does the one API call it needs and nothing else.
+    assert "/ignore-request/9/42" in body
 
 
 def test_render_comment_includes_new_endpoints_section():

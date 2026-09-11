@@ -26,7 +26,7 @@ function isSessionError(e: unknown): boolean {
 // Queue knows exactly what it means and can still ask the requester for
 // more context in the PR itself if needed -- same non-binding "still needs
 // approval" contract as every other ignore-request entry point.
-const LINK_IGNORE_REASON = "Requested via PR comment link";
+export const LINK_IGNORE_REASON = "Requested via PR comment link";
 
 export const LOG_STATUS_COLOR: Record<string, string> = {
   running: "border-chart-1/20 bg-chart-1/10 text-chart-1",

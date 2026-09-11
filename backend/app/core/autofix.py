@@ -426,7 +426,7 @@ def _installation_token_or_none(session: Session, target: Target) -> str | None:
     try:
         return get_installation_token(config, installation.installation_id)
     except httpx.HTTPError:
-        logger.warning("autofix: failed to mint installation token for %s", slug, exc_info=True)
+        logger.warning("autofix: failed to mint installation token for repository", exc_info=True)
         return None
 
 

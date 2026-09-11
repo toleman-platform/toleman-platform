@@ -21,6 +21,7 @@ from app.core.github_token import resolve_github_token
 from app.core.pr_guardrail_executor import (
     execute_pr_guardrail_scan,
     recompute_pr_scan_status,
+    revoke_finding_status_in_pr_comment,
     set_commit_status,
     submit_ignore_request,
     update_finding_status_in_pr_comment,
@@ -384,6 +385,40 @@ def _sync_approved_ignore_to_main_findings(
         )
 
 
+def _sync_revoked_ignore_to_main_findings(
+    session: Session, pr_finding: PRGuardrailFinding, target: Target, pr_number: int, actor: str
+) -> None:
+    """The reverse of _sync_approved_ignore_to_main_findings above: revoking
+    a PR Guardrail ignore approval is a real decision too, and if the
+    approval it undoes already flipped a matching main-table Finding to
+    ACCEPTED_RISK, that Finding must come back into the open queue
+    immediately -- REOPENED, the same vocabulary app/core/ingestion.py and
+    app/core/osv_malware_ingestion.py already use for "was resolved, now
+    it's back" -- rather than sit ACCEPTED_RISK on a decision nobody stands
+    behind any more. Only touches rows still ACCEPTED_RISK; a Finding
+    resolved some other way since (fixed, marked a false positive by an
+    unrelated triage, etc.) is left alone -- revoking this one approval must
+    not silently clobber a later, unrelated decision."""
+    query = select(Finding).where(
+        Finding.target_id == target.id,
+        Finding.branch == target.default_branch,
+        Finding.tool == pr_finding.tool,
+        Finding.rule_id == pr_finding.rule_id,
+        Finding.file_path == pr_finding.file_path,
+        Finding.state == FindingState.ACCEPTED_RISK,
+    )
+    query = query.where(Finding.line_start.is_(None) if pr_finding.line_start is None else Finding.line_start == pr_finding.line_start)
+    matches = session.exec(query).all()
+    for f in matches:
+        apply_triage(
+            f,
+            FindingState.REOPENED,
+            reason=f"Ignore approval revoked via PR Guardrail (PR #{pr_number})",
+            actor=actor,
+            session=session,
+        )
+
+
 @router.post("/findings/{finding_id}/approve-ignore")
 def approve_ignore(
     finding_id: int,
@@ -432,6 +467,48 @@ def reject_ignore(
     session.add(finding)
     session.commit()
     session.refresh(finding)
+    return _finding_out(finding)
+
+
+@router.post("/findings/{finding_id}/revoke-ignore")
+def revoke_ignore(
+    finding_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_security_reviewer),
+):
+    """Undo a previously-approved ignore -- a reviewer changed their mind, or
+    approved the wrong finding. Puts the finding back exactly where it was
+    before the approval (ignore_status NONE, no requested/reviewed metadata,
+    same shape as a finding nobody has ever acted on), and reverses
+    everything the approval itself did: a synced main Finding (if any) comes
+    back REOPENED, the PR comment's "approved to ignore" row reverts to a
+    live "request ignore" link (skipped once the PR is merged -- there's no
+    reviewer left to show it to), and the scan is re-evaluated in case this
+    was the one finding keeping it unblocked."""
+    finding = session.get(PRGuardrailFinding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    if finding.ignore_status != IgnoreStatus.APPROVED:
+        raise HTTPException(status_code=400, detail="finding is not currently approved to ignore")
+
+    finding.ignore_status = IgnoreStatus.NONE
+    finding.ignore_requested_by = ""
+    finding.ignore_requested_reason = ""
+    finding.ignore_reviewed_by = ""
+    finding.ignore_reviewed_at = None
+    session.add(finding)
+    session.commit()
+    session.refresh(finding)
+
+    pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
+    if pr_scan:
+        target = session.get(Target, pr_scan.target_id)
+        if target:
+            _sync_revoked_ignore_to_main_findings(session, finding, target, pr_scan.pr_number, actor=user.email)
+            session.commit()
+            revoke_finding_status_in_pr_comment(session, target, pr_scan.pr_number, finding)
+        recompute_pr_scan_status(session, pr_scan)
+
     return _finding_out(finding)
 
 

@@ -5,8 +5,11 @@ from app.core.pr_guardrail_executor import (
     COMMENT_MARKER,
     FRONTEND_URL,
     _find_existing_comment_id,
+    _finding_ref_link,
+    _pr_is_merged,
     post_pr_comment,
     render_comment,
+    revoke_finding_status_in_pr_comment,
     update_finding_status_in_pr_comment,
 )
 from app.models.models import PRGuardrailFinding, PRGuardrailStatus, Target
@@ -320,5 +323,128 @@ def test_noop_when_no_installation_token():
          patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
          patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
         update_finding_status_in_pr_comment(None, target, 7, _finding_row())
+        mock_get.assert_not_called()
+        mock_patch.assert_not_called()
+
+
+# --- _pr_is_merged() ----------------------------------------------------------
+
+
+def test_pr_is_merged_true_when_github_reports_merged():
+    target = _target()
+    with patch("app.core.pr_guardrail_executor.github_get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.resolve_github_token", return_value="tok"):
+        mock_get.return_value = _mock_response(200, {"merged": True})
+        assert _pr_is_merged(None, target, 7) is True
+
+
+def test_pr_is_merged_false_when_pr_still_open():
+    target = _target()
+    with patch("app.core.pr_guardrail_executor.github_get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.resolve_github_token", return_value="tok"):
+        mock_get.return_value = _mock_response(200, {"merged": False})
+        assert _pr_is_merged(None, target, 7) is False
+
+
+def test_pr_is_merged_fails_closed_on_github_error():
+    """Can't tell whether the PR is merged -- treated as merged (skip the
+    edit) rather than risking a stale comment claim on a PR nobody can act
+    on any more; an unnecessary skip costs nothing here."""
+    target = _target()
+    with patch("app.core.pr_guardrail_executor.github_get", side_effect=Exception("boom")), \
+         patch("app.core.pr_guardrail_executor.resolve_github_token", return_value="tok"):
+        assert _pr_is_merged(None, target, 7) is True
+
+
+# --- revoke_finding_status_in_pr_comment() ------------------------------------
+
+
+def _approved_body(finding: PRGuardrailFinding, other_finding_id: int = 43) -> str:
+    """A comment body as it would look right after update_finding_status_in_pr_comment
+    already patched `finding`'s row to "approved to ignore", alongside one
+    other still-pending row -- the state revoke_finding_status_in_pr_comment
+    has to reverse without touching that other row."""
+    ref_link = _finding_ref_link(target_id=1, pr_scan_id=finding.pr_scan_id, finding_id=finding.id)
+    other_ref_link = _finding_ref_link(target_id=1, pr_scan_id=finding.pr_scan_id, finding_id=other_finding_id)
+    other_ignore_link = f"{FRONTEND_URL}/ignore-request/{finding.pr_scan_id}/{other_finding_id}"
+    return (
+        f"{COMMENT_MARKER}\n**Toleman PR Guardrail**\n\n"
+        f"| High | `r` | t | `a.py:1` | [view]({ref_link}) &middot; ✅ approved to ignore |\n"
+        f"| Medium | `r2` | t2 | `b.py:2` | [view]({other_ref_link}) &middot; [request ignore]({other_ignore_link}) |\n"
+    )
+
+
+def test_revoking_patches_that_findings_approved_cell_back_to_request_ignore_link():
+    target = _target()
+    finding = _finding_row()
+    original_body = _approved_body(finding)
+    with patch("app.core.pr_guardrail_executor._pr_is_merged", return_value=False), \
+         patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value="tok"), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        mock_get.return_value = _mock_response(200, [{"id": 999, "body": original_body}])
+        mock_patch.return_value = _mock_response(200)
+
+        revoke_finding_status_in_pr_comment(None, target, 7, finding)
+
+        mock_patch.assert_called_once()
+        assert "issues/comments/999" in mock_patch.call_args.args[0]
+        patched_body = mock_patch.call_args.kwargs["json"]["body"]
+        ignore_link = f"{FRONTEND_URL}/ignore-request/{finding.pr_scan_id}/{finding.id}"
+        assert f"[request ignore]({ignore_link})" in patched_body
+        assert patched_body.count("approved to ignore") == 0
+        # The other finding's still-pending row must be untouched.
+        assert "43" in patched_body
+
+
+def test_revoke_noop_when_pr_is_merged():
+    target = _target()
+    finding = _finding_row()
+    with patch("app.core.pr_guardrail_executor._pr_is_merged", return_value=True), \
+         patch("app.core.pr_guardrail_executor._get_installation_token_or_none") as mock_token, \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        revoke_finding_status_in_pr_comment(None, target, 7, finding)
+
+        mock_token.assert_not_called()
+        mock_get.assert_not_called()
+        mock_patch.assert_not_called()
+
+
+def test_revoke_noop_when_no_toleman_comment_exists_yet():
+    target = _target()
+    with patch("app.core.pr_guardrail_executor._pr_is_merged", return_value=False), \
+         patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value="tok"), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        mock_get.return_value = _mock_response(200, [{"id": 111, "body": "some unrelated comment"}])
+
+        revoke_finding_status_in_pr_comment(None, target, 7, _finding_row())
+
+        mock_patch.assert_not_called()
+
+
+def test_revoke_noop_when_the_approved_cell_is_not_in_the_comment():
+    target = _target()
+    finding = _finding_row()
+    body = f"{COMMENT_MARKER}\nno matching approved row in here"
+    with patch("app.core.pr_guardrail_executor._pr_is_merged", return_value=False), \
+         patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value="tok"), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        mock_get.return_value = _mock_response(200, [{"id": 999, "body": body}])
+
+        revoke_finding_status_in_pr_comment(None, target, 7, finding)
+
+        mock_patch.assert_not_called()
+
+
+def test_revoke_noop_when_no_installation_token():
+    target = _target()
+    with patch("app.core.pr_guardrail_executor._pr_is_merged", return_value=False), \
+         patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value=None), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        revoke_finding_status_in_pr_comment(None, target, 7, _finding_row())
         mock_get.assert_not_called()
         mock_patch.assert_not_called()

@@ -3,14 +3,16 @@
 import { useMemo } from "react";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
-import { Users, Plug, Wrench, Store, Lock, type LucideIcon } from "lucide-react";
+import { Users, Plug, Wrench, Store, Lock, ShieldAlert, type LucideIcon } from "lucide-react";
 import { UserManagement } from "./user-management";
 import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
 import { ToolMarketplace } from "./tool-marketplace";
+import { SecurityLog } from "./security-log";
 
 const TABS = [
   { id: "users", label: "User Management", icon: Users },
+  { id: "security-log", label: "Security Log", icon: ShieldAlert },
   { id: "integrations", label: "Global Integrations", icon: Plug },
   { id: "tools", label: "Tools Health", icon: Wrench },
   { id: "tool-marketplace", label: "Tool Marketplace", icon: Store },
@@ -23,9 +25,11 @@ type TabId = (typeof TABS)[number]["id"];
 // policy config moved to /guardrails, Approval Queue moved to its own
 // /approval-queue route, and Workspace Roles moved into the new
 // /workspaces page (which also absorbed the per-workspace API key that
-// used to live in Settings behind a target picker).
+// used to live in Settings behind a target picker). Security Log (login/
+// logout/permission-change activity) lives alongside User Management under
+// Access -- both are admin-only account-control surfaces.
 const GROUPS: { id: string; label: string; icon: LucideIcon; tabs: TabId[] }[] = [
-  { id: "access", label: "Access", icon: Lock, tabs: ["users"] },
+  { id: "access", label: "Access", icon: Lock, tabs: ["users", "security-log"] },
   { id: "tooling", label: "Tooling", icon: Plug, tabs: ["integrations", "tools", "tool-marketplace"] },
 ];
 
@@ -101,6 +105,7 @@ export default function AdminPage() {
       </div>
 
       {tab === "users" && <UserManagement />}
+      {tab === "security-log" && <SecurityLog />}
       {tab === "integrations" && <GlobalIntegrations />}
       {tab === "tools" && <ToolsHealth />}
       {tab === "tool-marketplace" && <ToolMarketplace />}

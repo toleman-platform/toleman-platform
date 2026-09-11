@@ -8,7 +8,7 @@ import time
 
 from app.core.config import DEFAULT_SESSION_SECRET, settings
 
-SESSION_TTL_SECONDS = 60 * 60 * 24 * 7  # 7 days
+SESSION_TTL_SECONDS = 60 * 60 * 24  # 24 hours
 
 API_TOKEN_PREFIX = "toleman_pat_"
 

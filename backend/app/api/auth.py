@@ -5,14 +5,23 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
+from app.core.auth_audit import log_auth_event
 from app.core.config import settings
 from app.core.rate_limit import enforce_rate_limit
-from app.core.security import create_session_token, decode_session_token, hash_api_token, hash_password, verify_password
+from app.core.security import (
+    SESSION_TTL_SECONDS,
+    create_session_token,
+    decode_session_token,
+    hash_api_token,
+    hash_password,
+    verify_password,
+)
 from app.core.time import utcnow
 from app.models.models import (
     WORKSPACE_ROLE_RANK,
     ApiToken,
     ApiTokenScope,
+    AuthEventType,
     Finding,
     Target,
     User,
@@ -138,7 +147,26 @@ def login(payload: LoginRequest, request: Request, response: Response, session: 
 
     user = session.exec(select(User).where(User.email == payload.email)).first()
     if not user or not verify_password(payload.password, user.password_hash):
+        # Logged under the attempted email, not a resolved user (there may
+        # be none) -- still a real, actionable security signal (repeated
+        # failed attempts against one address), and the DB write happens
+        # regardless of whether the email exists so a caller can't use
+        # response timing/behavior to enumerate accounts differently from
+        # the existing rate-limit-only defense above.
+        log_auth_event(session, AuthEventType.LOGIN_FAILED, actor=payload.email, ip_address=client_ip)
         raise HTTPException(status_code=401, detail="invalid email or password")
+
+    # No concurrent logins for the same user: a fresh login bumps
+    # token_version, immediately invalidating any session token issued by an
+    # earlier login (this device or another) the same way logout/password-
+    # change already do -- so signing in somewhere new signs out everywhere
+    # else, rather than accumulating indefinitely many valid sessions.
+    user.token_version += 1
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    log_auth_event(session, AuthEventType.LOGIN_SUCCESS, actor=user.email, ip_address=client_ip)
 
     token = create_session_token(user.id, user.token_version)
     response.set_cookie(
@@ -147,7 +175,7 @@ def login(payload: LoginRequest, request: Request, response: Response, session: 
         httponly=True,
         secure=settings.cookie_secure,
         samesite="lax",
-        max_age=60 * 60 * 24 * 7,
+        max_age=SESSION_TTL_SECONDS,
         path="/",
         domain=settings.cookie_domain or None,
     )
@@ -166,6 +194,7 @@ def logout(
     user.token_version += 1
     session.add(user)
     session.commit()
+    log_auth_event(session, AuthEventType.LOGOUT, actor=user.email)
     response.delete_cookie(SESSION_COOKIE, path="/", domain=settings.cookie_domain or None)
     return {"ok": True}
 
@@ -215,6 +244,7 @@ def change_password(
     user.token_version += 1
     session.add(user)
     session.commit()
+    log_auth_event(session, AuthEventType.PASSWORD_CHANGED, actor=user.email)
 
     # Re-issue a fresh session for THIS request/device so the user isn't
     # logged out by their own password change, matching login()'s cookie.
@@ -225,7 +255,7 @@ def change_password(
         httponly=True,
         secure=settings.cookie_secure,
         samesite="lax",
-        max_age=60 * 60 * 24 * 7,
+        max_age=SESSION_TTL_SECONDS,
         path="/",
         domain=settings.cookie_domain or None,
     )

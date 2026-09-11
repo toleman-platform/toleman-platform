@@ -68,3 +68,29 @@ export const STATE_COLOR: Record<string, string> = {
   Mitigated: "text-chart-5",
   Reopened: "text-chart-3",
 };
+
+// Security audit log (admin-only, login/logout/permission-change activity;
+// see app/(dashboard)/admin/security-log.tsx). A failed login is the one
+// event here that's an active signal to look at, hence the destructive
+// treatment shared with a finding's Open state; permission changes get the
+// same amber as Accepted Risk/Reopened (a decision worth noticing, not
+// necessarily a bad one) rather than a color of their own.
+export const AUTH_EVENT_LABEL: Record<string, string> = {
+  login_success: "Login",
+  login_failed: "Failed login",
+  logout: "Logout",
+  password_changed: "Password changed",
+  role_changed: "Role changed",
+  workspace_role_changed: "Workspace role changed",
+  workspace_role_removed: "Workspace role removed",
+};
+
+export const AUTH_EVENT_COLOR: Record<string, string> = {
+  login_success: "border-chart-5/20 bg-chart-5/10 text-chart-5",
+  login_failed: "border-destructive/20 bg-destructive/10 text-destructive",
+  logout: "border-border bg-muted text-muted-foreground",
+  password_changed: "border-chart-1/20 bg-chart-1/10 text-chart-1",
+  role_changed: "border-chart-3/20 bg-chart-3/10 text-chart-3",
+  workspace_role_changed: "border-chart-3/20 bg-chart-3/10 text-chart-3",
+  workspace_role_removed: "border-chart-3/20 bg-chart-3/10 text-chart-3",
+};

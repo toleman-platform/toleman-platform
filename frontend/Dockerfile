@@ -68,4 +68,9 @@ USER node
 
 EXPOSE 3000
 
+# No curl/wget in node:24-slim; Node has had a global fetch() since v18, so
+# use that instead of adding a package just for this.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD node -e "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
 CMD ["node", "server.js"]

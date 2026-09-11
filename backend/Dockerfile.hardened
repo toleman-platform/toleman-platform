@@ -160,8 +160,20 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
+# Scan workdir + a writable HOME for the runtime's nonroot user (uid/gid
+# 65532, see the `:nonroot` tag note below), built here since the distroless
+# runtime stage has no shell/useradd to create it itself. Mirrors the plain
+# Dockerfile's `useradd ... && mkdir ... && chown` step, just split across
+# stages: chown here, COPY --chown carries the ownership into `runtime`.
+RUN mkdir -p /tmp/toleman-scans /home/toleman/.cache \
+    && chown -R 65532:65532 /app /tmp/toleman-scans /home/toleman
+
 # --- Runtime: distroless, no shell, no package manager ----------------------
-FROM gcr.io/distroless/cc-debian12 AS runtime
+# `:nonroot` rather than the bare (implicitly `:latest`) tag used before:
+# distroless publishes it for exactly this pairing (cc-debian12 at a fixed,
+# non-floating tag; CKV_DOCKER_7) and it already runs as uid/gid 65532
+# instead of root (CKV_DOCKER_3), so one tag change clears both findings.
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 # Python interpreter + its shared library (python:3.12-slim installs both
 # under /usr/local, not part of the OS package manager, so nothing here
@@ -223,17 +235,35 @@ COPY --from=builder \
     /usr/lib/x86_64-linux-gnu/libbrotlicommon.so.1 \
     /usr/lib/x86_64-linux-gnu/
 
-# App code.
+# App code, plus the scan workdir and HOME built and chowned to 65532:65532
+# (the nonroot user/group) back in the builder stage.
 WORKDIR /app
-COPY --from=builder /app /app
+COPY --from=builder --chown=65532:65532 /app /app
+COPY --from=builder --chown=65532:65532 /tmp/toleman-scans /tmp/toleman-scans
+COPY --from=builder --chown=65532:65532 /home/toleman /home/toleman
 
 ENV PATH="/usr/local/bin:$PATH" \
     LD_LIBRARY_PATH="/usr/local/lib" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    HOME=/home/toleman \
+    XDG_CACHE_HOME=/home/toleman/.cache
+
+# Explicit rather than relying on the base image's default: the `:nonroot`
+# tag above already runs as this user, but checkov's dockerfile check
+# (CKV_DOCKER_3) only reads instructions in this file, not inherited base
+# image metadata, so it still needs to see a USER line here. `nonroot` is
+# the name distroless's own /etc/passwd in this image maps to uid/gid 65532,
+# the same ID `builder`'s chown above used.
+USER nonroot
 
 EXPOSE 8000
 
 # No shell to interpret an entrypoint script or a shebang line, invoke the
 # copied interpreter directly as a module, exec-form only (already is).
+# No curl either: use the interpreter already copied in above via urllib
+# instead of adding a new dependency just for the check.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["python3.12", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=3)"]
+
 CMD ["python3.12", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

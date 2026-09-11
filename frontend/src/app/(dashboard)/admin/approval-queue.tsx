@@ -52,6 +52,16 @@ export function ApprovalQueue() {
     }
   }
 
+  async function revoke(id: number) {
+    setBusyId(id);
+    try {
+      await api.revokeIgnore(id);
+      refreshHistory();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -156,9 +166,22 @@ export function ApprovalQueue() {
                       {f.ignore_reviewed_at ? ` · ${new Date(f.ignore_reviewed_at).toLocaleString()}` : ""}
                     </div>
                   </div>
-                  <Badge variant="outline" className={`shrink-0 ${IGNORE_STATUS_COLOR[f.ignore_status] || "text-muted-foreground"}`}>
-                    {f.ignore_status}
-                  </Badge>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge variant="outline" className={IGNORE_STATUS_COLOR[f.ignore_status] || "text-muted-foreground"}>
+                      {f.ignore_status}
+                    </Badge>
+                    {f.ignore_status === "approved" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={busyId === f.id}
+                        onClick={() => revoke(f.id)}
+                        className="h-7 text-xs text-destructive"
+                      >
+                        Revoke
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardContent>
             </Card>

@@ -472,3 +472,169 @@ def test_approving_ignore_does_not_reopen_an_already_resolved_finding(client, en
         # Left exactly as a human already triaged it, not silently
         # reclassified as Accepted Risk underneath them.
         assert session.get(Finding, resolved_id).state == FindingState.FALSE_POSITIVE
+
+
+# ---------------------------------------------------------------------------
+# revoke-ignore: undoes approve-ignore -- finding back to "none", a synced
+# main Finding back to REOPENED, the PR comment's approved row back to a
+# live "request ignore" link (unless the PR is already merged), and the scan
+# re-evaluated in case this was the one finding keeping it unblocked.
+# ---------------------------------------------------------------------------
+
+
+def test_regular_user_cannot_revoke_ignore(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    sec_client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+
+    user_client = _login(client, engine, role=UserRole.USER, email="user2@example.com")
+    res = user_client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+    assert res.status_code == 403
+
+
+def test_revoke_ignore_requires_finding_to_be_currently_approved(client, engine):
+    _, finding_id = _make_pr_scan_and_finding(engine)
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+    assert res.status_code == 400
+
+
+def test_security_engineer_can_revoke_ignore(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ignore_status"] == "none"
+    assert body["ignore_requested_by"] == ""
+    assert body["ignore_requested_reason"] == ""
+    assert body["ignore_reviewed_by"] == ""
+    assert body["ignore_reviewed_at"] is None
+
+
+def test_revoking_ignore_reopens_the_matching_main_finding(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    main_finding_id = _make_main_finding(engine, target_id)
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+
+    with Session(engine) as session:
+        assert session.get(Finding, main_finding_id).state == FindingState.ACCEPTED_RISK
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+    assert res.status_code == 200
+
+    with Session(engine) as session:
+        main_finding = session.get(Finding, main_finding_id)
+        assert main_finding.state == FindingState.REOPENED
+        logs = session.exec(
+            select(FindingStateLog).where(FindingStateLog.finding_id == main_finding_id).order_by(FindingStateLog.id)
+        ).all()
+        assert len(logs) == 2
+        assert logs[1].from_state == FindingState.ACCEPTED_RISK
+        assert logs[1].to_state == FindingState.REOPENED
+        assert logs[1].actor == "security_engineer@example.com"
+
+
+def test_revoking_ignore_does_not_touch_a_finding_resolved_some_other_way(client, engine, monkeypatch):
+    """A Finding that was ACCEPTED_RISK via this exact approval and then
+    separately resolved another way (e.g. an admin later marked it a false
+    positive) must not be silently reopened just because the original
+    approval is revoked."""
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    main_finding_id = _make_main_finding(engine, target_id)
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+
+    with Session(engine) as session:
+        main_finding = session.get(Finding, main_finding_id)
+        main_finding.state = FindingState.FALSE_POSITIVE
+        session.add(main_finding)
+        session.commit()
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+    assert res.status_code == 200
+
+    with Session(engine) as session:
+        assert session.get(Finding, main_finding_id).state == FindingState.FALSE_POSITIVE
+
+
+def test_revoking_ignore_patches_the_pr_comment_when_not_merged(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        pr_guardrail_api,
+        "revoke_finding_status_in_pr_comment",
+        lambda session, target, pr_number, finding: calls.append((target.id, pr_number, finding.id)),
+    )
+    target_id = _make_target(engine)
+    scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    with Session(engine) as session:
+        pr_number = session.get(PRGuardrailScan, scan_id).pr_number
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+    assert res.status_code == 200
+    assert calls == [(target_id, pr_number, finding_id)]
+
+
+def test_revoking_the_sole_approval_reblocks_a_passed_scan(engine, monkeypatch):
+    """The mirror of #112 (test_approving_sole_blocking_finding_unblocks_scan
+    above): revoking the one approval that got a scan unblocked must put it
+    back to BLOCKED, not leave it reading PASSED (and GitHub green) on a PR
+    that is, once again, actually blocking."""
+    commit_status_calls = _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["High"])
+
+    with Session(engine) as session:
+        finding = session.get(PRGuardrailFinding, finding_id)
+        finding.ignore_status = IgnoreStatus.APPROVED
+        session.add(finding)
+        session.commit()
+        scan = session.get(PRGuardrailScan, scan_id)
+        recompute_pr_scan_status(session, scan)
+
+    with Session(engine) as session:
+        assert session.get(PRGuardrailScan, scan_id).status == PRGuardrailStatus.PASSED
+
+    with Session(engine) as session:
+        finding = session.get(PRGuardrailFinding, finding_id)
+        finding.ignore_status = IgnoreStatus.NONE
+        session.add(finding)
+        session.commit()
+        scan = session.get(PRGuardrailScan, scan_id)
+        recompute_pr_scan_status(session, scan)
+
+    with Session(engine) as session:
+        assert session.get(PRGuardrailScan, scan_id).status == PRGuardrailStatus.BLOCKED
+    assert commit_status_calls[-1][3] == "failure"
+
+
+def test_revoke_ignore_endpoint_reblocks_pr_end_to_end(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+
+    with Session(engine) as session:
+        assert session.get(PRGuardrailScan, scan_id).status == PRGuardrailStatus.PASSED
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+    assert res.status_code == 200
+
+    with Session(engine) as session:
+        assert session.get(PRGuardrailScan, scan_id).status == PRGuardrailStatus.BLOCKED

@@ -391,6 +391,29 @@ def _severity_count_table(findings: list[PRGuardrailFinding]) -> str:
     return "\n".join([header, divider, row])
 
 
+def _finding_ref_link(target_id: int, pr_scan_id: int, finding_id: int) -> str:
+    return f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{finding_id}"
+
+
+def _finding_ignore_link(pr_scan_id: int, finding_id: int) -> str:
+    # A dedicated, minimal page (frontend/src/app/ignore-request/...), not
+    # /pr-history: that page carries the full dashboard layout (sidebar, a
+    # live GitHub-PRs fetch, the whole PR Audit log for the target), all of
+    # it irrelevant to this one action and slow to clear before the user
+    # sees anything. This route does the one API call it needs and shows the
+    # result -- "Requested" or whatever the finding's state already is --
+    # with nothing else in the way.
+    return f"{FRONTEND_URL}/ignore-request/{pr_scan_id}/{finding_id}"
+
+
+def _approved_action_cell(ref_link: str) -> str:
+    return f"[view]({ref_link}) &middot; ✅ approved to ignore"
+
+
+def _pending_action_cell(ref_link: str, ignore_link: str) -> str:
+    return f"[view]({ref_link}) &middot; [request ignore]({ignore_link})"
+
+
 def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_id: int) -> str:
     """GFM table (Severity | Rule | Title | Location | Links) for one
     severity group's findings, replaces the old flat prose-bullet list."""
@@ -402,24 +425,15 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
         loc = f.file_path
         if f.line_start:
             loc += f":{f.line_start}"
-        ref_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{f.id}"
+        ref_link = _finding_ref_link(target_id, pr_scan_id, f.id)
         if f.ignore_status == IgnoreStatus.APPROVED:
             # #401: this row's ignore_status can arrive already "approved"
             # at render time -- carried forward from an earlier scan of the
             # same PR (_carry_forward_approved_ignore) -- and must not offer
             # "request ignore" again as if nobody had acted on it yet.
-            action = f"[view]({ref_link}) &middot; ✅ approved to ignore"
+            action = _approved_action_cell(ref_link)
         else:
-            # A dedicated, minimal page (frontend/src/app/ignore-request/...),
-            # not /pr-history: that page carries the full dashboard layout
-            # (sidebar, a live GitHub-PRs fetch, the whole PR Audit log for
-            # the target), all of it irrelevant to this one action and slow
-            # to clear before the user sees anything. This route does the
-            # one API call it needs and shows the result -- "Requested" or
-            # whatever the finding's state already is -- with nothing else
-            # in the way.
-            ignore_link = f"{FRONTEND_URL}/ignore-request/{pr_scan_id}/{f.id}"
-            action = f"[view]({ref_link}) &middot; [request ignore]({ignore_link})"
+            action = _pending_action_cell(ref_link, _finding_ignore_link(pr_scan_id, f.id))
         lines.append(f"| {f.severity} | `{f.rule_id}` | {f.title} | `{loc}` | {action} |")
     return "\n".join(lines)
 
@@ -732,7 +746,7 @@ def update_finding_status_in_pr_comment(session: Session, target: Target, pr_num
             return
         comment_id, body = found
 
-        old = f"&middot; [request ignore]({FRONTEND_URL}/ignore-request/{finding.pr_scan_id}/{finding.id})"
+        old = f"&middot; [request ignore]({_finding_ignore_link(finding.pr_scan_id, finding.id)})"
         new = "&middot; ✅ approved to ignore"
         if old not in body:
             return
@@ -751,6 +765,77 @@ def update_finding_status_in_pr_comment(session: Session, target: Target, pr_num
             )
     except Exception:
         logger.warning("PR guardrail: exception patching approved-ignore status into PR comment", exc_info=True)
+
+
+def _pr_is_merged(session: Session, target: Target, pr_number: int) -> bool:
+    """Best-effort merge-state check, used to gate revoke_finding_status_in_pr_comment
+    below: a merged PR's Toleman comment is a historical record, not something
+    a reviewer can still act on, so there is nothing to gain by editing it
+    back and one more avoidable GitHub call to fail on a PR that has been
+    quiet for entirely unrelated reasons. Fails closed to "merged" (i.e. skip
+    the edit) on any error -- an unnecessary skip costs nothing here, unlike
+    the fail-open posture set_commit_status uses for a scan result that must
+    reach GitHub regardless."""
+    try:
+        slug = repo_slug_from_url(target.repo_url)
+        pr_res = github_get(f"/repos/{slug}/pulls/{pr_number}", token=resolve_github_token(session, target.workspace_id, slug) or "")
+        pr_res.raise_for_status()
+        return bool(pr_res.json().get("merged"))
+    except Exception:
+        logger.warning("PR guardrail: could not determine merge state for %s#%s", target.repo_url, pr_number, exc_info=True)
+        return True
+
+
+def revoke_finding_status_in_pr_comment(session: Session, target: Target, pr_number: int, finding: PRGuardrailFinding) -> None:
+    """Undoes what update_finding_status_in_pr_comment did: a security
+    reviewer revoking a previously-approved ignore wants the PR comment to
+    stop claiming this finding is approved, immediately, the same way
+    approving it updated the comment immediately rather than waiting for a
+    rescan.
+
+    The "approved to ignore" cell (_approved_action_cell) doesn't embed
+    finding.id on its own -- unlike the pending cell's ignore link, its text
+    is identical for every approved row in the comment -- so the search
+    string here has to include the row's ref_link (_finding_ref_link, which
+    does embed the id via "#finding-{id}") to land on the right row and
+    reconstruct exactly the pending-cell text render_comment would have
+    produced for this finding had it never been approved.
+
+    Skipped once the PR is merged (see _pr_is_merged): there is no reviewer
+    left to show a live "request ignore" link to. Best-effort and silent on
+    any other miss, same as the approve path."""
+    if _pr_is_merged(session, target, pr_number):
+        return
+    slug = repo_slug_from_url(target.repo_url)
+    try:
+        token = _get_installation_token_or_none(session, target)
+        if not token:
+            return
+        found = _find_existing_comment(slug, pr_number, token)
+        if not found:
+            return
+        comment_id, body = found
+
+        ref_link = _finding_ref_link(target.id, finding.pr_scan_id, finding.id)
+        old = _approved_action_cell(ref_link)
+        if old not in body:
+            return
+        new = _pending_action_cell(ref_link, _finding_ignore_link(finding.pr_scan_id, finding.id))
+        patched = body.replace(old, new, 1)
+
+        res = httpx.patch(
+            f"https://api.github.com/repos/{slug}/issues/comments/{comment_id}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            json={"body": patched},
+            timeout=15,
+        )
+        if res.status_code >= 300:
+            logger.warning(
+                "PR guardrail: failed to patch revoked-ignore status into PR comment: %s %s",
+                res.status_code, res.text[:300],
+            )
+    except Exception:
+        logger.warning("PR guardrail: exception patching revoked-ignore status into PR comment", exc_info=True)
 
 
 def reply_to_pr(session: Session, target: Target, pr_number: int, body: str) -> None:
@@ -1140,18 +1225,23 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
 
 
 def recompute_pr_scan_status(session: Session, pr_scan: PRGuardrailScan) -> None:
-    """Re-evaluate a BLOCKED PRGuardrailScan after an individual finding's
-    ignore-request is approved (#112). Before this, the only way to unblock
-    a PR was the blunt whole-scan `override`; approving every one of a
-    PR's blocking findings individually still left the scan (and GitHub
-    commit status) stuck on BLOCKED forever, since approve_ignore only
-    touched the finding row, never the scan.
+    """Re-evaluate a PRGuardrailScan's blocked/passed status after an
+    individual finding's ignore decision changes -- an approval (#112) or a
+    revocation of one. Before #112, the only way to unblock a PR was the
+    blunt whole-scan `override`; approving every one of a PR's blocking
+    findings individually still left the scan (and GitHub commit status)
+    stuck on BLOCKED forever, since approve_ignore only touched the finding
+    row, never the scan. Revoking an approval has the same gap in the other
+    direction: without this, un-approving the one finding that got a scan
+    unblocked leaves it reading PASSED (and GitHub green) on a PR that is
+    once again blocking, until whatever the next real scan happens to be.
 
-    No-op for scans not currently BLOCKED: a PASSED scan has nothing to
-    recompute, and OVERRIDDEN is a deliberate accept-everything escape hatch
-    that a later per-finding approval shouldn't silently reverse.
+    No-op for scans not currently BLOCKED or PASSED: RUNNING/ERROR have
+    nothing to recompute, and OVERRIDDEN is a deliberate accept-everything
+    escape hatch that a per-finding approval or revocation shouldn't
+    silently reverse either way.
     """
-    if pr_scan.status != PRGuardrailStatus.BLOCKED:
+    if pr_scan.status not in (PRGuardrailStatus.BLOCKED, PRGuardrailStatus.PASSED):
         return
 
     target = session.get(Target, pr_scan.target_id)
@@ -1171,10 +1261,11 @@ def recompute_pr_scan_status(session: Session, pr_scan: PRGuardrailScan) -> None
     ).all()
     blocking_severities = effective_blocking_severities(policies)
 
-    if any(f.severity in blocking_severities for f in still_open):
-        return  # a still-open (non-approved) finding legitimately keeps this blocked
+    now_blocked = any(f.severity in blocking_severities for f in still_open)
+    if now_blocked == (pr_scan.status == PRGuardrailStatus.BLOCKED):
+        return  # already correct: still-open findings legitimately explain the current status
 
-    pr_scan.status = PRGuardrailStatus.PASSED
+    pr_scan.status = PRGuardrailStatus.BLOCKED if now_blocked else PRGuardrailStatus.PASSED
     session.add(pr_scan)
     session.commit()
     session.refresh(pr_scan)
@@ -1187,20 +1278,25 @@ def recompute_pr_scan_status(session: Session, pr_scan: PRGuardrailScan) -> None
         pr_res = github_get(f"/repos/{slug}/pulls/{pr_scan.pr_number}", token=resolve_github_token(session, target.workspace_id, slug) or "")
         pr_res.raise_for_status()
         head_sha = pr_res.json()["head"]["sha"]
-        set_commit_status(
-            session,
-            target,
-            head_sha,
-            "success",
-            "All blocking findings individually approved for ignore",
-        )
+        if now_blocked:
+            # Same alert-mode carve-out execute_pr_guardrail_scan's own
+            # BLOCKED branch uses: alert-mode targets warn, never fail the
+            # commit status, even once a revoked approval restores a real
+            # blocking finding.
+            if enforcement_mode == "alert":
+                state, desc = "success", "[alert mode, non-blocking] A previously-approved ignore was revoked"
+            else:
+                state, desc = "failure", "A previously-approved ignore was revoked, restoring a blocking finding"
+        else:
+            state, desc = "success", "All blocking findings individually approved for ignore"
+        set_commit_status(session, target, head_sha, state, desc)
     except Exception:
         # Best-effort, same philosophy as the rest of this module's GitHub
         # calls; the scan row itself is already correctly updated above;
         # a failure here just means GitHub's commit status lags until the
-        # next real scan or a retry, not a failed approval.
+        # next real scan or a retry, not a failed approval/revocation.
         logger.exception(
             "PR guardrail: failed to update commit status after per-finding "
-            "ignore approval for scan %s",
+            "ignore decision for scan %s",
             pr_scan.id,
         )

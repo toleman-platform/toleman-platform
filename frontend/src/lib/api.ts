@@ -1622,6 +1622,8 @@ export const api = {
     jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/approve-ignore`, { method: "POST" }),
   rejectIgnore: (findingId: number) =>
     jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/reject-ignore`, { method: "POST" }),
+  revokeIgnore: (findingId: number) =>
+    jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/revoke-ignore`, { method: "POST" }),
   search: (q: string) => jsonFetch<SearchResults>(`/api/search?q=${encodeURIComponent(q)}`),
   listPolicies: (workspaceId: number) => jsonFetch<PolicyRule[]>(`/api/policies?workspace_id=${workspaceId}`),
   createPolicy: (p: { workspace_id: number; rule_type: PolicyRuleType; value: string; reason?: string }) =>

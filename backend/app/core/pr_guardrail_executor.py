@@ -632,10 +632,10 @@ def _get_installation_token_or_none(session: Session, target: Target) -> str | N
     return get_installation_token(config, installation.installation_id)
 
 
-def _find_existing_comment_id(slug: str, pr_number: int, token: str) -> int | None:
-    """List issue comments on the PR and return the id of the first one
-    carrying COMMENT_MARKER, or None if this is the first Toleman comment on
-    this PR. GitHub's issue-comments API is paginated (100/page default);
+def _find_existing_comment(slug: str, pr_number: int, token: str) -> tuple[int, str] | None:
+    """List issue comments on the PR and return (id, body) of the first one
+    carrying COMMENT_MARKER, or None if there is no Toleman comment on this
+    PR yet. GitHub's issue-comments API is paginated (100/page default);
     walk pages since a long-lived PR can accumulate comments from humans and
     other bots ahead of Toleman's own."""
     page = 1
@@ -653,10 +653,15 @@ def _find_existing_comment_id(slug: str, pr_number: int, token: str) -> int | No
         for comment in comments:
             body = comment.get("body") or ""
             if COMMENT_MARKER in body or any(m in body for m in LEGACY_COMMENT_MARKERS):
-                return comment["id"]
+                return comment["id"], body
         if len(comments) < 100:
             return None
         page += 1
+
+
+def _find_existing_comment_id(slug: str, pr_number: int, token: str) -> int | None:
+    found = _find_existing_comment(slug, pr_number, token)
+    return found[0] if found else None
 
 
 def post_pr_comment(session: Session, target: Target, pr_number: int, body: str) -> None:
@@ -699,6 +704,53 @@ def post_pr_comment(session: Session, target: Target, pr_number: int, body: str)
             logger.warning("PR guardrail: failed to %s PR comment: %s %s", action, res.status_code, res.text[:300])
     except Exception:
         logger.warning("PR guardrail: exception posting PR comment", exc_info=True)
+
+
+def update_finding_status_in_pr_comment(session: Session, target: Target, pr_number: int, finding: PRGuardrailFinding) -> None:
+    """#401: a rescan is not the only way an ignore approval should show up
+    on GitHub -- a security reviewer clicking Approve wants the PR comment
+    to say so immediately, not "next time someone pushes a commit". Rather
+    than regenerating the whole comment from render_comment (which needs
+    scan-level context, e.g. the new-API-endpoints list, that isn't fully
+    persisted and would otherwise mean re-cloning the repo just to answer an
+    approval click), this patches only the one table cell that changed:
+    finding.id makes the "request ignore" link for this row unique within
+    the comment (see _findings_table's ignore_link), so a plain substring
+    swap is exact and leaves every other row -- and the endpoints section,
+    tool-coverage line, everything else -- byte-identical to what the scan
+    itself produced. Best-effort and silent on any miss (no Toleman comment
+    yet, the row's already been patched, the comment structure changed):
+    this is a nice-to-have on top of an already-correct approval, not a
+    step the approval itself depends on."""
+    slug = repo_slug_from_url(target.repo_url)
+    try:
+        token = _get_installation_token_or_none(session, target)
+        if not token:
+            return
+        found = _find_existing_comment(slug, pr_number, token)
+        if not found:
+            return
+        comment_id, body = found
+
+        old = f"&middot; [request ignore]({FRONTEND_URL}/ignore-request/{finding.pr_scan_id}/{finding.id})"
+        new = "&middot; ✅ approved to ignore"
+        if old not in body:
+            return
+        patched = body.replace(old, new, 1)
+
+        res = httpx.patch(
+            f"https://api.github.com/repos/{slug}/issues/comments/{comment_id}",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            json={"body": patched},
+            timeout=15,
+        )
+        if res.status_code >= 300:
+            logger.warning(
+                "PR guardrail: failed to patch approved-ignore status into PR comment: %s %s",
+                res.status_code, res.text[:300],
+            )
+    except Exception:
+        logger.warning("PR guardrail: exception patching approved-ignore status into PR comment", exc_info=True)
 
 
 def reply_to_pr(session: Session, target: Target, pr_number: int, body: str) -> None:

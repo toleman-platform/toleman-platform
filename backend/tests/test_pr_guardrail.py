@@ -3,9 +3,11 @@ from unittest.mock import Mock, patch
 from app.core.pr_guardrail import compute_net_new, highest_severity, should_block
 from app.core.pr_guardrail_executor import (
     COMMENT_MARKER,
+    FRONTEND_URL,
     _find_existing_comment_id,
     post_pr_comment,
     render_comment,
+    update_finding_status_in_pr_comment,
 )
 from app.models.models import PRGuardrailFinding, PRGuardrailStatus, Target
 
@@ -244,3 +246,79 @@ def test_post_pr_comment_noop_when_no_installation_token():
         post_pr_comment(None, target, 7, "body")
         mock_get.assert_not_called()
         mock_post.assert_not_called()
+
+
+# --- update_finding_status_in_pr_comment() (#401) ----------------------------
+
+
+def _finding_row(finding_id=42, pr_scan_id=9):
+    return PRGuardrailFinding(
+        id=finding_id, pr_scan_id=pr_scan_id, tool="semgrep", rule_id="r", title="t",
+        file_path="a.py", line_start=1, severity="High",
+    )
+
+
+def test_approving_patches_only_that_findings_ignore_link_in_place():
+    target = _target()
+    finding = _finding_row()
+    ignore_link = f"{FRONTEND_URL}/ignore-request/{finding.pr_scan_id}/{finding.id}"
+    other_ignore_link = f"{FRONTEND_URL}/ignore-request/{finding.pr_scan_id}/43"
+    original_body = (
+        f"{COMMENT_MARKER}\n**Toleman PR Guardrail**\n\n"
+        f"| High | `r` | t | `a.py:1` | [view](x) &middot; [request ignore]({ignore_link}) |\n"
+        f"| Medium | `r2` | t2 | `b.py:2` | [view](y) &middot; [request ignore]({other_ignore_link}) |\n"
+    )
+    with patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value="tok"), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        mock_get.return_value = _mock_response(200, [{"id": 999, "body": original_body}])
+        mock_patch.return_value = _mock_response(200)
+
+        update_finding_status_in_pr_comment(None, target, 7, finding)
+
+        mock_patch.assert_called_once()
+        assert "issues/comments/999" in mock_patch.call_args.args[0]
+        patched_body = mock_patch.call_args.kwargs["json"]["body"]
+        assert f"[request ignore]({ignore_link})" not in patched_body
+        assert "approved to ignore" in patched_body
+        # The other finding's row (a different id) must be untouched.
+        assert f"[request ignore]({other_ignore_link})" in patched_body
+
+
+def test_noop_when_no_toleman_comment_exists_yet():
+    target = _target()
+    with patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value="tok"), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        mock_get.return_value = _mock_response(200, [{"id": 111, "body": "some unrelated comment"}])
+
+        update_finding_status_in_pr_comment(None, target, 7, _finding_row())
+
+        mock_patch.assert_not_called()
+
+
+def test_noop_when_the_findings_link_is_not_in_the_comment():
+    """The row may already have been patched (a re-clicked approve, or the
+    comment structure changed since); never corrupt the comment guessing at
+    a replacement."""
+    target = _target()
+    finding = _finding_row()
+    body = f"{COMMENT_MARKER}\nno matching link in here"
+    with patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value="tok"), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        mock_get.return_value = _mock_response(200, [{"id": 999, "body": body}])
+
+        update_finding_status_in_pr_comment(None, target, 7, finding)
+
+        mock_patch.assert_not_called()
+
+
+def test_noop_when_no_installation_token():
+    target = _target()
+    with patch("app.core.pr_guardrail_executor._get_installation_token_or_none", return_value=None), \
+         patch("app.core.pr_guardrail_executor.httpx.get") as mock_get, \
+         patch("app.core.pr_guardrail_executor.httpx.patch") as mock_patch:
+        update_finding_status_in_pr_comment(None, target, 7, _finding_row())
+        mock_get.assert_not_called()
+        mock_patch.assert_not_called()

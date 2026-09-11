@@ -6,6 +6,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.deps as deps_module
+import app.api.pr_guardrail as pr_guardrail_api
 from app.api.deps import get_session
 import app.core.pr_guardrail_executor as pr_guardrail_executor
 from app.core.pr_guardrail_executor import _severity_str, recompute_pr_scan_status, render_comment
@@ -418,6 +419,29 @@ def test_approving_ignore_immediately_accepts_the_matching_main_finding(client, 
         assert logs[0].from_state == FindingState.OPEN
         assert logs[0].to_state == FindingState.ACCEPTED_RISK
         assert logs[0].actor == "security_engineer@example.com"
+
+
+def test_approving_ignore_patches_the_pr_comment_immediately(client, engine, monkeypatch):
+    """#401: approving must not wait for a rescan to reflect on GitHub --
+    update_finding_status_in_pr_comment is called with the exact finding
+    that was just approved, so the existing comment can be patched in
+    place."""
+    _patch_github(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        pr_guardrail_api,
+        "update_finding_status_in_pr_comment",
+        lambda session, target, pr_number, finding: calls.append((target.id, pr_number, finding.id)),
+    )
+    target_id = _make_target(engine)
+    scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    with Session(engine) as session:
+        pr_number = session.get(PRGuardrailScan, scan_id).pr_number
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+    assert res.status_code == 200
+    assert calls == [(target_id, pr_number, finding_id)]
 
 
 def test_approving_ignore_does_not_touch_a_finding_on_a_non_default_branch(client, engine, monkeypatch):

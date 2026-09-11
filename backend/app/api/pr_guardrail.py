@@ -23,6 +23,7 @@ from app.core.pr_guardrail_executor import (
     recompute_pr_scan_status,
     set_commit_status,
     submit_ignore_request,
+    update_finding_status_in_pr_comment,
 )
 from app.core.staleness import mark_stale_if_needed
 from app.core.time import utcnow
@@ -408,6 +409,9 @@ def approve_ignore(
         if target:
             _sync_approved_ignore_to_main_findings(session, finding, target, pr_scan.pr_number, actor=user.email)
             session.commit()
+            # #401: reflect the approval on GitHub immediately, not only the
+            # next time this PR happens to get rescanned.
+            update_finding_status_in_pr_comment(session, target, pr_scan.pr_number, finding)
         recompute_pr_scan_status(session, pr_scan)
 
     return _finding_out(finding)

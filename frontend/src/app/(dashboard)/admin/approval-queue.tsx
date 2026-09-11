@@ -25,6 +25,15 @@ const TABS = [
 ] as const;
 type Tab = (typeof TABS)[number]["id"];
 
+// The History tab's "X by <reviewer>" line covers every decided
+// ignore_status (approved/rejected/revoked, never "none"/"requested" --
+// those live in the Approval Requests tab instead).
+const DECISION_LABEL: Record<string, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+  revoked: "Revoked",
+};
+
 function normalizeTab(raw: string | null): Tab {
   return TABS.some((t) => t.id === raw) ? (raw as Tab) : "requests";
 }
@@ -220,7 +229,7 @@ export function ApprovalQueue() {
                           Requested by {f.ignore_requested_by}: {f.ignore_requested_reason}
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
-                          {f.ignore_status === "approved" ? "Approved" : "Rejected"} by {f.ignore_reviewed_by}
+                          {DECISION_LABEL[f.ignore_status] || f.ignore_status} by {f.ignore_reviewed_by}
                           {f.ignore_reviewed_at ? ` · ${new Date(f.ignore_reviewed_at).toLocaleString()}` : ""}
                         </div>
                       </div>

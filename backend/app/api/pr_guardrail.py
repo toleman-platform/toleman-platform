@@ -350,12 +350,13 @@ def list_ignore_request_history(
     session: Session = Depends(get_session),
     user: User = Depends(require_security_reviewer),
 ):
-    """Already-decided ignore requests (approved or rejected), most recently
-    reviewed first -- the Approval Queue's own record of what it has already
-    ruled on, alongside the still-pending list above. Paginated for the same
-    reason the pending list is: this only grows over a workspace's lifetime."""
+    """Already-decided ignore requests (approved, rejected, or later
+    revoked), most recently reviewed first -- the Approval Queue's own
+    record of what it has already ruled on, alongside the still-pending
+    list above. Paginated for the same reason the pending list is: this
+    only grows over a workspace's lifetime."""
     base_query = select(PRGuardrailFinding).where(
-        PRGuardrailFinding.ignore_status.in_([IgnoreStatus.APPROVED, IgnoreStatus.REJECTED])
+        PRGuardrailFinding.ignore_status.in_([IgnoreStatus.APPROVED, IgnoreStatus.REJECTED, IgnoreStatus.REVOKED])
     )
     total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
     page = max(page, 1)
@@ -494,25 +495,28 @@ def revoke_ignore(
     user: User = Depends(require_security_reviewer),
 ):
     """Undo a previously-approved ignore -- a reviewer changed their mind, or
-    approved the wrong finding. Puts the finding back exactly where it was
-    before the approval (ignore_status NONE, no requested/reviewed metadata,
-    same shape as a finding nobody has ever acted on), and reverses
-    everything the approval itself did: a synced main Finding (if any) comes
-    back REOPENED, the PR comment's "approved to ignore" row reverts to a
-    live "request ignore" link (skipped once the PR is merged -- there's no
-    reviewer left to show it to), and the scan is re-evaluated in case this
-    was the one finding keeping it unblocked."""
+    approved the wrong finding. Marks the finding REVOKED (a distinct
+    terminal state from NONE: this row was acted on and the action was
+    walked back, which the Approval Queue's History tab needs to keep
+    showing rather than having the finding silently vanish from the record)
+    and reverses everything the approval itself did: a synced main Finding
+    (if any) comes back REOPENED, the PR comment's "approved to ignore" row
+    reverts to a live "request ignore" link (skipped once the PR is merged
+    -- there's no reviewer left to show it to), and the scan is
+    re-evaluated in case this was the one finding keeping it unblocked.
+    ignore_requested_by/reason are left as-is (the original request is
+    still real history); ignore_reviewed_by/at are overwritten with the
+    revoker's identity and timestamp, same "who made the latest decision"
+    meaning approve/reject already give those two fields."""
     finding = session.get(PRGuardrailFinding, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
     if finding.ignore_status != IgnoreStatus.APPROVED:
         raise HTTPException(status_code=400, detail="finding is not currently approved to ignore")
 
-    finding.ignore_status = IgnoreStatus.NONE
-    finding.ignore_requested_by = ""
-    finding.ignore_requested_reason = ""
-    finding.ignore_reviewed_by = ""
-    finding.ignore_reviewed_at = None
+    finding.ignore_status = IgnoreStatus.REVOKED
+    finding.ignore_reviewed_by = user.email
+    finding.ignore_reviewed_at = utcnow()
     session.add(finding)
     session.commit()
     session.refresh(finding)

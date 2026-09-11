@@ -34,6 +34,7 @@ const STATUS_LABEL: Record<IgnoreStatus, string> = {
   requested: "Requested — pending security review",
   approved: "Approved",
   rejected: "Rejected",
+  revoked: "Approval revoked",
 };
 
 export function IgnoreRequestClient({ prScanId, findingId }: { prScanId: number; findingId: number }) {

@@ -775,6 +775,14 @@ class IgnoreStatus(str, Enum):
     REQUESTED = "requested"
     APPROVED = "approved"
     REJECTED = "rejected"
+    # A previously-approved ignore that a reviewer later undid (see
+    # revoke_ignore, app/api/pr_guardrail.py). Deliberately its own terminal
+    # state rather than resetting back to NONE: a finding a reviewer never
+    # looked at and one whose approval was explicitly walked back are
+    # different facts, and the Approval Queue's History tab needs to keep
+    # showing the latter rather than having it silently vanish from the
+    # record the moment it's revoked.
+    REVOKED = "revoked"
 
 
 class PRGuardrailFinding(SQLModel, table=True):

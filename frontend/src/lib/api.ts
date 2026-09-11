@@ -1,3 +1,5 @@
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
+
 // Where the browser and the server each reach the backend.
 //
 // (Finding BLD-02) This used to be a single `const` reading
@@ -843,6 +845,7 @@ export type PrGuardrailScanResult = {
   new_findings: PrGuardrailFindingSummary[];
 };
 export type IgnoreStatus = "none" | "requested" | "approved" | "rejected";
+export type PrGuardrailFindingPage = { items: PrGuardrailFinding[]; total: number };
 export type PrGuardrailFinding = {
   id: number;
   pr_scan_id: number;
@@ -1614,10 +1617,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
-  getPendingIgnoreRequests: () =>
-    jsonFetch<PrGuardrailFinding[]>("/api/pr-guardrail/ignore-requests/pending"),
-  getIgnoreRequestHistory: () =>
-    jsonFetch<PrGuardrailFinding[]>("/api/pr-guardrail/ignore-requests/history"),
+  getPendingIgnoreRequests: (page = 1, pageSize = DEFAULT_PAGE_SIZE) =>
+    jsonFetch<PrGuardrailFindingPage>(
+      `/api/pr-guardrail/ignore-requests/pending?page=${page}&page_size=${pageSize}`,
+    ),
+  getIgnoreRequestHistory: (page = 1, pageSize = DEFAULT_PAGE_SIZE) =>
+    jsonFetch<PrGuardrailFindingPage>(
+      `/api/pr-guardrail/ignore-requests/history?page=${page}&page_size=${pageSize}`,
+    ),
   approveIgnore: (findingId: number) =>
     jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/approve-ignore`, { method: "POST" }),
   rejectIgnore: (findingId: number) =>

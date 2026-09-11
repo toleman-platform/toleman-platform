@@ -2,13 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, XCircle } from "lucide-react";
 import { api, ApiError, IgnoreStatus, NetworkError } from "@/lib/api";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/brand-mark";
 import { IGNORE_STATUS_COLOR } from "@/lib/severity";
 import { LINK_IGNORE_REASON } from "@/components/pr-guardrail-log";
+import { safeHref } from "@/lib/utils";
 
 // A "request ignore" link posted in a PR Guardrail comment used to point at
 // /pr-history, the full dashboard page: heavy sidebar layout, a live
@@ -36,12 +38,22 @@ const STATUS_LABEL: Record<IgnoreStatus, string> = {
 
 export function IgnoreRequestClient({ prScanId, findingId }: { prScanId: number; findingId: number }) {
   const [state, setState] = useState<State>({ phase: "loading" });
+  const [prUrl, setPrUrl] = useState<string | null>(null);
 
   useEffect(() => {
     async function run() {
       let findings;
       try {
-        findings = await api.getPrGuardrailFindings(prScanId);
+        // The scan-metadata lookup is a convenience (the "Back to PR" link
+        // below); its failure must not block the actual ignore-request flow,
+        // so it's caught on its own rather than folded into the same
+        // try/catch as the findings fetch.
+        const [findingsResult, scanMeta] = await Promise.all([
+          api.getPrGuardrailFindings(prScanId),
+          api.getPrGuardrailScan(prScanId).catch(() => null),
+        ]);
+        findings = findingsResult;
+        if (scanMeta) setPrUrl(scanMeta.pr_url);
       } catch (e) {
         setState({ phase: "error", message: describeError(e) });
         return;
@@ -131,7 +143,16 @@ export function IgnoreRequestClient({ prScanId, findingId }: { prScanId: number;
             </>
           )}
 
-          <Link href="/pr-history" className="mt-2 text-xs text-muted-foreground underline hover:text-foreground">
+          {prUrl && (state.phase === "done" || state.phase === "error" || state.phase === "not-found") && (
+            <Button size="sm" variant="outline" asChild className="mt-2 gap-1.5">
+              <a href={safeHref(prUrl)} target="_blank" rel="noopener noreferrer">
+                Back to PR
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+            </Button>
+          )}
+
+          <Link href="/pr-history" className="mt-1 text-xs text-muted-foreground underline hover:text-foreground">
             Go to PR History
           </Link>
         </CardContent>

@@ -1605,6 +1605,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ reason }),
     }),
+  getPrGuardrailScan: (prScanId: number) =>
+    jsonFetch<{ pr_number: number; pr_url: string | null }>(`/api/pr-guardrail/${prScanId}`),
   getPrGuardrailFindings: (prScanId: number) =>
     jsonFetch<PrGuardrailFinding[]>(`/api/pr-guardrail/${prScanId}/findings`),
   requestIgnoreFinding: (findingId: number, reason: string) =>
@@ -1614,6 +1616,8 @@ export const api = {
     }),
   getPendingIgnoreRequests: () =>
     jsonFetch<PrGuardrailFinding[]>("/api/pr-guardrail/ignore-requests/pending"),
+  getIgnoreRequestHistory: () =>
+    jsonFetch<PrGuardrailFinding[]>("/api/pr-guardrail/ignore-requests/history"),
   approveIgnore: (findingId: number) =>
     jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/approve-ignore`, { method: "POST" }),
   rejectIgnore: (findingId: number) =>

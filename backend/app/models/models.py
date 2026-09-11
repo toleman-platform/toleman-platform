@@ -1037,7 +1037,7 @@ class FalsePositiveRule(SQLModel, table=True):
     """A learned suppression rule (issue #76), created automatically the
     moment a user triages a Finding to FindingState.FALSE_POSITIVE (see
     app.core.fp_learning.learn_suppression_rule, called from
-    app.api.findings._apply_triage) and consumed at ingestion time
+    app.core.triage.apply_triage) and consumed at ingestion time
     (app.core.ingestion.ingest_findings) to auto-suppress newly-created
     Findings that match the same signature; so the same false positive
     doesn't have to be re-triaged every time it reappears, including in a

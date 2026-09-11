@@ -12,6 +12,9 @@ from app.core.pr_guardrail_executor import _severity_str, recompute_pr_scan_stat
 from app.core.security import create_session_token, hash_password
 from app.main import app
 from app.models.models import (
+    Finding,
+    FindingState,
+    FindingStateLog,
     IgnoreStatus,
     Organization,
     PRGuardrailFinding,
@@ -218,6 +221,52 @@ def test_pending_queue_only_shows_requested(client, engine):
     assert finding_id in ids
 
 
+def test_history_shows_approved_and_rejected_but_not_pending(client, engine):
+    _, approved_id = _make_pr_scan_and_finding(engine)
+    _, rejected_id = _make_pr_scan_and_finding(engine)
+    _, still_pending_id = _make_pr_scan_and_finding(engine)
+
+    # _login re-authenticates the same shared TestClient in place, so the
+    # dev's request-ignore call must happen before the final sec_client
+    # login that the closing GET below relies on (same ordering as
+    # test_pending_queue_only_shows_requested above).
+    dev_client = _login(client, engine, role=UserRole.DEVELOPER, email="dev2@example.com")
+    dev_client.post(f"/api/pr-guardrail/findings/{still_pending_id}/request-ignore", json={"reason": "fp"})
+
+    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    sec_client.post(f"/api/pr-guardrail/findings/{approved_id}/approve-ignore")
+    sec_client.post(f"/api/pr-guardrail/findings/{rejected_id}/reject-ignore")
+
+    res = sec_client.get("/api/pr-guardrail/ignore-requests/history")
+    assert res.status_code == 200
+    body = res.json()
+    ids = {f["id"] for f in body}
+    assert ids == {approved_id, rejected_id}
+    statuses = {f["id"]: f["ignore_status"] for f in body}
+    assert statuses[approved_id] == "approved"
+    assert statuses[rejected_id] == "rejected"
+
+
+def test_history_most_recently_reviewed_first(client, engine):
+    _, first_id = _make_pr_scan_and_finding(engine)
+    _, second_id = _make_pr_scan_and_finding(engine)
+    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    sec_client.post(f"/api/pr-guardrail/findings/{first_id}/approve-ignore")
+    sec_client.post(f"/api/pr-guardrail/findings/{second_id}/approve-ignore")
+
+    res = sec_client.get("/api/pr-guardrail/ignore-requests/history")
+    assert res.status_code == 200
+    ids_in_order = [f["id"] for f in res.json()]
+    assert ids_in_order[0] == second_id
+    assert ids_in_order[1] == first_id
+
+
+def test_only_security_reviewers_can_read_history(client, engine):
+    client = _login(client, engine, role=UserRole.USER)
+    res = client.get("/api/pr-guardrail/ignore-requests/history")
+    assert res.status_code == 403
+
+
 def test_list_findings_for_a_scan(client, engine):
     # ADMIN bypasses workspace scoping (accessible_workspace_ids returns
     # None); this test's scan targets target_id=1, which doesn't exist as
@@ -329,3 +378,73 @@ def test_approve_ignore_endpoint_unblocks_pr_end_to_end(client, engine, monkeypa
     with Session(engine) as session:
         scan = session.get(PRGuardrailScan, scan_id)
         assert scan.status == PRGuardrailStatus.PASSED
+
+
+def _make_main_finding(engine, target_id: int, state=FindingState.OPEN, branch="main", **overrides) -> int:
+    fields = dict(
+        target_id=target_id, dedup_hash="whatever", tool="semgrep", rule_id="rule-0",
+        title="weak crypto", file_path="a.py", line_start=10, severity=Severity.CRITICAL,
+        branch=branch, state=state,
+    )
+    fields.update(overrides)
+    with Session(engine) as session:
+        finding = Finding(**fields)
+        session.add(finding)
+        session.commit()
+        session.refresh(finding)
+        return finding.id
+
+
+def test_approving_ignore_immediately_accepts_the_matching_main_finding(client, engine, monkeypatch):
+    """#... : a reviewer approving a PR Guardrail ignore request is a real
+    triage decision. If the same vulnerability already exists as a
+    main-table Finding (matched on tool/rule_id/file_path/line_start on the
+    target's default branch), it must flip to Accepted Risk right away --
+    not sit Open until whatever the next full scan happens to be."""
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    main_finding_id = _make_main_finding(engine, target_id)
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+    assert res.status_code == 200
+
+    with Session(engine) as session:
+        main_finding = session.get(Finding, main_finding_id)
+        assert main_finding.state == FindingState.ACCEPTED_RISK
+        logs = session.exec(select(FindingStateLog).where(FindingStateLog.finding_id == main_finding_id)).all()
+        assert len(logs) == 1
+        assert logs[0].from_state == FindingState.OPEN
+        assert logs[0].to_state == FindingState.ACCEPTED_RISK
+        assert logs[0].actor == "security_engineer@example.com"
+
+
+def test_approving_ignore_does_not_touch_a_finding_on_a_non_default_branch(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)  # default_branch defaults to "main"
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    other_branch_finding_id = _make_main_finding(engine, target_id, branch="some-other-branch")
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+    assert res.status_code == 200
+
+    with Session(engine) as session:
+        assert session.get(Finding, other_branch_finding_id).state == FindingState.OPEN
+
+
+def test_approving_ignore_does_not_reopen_an_already_resolved_finding(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    resolved_id = _make_main_finding(engine, target_id, state=FindingState.FALSE_POSITIVE)
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+    assert res.status_code == 200
+
+    with Session(engine) as session:
+        # Left exactly as a human already triaged it, not silently
+        # reclassified as Accepted Risk underneath them.
+        assert session.get(Finding, resolved_id).state == FindingState.FALSE_POSITIVE

@@ -26,7 +26,18 @@ from app.core.pr_guardrail_executor import (
 )
 from app.core.staleness import mark_stale_if_needed
 from app.core.time import utcnow
-from app.models.models import IgnoreStatus, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target, User, WorkspaceRole
+from app.core.triage import apply_triage
+from app.models.models import (
+    Finding,
+    FindingState,
+    IgnoreStatus,
+    PRGuardrailFinding,
+    PRGuardrailScan,
+    PRGuardrailStatus,
+    Target,
+    User,
+    WorkspaceRole,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +270,20 @@ def pr_guardrail_log(
     return {"scans": [_scan_out(s, target_by_id) for s in scans], "stats": stats}
 
 
+@router.get("/{pr_scan_id}")
+def get_pr_guardrail_scan(
+    pr_scan_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Minimal scan metadata for surfaces that only have a pr_scan_id in
+    hand -- currently just the originating PR's GitHub URL, for the
+    /ignore-request confirmation page's "back to PR" link."""
+    pr_scan = _get_pr_scan_scoped(pr_scan_id, session, user)
+    target = session.get(Target, pr_scan.target_id)
+    return {"pr_number": pr_scan.pr_number, "pr_url": _pr_url(target, pr_scan.pr_number)}
+
+
 @router.get("/{pr_scan_id}/findings")
 def list_pr_guardrail_findings(
     pr_scan_id: int,
@@ -306,6 +331,58 @@ def list_pending_ignore_requests(
     return [_finding_out(f) for f in findings]
 
 
+@router.get("/ignore-requests/history")
+def list_ignore_request_history(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_security_reviewer),
+):
+    """Already-decided ignore requests (approved or rejected), most recently
+    reviewed first -- the Approval Queue's own record of what it has already
+    ruled on, alongside the still-pending list above."""
+    findings = session.exec(
+        select(PRGuardrailFinding)
+        .where(PRGuardrailFinding.ignore_status.in_([IgnoreStatus.APPROVED, IgnoreStatus.REJECTED]))
+        .order_by(PRGuardrailFinding.ignore_reviewed_at.desc())
+    ).all()
+    return [_finding_out(f) for f in findings]
+
+
+def _sync_approved_ignore_to_main_findings(
+    session: Session, pr_finding: PRGuardrailFinding, target: Target, pr_number: int, actor: str
+) -> None:
+    """A security reviewer approving a PR Guardrail ignore request is a
+    real, final triage decision -- the same decision "Accept Risk" on the
+    main Findings page represents. If the same vulnerability already exists
+    as a main-table Finding on this target's default branch (most often:
+    the PR that raised it already merged and a full scan already ingested
+    it, or an older scan already found it independently), that Finding must
+    reflect the approval immediately, not sit OPEN until whatever the next
+    scan happens to be. Matched on (tool, rule_id, file_path, line_start)
+    rather than dedup_hash: PRGuardrailFinding doesn't persist the snippet
+    dedup_hash is built from, so reproducing that hash isn't reliable, and
+    this triple is what actually identifies "the same finding" here.
+    Only touches rows still OPEN/REOPENED; a Finding already resolved some
+    other way is left alone."""
+    query = select(Finding).where(
+        Finding.target_id == target.id,
+        Finding.branch == target.default_branch,
+        Finding.tool == pr_finding.tool,
+        Finding.rule_id == pr_finding.rule_id,
+        Finding.file_path == pr_finding.file_path,
+        Finding.state.in_([FindingState.OPEN, FindingState.REOPENED]),
+    )
+    query = query.where(Finding.line_start.is_(None) if pr_finding.line_start is None else Finding.line_start == pr_finding.line_start)
+    matches = session.exec(query).all()
+    for f in matches:
+        apply_triage(
+            f,
+            FindingState.ACCEPTED_RISK,
+            reason=f"Ignore approved via PR Guardrail (PR #{pr_number})",
+            actor=actor,
+            session=session,
+        )
+
+
 @router.post("/findings/{finding_id}/approve-ignore")
 def approve_ignore(
     finding_id: int,
@@ -327,6 +404,10 @@ def approve_ignore(
     # blunt whole-scan override used to be the only way out of that.
     pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
     if pr_scan:
+        target = session.get(Target, pr_scan.target_id)
+        if target:
+            _sync_approved_ignore_to_main_findings(session, finding, target, pr_scan.pr_number, actor=user.email)
+            session.commit()
         recompute_pr_scan_status(session, pr_scan)
 
     return _finding_out(finding)

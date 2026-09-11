@@ -2,7 +2,7 @@
 
 Covers both halves of the feature:
   1. Triaging a Finding to FALSE_POSITIVE learns a FalsePositiveRule
-     (app.api.findings._apply_triage -> app.core.fp_learning.learn_suppression_rule).
+     (app.core.triage.apply_triage -> app.core.fp_learning.learn_suppression_rule).
   2. ingest_findings auto-suppresses a NEW finding matching a learned rule's
      signature (rule_id + tool + file basename), including across two
      *different* Targets in the same Workspace (the "cross-repo" case the

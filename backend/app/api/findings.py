@@ -11,11 +11,11 @@ from sqlmodel import Session, func, or_, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
 from app.core.cve_enrichment import get_cve_enrichment
-from app.core.fp_learning import learn_suppression_rule
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
 from app.core.remediation import group_remediations
 from app.core.time import utcnow
+from app.core.triage import apply_triage
 from app.core.fixability import (
     UNKNOWN,
     VALID_FIXABILITY,
@@ -161,42 +161,6 @@ class FindingEnrichmentResponse(BaseModel):
     references: list[str] | None = None
     fix_versions: list[dict] | None = None
     fetched_at: datetime | None = None
-
-
-def _apply_triage(
-    finding: Finding,
-    to_state: FindingState,
-    reason: str,
-    actor: str,
-    session: Session,
-    batch_id: str | None = None,
-) -> Finding:
-    """Shared single-finding state-transition + audit-log logic, used by
-    both the single triage endpoint and the bulk triage endpoint.
-
-    batch_id (issue #123) tags every FindingStateLog row written by the same
-    bulk-triage call so the Audit Log can collapse them into one grouped feed
-    item at read time instead of flooding the feed with N near-identical
-    rows. None for single-finding triage."""
-    log = FindingStateLog(
-        finding_id=finding.id, from_state=finding.state, to_state=to_state, reason=reason, actor=actor, batch_id=batch_id
-    )
-    finding.state = to_state
-    session.add(finding)
-    session.add(log)
-    if to_state == FindingState.FALSE_POSITIVE:
-        # Issue #76: teach the false-positive learning engine right at the
-        # moment a human marks this as noise, so the same shape of finding
-        # (same rule_id+tool+file basename) is auto-suppressed on future
-        # ingestion; including in a different repo within this workspace.
-        # Best-effort: a learning failure must never block the triage action
-        # itself, same "never break the primary action" philosophy as the
-        # Jira/notification hooks in app.core.ingestion.
-        try:
-            learn_suppression_rule(session, finding, actor=actor)
-        except Exception:
-            logger.exception("learn_suppression_rule failed for finding %s", finding.id)
-    return finding
 
 
 @router.get("")
@@ -460,7 +424,7 @@ def bulk_triage_findings(
         # rather than once, the same reason create_target checks explicitly
         # instead of using require_workspace_role (see its comment).
         enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, finding_id=finding_id)
-        updated.append(_apply_triage(finding, payload.to_state, payload.reason, payload.actor, session, batch_id=batch_id))
+        updated.append(apply_triage(finding, payload.to_state, payload.reason, payload.actor, session, batch_id=batch_id))
     session.commit()
     for finding in updated:
         session.refresh(finding)
@@ -479,7 +443,7 @@ def triage_finding(
     finding = session.get(Finding, finding_id)
     if not finding:
         return {"error": "not found"}
-    _apply_triage(finding, to_state, reason, actor, session)
+    apply_triage(finding, to_state, reason, actor, session)
     session.commit()
     session.refresh(finding)
     return finding

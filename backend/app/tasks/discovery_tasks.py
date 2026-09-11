@@ -1,7 +1,7 @@
 import logging
 import subprocess
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.core.db import engine
 from app.core.discovery_ingestion import upsert_endpoints
@@ -80,13 +80,13 @@ def run_discovery(self, target_id: int, run_id: int):
             discovered = discover_endpoints(repo_path)
             new_endpoints = upsert_endpoints(session, target_id, target.default_branch, discovered)
 
-            all_count = len(
-                session.exec(
-                    select(ApiEndpoint).where(
-                        ApiEndpoint.target_id == target_id, ApiEndpoint.branch == target.default_branch
-                    )
-                ).all()
-            )
+            all_count = session.exec(
+                select(func.count()).select_from(
+                    select(ApiEndpoint)
+                    .where(ApiEndpoint.target_id == target_id, ApiEndpoint.branch == target.default_branch)
+                    .subquery()
+                )
+            ).one()
 
             run.status = "completed"
             run.count = all_count

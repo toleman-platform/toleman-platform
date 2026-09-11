@@ -16,7 +16,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.api.auth import accessible_workspace_ids, current_api_token_user, require_api_token_write_scope
 from app.api.deps import get_session
@@ -111,7 +111,7 @@ def list_findings(
         if state is not None:
             query = query.where(Finding.state == state)
 
-        total = len(session.exec(query).all())
+        total = session.exec(select(func.count()).select_from(query.subquery())).one()
         page_size = max(1, min(page_size, 100))
         items = session.exec(query.offset((max(page, 1) - 1) * page_size).limit(page_size)).all()
         result = {"items": items, "total": total}

@@ -40,6 +40,20 @@ describe("proxy (session-aware routing)", () => {
     expect(fetchMock).not.toHaveBeenCalled(); // no cookie at all; no need to hit the backend
   });
 
+  it("preserves the query string in the post-login \"next\" redirect (#385/#393 deep links)", async () => {
+    // pr_guardrail_executor.py's "view"/"request ignore" PR-comment links
+    // carry target_id/pr_scan_id/ignore_finding as query params (#393); if
+    // an unauthenticated visitor's first hit is one of those links, this
+    // query string must survive the login round-trip or the page falls
+    // back to whichever target happens to be first in their list instead
+    // of the one the link was actually for.
+    const res = await proxy(makeRequest("/pr-history?target_id=2&ignore_finding=144"));
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe(
+      "http://localhost:3000/login?next=%2Fpr-history%3Ftarget_id%3D2%26ignore_finding%3D144",
+    );
+  });
+
   it("does not redirect a request with no cookie on /login itself", async () => {
     const res = await proxy(makeRequest("/login"));
     expect(res.status).not.toBe(307);

@@ -44,7 +44,13 @@ export async function proxy(request: NextRequest) {
 
   if (!validSession && !isPublic) {
     const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("next", pathname);
+    // #385/#393's deep links carry target_id/pr_scan_id/ignore_finding in
+    // the query string -- pathname alone drops them, so a visitor whose
+    // session had already expired (or who'd never logged in) landed back
+    // on a bare /pr-history after signing in, silently defaulting to
+    // whichever target happened to be first in their list instead of the
+    // one the link was actually for.
+    loginUrl.searchParams.set("next", pathname + request.nextUrl.search);
     const response = NextResponse.redirect(loginUrl);
     // Clear the stale/invalid cookie so it isn't resent on every subsequent
     // request (and so it can't shadow a later, genuinely valid login).

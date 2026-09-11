@@ -24,16 +24,32 @@ os.environ["TOLEMAN_API_URL"] = "http://localhost:8000"
 import server  # noqa: E402
 
 
-def _stdio_ctx():
-    """A Context with no live HTTP request, same shape stdio mode gets."""
-    return SimpleNamespace(request_context=SimpleNamespace(request=None))
+def _stdio_ctx(client_name: str = "claude-code", client_version: str = "1.0.0"):
+    """A Context with no live HTTP request, same shape stdio mode gets.
+    session.client_params IS populated here -- stdio does one real MCP
+    `initialize` handshake per process lifetime, so the client's declared
+    clientInfo is genuinely available (see server.py's _resolve_agent)."""
+    client_params = SimpleNamespace(clientInfo=SimpleNamespace(name=client_name, version=client_version))
+    return SimpleNamespace(
+        request_context=SimpleNamespace(request=None, session=SimpleNamespace(client_params=client_params))
+    )
 
 
-def _http_ctx(authorization: str | None):
+def _http_ctx(authorization: str | None, user_agent: str | None = "test-mcp-client/1.0"):
     """A Context carrying a fake incoming HTTP request, same shape
-    streamable-http mode gets (see server.py's _resolve_token)."""
+    streamable-http mode gets (see server.py's _resolve_token/_resolve_agent).
+    session.client_params is None here -- this server runs with
+    stateless_http=True, which never actually processes a real `initialize`
+    request per tool call (see _resolve_agent's docstring), so a real
+    deployment never has it populated in this mode either."""
     headers = {} if authorization is None else {"authorization": authorization}
-    return SimpleNamespace(request_context=SimpleNamespace(request=SimpleNamespace(headers=headers)))
+    if user_agent is not None:
+        headers["user-agent"] = user_agent
+    return SimpleNamespace(
+        request_context=SimpleNamespace(
+            request=SimpleNamespace(headers=headers), session=SimpleNamespace(client_params=None)
+        )
+    )
 
 
 STDIO_CTX = _stdio_ctx()
@@ -256,6 +272,33 @@ def test_resolve_token_rejects_a_non_bearer_authorization_header_over_http():
     from mcp.server.fastmcp.exceptions import ToolError
     with pytest.raises(ToolError, match="Authorization"):
         server._resolve_token(_http_ctx("Basic dXNlcjpwYXNz"))
+
+
+# ---------------------------------------------------------------------------
+# _resolve_agent: stdio (real MCP clientInfo, since stdio does one genuine
+# `initialize` handshake per process) vs streamable-http (User-Agent header
+# -- client_params is never populated there, this server runs with
+# stateless_http=True, see server.py's _resolve_agent docstring).
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_agent_uses_mcp_client_info_over_stdio():
+    assert server._resolve_agent(_stdio_ctx("claude-code", "2.1.268")) == "claude-code/2.1.268"
+
+
+def test_resolve_agent_uses_the_user_agent_header_over_http():
+    assert server._resolve_agent(_http_ctx("Bearer x", user_agent="claude-connector/1.0")) == "claude-connector/1.0"
+
+
+def test_resolve_agent_falls_back_to_unknown_with_no_user_agent_header():
+    assert server._resolve_agent(_http_ctx("Bearer x", user_agent=None)) == "unknown"
+
+
+@respx.mock
+def test_list_targets_forwards_agent_as_a_header():
+    route = respx.get("http://localhost:8000/api/public/v1/targets").mock(return_value=httpx.Response(200, json=[]))
+    server.list_targets(_http_ctx("Bearer x", user_agent="claude-code/2.1.268"))
+    assert route.calls.last.request.headers["x-mcp-agent"] == "claude-code/2.1.268"
 
 
 @respx.mock

@@ -32,6 +32,7 @@ export function AuditLogFilterBar({ actors }: { actors: string[] }) {
         <option value="">All event types</option>
         <option value="triage">Triage</option>
         <option value="scan">Scan</option>
+        <option value="mcp">MCP / API token</option>
       </select>
 
       <select

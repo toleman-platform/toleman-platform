@@ -12,6 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
+from app.core.mcp_audit import log_mcp_action
 from app.core.security import create_session_token, hash_password
 from app.core.time import utcnow
 from app.main import app
@@ -74,6 +75,15 @@ def _make_target(engine, name="Target A") -> int:
         session.commit()
         session.refresh(target)
         return target.id
+
+
+def _make_user(engine, email) -> int:
+    with Session(engine) as session:
+        user = User(email=email, name=email, password_hash=hash_password("whatever123"))
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user.id
 
 
 def _make_finding(engine, target_id, **overrides) -> int:
@@ -291,3 +301,94 @@ def test_list_actors(client, engine):
     resp = client.get("/api/audit/actors")
     assert resp.status_code == 200
     assert set(resp.json()) == {"alice", "bob"}
+
+
+# ---------------------------------------------------------------------------
+# McpAuditLog (issue #108 follow-up): app.core.mcp_audit.log_mcp_action rows
+# show up in this same feed as event_type="mcp" -- who (the token's owner)
+# and what agent software did what over /api/public/v1/*.
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_action_appears_in_audit_log(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id)
+    uid = _make_user(engine, "mcp-caller@example.com")
+
+    with Session(engine) as session:
+        user = session.get(User, uid)
+        log_mcp_action(
+            session, user, agent="claude-code/2.1.268", tool="raise_fix_pr",
+            summary="opened PR https://github.com/a/b/pull/1 for finding #1 (strategy=mcp_client)",
+            target_id=target_id, finding_id=finding_id,
+        )
+
+    resp = client.get("/api/audit/log", params={"event_type": "mcp"})
+    body = resp.json()
+    assert body["total"] == 1
+    event = body["items"][0]
+    assert event["type"] == "mcp"
+    assert event["actor"] == "mcp-caller@example.com"
+    assert "[raise_fix_pr]" in event["summary"]
+    assert "opened PR" in event["summary"]
+    assert event["reason"] == "via claude-code/2.1.268"
+
+
+def test_mcp_action_failure_is_visible_in_summary_and_reason(client, engine):
+    _login(client, engine)
+    uid = _make_user(engine, "mcp-caller@example.com")
+
+    with Session(engine) as session:
+        user = session.get(User, uid)
+        log_mcp_action(
+            session, user, agent="claude-code/2.1.268", tool="raise_fix_pr",
+            summary="failed to open PR for finding #1 (strategy=mcp_client)",
+            success=False, error="no GitHub App installed",
+        )
+
+    resp = client.get("/api/audit/log", params={"event_type": "mcp"})
+    event = resp.json()["items"][0]
+    assert "(failed)" in event["summary"]
+    assert "no GitHub App installed" in event["reason"]
+
+
+def test_mcp_events_excluded_by_a_different_event_type_filter(client, engine):
+    _login(client, engine)
+    uid = _make_user(engine, "mcp-caller@example.com")
+    with Session(engine) as session:
+        user = session.get(User, uid)
+        log_mcp_action(session, user, agent="claude-code", tool="list_targets", summary="listed 0 target(s)")
+
+    resp = client.get("/api/audit/log", params={"event_type": "triage"})
+    assert resp.json()["total"] == 0
+
+    resp2 = client.get("/api/audit/log")  # no filter: mcp rows still included
+    assert any(e["type"] == "mcp" for e in resp2.json()["items"])
+
+
+def test_mcp_actor_filter_matches_by_user_email(client, engine):
+    _login(client, engine)
+    uid_a = _make_user(engine, "alice-mcp@example.com")
+    uid_b = _make_user(engine, "bob-mcp@example.com")
+    with Session(engine) as session:
+        log_mcp_action(session, session.get(User, uid_a), agent="claude-code", tool="list_targets", summary="listed 0 target(s)")
+        log_mcp_action(session, session.get(User, uid_b), agent="claude-code", tool="list_targets", summary="listed 0 target(s)")
+
+    resp = client.get("/api/audit/log", params={"actor": "alice-mcp@example.com"})
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["actor"] == "alice-mcp@example.com"
+
+
+def test_list_actors_includes_mcp_only_users(client, engine):
+    """A user who has only ever acted through an MCP token (never triaged a
+    finding in the UI) has no FindingStateLog row at all -- list_actors
+    must still surface them, not just triage actors."""
+    _login(client, engine)
+    uid = _make_user(engine, "mcp-only@example.com")
+    with Session(engine) as session:
+        log_mcp_action(session, session.get(User, uid), agent="claude-code", tool="list_targets", summary="listed 0 target(s)")
+
+    resp = client.get("/api/audit/actors")
+    assert "mcp-only@example.com" in resp.json()

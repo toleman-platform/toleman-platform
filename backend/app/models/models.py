@@ -356,6 +356,43 @@ class SnippetScanRun(SQLModel, table=True):
     completed_at: Optional[datetime] = None
 
 
+class McpAuditLog(SQLModel, table=True):
+    """One call to app.api.public_api (issue #108 follow-up) -- every
+    endpoint there is reachable by an ApiToken, and the Toleman MCP server
+    is the intended, primary caller, so this doubles as "MCP audit log"
+    without needing a separate table per API-token integration. Written by
+    app.core.mcp_audit.log_mcp_action, one call site per public_api.py
+    endpoint (same "single write-path function, many explicit call sites"
+    convention as app.core.auth_audit.log_auth_event).
+
+    `user_id` is the token's owner (current_api_token_user already
+    resolves this on every call, so it costs nothing extra to capture).
+    `agent` is best-effort caller *software* identity, not a person: for
+    the streamable-http transport (Toleman's own deployed MCP server) it's
+    the MCP client's own User-Agent header, forwarded by mcp-server as
+    X-MCP-Agent since stateless_http mode never runs a real MCP
+    initialize handshake per HTTP request (so ctx.session.client_params is
+    always None there -- see server.py's _resolve_agent for the full
+    reasoning); for stdio mode it's the real MCP clientInfo name/version,
+    since stdio *does* do one real handshake per process lifetime. Falls
+    back to "unknown" for a bare API-token script that isn't the MCP
+    server at all (no X-MCP-Agent header sent).
+
+    `target_id`/`finding_id` are nullable -- not every action is scoped to
+    one (list_targets isn't scoped to any; suggest_fix/raise_fix_pr are
+    scoped to a finding); left blank rather than forced to a sentinel."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    agent: str = "unknown"
+    tool: str = Field(index=True)  # "list_targets", "raise_fix_pr", ...
+    summary: str = ""
+    target_id: Optional[int] = Field(default=None, foreign_key="target.id")
+    finding_id: Optional[int] = Field(default=None, foreign_key="finding.id")
+    success: bool = True
+    error: str = ""
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class ToolInstallRun(SQLModel, table=True):
     """One admin-triggered scanner install (#216).
 

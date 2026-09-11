@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -22,6 +22,7 @@ from app.api.auth import accessible_workspace_ids, current_api_token_user, requi
 from app.api.deps import get_session
 from app.core.async_jobs import create_running_row
 from app.core.autofix import AutofixError, Patch, open_fix_pr, suggest_fix
+from app.core.mcp_audit import log_mcp_action
 from app.core.rate_limit import enforce_rate_limit
 from app.models.models import Finding, Scan, SnippetScanRun, Target, User
 from app.scanners import parsers
@@ -32,6 +33,15 @@ from app.tasks.snippet_scan_tasks import run_snippet_scan
 router = APIRouter(prefix="/api/public/v1", tags=["public-api"])
 
 PARSER_MAP = parsers.PARSER_MAP
+
+
+def mcp_agent(request: Request) -> str:
+    """Best-effort caller-*software* identity (not a person -- `user` above
+    already identifies who). Forwarded by mcp-server as the X-MCP-Agent
+    header (see server.py's _resolve_agent for why it can't be read off
+    the MCP session itself in streamable-http mode); "unknown" for a bare
+    API-token script that isn't the MCP server at all."""
+    return request.headers.get("x-mcp-agent", "unknown")
 
 
 def _get_target_scoped(target_id: int, session: Session, user: User) -> Target:
@@ -45,19 +55,35 @@ def _get_target_scoped(target_id: int, session: Session, user: User) -> Target:
 
 
 @router.get("/targets")
-def list_targets(session: Session = Depends(get_session), user: User = Depends(current_api_token_user)):
+def list_targets(
+    session: Session = Depends(get_session),
+    user: User = Depends(current_api_token_user),
+    agent: str = Depends(mcp_agent),
+):
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
-        return []
-    query = select(Target)
-    if ws_ids is not None:
-        query = query.where(Target.workspace_id.in_(ws_ids))
-    return session.exec(query).all()
+        targets = []
+    else:
+        query = select(Target)
+        if ws_ids is not None:
+            query = query.where(Target.workspace_id.in_(ws_ids))
+        targets = session.exec(query).all()
+    log_mcp_action(session, user, agent=agent, tool="list_targets", summary=f"listed {len(targets)} target(s)")
+    return targets
 
 
 @router.get("/targets/{target_id}")
-def get_target(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_api_token_user)):
-    return _get_target_scoped(target_id, session, user)
+def get_target(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_api_token_user),
+    agent: str = Depends(mcp_agent),
+):
+    target = _get_target_scoped(target_id, session, user)
+    log_mcp_action(
+        session, user, agent=agent, tool="get_target", summary=f"viewed target: {target.name}", target_id=target.id
+    )
+    return target
 
 
 @router.get("/findings")
@@ -69,44 +95,72 @@ def list_findings(
     page_size: int = 25,
     session: Session = Depends(get_session),
     user: User = Depends(current_api_token_user),
+    agent: str = Depends(mcp_agent),
 ):
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
-        return {"items": [], "total": 0}
+        result = {"items": [], "total": 0}
+    else:
+        query = select(Finding)
+        if ws_ids is not None:
+            query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
+        if target_id is not None:
+            query = query.where(Finding.target_id == target_id)
+        if severity is not None:
+            query = query.where(Finding.severity == severity)
+        if state is not None:
+            query = query.where(Finding.state == state)
 
-    query = select(Finding)
-    if ws_ids is not None:
-        query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
-    if target_id is not None:
-        query = query.where(Finding.target_id == target_id)
-    if severity is not None:
-        query = query.where(Finding.severity == severity)
-    if state is not None:
-        query = query.where(Finding.state == state)
-
-    total = len(session.exec(query).all())
-    page_size = max(1, min(page_size, 100))
-    items = session.exec(query.offset((max(page, 1) - 1) * page_size).limit(page_size)).all()
-    return {"items": items, "total": total}
+        total = len(session.exec(query).all())
+        page_size = max(1, min(page_size, 100))
+        items = session.exec(query.offset((max(page, 1) - 1) * page_size).limit(page_size)).all()
+        result = {"items": items, "total": total}
+    filters = ", ".join(
+        f"{k}={v}" for k, v in [("target_id", target_id), ("severity", severity), ("state", state)] if v is not None
+    )
+    log_mcp_action(
+        session, user, agent=agent, tool="list_findings",
+        summary=f"listed findings ({filters or 'no filters'}) -> {result['total']} total",
+        target_id=target_id,
+    )
+    return result
 
 
 @router.get("/findings/{finding_id}")
-def get_finding(finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_api_token_user)):
+def get_finding(
+    finding_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_api_token_user),
+    agent: str = Depends(mcp_agent),
+):
     finding = session.get(Finding, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
     # A finding has no workspace_id of its own, scope via its target,
     # same 404-shaped hiding as every other workspace-owned resource.
     _get_target_scoped(finding.target_id, session, user)
+    log_mcp_action(
+        session, user, agent=agent, tool="get_finding", summary=f"viewed finding #{finding.id}: {finding.title}",
+        target_id=finding.target_id, finding_id=finding.id,
+    )
     return finding
 
 
 @router.get("/scans/{scan_id}")
-def get_scan(scan_id: int, session: Session = Depends(get_session), user: User = Depends(current_api_token_user)):
+def get_scan(
+    scan_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_api_token_user),
+    agent: str = Depends(mcp_agent),
+):
     scan = session.get(Scan, scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail="scan not found")
     _get_target_scoped(scan.target_id, session, user)
+    log_mcp_action(
+        session, user, agent=agent, tool="get_scan_status",
+        summary=f"checked scan #{scan.id} status: {scan.status}", target_id=scan.target_id,
+    )
     return scan
 
 
@@ -124,6 +178,7 @@ def trigger_scan(
     session: Session = Depends(get_session),
     user: User = Depends(current_api_token_user),
     _write_scope: None = Depends(require_api_token_write_scope),
+    agent: str = Depends(mcp_agent),
 ):
     """Requires a read_write-scoped token (see require_api_token_write_scope);
     the default token scope is read-only, so a caller must have
@@ -153,6 +208,10 @@ def trigger_scan(
 
     run_scan.delay(target_id=target.id, tool=tool, scan_id=scan.id)
 
+    log_mcp_action(
+        session, user, agent=agent, tool="trigger_scan",
+        summary=f"triggered {tool} scan on target {target.name} (scan #{scan.id})", target_id=target.id,
+    )
     return {"scan_id": scan.id, "status": scan.status}
 
 
@@ -191,7 +250,10 @@ class RaiseFixPrRequest(BaseModel):
 
 @router.post("/findings/{finding_id}/suggest-fix")
 def suggest_fix_endpoint(
-    finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_api_token_user)
+    finding_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_api_token_user),
+    agent: str = Depends(mcp_agent),
 ) -> SuggestFixResponse:
     """Read-scoped: never writes anywhere, same permission level as every
     other GET-shaped endpoint on this router."""
@@ -199,7 +261,14 @@ def suggest_fix_endpoint(
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
     _get_target_scoped(finding.target_id, session, user)
-    return SuggestFixResponse(**suggest_fix(session, finding))
+    response = SuggestFixResponse(**suggest_fix(session, finding))
+    log_mcp_action(
+        session, user, agent=agent, tool="suggest_fix",
+        summary=f"requested fix suggestion for finding #{finding.id}"
+                + (f" (strategy={response.strategy})" if response.strategy else " (no patch built)"),
+        target_id=finding.target_id, finding_id=finding.id,
+    )
+    return response
 
 
 @router.post("/findings/{finding_id}/raise-pr")
@@ -209,6 +278,7 @@ def raise_fix_pr_endpoint(
     session: Session = Depends(get_session),
     user: User = Depends(current_api_token_user),
     _write_scope: None = Depends(require_api_token_write_scope),
+    agent: str = Depends(mcp_agent),
 ) -> dict:
     """Requires a read_write-scoped token (writes a branch/PR to the
     target's real GitHub repo). `file_path` must match the finding's own
@@ -230,9 +300,21 @@ def raise_fix_pr_endpoint(
         explanation=payload.explanation,
     )
     try:
-        return open_fix_pr(session, target, finding, patch)
+        result = open_fix_pr(session, target, finding, patch)
     except AutofixError as exc:
+        log_mcp_action(
+            session, user, agent=agent, tool="raise_fix_pr",
+            summary=f"failed to open PR for finding #{finding.id} (strategy={payload.strategy})",
+            target_id=finding.target_id, finding_id=finding.id, success=False, error=str(exc),
+        )
         raise HTTPException(status_code=502, detail=str(exc))
+
+    log_mcp_action(
+        session, user, agent=agent, tool="raise_fix_pr",
+        summary=f"opened PR {result['pr_url']} for finding #{finding.id} (strategy={payload.strategy})",
+        target_id=finding.target_id, finding_id=finding.id,
+    )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +380,7 @@ def create_snippet_scan(
     payload: ScanSnippetRequest,
     session: Session = Depends(get_session),
     user: User = Depends(current_api_token_user),
+    agent: str = Depends(mcp_agent),
 ) -> dict:
     """Read-scoped: this never touches a real target/repo, so no elevated
     token scope is required, same reasoning as suggest-fix above."""
@@ -323,6 +406,15 @@ def create_snippet_scan(
         session, SnippetScanRun(user_id=user.id, filename=payload.filename, status="running")
     )
     run_snippet_scan.delay(run_id=run.id, filename=payload.filename, content=payload.content, tools=tools)
+    # Logged once here, not on GET /scan-snippet/{run_id} below -- the MCP
+    # tool polls that endpoint in a loop until the run completes (see
+    # mcp-server/server.py's check_code_for_vulnerabilities), and logging
+    # every poll iteration would flood the audit trail with near-duplicate
+    # rows for what is, from the caller's side, one action.
+    log_mcp_action(
+        session, user, agent=agent, tool="check_code_for_vulnerabilities",
+        summary=f"submitted snippet scan for {payload.filename} (tools={', '.join(tools)})",
+    )
     return {"run_id": run.id, "status": run.status}
 
 

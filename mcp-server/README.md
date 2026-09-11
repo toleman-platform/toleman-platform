@@ -140,6 +140,18 @@ automatically (`.claude/settings.json` pre-trusts it via
 *starts* — adding or changing `TOLEMAN_API_TOKEN` takes effect on the next
 new session, not the one already running.
 
+## Audit logging
+
+Every call through this server is logged on the Toleman side (`GET
+/api/audit/log?event_type=mcp` / the Audit Log page's "MCP / API token"
+filter): who (the token's owner), what agent software (best-effort --
+Claude Code, Claude Desktop, whatever sent the request; see `_resolve_agent`
+in `server.py` for how this is determined, and why it's not simply read off
+the MCP session itself in remote mode), which tool, and a short summary of
+what happened. Nothing about a call's *content* (finding titles, diffs,
+scanned code) is logged beyond what the summary needs to be useful on its
+own -- this is an access trail, not a full request/response log.
+
 ## Development
 
 ```bash

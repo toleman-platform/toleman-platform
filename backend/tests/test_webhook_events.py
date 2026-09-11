@@ -10,10 +10,16 @@ own Recent Deliveries page -- zero push deliveries across dozens of real
 pushes/merges in the same window pull_request deliveries for those same
 commits arrived fine for), so pull_request.closed(merged=true) is now a
 second, more reliable trigger for the same "reflect a merged fix" goal.
+
+And TestPullRequestHandler (#401): the ordinary opened/reopened/synchronize
+trigger now creates the PRGuardrailScan row itself, synchronously, before
+dispatching the scan task, so the dashboard has something to show as
+"running" from the moment the webhook lands rather than only once the task
+gets around to its own GitHub-API PR fetch.
 """
 import pytest
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.api import webhooks
 from app.models.models import (
@@ -21,6 +27,7 @@ from app.models.models import (
     Organization,
     PRGuardrailFinding,
     PRGuardrailScan,
+    PRGuardrailStatus,
     Target,
     Workspace,
 )
@@ -110,6 +117,83 @@ class TestPushHandler:
         assert result == {"ok": True, "skipped": "no matching target"}
 
 
+class TestPullRequestHandler:
+    """#401: the ordinary opened/reopened/synchronize trigger must create
+    the PRGuardrailScan row itself, synchronously, before dispatching the
+    scan task -- not leave the dashboard with nothing to show as "running"
+    until the task gets around to its own GitHub-API PR fetch."""
+
+    def _payload(self, action="opened", pr_number=7, title="Add feature", head_ref="feature-x"):
+        return {
+            "action": action,
+            "number": pr_number,
+            "pull_request": {"title": title, "head": {"ref": head_ref}},
+            "repository": {"clone_url": "https://github.com/acme/repo"},
+        }
+
+    def test_opened_creates_a_running_placeholder_before_dispatch(self, engine, target_id, monkeypatch):
+        from app.tasks import pr_guardrail_tasks
+
+        calls = []
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: calls.append(a))
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, self._payload())
+
+        assert result["queued"] is True
+        pr_scan_id = result["pr_scan_id"]
+        assert calls == [(target_id, 7, pr_scan_id)]
+
+        with Session(engine) as session:
+            pr_scan = session.get(PRGuardrailScan, pr_scan_id)
+            assert pr_scan is not None
+            assert pr_scan.target_id == target_id
+            assert pr_scan.pr_number == 7
+            assert pr_scan.status == PRGuardrailStatus.RUNNING
+            # Straight from the webhook payload, no extra GitHub API call
+            # needed to have something real to show immediately.
+            assert pr_scan.pr_title == "Add feature"
+            assert pr_scan.branch == "feature-x"
+
+    def test_synchronize_also_creates_a_placeholder(self, engine, target_id, monkeypatch):
+        from app.tasks import pr_guardrail_tasks
+
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: None)
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, self._payload(action="synchronize"))
+
+        with Session(engine) as session:
+            assert session.get(PRGuardrailScan, result["pr_scan_id"]).status == PRGuardrailStatus.RUNNING
+
+    def test_no_matching_target_creates_no_placeholder(self, engine, target_id, monkeypatch):
+        from app.tasks import pr_guardrail_tasks
+
+        calls = []
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: calls.append(a))
+        payload = self._payload()
+        payload["repository"]["clone_url"] = "https://github.com/no-such/repo"
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, payload)
+            assert result == {"ok": True, "skipped": "no matching target"}
+            assert session.exec(select(PRGuardrailScan)).all() == []
+        assert calls == []
+
+    def test_closed_without_merging_creates_no_placeholder(self, engine, target_id, monkeypatch):
+        from app.tasks import pr_guardrail_tasks
+
+        calls = []
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: calls.append(a))
+        payload = self._payload(action="closed")
+        payload["pull_request"]["merged"] = False
+
+        with Session(engine) as session:
+            webhooks._handle_pull_request(session, payload)
+            assert session.exec(select(PRGuardrailScan)).all() == []
+        assert calls == []
+
+
 class TestPullRequestMergedHandler:
     def _payload(self, merged=True, action="closed", base_ref="main"):
         return {
@@ -190,7 +274,7 @@ class TestPullRequestMergedHandler:
             result = webhooks._handle_pull_request(session, self._payload(action="opened", merged=False))
 
         assert result["queued"] is True
-        assert pr_calls == [(target_id, 7)]
+        assert pr_calls == [(target_id, 7, result["pr_scan_id"])]
         assert full_scan_calls == []
 
 

@@ -15,7 +15,11 @@ Four event types handled, each independent of the others:
     opened/reopened/synchronize; closed-and-merged is also handled here
     (_handle_pr_merged) rather than solely relying on push below, since
     push turned out not to reliably deliver in practice -- see
-    _handle_pr_merged's own docstring.
+    _handle_pr_merged's own docstring. Creates the PRGuardrailScan row
+    synchronously, right here, before dispatching the scan task (#401),
+    so the dashboard has something to show as "running" from the moment
+    the webhook lands rather than only once the task's own GitHub-API PR
+    fetch happens to complete.
   - push: re-scan a target's default branch so the dashboard reflects a
     merged fix without depending on that target's own generated
     toleman-scan.yml having TOLEMAN_API_URL/TOLEMAN_API_KEY configured.
@@ -47,7 +51,7 @@ from app.core.crypto import decrypt_secret
 from app.core.db import engine
 from app.core.github_app import resolve_config_for_installation
 from app.core.pr_guardrail_executor import reply_to_pr, submit_ignore_request
-from app.models.models import GitHubAppConfig, GitHubInstallation, PRGuardrailFinding, PRGuardrailScan, Target
+from app.models.models import GitHubAppConfig, GitHubInstallation, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +135,33 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
         logger.info("webhook: no target registered for %s, ignoring", repo_clone_url)
         return {"ok": True, "skipped": "no matching target"}
 
+    # A placeholder row, created synchronously right here rather than only
+    # once the dispatched task gets around to its own GitHub-API PR fetch
+    # inside execute_pr_guardrail_scan: that fetch, plus however long the
+    # task sits queued before a worker picks it up, is otherwise a window
+    # with no PRGuardrailScan row at all for the dashboard to show as
+    # "running" -- exactly the "no status until it's already done" gap
+    # reported live. The payload already carries everything needed (title,
+    # head branch), so this costs no extra API call and the webhook
+    # response stays fast. Same create-row(status="running")-then-dispatch
+    # pattern already used for every other async job in this codebase (see
+    # app/core/staleness.py); PR Guardrail's webhook path was the one
+    # outlier that didn't follow it.
+    pr_scan = PRGuardrailScan(
+        target_id=target.id,
+        pr_number=pr_number,
+        pr_title=pr.get("title", ""),
+        branch=(pr.get("head") or {}).get("ref", ""),
+        status=PRGuardrailStatus.RUNNING,
+    )
+    session.add(pr_scan)
+    session.commit()
+    session.refresh(pr_scan)
+
     from app.tasks.pr_guardrail_tasks import run_pr_guardrail_scan_task
 
-    run_pr_guardrail_scan_task.delay(target.id, pr_number)
-    return {"ok": True, "queued": True, "target_id": target.id, "pr_number": pr_number}
+    run_pr_guardrail_scan_task.delay(target.id, pr_number, pr_scan.id)
+    return {"ok": True, "queued": True, "target_id": target.id, "pr_number": pr_number, "pr_scan_id": pr_scan.id}
 
 
 def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:

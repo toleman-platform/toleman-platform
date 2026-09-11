@@ -96,10 +96,39 @@ def _resolve_token(ctx: Context) -> str:
     return TOLEMAN_API_TOKEN
 
 
-def _client(token: str) -> httpx.Client:
+def _resolve_agent(ctx: Context) -> str:
+    """Best-effort identity of the *software* making this call (Claude
+    Code, Claude Desktop, some other MCP client, ...), forwarded to
+    Toleman as X-MCP-Agent so app.core.mcp_audit's audit log can show more
+    than just "some token was used" -- see McpAuditLog's own docstring.
+
+    In stdio mode, `ctx.request_context.session.client_params` is the real
+    thing: stdio does one genuine MCP `initialize` handshake per process
+    lifetime, and the client's declared clientInfo (name/version) lands
+    there. In streamable-http mode it's unreliable -- this server runs
+    with `stateless_http=True` (module docstring explains why), which
+    constructs each request's ServerSession already marked initialized
+    (see mcp.server.session.ServerSession.__init__), so the real
+    `initialize` request is never actually processed for an individual
+    tool-call request and client_params stays None. The Authorization
+    header proves a request is from *someone*, but nothing at the MCP
+    protocol layer says *what software* sent it in this mode -- so this
+    falls back to the plain HTTP User-Agent header instead, which every
+    HTTP client sends regardless of MCP-level session state."""
+    request_context = ctx.request_context
+    request = request_context.request if request_context is not None else None
+    if request is not None:
+        return request.headers.get("user-agent", "unknown")
+    client_params = request_context.session.client_params if request_context is not None else None
+    if client_params is not None:
+        return f"{client_params.clientInfo.name}/{client_params.clientInfo.version}"
+    return "unknown"
+
+
+def _client(token: str, agent: str) -> httpx.Client:
     return httpx.Client(
         base_url=f"{TOLEMAN_API_URL}/api/public/v1",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", "X-MCP-Agent": agent},
         timeout=30.0,
     )
 
@@ -107,7 +136,7 @@ def _client(token: str) -> httpx.Client:
 @mcp.tool()
 def list_targets(ctx: Context) -> list[dict]:
     """List every target (scanned repo) in workspaces this token can access."""
-    with _client(_resolve_token(ctx)) as c:
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.get("/targets")
         r.raise_for_status()
         return r.json()
@@ -132,7 +161,7 @@ def list_findings(
         params["severity"] = severity
     if state is not None:
         params["state"] = state
-    with _client(_resolve_token(ctx)) as c:
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.get("/findings", params=params)
         r.raise_for_status()
         return r.json()
@@ -141,7 +170,7 @@ def list_findings(
 @mcp.tool()
 def get_finding(ctx: Context, finding_id: int) -> dict:
     """Get full detail for a single finding by id."""
-    with _client(_resolve_token(ctx)) as c:
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.get(f"/findings/{finding_id}")
         r.raise_for_status()
         return r.json()
@@ -151,7 +180,7 @@ def get_finding(ctx: Context, finding_id: int) -> dict:
 def get_scan_status(ctx: Context, scan_id: int) -> dict:
     """Get a scan's current status (running/completed/failed) and, once
     settled, its findings count and any error message."""
-    with _client(_resolve_token(ctx)) as c:
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.get(f"/scans/{scan_id}")
         r.raise_for_status()
         return r.json()
@@ -163,7 +192,7 @@ def trigger_scan(ctx: Context, target_id: int, tool: str) -> dict:
     target. Requires a read_write-scoped token; a read-only token gets
     a clear permission error, not a silent no-op. Returns immediately with
     a scan_id; poll get_scan_status(scan_id) for the result."""
-    with _client(_resolve_token(ctx)) as c:
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.post("/scans", params={"target_id": target_id, "tool": tool})
         r.raise_for_status()
         return r.json()
@@ -177,8 +206,19 @@ def suggest_fix(ctx: Context, finding_id: int) -> dict:
     patch could be built and verified against the file as it actually
     exists in the repo, a diff to review. Never writes anywhere: call
     raise_fix_pr with the exact fields this returns to actually open a PR
-    for it. Requires only a read-scoped token."""
-    with _client(_resolve_token(ctx)) as c:
+    for it. Requires only a read-scoped token.
+
+    If `diff` comes back None (no AI provider configured on Toleman and no
+    deterministic patch applied -- common for SAST findings when nothing's
+    set up under Admin > Global Integrations), you don't need Toleman's own
+    AI at all: read `recommendation` plus the finding's file_path/
+    line_start/line_end (get_finding) and the target's repo_url/
+    default_branch (get_target/list_targets), fix the flagged code yourself
+    -- you already have the repo, if this is a Claude Code session working
+    in it -- and call raise_fix_pr with strategy="mcp_client" and the full
+    corrected file content. Toleman still opens the PR (it holds the GitHub
+    App installation token); only the patch generation moves to you."""
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.post(f"/findings/{finding_id}/suggest-fix")
         r.raise_for_status()
         return r.json()
@@ -194,13 +234,25 @@ def raise_fix_pr(
     strategy: str,
     explanation: str = "",
 ) -> dict:
-    """Opens a PR for the *exact* patch a prior suggest_fix call returned --
-    pass its file_path/new_content/ref/strategy/explanation back verbatim,
-    so what gets committed is guaranteed to match the diff already
-    reviewed, not a freshly (and possibly differently) regenerated one.
+    """Opens a PR for a patch to `file_path` (which must match the
+    finding's own file_path) on branch `ref`, committing `new_content` as
+    that file's full new contents. Two ways to call this:
+
+    1. Usual case: pass file_path/new_content/ref/strategy/explanation back
+       *exactly* as a prior suggest_fix call returned them (strategy will
+       be "ai" or "deterministic_sca"), so what's committed is guaranteed
+       to match the diff already reviewed, not a freshly (and possibly
+       differently) regenerated one.
+    2. suggest_fix came back with diff=None (no Toleman AI provider
+       configured, no deterministic patch available): read the file
+       yourself, write the full corrected content, and call this with
+       strategy="mcp_client" -- Toleman still opens the PR via its GitHub
+       App installation token, it just isn't the one that generated the
+       patch.
+
     Requires a read_write-scoped token, since this writes a branch/PR to
     the target's real GitHub repo."""
-    with _client(_resolve_token(ctx)) as c:
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.post(
             f"/findings/{finding_id}/raise-pr",
             json={
@@ -239,8 +291,7 @@ def check_code_for_vulnerabilities(
     an empty list means clean, not "not checked." Requires only a
     read-scoped token; nothing here is persisted as a real Finding or
     tied to any target."""
-    token = _resolve_token(ctx)
-    with _client(token) as c:
+    with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         payload: dict = {"filename": filename, "content": content}
         if tools is not None:
             payload["tools"] = tools

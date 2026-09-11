@@ -23,7 +23,7 @@ package and this project's pinned FastAPI/SQLModel versions).
 | `get_scan_status` | read | A scan's status/result |
 | `trigger_scan` | read/write | Trigger a native scan against a target |
 | `suggest_fix` | read | Fix recommendation (+ diff, where possible) for a finding; never writes anywhere |
-| `raise_fix_pr` | read/write | Opens a PR for the exact patch a prior `suggest_fix` call returned |
+| `raise_fix_pr` | read/write | Opens a PR for the exact patch a prior `suggest_fix` call returned, or one you generated yourself |
 | `check_code_for_vulnerabilities` | read | Scan a code snippet for vulnerabilities *before* it's written to a real file/commit |
 
 `suggest_fix` + `raise_fix_pr` are deliberately two calls, not one: review
@@ -31,6 +31,22 @@ the recommendation/diff first, then explicitly open the PR for that *exact*
 patch, never a freshly (and possibly differently) regenerated one. See
 `app/api/findings.py`'s `FindingSuggestFixResponse` docstring in the main
 backend for the full reasoning; the public API mirrors it exactly.
+
+### When Toleman has no AI provider configured
+
+`suggest_fix` still always returns a recommendation, but `diff` comes back
+`None` for anything beyond a deterministic dependency-version bump (Admin >
+Global Integrations has no provider set, or the AI declined to produce a
+clean patch). You don't need Toleman's own AI to fix these: an MCP client
+that already holds the repo -- Claude Code, most commonly -- can read the
+flagged file itself (`get_finding` has `file_path`/`line_start`/`line_end`;
+`list_targets`/`get_target` have the target's `repo_url`/`default_branch`),
+write the fix, and call `raise_fix_pr` with `strategy="mcp_client"` and the
+corrected file's full content. Toleman still opens the PR through its own
+GitHub App installation token -- only patch *generation* moved to the
+client, not PR creation. The PR body labels it accordingly ("an
+MCP-client-generated patch") so it's clear in GitHub which findings got an
+AI-provider patch vs. a client-generated one.
 
 ## Two ways to run it
 
@@ -110,6 +126,31 @@ personal access token, nothing to install.
   }
 }
 ```
+
+This repo's own `.mcp.json` (checked in at the repo root) has this same entry
+pointed at the production deployment, reading the token from a
+`TOLEMAN_API_TOKEN` env var rather than a hardcoded value, so it's safe to
+commit — set that env var in your Claude Code client (or, for a Claude Code
+on the web / remote environment, as an environment variable on the
+environment itself; see the "Environment variables" section of
+[the docs](https://code.claude.com/docs/en/claude-code-on-the-web)) and any
+Claude Code session opened in this repo picks up the `toleman` MCP server
+automatically (`.claude/settings.json` pre-trusts it via
+`enabledMcpjsonServers`). Note that MCP servers are attached when a session
+*starts* — adding or changing `TOLEMAN_API_TOKEN` takes effect on the next
+new session, not the one already running.
+
+## Audit logging
+
+Every call through this server is logged on the Toleman side (`GET
+/api/audit/log?event_type=mcp` / the Audit Log page's "MCP / API token"
+filter): who (the token's owner), what agent software (best-effort --
+Claude Code, Claude Desktop, whatever sent the request; see `_resolve_agent`
+in `server.py` for how this is determined, and why it's not simply read off
+the MCP session itself in remote mode), which tool, and a short summary of
+what happened. Nothing about a call's *content* (finding titles, diffs,
+scanned code) is logged beyond what the summary needs to be useful on its
+own -- this is an access trail, not a full request/response log.
 
 ## Development
 

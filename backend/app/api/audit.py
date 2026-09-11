@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
-from app.models.models import FindingStateLog, Finding, Scan, Target
+from app.models.models import FindingStateLog, Finding, McpAuditLog, Scan, Target, User
 
 router = APIRouter(prefix="/api/audit", tags=["audit"])
 
@@ -67,12 +67,14 @@ def audit_log(
     page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
 ) -> AuditLogResponse:
-    """Global audit trail: finding triage transitions + scan runs, real DB
-    records. Supports the same filter-bar + real-pagination pattern as
-    findings.list_findings (issue #123), date range, event type, actor.
+    """Global audit trail: finding triage transitions + scan runs + MCP/
+    public-API actions, real DB records. Supports the same filter-bar +
+    real-pagination pattern as findings.list_findings (issue #123), date
+    range, event type, actor.
     """
     findings = {f.id: f for f in session.exec(select(Finding)).all()}
     targets = {t.id: t for t in session.exec(select(Target)).all()}
+    users = {u.id: u for u in session.exec(select(User)).all()}
 
     dt_from = _parse_date_bound(date_from, end_of_day=False)
     dt_to = _parse_date_bound(date_to, end_of_day=True)
@@ -159,6 +161,32 @@ def audit_log(
                     "expand": None,
                 })
 
+    if event_type in (None, "", "mcp"):
+        # McpAuditLog rows (app.core.mcp_audit): every call to
+        # /api/public/v1/*, the Toleman MCP server's own surface -- who
+        # (actor, the token's owner) and what agent software did what.
+        # actor here filters by the user's email, not a stored string
+        # column, so it needs a join rather than a plain where().
+        query = select(McpAuditLog)
+        if actor:
+            query = query.join(User, User.id == McpAuditLog.user_id).where(User.email == actor)
+        if dt_from:
+            query = query.where(McpAuditLog.created_at >= dt_from)
+        if dt_to:
+            query = query.where(McpAuditLog.created_at <= dt_to)
+        mcp_logs = session.exec(query.order_by(McpAuditLog.created_at.desc())).all()
+        for log in mcp_logs:
+            actor_user = users.get(log.user_id)
+            events.append({
+                "type": "mcp",
+                "timestamp": log.created_at.isoformat(),
+                "actor": actor_user.email if actor_user else f"user#{log.user_id}",
+                "summary": f"[{log.tool}] {log.summary}" + ("" if log.success else " (failed)"),
+                "reason": f"via {log.agent}" + (f": {log.error}" if log.error else ""),
+                "grouped_count": 1,
+                "expand": None,
+            })
+
     events.sort(key=lambda e: e["timestamp"], reverse=True)
     total = len(events)
 
@@ -172,8 +200,15 @@ def audit_log(
 
 @router.get("/actors")
 def list_actors(session: Session = Depends(get_session)) -> list[str]:
-    """Distinct actors across the triage audit trail, for populating the
-    Audit Log actor filter; same 'real facet from real data' pattern as
-    findings.list_tool_facets."""
-    rows = session.exec(select(FindingStateLog.actor).distinct()).all()
-    return sorted(rows)
+    """Distinct actors across the triage + MCP audit trails, for
+    populating the Audit Log actor filter; same 'real facet from real
+    data' pattern as findings.list_tool_facets. A user who's only ever
+    acted through an MCP token (never triaged a finding in the UI) has no
+    FindingStateLog row at all, so that trail alone would silently omit
+    them from the filter -- join in McpAuditLog's own distinct users too."""
+    triage_actors = set(session.exec(select(FindingStateLog.actor).distinct()).all())
+    mcp_user_ids = session.exec(select(McpAuditLog.user_id).distinct()).all()
+    if mcp_user_ids:
+        mcp_actors = session.exec(select(User.email).where(User.id.in_(mcp_user_ids))).all()
+        triage_actors.update(mcp_actors)
+    return sorted(triage_actors)

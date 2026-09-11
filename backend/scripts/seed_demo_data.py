@@ -21,7 +21,7 @@ from pathlib import Path
 # Ensure app package is discoverable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from sqlmodel import Session, select, delete
+from sqlmodel import Session, func, select, delete
 from app.core.config import settings
 from app.core.db import engine
 from app.core.dedup import compute_dedup_hash
@@ -449,7 +449,9 @@ def seed_random_data(
     # Reconcile findings_count across all scans
     all_scans = session.exec(select(Scan)).all()
     for scan in all_scans:
-        linked_count = len(session.exec(select(Finding).where(Finding.scan_id == scan.id)).all())
+        linked_count = session.exec(
+            select(func.count()).select_from(select(Finding).where(Finding.scan_id == scan.id).subquery())
+        ).one()
         scan.findings_count = linked_count
         session.add(scan)
 

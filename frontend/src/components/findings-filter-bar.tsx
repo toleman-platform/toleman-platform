@@ -16,12 +16,10 @@ const SELECT_CLASS =
 export function FindingsFilterBar({
   targets,
   tools,
-  categories,
   groups,
 }: {
   targets: Target[];
   tools: string[];
-  categories: string[];
   groups: Group[];
 }) {
   const router = useRouter();
@@ -42,11 +40,16 @@ export function FindingsFilterBar({
     updateParam("search", search);
   }
 
-  const hasFilters = ["severity", "tool", "category", "state", "target_id", "group_id", "search", "fixability"].some((k) => searchParams.get(k));
+  const hasFilters = ["severity", "tool", "state", "target_id", "group_id", "search", "fixability"].some((k) => searchParams.get(k));
 
+  // "category" is deliberately not part of hasFilters/clearAll: it's the
+  // active tab (FindingsCategoryTabs), a location rather than a filter, so
+  // clearing filters refines within the current tab instead of navigating
+  // away from it.
   function clearAll() {
     setSearch("");
-    router.push(pathname);
+    const category = searchParams.get("category");
+    router.push(category ? `${pathname}?category=${encodeURIComponent(category)}` : pathname);
   }
 
   return (
@@ -105,23 +108,6 @@ export function FindingsFilterBar({
         {tools.map((t) => (
           <option key={t} value={t}>
             {t}
-          </option>
-        ))}
-      </select>
-
-      {/* Vulnerability-type category (Code/SAST, Secret, OSS/SCA, License,
-          IaC, AI/ML, ...), same vocabulary Tool Marketplace already shows;
-          derived server-side from tool, see app.core.tool_registry. */}
-      <select
-        aria-label="Filter by category"
-        className={SELECT_CLASS}
-        value={searchParams.get("category") ?? ""}
-        onChange={(e) => updateParam("category", e.target.value)}
-      >
-        <option value="">All categories</option>
-        {categories.map((c) => (
-          <option key={c} value={c}>
-            {c}
           </option>
         ))}
       </select>

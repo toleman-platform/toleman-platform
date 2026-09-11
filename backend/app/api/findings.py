@@ -170,30 +170,35 @@ class FindingEnrichmentResponse(BaseModel):
     fetched_at: datetime | None = None
 
 
-@router.get("")
-def list_findings(
-    target_id: int | None = None,
-    group_id: int | None = None,
-    branch: str | None = None,
-    state: FindingState | None = None,
-    severity: Severity | None = None,
-    tool: str | None = None,
-    category: str | None = None,
-    fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
-    environment: str | None = None,
-    owner: str | None = None,
-    search: str | None = None,
-    page: int = 1,
-    page_size: int = DEFAULT_PAGE_SIZE,
-    session: Session = Depends(get_session),
-    user: User = Depends(current_user),
-) -> FindingListResponse:
-    # Issue #57: scope to workspaces the caller is a member of (None = admin,
-    # no filter). A caller with no memberships gets ws_ids == [] below, which
-    # short-circuits to an empty page rather than every workspace's findings.
+def _filtered_findings_query(
+    session: Session,
+    user: User,
+    *,
+    target_id: int | None,
+    group_id: int | None,
+    branch: str | None,
+    state: FindingState | None,
+    severity: Severity | None,
+    tool: str | None,
+    fixability: Literal["fixable", "no_known_fix", "unknown"] | None,
+    environment: str | None,
+    owner: str | None,
+    search: str | None,
+):
+    """Every list_findings filter except `category` (deliberately excluded:
+    the category-counts facet below needs the SAME filters applied for its
+    counts to mean anything -- "12 SCA findings" while severity=Critical is
+    active must count only critical SCA findings -- but obviously can't
+    itself filter by the one dimension it's counting across). Shared so the
+    two endpoints can't drift on what a given filter param means.
+
+    Returns `(query, target_joined)`, or `(None, False)` when the caller's
+    workspace membership resolves to zero workspaces (#57): a real query
+    would come back empty anyway, and returning None here lets both callers
+    short-circuit without a wasted round trip."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
-        return FindingListResponse(items=[], total=0)
+        return None, False
 
     query = select(Finding)
     target_joined = ws_ids is not None
@@ -217,16 +222,6 @@ def list_findings(
         query = query.where(Finding.severity == severity)
     if tool is not None:
         query = query.where(Finding.tool == tool)
-    if category is not None:
-        # category is purely derived from tool (app.core.tool_registry.
-        # tool_category), so filtering is just the reverse lookup at the SQL
-        # level; "Other" is every tool tool_category() doesn't recognize
-        # (notably including a CI pipeline's free-form `tool` on POST
-        # /api/ingest/{target_id}), so it's a NOT IN rather than an IN.
-        if category == UNKNOWN_TOOL_CATEGORY:
-            query = query.where(Finding.tool.not_in(all_known_tools()))
-        else:
-            query = query.where(Finding.tool.in_(tools_in_category(category)))
     if environment is not None or owner is not None:
         # (#251) Filter findings by the owning target's metadata. Needs the
         # Target join, which only happens above when ws_ids is not None (an
@@ -277,6 +272,46 @@ def list_findings(
                 Target.name.ilike(like),
             )
         )
+    return query, target_joined
+
+
+@router.get("")
+def list_findings(
+    target_id: int | None = None,
+    group_id: int | None = None,
+    branch: str | None = None,
+    state: FindingState | None = None,
+    severity: Severity | None = None,
+    tool: str | None = None,
+    category: str | None = None,
+    fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
+    environment: str | None = None,
+    owner: str | None = None,
+    search: str | None = None,
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> FindingListResponse:
+    query, _ = _filtered_findings_query(
+        session, user, target_id=target_id, group_id=group_id, branch=branch, state=state,
+        severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
+    )
+    if query is None:
+        # Issue #57: caller has zero workspace memberships -- an empty page,
+        # not every workspace's data and not an error.
+        return FindingListResponse(items=[], total=0)
+
+    if category is not None:
+        # category is purely derived from tool (app.core.tool_registry.
+        # tool_category), so filtering is just the reverse lookup at the SQL
+        # level; "Other" is every tool tool_category() doesn't recognize
+        # (notably including a CI pipeline's free-form `tool` on POST
+        # /api/ingest/{target_id}), so it's a NOT IN rather than an IN.
+        if category == UNKNOWN_TOOL_CATEGORY:
+            query = query.where(Finding.tool.not_in(all_known_tools()))
+        else:
+            query = query.where(Finding.tool.in_(tools_in_category(category)))
 
     total = session.exec(select(func.count()).select_from(query.subquery())).one()
 
@@ -305,16 +340,50 @@ def list_tool_facets(session: Session = Depends(get_session), user: User = Depen
     return sorted(rows)
 
 
+class CategoryFacet(BaseModel):
+    category: str
+    count: int
+
+
 @router.get("/facets/categories")
-def list_category_facets(user: User = Depends(current_user)) -> list[str]:
-    """Every vulnerability-type category a finding could be grouped under
-    (Code/SAST, Secret, OSS/SCA, License, IaC, AI/ML, ...), for populating
-    the Findings page's category filter. A pure function of TOOL_REGISTRY
-    (app.core.tool_registry.all_categories) plus "Other", not a per-caller
-    DB query like /facets/tools: the possible categories don't depend on
-    which findings exist or which workspace the caller can see, only on
-    what Toleman's tools are registered as."""
-    return all_categories()
+def list_category_facets(
+    target_id: int | None = None,
+    group_id: int | None = None,
+    branch: str | None = None,
+    state: FindingState | None = None,
+    severity: Severity | None = None,
+    tool: str | None = None,
+    fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
+    environment: str | None = None,
+    owner: str | None = None,
+    search: str | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> list[CategoryFacet]:
+    """Per-category finding counts for the Findings page's category tabs
+    ("SCA (12)", "Secrets (3)", ...) -- tabs, not a filter dropdown, replace
+    an active category *view*, so each tab's count must reflect every OTHER
+    filter currently applied (severity/tool/state/search/...) the same way
+    list_findings itself would, via the same `_filtered_findings_query`
+    both endpoints share. `category` itself is deliberately not one of the
+    accepted filters here: it's the one dimension being counted across, not
+    filtered by.
+
+    Every registered category is returned, including ones with count 0 --
+    a tab that's currently empty under the active filters is still a real,
+    clickable destination, not the same as a category that doesn't exist
+    (app.core.tool_registry.all_categories)."""
+    query, _ = _filtered_findings_query(
+        session, user, target_id=target_id, group_id=group_id, branch=branch, state=state,
+        severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
+    )
+    counts = {c: 0 for c in all_categories()}
+    if query is not None:
+        subq = query.subquery()
+        rows = session.exec(select(subq.c.tool, func.count()).group_by(subq.c.tool)).all()
+        for tool_name, count in rows:
+            counts[tool_category(tool_name)] += count
+    return [CategoryFacet(category=c, count=counts[c]) for c in all_categories()]
 
 
 @router.get("/remediations")

@@ -178,11 +178,40 @@ def test_category_facets_lists_every_known_category(client, engine):
     _login(client, engine)
     resp = client.get("/api/findings/facets/categories")
     assert resp.status_code == 200
-    categories = resp.json()
+    categories = {row["category"] for row in resp.json()}
     assert "SAST" in categories
     assert "Secrets" in categories
     assert "SCA" in categories
     assert "Other" in categories
+
+
+def test_category_facets_counts_findings_per_category(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="a", rule_id="r1", tool="semgrep")
+    _make_finding(engine, target_id, title="b", rule_id="r2", tool="semgrep")
+    _make_finding(engine, target_id, title="c", rule_id="r3", tool="trivy")
+
+    resp = client.get("/api/findings/facets/categories")
+    counts = {row["category"]: row["count"] for row in resp.json()}
+    assert counts["SAST"] == 2
+    assert counts["SCA"] == 1
+    assert counts["Secrets"] == 0  # a registered category with no findings is still 0, not absent
+
+
+def test_category_facets_counts_respect_other_active_filters(client, engine):
+    """Tabs, not a plain filter: each category's count must reflect every
+    OTHER filter currently applied, the same way list_findings itself
+    would -- otherwise a "SCA (12)" tab next to an active severity=Critical
+    search would be lying about what clicking it shows."""
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="critical semgrep", rule_id="r1", tool="semgrep", severity=Severity.CRITICAL)
+    _make_finding(engine, target_id, title="low semgrep", rule_id="r2", tool="semgrep", severity=Severity.LOW)
+
+    resp = client.get("/api/findings/facets/categories", params={"severity": "Critical"})
+    counts = {row["category"]: row["count"] for row in resp.json()}
+    assert counts["SAST"] == 1
 
 
 def test_filter_by_state(client, engine):

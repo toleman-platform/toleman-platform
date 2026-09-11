@@ -10,6 +10,7 @@ from sqlmodel import Session, and_, func, or_, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
+from app.core.autofix import fix_finding
 from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
@@ -170,6 +171,23 @@ class FindingEnrichmentResponse(BaseModel):
     references: list[str] | None = None
     fix_versions: list[dict] | None = None
     fetched_at: datetime | None = None
+
+
+class FindingFixResponse(BaseModel):
+    """Autofix + fix recommendation (app.core.autofix), always populated
+    with `recommendation`; `mode` says what else came with it -- "pr" (a
+    real fix PR was opened), "diff" (a patch was generated but no PR could
+    be opened, e.g. no GitHub App installed), or "recommendation_only" (no
+    automated patch could be generated for this finding at all)."""
+    mode: Literal["pr", "diff", "recommendation_only"]
+    recommendation: str
+    strategy: Literal["ai", "deterministic_sca"] | None = None
+    diff: str | None = None
+    file_path: str | None = None
+    pr_url: str | None = None
+    pr_number: int | None = None
+    branch: str | None = None
+    warning: str | None = None
 
 
 def _filtered_findings_query(
@@ -587,6 +605,30 @@ def triage_finding(
     session.commit()
     session.refresh(finding)
     return finding
+
+
+@router.post("/{finding_id}/fix")
+def fix_finding_endpoint(
+    finding_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+) -> FindingFixResponse:
+    """Autofix + fix recommendation for one finding (app.core.autofix):
+    always returns a recommendation; opens a real fix PR via the GitHub
+    App when a patch can be generated and the App is installed for this
+    target, falls back to returning the diff otherwise. DEVELOPER role
+    required, same gate as /triage, since a successful call can write a
+    branch/PR to the target's real GitHub repo."""
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    target = session.get(Target, finding.target_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="finding not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="finding not found")
+    return FindingFixResponse(**fix_finding(session, target, finding))
 
 
 @router.get("/{finding_id}/history")

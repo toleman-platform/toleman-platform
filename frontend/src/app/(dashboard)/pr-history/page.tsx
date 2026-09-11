@@ -24,8 +24,27 @@ function isSessionError(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;
 }
 
+// Parses a positive integer id out of a URL search param, e.g. the
+// `target_id`/`pr_scan_id`/`ignore_finding` params on the "view"/"request
+// ignore" links pr_guardrail_executor.py posts in PR comments -- ALL_TARGETS
+// (0) and anything malformed both fall through to null rather than seeding
+// a bogus selection.
+function positiveIntParam(params: URLSearchParams, key: string): number | null {
+  const n = Number(params.get(key));
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 export default function PrHistoryPage() {
-  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
+  const prSearchParams = useSearchParams();
+  // Deep-linking from a PR comment's "view"/"request ignore" links (#385):
+  // seeded once from the URL so the page opens on the right repo instead of
+  // whichever target happens to be first in the list. Only the initial
+  // value; a later manual repo switch is a real state change afterward.
+  const [chosenTargetId, setChosenTargetId] = useState<number | null>(() =>
+    positiveIntParam(prSearchParams, "target_id"),
+  );
+  const linkedScanId = positiveIntParam(prSearchParams, "pr_scan_id");
+  const linkedIgnoreFindingId = positiveIntParam(prSearchParams, "ignore_finding");
 
   const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
   const targets = targetsData ?? [];
@@ -53,7 +72,6 @@ export default function PrHistoryPage() {
   const sessionExpired = loadError !== null && isSessionError(loadError);
   const error = sessionExpired ? null : (loadError?.message ?? null);
 
-  const prSearchParams = useSearchParams();
   const prPageSize = pageSizeFromParams(prSearchParams.get("page_size") ?? undefined);
   const prPageRaw = Math.max(1, Number(prSearchParams.get("page") ?? "1") || 1);
   const prTotalPages = Math.max(1, Math.ceil(prs.length / prPageSize));
@@ -142,7 +160,7 @@ export default function PrHistoryPage() {
         </>
       )}
 
-      <PrGuardrailLog targetId={targetId} />
+      <PrGuardrailLog targetId={targetId} initialScanId={linkedScanId} initialIgnoreFindingId={linkedIgnoreFindingId} />
     </div>
   );
 }

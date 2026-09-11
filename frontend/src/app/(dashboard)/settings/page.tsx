@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Copy, UserCircle, Bell, Cog, type LucideIcon } from "lucide-react";
 import {
   api,
+  apiBaseUrl,
   ApiToken,
   ApiTokenScope,
   AuthUser,
@@ -20,6 +21,93 @@ import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/target-picker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+
+// mcp-server/README.md's own tool table, mirrored here so a user can see
+// what a connected MCP client can actually do without leaving the app.
+// Static: these are the tools mcp-server/server.py registers, not
+// something the backend has any live inventory of to fetch.
+const MCP_TOOLS: { name: string; scope: "read" | "read/write"; description: string }[] = [
+  { name: "list_targets", scope: "read", description: "List targets in your accessible workspaces" },
+  { name: "list_findings", scope: "read", description: "List findings, filterable by target/severity/state, paginated" },
+  { name: "get_finding", scope: "read", description: "Full detail for one finding" },
+  { name: "get_scan_status", scope: "read", description: "A scan's status/result" },
+  { name: "trigger_scan", scope: "read/write", description: "Trigger a native scan against a target" },
+  { name: "suggest_fix", scope: "read", description: "Fix recommendation (+ diff, where possible) for a finding; never writes anywhere" },
+  { name: "raise_fix_pr", scope: "read/write", description: "Opens a PR for the exact patch a prior suggest_fix call returned" },
+  { name: "check_code_for_vulnerabilities", scope: "read", description: "Scan a code snippet for vulnerabilities before it's written to a real file/commit" },
+];
+
+function McpServerCard() {
+  const [copied, setCopied] = useState(false);
+  // Issue #108: the remote (streamable-http) MCP server is deployed
+  // alongside the public API at the same origin, under /mcp (see
+  // mcp-server/README.md's "Remote (streamable-http)" section and
+  // toleman-deploy's Caddyfile) -- so the same browser-facing API URL
+  // every other public-API caller already uses is the right base for this
+  // too, no separate env var to plumb through.
+  const mcpUrl = `${apiBaseUrl()}/mcp`;
+
+  function copy() {
+    navigator.clipboard.writeText(mcpUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  const configSnippet = JSON.stringify(
+    {
+      mcpServers: {
+        toleman: {
+          url: mcpUrl,
+          headers: { Authorization: "Bearer <your personal access token>" },
+        },
+      },
+    },
+    null,
+    2
+  );
+
+  return (
+    <Card className="border-border bg-card">
+      <CardContent className="flex flex-col gap-3 px-4 py-4">
+        <div>
+          <h2 className="text-sm font-medium text-foreground">MCP Server</h2>
+          <p className="text-xs text-muted-foreground">
+            Connect Claude Code, Claude Desktop, or any other MCP-compatible tool directly to this Toleman
+            instance -- list targets, browse findings, get a fix recommendation and open a PR for it, and check
+            code for vulnerabilities while it&apos;s being written, not just after it&apos;s already committed.
+            Authenticate with a personal access token from API Tokens below, passed as the connection&apos;s
+            Bearer header.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <code className="flex-1 truncate rounded-md bg-secondary px-3 py-2 text-sm text-foreground">{mcpUrl}</code>
+          <Button variant="outline" size="icon" aria-label="Copy MCP server URL" onClick={copy}>
+            <Copy />
+          </Button>
+          {copied && <span className="shrink-0 text-xs text-chart-5">Copied</span>}
+        </div>
+
+        <details className="text-xs">
+          <summary className="cursor-pointer text-foreground">Claude Code / Claude Desktop config</summary>
+          <pre className="mt-2 overflow-x-auto rounded-md bg-secondary px-3 py-2 text-foreground">{configSnippet}</pre>
+        </details>
+
+        <details className="text-xs">
+          <summary className="cursor-pointer text-foreground">Available tools</summary>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {MCP_TOOLS.map((t) => (
+              <li key={t.name} className="text-muted-foreground">
+                <code className="text-foreground">{t.name}</code>{" "}
+                <span className="rounded bg-secondary px-1 py-0.5">{t.scope}</span> -- {t.description}
+              </li>
+            ))}
+          </ul>
+        </details>
+      </CardContent>
+    </Card>
+  );
+}
 
 function ApiTokensCard() {
   const [tokens, setTokens] = useState<ApiToken[] | null>(null);
@@ -513,7 +601,7 @@ function WorkspaceSection() {
                 review found nothing said which one a given integration wants. */}
             <p className="mt-1 text-[11px] text-muted-foreground">
               Use this one for CI pushing scan results in (<code>POST /api/ingest</code>). For the public API
-              and the MCP server, create a personal API token below instead.
+              and the MCP server below, create a personal API token instead.
             </p>
           </div>
           <Link href="/workspaces" className="shrink-0 text-xs text-accent-strong underline">
@@ -522,6 +610,7 @@ function WorkspaceSection() {
         </CardContent>
       </Card>
 
+      <McpServerCard />
       <ApiTokensCard />
     </div>
   );

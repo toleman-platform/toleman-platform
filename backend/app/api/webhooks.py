@@ -11,10 +11,18 @@ real work (a scan, a repo sync) is dispatched to Celery rather than run
 inline here.
 
 Four event types handled, each independent of the others:
-  - pull_request: the original PR Guardrail trigger (GH-03).
+  - pull_request: the original PR Guardrail trigger (GH-03) for
+    opened/reopened/synchronize; closed-and-merged is also handled here
+    (_handle_pr_merged) rather than solely relying on push below, since
+    push turned out not to reliably deliver in practice -- see
+    _handle_pr_merged's own docstring.
   - push: re-scan a target's default branch so the dashboard reflects a
     merged fix without depending on that target's own generated
     toleman-scan.yml having TOLEMAN_API_URL/TOLEMAN_API_KEY configured.
+    Covers a direct push to the default branch outside any PR, which
+    pull_request.closed can't; _handle_pr_merged above covers the same
+    "reflect a merged fix" goal for the PR-merge case specifically, since
+    this event alone proved unreliable for that.
   - installation_repositories: auto-create/remove Targets when repo access
     changes on an existing installation, instead of only at initial install
     or a manually-clicked "Sync now".
@@ -108,6 +116,11 @@ def _verify_signature(
 
 def _handle_pull_request(session: Session, payload: dict) -> dict:
     action = payload.get("action")
+    pr = payload.get("pull_request") or {}
+
+    if action == "closed" and pr.get("merged"):
+        return _handle_pr_merged(session, payload, pr)
+
     if action not in PR_TRIGGERING_ACTIONS:
         return {"ok": True, "skipped": f"action={action}"}
 
@@ -122,6 +135,43 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
 
     run_pr_guardrail_scan_task.delay(target.id, pr_number)
     return {"ok": True, "queued": True, "target_id": target.id, "pr_number": pr_number}
+
+
+def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
+    """Re-scan a target's default branch so the dashboard reflects a merged
+    fix, same goal as `_handle_push` below -- but triggered off
+    `pull_request.closed` (merged=true) instead of `push`.
+
+    `push` was meant to be the trigger for this (see module docstring), and
+    is still wired up for the case it covers that this doesn't (a direct
+    push to the default branch outside any PR). But `push`, even correctly
+    subscribed and saved on the App's Permissions & events page, turned out
+    not to reliably deliver in practice: confirmed live via GitHub's own
+    Recent Deliveries page, zero `push` deliveries across dozens of real
+    pushes and PR merges in the same window, right alongside `pull_request`
+    deliveries for those same commits arriving fine. Rather than keep
+    chasing an undocumented GitHub quirk (the same call already made for
+    `installation_repositories`, see sync_repos_task's periodic catch-up),
+    this piggybacks on `pull_request` instead: a merge is delivered as
+    `pull_request.closed` with `merged: true`, and that event demonstrably
+    *does* arrive reliably -- every other trigger in this file already
+    depends on it."""
+    repo_clone_url = payload.get("repository", {}).get("clone_url")
+    target = session.exec(select(Target).where(Target.repo_url == repo_clone_url)).first()
+    if not target:
+        return {"ok": True, "skipped": "no matching target"}
+
+    base_ref = (pr.get("base") or {}).get("ref")
+    if base_ref != target.default_branch:
+        # Merged into a non-default branch (e.g. a release branch): the
+        # default branch's own content didn't change, so there is nothing
+        # new for a full scan to find.
+        return {"ok": True, "skipped": f"merged into non-default branch (base={base_ref})"}
+
+    from app.tasks.scan_tasks import queue_full_scan_for_target_task
+
+    queue_full_scan_for_target_task.delay(target.id)
+    return {"ok": True, "queued": True, "target_id": target.id, "reason": "pull request merged"}
 
 
 def _handle_push(session: Session, payload: dict) -> dict:

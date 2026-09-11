@@ -3,6 +3,13 @@
 issue_comment (`@toleman ignore finding=<id> <reason>`). Plumbing for
 installation_repositories tested where it dispatches; the actual
 resync logic itself is app.api.github_app._sync_repos's own coverage.
+
+Also covers _handle_pr_merged: `push` turned out not to reliably deliver in
+practice even when correctly subscribed+saved (confirmed live via GitHub's
+own Recent Deliveries page -- zero push deliveries across dozens of real
+pushes/merges in the same window pull_request deliveries for those same
+commits arrived fine for), so pull_request.closed(merged=true) is now a
+second, more reliable trigger for the same "reflect a merged fix" goal.
 """
 import pytest
 from sqlalchemy.pool import StaticPool
@@ -101,6 +108,90 @@ class TestPushHandler:
                 {"ref": "refs/heads/main", "repository": {"clone_url": "https://github.com/no-such/repo"}},
             )
         assert result == {"ok": True, "skipped": "no matching target"}
+
+
+class TestPullRequestMergedHandler:
+    def _payload(self, merged=True, action="closed", base_ref="main"):
+        return {
+            "action": action,
+            "number": 7,
+            "pull_request": {"merged": merged, "base": {"ref": base_ref}},
+            "repository": {"clone_url": "https://github.com/acme/repo"},
+        }
+
+    def test_merged_pr_into_default_branch_queues_a_full_scan(self, engine, target_id, monkeypatch):
+        from app.tasks import scan_tasks
+
+        calls = []
+        monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: calls.append(a))
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, self._payload())
+
+        assert result["queued"] is True
+        assert calls == [(target_id,)]
+
+    def test_closed_without_merging_does_not_queue_a_scan(self, engine, target_id, monkeypatch):
+        """A closed-but-not-merged PR (abandoned) changed nothing on the
+        default branch; nothing to re-scan for."""
+        from app.tasks import pr_guardrail_tasks, scan_tasks
+
+        calls = []
+        monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: calls.append(a))
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, self._payload(merged=False))
+
+        assert "skipped" in result
+        assert calls == []
+
+    def test_merged_into_non_default_branch_is_skipped(self, engine, target_id, monkeypatch):
+        from app.tasks import scan_tasks
+
+        calls = []
+        monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: calls.append(a))
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, self._payload(base_ref="release-branch"))
+
+        assert "skipped" in result
+        assert calls == []
+
+    def test_merged_pr_with_no_matching_target_is_skipped(self, engine, target_id, monkeypatch):
+        from app.tasks import scan_tasks
+
+        calls = []
+        monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: calls.append(a))
+
+        payload = self._payload()
+        payload["repository"]["clone_url"] = "https://github.com/no-such/repo"
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, payload)
+
+        assert result == {"ok": True, "skipped": "no matching target"}
+        assert calls == []
+
+    def test_opened_action_still_triggers_the_ordinary_pr_scan_not_a_full_scan(self, engine, target_id, monkeypatch):
+        """A merged-PR full scan and the ordinary PR-diff guardrail scan are
+        separate paths; opening a PR must still hit the latter, not get
+        mistakenly routed into the former."""
+        from app.tasks import pr_guardrail_tasks, scan_tasks
+
+        pr_calls = []
+        full_scan_calls = []
+        monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: pr_calls.append(a))
+        monkeypatch.setattr(
+            scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: full_scan_calls.append(a)
+        )
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(session, self._payload(action="opened", merged=False))
+
+        assert result["queued"] is True
+        assert pr_calls == [(target_id, 7)]
+        assert full_scan_calls == []
 
 
 class TestInstallationRepositoriesHandler:

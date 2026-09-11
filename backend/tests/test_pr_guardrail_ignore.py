@@ -135,9 +135,15 @@ def test_render_comment_includes_ref_and_ignore_links():
         id=42, pr_scan_id=1, tool="semgrep", rule_id="r", title="t", file_path="a.py",
         line_start=1, severity="High",
     )
-    body = render_comment([finding], [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=1)
+    body = render_comment([finding], [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
     assert "finding-42" in body
     assert "ignore_finding=42" in body
+    # The ignore link must carry pr_scan_id too, not just target_id --
+    # pr-history's PrGuardrailLog only auto-expands (and so only ever mounts
+    # the auto-submit effect for) the scan named by pr_scan_id; a link
+    # missing it lands on the page with nothing expanded and the one-click
+    # request never fires, indistinguishable from the link just not working.
+    assert "pr_scan_id=9&ignore_finding=42" in body
 
 
 def test_render_comment_includes_new_endpoints_section():

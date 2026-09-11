@@ -4,9 +4,9 @@ from typing import Literal
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlmodel import Session, func, or_, select
+from sqlmodel import Session, and_, func, or_, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
@@ -29,6 +29,8 @@ from app.models.models import (
     FindingState,
     FindingStateLog,
     NotificationEventType,
+    OPEN_FINDING_STATES,
+    RESOLVED_FINDING_STATES,
     Severity,
     Target,
     TargetGroup,
@@ -174,13 +176,14 @@ def _filtered_findings_query(
     session: Session,
     user: User,
     *,
-    target_id: int | None,
+    target_id: list[int] | None,
     group_id: int | None,
     branch: str | None,
-    state: FindingState | None,
-    severity: Severity | None,
-    tool: str | None,
-    fixability: Literal["fixable", "no_known_fix", "unknown"] | None,
+    state: list[FindingState] | None,
+    resolved: bool | None,
+    severity: list[Severity] | None,
+    tool: list[str] | None,
+    fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None,
     environment: str | None,
     owner: str | None,
     search: str | None,
@@ -191,6 +194,26 @@ def _filtered_findings_query(
     active must count only critical SCA findings -- but obviously can't
     itself filter by the one dimension it's counting across). Shared so the
     two endpoints can't drift on what a given filter param means.
+
+    `target_id`/`state`/`severity`/`tool`/`fixability` are all multi-select
+    (the Findings page's filter bar lets a caller pick more than one value
+    per filter, e.g. Critical+High severity in one view) -- each is `None`
+    for "no filter", or a non-empty list applied as `.in_(...)`, never a
+    single bare value. An empty list is treated the same as `None` (a
+    caller that deselects every checkbox means "no filter", not "match
+    nothing") rather than a query that can never match any row.
+
+    `resolved` (Open vs Resolved split on the Findings page) is `None` for
+    every caller except that page itself: a target's own Vulnerabilities
+    tab, the malicious-packages/AI-security inventories, and the public API
+    (`app/api/public_api.py`, a wholly separate implementation) all still
+    want every state by default, same as before this param existed --
+    changing that default globally would have silently hidden already-
+    triaged malicious-package/AI findings from pages whose whole point is
+    being a complete inventory, not a triage queue. `state` wins when given
+    (non-empty), same as it always has; `resolved` only ever narrows to the
+    open (`OPEN_FINDING_STATES`) or resolved (`RESOLVED_FINDING_STATES`)
+    group when `state` is absent.
 
     Returns `(query, target_joined)`, or `(None, False)` when the caller's
     workspace membership resolves to zero workspaces (#57): a real query
@@ -212,16 +235,18 @@ def _filtered_findings_query(
         query = query.join(TargetGroup, TargetGroup.target_id == Finding.target_id).where(
             TargetGroup.group_id == group_id
         )
-    if target_id is not None:
-        query = query.where(Finding.target_id == target_id)
+    if target_id:
+        query = query.where(Finding.target_id.in_(target_id))
     if branch is not None:
         query = query.where(Finding.branch == branch)
-    if state is not None:
-        query = query.where(Finding.state == state)
-    if severity is not None:
-        query = query.where(Finding.severity == severity)
-    if tool is not None:
-        query = query.where(Finding.tool == tool)
+    if state:
+        query = query.where(Finding.state.in_(state))
+    elif resolved is not None:
+        query = query.where(Finding.state.in_(RESOLVED_FINDING_STATES if resolved else OPEN_FINDING_STATES))
+    if severity:
+        query = query.where(Finding.severity.in_(severity))
+    if tool:
+        query = query.where(Finding.tool.in_(tool))
     if environment is not None or owner is not None:
         # (#251) Filter findings by the owning target's metadata. Needs the
         # Target join, which only happens above when ws_ids is not None (an
@@ -234,7 +259,7 @@ def _filtered_findings_query(
             query = query.where(Target.environment == environment)
         if owner is not None:
             query = query.where(Target.owner == owner)
-    if fixability is not None:
+    if fixability:
         # (#246) Expressed as a subquery over CveEnrichment rather than a
         # join, so it composes with the joins above without duplicating rows
         # when a finding's CVE has several enrichment matches.
@@ -244,16 +269,23 @@ def _filtered_findings_query(
             CveEnrichment.fixed_versions != "[]",
         )
         known_cves = select(CveEnrichment.cve_id).where(CveEnrichment.osv_found == True)  # noqa: E712
-        if fixability == "fixable":
-            query = query.where(Finding.cve_id.in_(fixable_cves))
-        elif fixability == "no_known_fix":
-            query = query.where(
-                Finding.cve_id.in_(known_cves), Finding.cve_id.not_in(fixable_cves)
+        # Multi-select: each requested value contributes its own condition,
+        # OR'd together (e.g. "fixable" + "unknown" together means "either
+        # a known fix exists, or fixability couldn't be established at
+        # all" -- exactly what selecting both checkboxes should mean).
+        conditions = []
+        if "fixable" in fixability:
+            conditions.append(Finding.cve_id.in_(fixable_cves))
+        if "no_known_fix" in fixability:
+            conditions.append(
+                and_(Finding.cve_id.in_(known_cves), Finding.cve_id.not_in(fixable_cves))
             )
-        else:  # unknown, no CVE at all, or no resolved advisory
-            query = query.where(
+        if "unknown" in fixability:
+            conditions.append(
                 or_(Finding.cve_id.is_(None), Finding.cve_id.not_in(known_cves))
             )
+        if conditions:
+            query = query.where(or_(*conditions))
     if search:
         # Issue #122: AI Analysis' finding-search typeahead reuses this
         # query param rather than new backend search logic, and searches by
@@ -277,14 +309,22 @@ def _filtered_findings_query(
 
 @router.get("")
 def list_findings(
-    target_id: int | None = None,
+    # Multi-select filters (the Findings page's filter bar lets more than
+    # one value be picked per filter): repeated query params, e.g.
+    # `?severity=Critical&severity=High`. `Query(default=None)` accepts
+    # zero, one, or many -- a single `?severity=Critical` still works
+    # exactly as it always has.
+    target_id: list[int] | None = Query(default=None),
     group_id: int | None = None,
     branch: str | None = None,
-    state: FindingState | None = None,
-    severity: Severity | None = None,
-    tool: str | None = None,
+    state: list[FindingState] | None = Query(default=None),
+    # Open vs Resolved split on the Findings page (None: every other
+    # caller, unaffected -- see _filtered_findings_query's docstring).
+    resolved: bool | None = None,
+    severity: list[Severity] | None = Query(default=None),
+    tool: list[str] | None = Query(default=None),
     category: str | None = None,
-    fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
+    fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
     environment: str | None = None,
     owner: str | None = None,
     search: str | None = None,
@@ -294,7 +334,7 @@ def list_findings(
     user: User = Depends(current_user),
 ) -> FindingListResponse:
     query, _ = _filtered_findings_query(
-        session, user, target_id=target_id, group_id=group_id, branch=branch, state=state,
+        session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
         severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
     )
     if query is None:
@@ -347,13 +387,14 @@ class CategoryFacet(BaseModel):
 
 @router.get("/facets/categories")
 def list_category_facets(
-    target_id: int | None = None,
+    target_id: list[int] | None = Query(default=None),
     group_id: int | None = None,
     branch: str | None = None,
-    state: FindingState | None = None,
-    severity: Severity | None = None,
-    tool: str | None = None,
-    fixability: Literal["fixable", "no_known_fix", "unknown"] | None = None,
+    state: list[FindingState] | None = Query(default=None),
+    resolved: bool | None = None,
+    severity: list[Severity] | None = Query(default=None),
+    tool: list[str] | None = Query(default=None),
+    fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
     environment: str | None = None,
     owner: str | None = None,
     search: str | None = None,
@@ -363,18 +404,18 @@ def list_category_facets(
     """Per-category finding counts for the Findings page's category tabs
     ("SCA (12)", "Secrets (3)", ...) -- tabs, not a filter dropdown, replace
     an active category *view*, so each tab's count must reflect every OTHER
-    filter currently applied (severity/tool/state/search/...) the same way
-    list_findings itself would, via the same `_filtered_findings_query`
-    both endpoints share. `category` itself is deliberately not one of the
-    accepted filters here: it's the one dimension being counted across, not
-    filtered by.
+    filter currently applied (severity/tool/state/resolved/search/...) the
+    same way list_findings itself would, via the same
+    `_filtered_findings_query` both endpoints share. `category` itself is
+    deliberately not one of the accepted filters here: it's the one
+    dimension being counted across, not filtered by.
 
     Every registered category is returned, including ones with count 0 --
     a tab that's currently empty under the active filters is still a real,
     clickable destination, not the same as a category that doesn't exist
     (app.core.tool_registry.all_categories)."""
     query, _ = _filtered_findings_query(
-        session, user, target_id=target_id, group_id=group_id, branch=branch, state=state,
+        session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
         severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
     )
     counts = {c: 0 for c in all_categories()}

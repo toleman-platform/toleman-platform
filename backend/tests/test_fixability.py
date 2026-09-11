@@ -147,6 +147,13 @@ class TestFindingsApi:
         _login(client, engine)
         assert client.get(f"/api/findings?fixability={value}").status_code == 200
 
+    def test_multiple_filter_values_are_accepted(self, client, engine):
+        """The Findings page's fixability filter is multi-select (e.g.
+        "fixable" + "unknown" together): repeated `fixability` params."""
+        _login(client, engine)
+        res = client.get("/api/findings", params={"fixability": [FIXABLE, UNKNOWN]})
+        assert res.status_code == 200
+
     def test_a_sast_finding_with_no_cve_is_unknown_not_no_fix(self, client, engine):
         """Most SAST and secrets findings carry no CVE. "No known fix" would
         be actively wrong for a hardcoded secret, whose fix is obvious."""

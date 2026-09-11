@@ -33,6 +33,21 @@ class FindingState(str, Enum):
     REOPENED = "Reopened"
 
 
+# "Still needs attention" vs "already triaged/resolved" -- the split
+# app.core.security_score/app.core.widgets already use for posture
+# calculations (open-findings counts, SLA compliance, etc), and now also
+# the Findings page's own Open/Resolved split (app/api/findings.py). Kept
+# here, next to FindingState itself, as the one definition every caller
+# imports rather than three independent hardcoded tuples drifting apart.
+OPEN_FINDING_STATES = (FindingState.OPEN, FindingState.REOPENED)
+RESOLVED_FINDING_STATES = (
+    FindingState.ACCEPTED_RISK,
+    FindingState.FALSE_POSITIVE,
+    FindingState.WONT_FIX,
+    FindingState.MITIGATED,
+)
+
+
 class UserRole(str, Enum):
     ADMIN = "admin"
     USER = "user"

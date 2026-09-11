@@ -10,11 +10,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
+import json
+
 import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
 from app.main import app
-from app.models.models import Finding, FindingState, Organization, Severity, Target, User, Workspace
+from app.models.models import CveEnrichment, Finding, FindingState, Organization, Severity, Target, User, Workspace
 
 
 @pytest.fixture()
@@ -121,6 +123,23 @@ def test_filter_by_severity(client, engine):
     assert body["items"][0]["title"] == "Critical one"
 
 
+def test_filter_by_severity_accepts_multiple_values(client, engine):
+    """The Findings page's filter bar is multi-select: repeated `severity`
+    query params (e.g. `?severity=Critical&severity=High`) should OR
+    together, not just accept a single value."""
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Critical one", rule_id="r1", severity=Severity.CRITICAL)
+    _make_finding(engine, target_id, title="High one", rule_id="r2", severity=Severity.HIGH)
+    _make_finding(engine, target_id, title="Low one", rule_id="r3", severity=Severity.LOW)
+
+    resp = client.get("/api/findings", params={"severity": ["Critical", "High"]})
+    body = resp.json()
+    titles = {item["title"] for item in body["items"]}
+    assert body["total"] == 2
+    assert titles == {"Critical one", "High one"}
+
+
 def test_filter_by_tool(client, engine):
     _login(client, engine)
     target_id = _make_target(engine)
@@ -131,6 +150,20 @@ def test_filter_by_tool(client, engine):
     body = resp.json()
     assert body["total"] == 1
     assert body["items"][0]["tool"] == "trivy"
+
+
+def test_filter_by_tool_accepts_multiple_values(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Semgrep finding", rule_id="r1", tool="semgrep")
+    _make_finding(engine, target_id, title="Trivy finding", rule_id="r2", tool="trivy")
+    _make_finding(engine, target_id, title="Gitleaks finding", rule_id="r3", tool="gitleaks")
+
+    resp = client.get("/api/findings", params={"tool": ["semgrep", "trivy"]})
+    body = resp.json()
+    titles = {item["title"] for item in body["items"]}
+    assert body["total"] == 2
+    assert titles == {"Semgrep finding", "Trivy finding"}
 
 
 def test_finding_out_includes_derived_category(client, engine):
@@ -226,6 +259,32 @@ def test_filter_by_state(client, engine):
     assert body["items"][0]["title"] == "Accepted one"
 
 
+def test_filter_by_state_accepts_multiple_values(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Open one", rule_id="r1", state=FindingState.OPEN)
+    _make_finding(engine, target_id, title="Reopened one", rule_id="r2", state=FindingState.REOPENED)
+    _make_finding(engine, target_id, title="Accepted one", rule_id="r3", state=FindingState.ACCEPTED_RISK)
+
+    resp = client.get("/api/findings", params={"state": ["Open", "Reopened"]})
+    body = resp.json()
+    titles = {item["title"] for item in body["items"]}
+    assert body["total"] == 2
+    assert titles == {"Open one", "Reopened one"}
+
+
+def test_state_takes_precedence_over_resolved_even_when_multi_selected(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Open one", rule_id="r1", state=FindingState.OPEN)
+    _make_finding(engine, target_id, title="Accepted one", rule_id="r2", state=FindingState.ACCEPTED_RISK)
+
+    resp = client.get("/api/findings", params={"state": ["Accepted Risk"], "resolved": "false"})
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["title"] == "Accepted one"
+
+
 def test_filter_by_target(client, engine):
     _login(client, engine)
     target_a = _make_target(engine, name="Target A")
@@ -237,6 +296,99 @@ def test_filter_by_target(client, engine):
     body = resp.json()
     assert body["total"] == 1
     assert body["items"][0]["title"] == "In A"
+
+
+def test_filter_by_target_accepts_multiple_values(client, engine):
+    _login(client, engine)
+    target_a = _make_target(engine, name="Target A")
+    target_b = _make_target(engine, name="Target B")
+    target_c = _make_target(engine, name="Target C")
+    _make_finding(engine, target_a, title="In A", rule_id="r1")
+    _make_finding(engine, target_b, title="In B", rule_id="r2")
+    _make_finding(engine, target_c, title="In C", rule_id="r3")
+
+    resp = client.get("/api/findings", params={"target_id": [target_a, target_b]})
+    body = resp.json()
+    titles = {item["title"] for item in body["items"]}
+    assert body["total"] == 2
+    assert titles == {"In A", "In B"}
+
+
+def test_filter_by_fixability_accepts_multiple_values(client, engine):
+    """"fixable" + "unknown" together means the union: either a known fix
+    exists, or fixability couldn't be established -- not "no known fix",
+    which is deliberately excluded from this selection."""
+    _login(client, engine)
+    target_id = _make_target(engine)
+    fixable_id = _make_finding(engine, target_id, title="Fixable one", rule_id="r1", cve_id="CVE-2024-0001")
+    no_fix_id = _make_finding(engine, target_id, title="No known fix one", rule_id="r2", cve_id="CVE-2024-0002")
+    _make_finding(engine, target_id, title="Unknown one", rule_id="r3")  # no cve_id at all
+
+    with Session(engine) as session:
+        session.add(CveEnrichment(cve_id="CVE-2024-0001", osv_found=True, fixed_versions=json.dumps([{"fixed": "1.0"}])))
+        session.add(CveEnrichment(cve_id="CVE-2024-0002", osv_found=True, fixed_versions=json.dumps([])))
+        session.commit()
+
+    resp = client.get("/api/findings", params={"fixability": ["fixable", "unknown"]})
+    body = resp.json()
+    titles = {item["title"] for item in body["items"]}
+    assert titles == {"Fixable one", "Unknown one"}
+    assert no_fix_id  # sanity: the excluded finding was actually created
+    assert fixable_id
+
+
+def test_filter_by_resolved_false_returns_only_open_and_reopened(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Open one", rule_id="r1", state=FindingState.OPEN)
+    _make_finding(engine, target_id, title="Reopened one", rule_id="r2", state=FindingState.REOPENED)
+    _make_finding(engine, target_id, title="Mitigated one", rule_id="r3", state=FindingState.MITIGATED)
+    _make_finding(engine, target_id, title="Accepted one", rule_id="r4", state=FindingState.ACCEPTED_RISK)
+
+    resp = client.get("/api/findings", params={"resolved": "false"})
+    body = resp.json()
+    titles = {item["title"] for item in body["items"]}
+    assert body["total"] == 2
+    assert titles == {"Open one", "Reopened one"}
+
+
+def test_filter_by_resolved_true_returns_only_triaged_states(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Open one", rule_id="r1", state=FindingState.OPEN)
+    _make_finding(engine, target_id, title="Mitigated one", rule_id="r2", state=FindingState.MITIGATED)
+    _make_finding(engine, target_id, title="False positive one", rule_id="r3", state=FindingState.FALSE_POSITIVE)
+
+    resp = client.get("/api/findings", params={"resolved": "true"})
+    body = resp.json()
+    titles = {item["title"] for item in body["items"]}
+    assert body["total"] == 2
+    assert titles == {"Mitigated one", "False positive one"}
+
+
+def test_resolved_unset_returns_every_state_unaffected(client, engine):
+    """No caller other than the Findings page itself passes `resolved` --
+    a target's Vulnerabilities tab, malicious-packages/AI-security
+    inventories, etc all still need to see every state by default."""
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Open one", rule_id="r1", state=FindingState.OPEN)
+    _make_finding(engine, target_id, title="Mitigated one", rule_id="r2", state=FindingState.MITIGATED)
+
+    resp = client.get("/api/findings")
+    body = resp.json()
+    assert body["total"] == 2
+
+
+def test_category_facets_resolved_false_only_counts_open_findings(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="open semgrep", rule_id="r1", tool="semgrep", state=FindingState.OPEN)
+    _make_finding(engine, target_id, title="mitigated semgrep", rule_id="r2", tool="semgrep", state=FindingState.MITIGATED)
+
+    resp = client.get("/api/findings/facets/categories", params={"resolved": "false"})
+    counts = {row["category"]: row["count"] for row in resp.json()}
+    assert counts["SAST"] == 1
 
 
 def test_search_matches_title(client, engine):

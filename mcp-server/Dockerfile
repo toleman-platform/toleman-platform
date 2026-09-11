@@ -34,4 +34,15 @@ ENV TOLEMAN_MCP_TRANSPORT=streamable-http \
 
 EXPOSE 8080
 
+# A plain TCP connect rather than an HTTP status check: the `mcp` package's
+# own streamable-http endpoint returns 406 for anything that isn't a real
+# MCP session handshake (verified against a live server during
+# development), so a status-code-based check would need to special-case
+# that instead of treating it as unhealthy. A liveness check only needs to
+# prove the process is up and accepting connections on its configured port
+# (TOLEMAN_MCP_PORT, read the same way the server itself binds it), not
+# replicate MCP protocol semantics.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import os, socket; socket.create_connection(('localhost', int(os.environ.get('TOLEMAN_MCP_PORT', 8080))), timeout=3)" || exit 1
+
 CMD ["python", "server.py"]

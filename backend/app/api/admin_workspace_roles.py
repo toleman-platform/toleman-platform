@@ -9,8 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.api.auth import current_user
 from app.api.deps import get_session
-from app.models.models import User, Workspace, WorkspaceMembership, WorkspaceRole
+from app.core.auth_audit import log_auth_event
+from app.models.models import AuthEventType, User, Workspace, WorkspaceMembership, WorkspaceRole
 
 router = APIRouter(prefix="/api/admin/workspace-roles", tags=["admin"])
 
@@ -64,7 +66,11 @@ def list_memberships(workspace_id: int | None = None, session: Session = Depends
 
 
 @router.put("", response_model=MembershipOut)
-def assign_membership(payload: AssignMembershipRequest, session: Session = Depends(get_session)):
+def assign_membership(
+    payload: AssignMembershipRequest,
+    session: Session = Depends(get_session),
+    admin_user: User = Depends(current_user),
+):
     """Upsert: assigning a user a role for a workspace they're already a
     member of updates the existing row rather than creating a duplicate."""
     user = session.get(User, payload.user_id)
@@ -80,6 +86,7 @@ def assign_membership(payload: AssignMembershipRequest, session: Session = Depen
             WorkspaceMembership.workspace_id == payload.workspace_id,
         )
     ).first()
+    old_role = membership.role if membership else None
     if membership:
         membership.role = payload.role
     else:
@@ -87,14 +94,35 @@ def assign_membership(payload: AssignMembershipRequest, session: Session = Depen
     session.add(membership)
     session.commit()
     session.refresh(membership)
+    if old_role != membership.role:
+        log_auth_event(
+            session,
+            AuthEventType.WORKSPACE_ROLE_CHANGED,
+            actor=admin_user.email,
+            target_email=user.email,
+            detail=f"{workspace.name}: {old_role.value if old_role else 'none'} -> {membership.role.value}",
+        )
     return _out(membership, user, workspace)
 
 
 @router.delete("/{membership_id}")
-def remove_membership(membership_id: int, session: Session = Depends(get_session)):
+def remove_membership(
+    membership_id: int,
+    session: Session = Depends(get_session),
+    admin_user: User = Depends(current_user),
+):
     membership = session.get(WorkspaceMembership, membership_id)
     if not membership:
         raise HTTPException(status_code=404, detail="membership not found")
+    user = session.get(User, membership.user_id)
+    workspace = session.get(Workspace, membership.workspace_id)
     session.delete(membership)
     session.commit()
+    log_auth_event(
+        session,
+        AuthEventType.WORKSPACE_ROLE_REMOVED,
+        actor=admin_user.email,
+        target_email=user.email if user else "",
+        detail=f"{workspace.name if workspace else 'workspace ' + str(membership.workspace_id)}: removed ({membership.role.value})",
+    )
     return {"ok": True}

@@ -51,6 +51,45 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
+class AuthEventType(str, Enum):
+    LOGIN_SUCCESS = "login_success"
+    LOGIN_FAILED = "login_failed"
+    LOGOUT = "logout"
+    PASSWORD_CHANGED = "password_changed"
+    ROLE_CHANGED = "role_changed"
+    WORKSPACE_ROLE_CHANGED = "workspace_role_changed"
+    WORKSPACE_ROLE_REMOVED = "workspace_role_removed"
+
+
+class AuthAuditLog(SQLModel, table=True):
+    """Security-relevant account activity: who logged in/out, when, from
+    where, and who changed whose permissions. Deliberately separate from
+    FindingStateLog/Scan (what `GET /api/audit/log` already renders as the
+    Audit Log page) -- that feed is "what happened to our vulnerability
+    posture" and is visible to any authenticated user; this one is "who did
+    what to this platform's own access control" and is admin-only
+    (`GET /api/audit/security-log`, gated the same way app/api/admin.py's
+    user management already is), a different sensitivity level entirely.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event_type: AuthEventType = Field(index=True)
+    # Who performed the action. For LOGIN_SUCCESS/LOGIN_FAILED/LOGOUT/
+    # PASSWORD_CHANGED this is the same person the event is about; for
+    # ROLE_CHANGED/WORKSPACE_ROLE_CHANGED/WORKSPACE_ROLE_REMOVED this is the
+    # admin who made the change, which can differ from target_email below.
+    actor: str = Field(index=True)
+    # The user the event is about. Defaults to `actor` at write time for the
+    # self-service events (login/logout/password) so every row is
+    # filterable by "events about user X" regardless of event type, without
+    # a nullable column meaning two different things.
+    target_email: str = ""
+    detail: str = ""
+    # Best-effort (Request.client can be None behind some proxies/test
+    # clients); never blocks logging the event itself.
+    ip_address: str = ""
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
 class Organization(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str

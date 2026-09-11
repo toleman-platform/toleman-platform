@@ -787,6 +787,35 @@ export type AuditLogQuery = {
 };
 export type AuditLogResult = { items: AuditEvent[]; total: number };
 
+// Admin-only security audit log (login/logout, password changes,
+// permission changes) -- app.models.models.AuthAuditLog via
+// GET /api/audit/security-log, distinct from AuditEvent/AuditLogResult
+// above (the findings-triage feed every authenticated user can read).
+export type AuthEventType =
+  | "login_success"
+  | "login_failed"
+  | "logout"
+  | "password_changed"
+  | "role_changed"
+  | "workspace_role_changed"
+  | "workspace_role_removed";
+export type AuthAuditLogEntry = {
+  id: number;
+  event_type: AuthEventType;
+  actor: string;
+  target_email: string;
+  detail: string;
+  ip_address: string;
+  created_at: string;
+};
+export type SecurityAuditLogQuery = {
+  event_type?: AuthEventType;
+  email?: string;
+  page?: number;
+  page_size?: number;
+};
+export type SecurityAuditLogResult = { items: AuthAuditLogEntry[]; total: number };
+
 export type SearchResults = { findings: Finding[]; targets: Target[] };
 
 // #34: a platform may have multiple registered GitHub Apps, each with its
@@ -1499,6 +1528,15 @@ export const api = {
     return jsonFetch<AuditLogResult>(`/api/audit/log?${params.toString()}`);
   },
   auditActors: () => jsonFetch<string[]>("/api/audit/actors"),
+  securityAuditLog: (query: SecurityAuditLogQuery = {}) => {
+    const params = new URLSearchParams();
+    if (query.event_type) params.set("event_type", query.event_type);
+    if (query.email) params.set("email", query.email);
+    if (query.page) params.set("page", String(query.page));
+    if (query.page_size) params.set("page_size", String(query.page_size));
+    return jsonFetch<SecurityAuditLogResult>(`/api/audit/security-log?${params.toString()}`);
+  },
+  securityAuditActors: () => jsonFetch<string[]>("/api/audit/security-log/actors"),
   users: () => jsonFetch<AuthUser[]>("/api/admin/users"),
   createUser: (u: { email: string; name: string; password: string; role: string }) =>
     jsonFetch<AuthUser>("/api/admin/users", { method: "POST", body: JSON.stringify(u) }),

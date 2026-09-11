@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.api.auth import current_user
 from app.api.deps import get_session
+from app.core.auth_audit import log_auth_event
 from app.core.security import hash_password
-from app.models.models import User, UserRole
+from app.models.models import AuthEventType, User, UserRole
 
 router = APIRouter(prefix="/api/admin/users", tags=["admin"])
 
@@ -50,14 +52,28 @@ def create_user(payload: CreateUserRequest, session: Session = Depends(get_sessi
 
 
 @router.patch("/{user_id}/role", response_model=UserOut)
-def update_role(user_id: int, payload: UpdateRoleRequest, session: Session = Depends(get_session)):
+def update_role(
+    user_id: int,
+    payload: UpdateRoleRequest,
+    session: Session = Depends(get_session),
+    admin_user: User = Depends(current_user),
+):
     user = session.get(User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="user not found")
+    old_role = user.role
     user.role = payload.role
     session.add(user)
     session.commit()
     session.refresh(user)
+    if old_role != user.role:
+        log_auth_event(
+            session,
+            AuthEventType.ROLE_CHANGED,
+            actor=admin_user.email,
+            target_email=user.email,
+            detail=f"{old_role.value} -> {user.role.value}",
+        )
     return user
 
 

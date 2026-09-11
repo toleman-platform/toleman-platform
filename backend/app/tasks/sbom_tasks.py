@@ -2,7 +2,7 @@ import logging
 import subprocess
 from urllib.parse import urlparse
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.core.db import engine
 from app.core.github import repo_slug_from_url
@@ -174,13 +174,13 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             except Exception:
                 logger.exception("Malware check failed for target %s", target_id)
 
-            all_count = len(
-                session.exec(
-                    select(SbomComponent).where(
-                        SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch
-                    )
-                ).all()
-            )
+            all_count = session.exec(
+                select(func.count()).select_from(
+                    select(SbomComponent)
+                    .where(SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch)
+                    .subquery()
+                )
+            ).one()
 
             # A run no inventory source carried produced no inventory, so it
             # is failed rather than completed-with-nothing, however well the

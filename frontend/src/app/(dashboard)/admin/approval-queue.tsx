@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { SEVERITY_COLOR } from "@/lib/severity";
+import { IGNORE_STATUS_COLOR, SEVERITY_COLOR } from "@/lib/severity";
 
 export function ApprovalQueue() {
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -19,11 +19,23 @@ export function ApprovalQueue() {
   } = useAsyncData<PrGuardrailFinding[]>(() => api.getPendingIgnoreRequests());
   const error = loadError?.message ?? null;
 
+  // A decision made here moves a row from the pending list above to this
+  // history list; both need refreshing together so a just-approved/rejected
+  // finding shows up in its new place immediately, not only after the next
+  // full page load.
+  const {
+    data: history,
+    error: historyLoadError,
+    refetch: refreshHistory,
+  } = useAsyncData<PrGuardrailFinding[]>(() => api.getIgnoreRequestHistory());
+  const historyError = historyLoadError?.message ?? null;
+
   async function approve(id: number) {
     setBusyId(id);
     try {
       await api.approveIgnore(id);
       refresh();
+      refreshHistory();
     } finally {
       setBusyId(null);
     }
@@ -34,6 +46,7 @@ export function ApprovalQueue() {
     try {
       await api.rejectIgnore(id);
       refresh();
+      refreshHistory();
     } finally {
       setBusyId(null);
     }
@@ -101,6 +114,57 @@ export function ApprovalQueue() {
           ))}
           {findings.length === 0 && (
             <p className="text-sm text-muted-foreground">No pending ignore requests.</p>
+          )}
+        </div>
+      )}
+
+      <div>
+        <h2 className="text-lg font-semibold text-foreground">History</h2>
+        <p className="text-sm text-muted-foreground">
+          Ignore requests already approved or rejected.
+        </p>
+      </div>
+
+      {historyError && <p className="text-sm text-destructive">{historyError}</p>}
+      {history === null && !historyError && <SkeletonList count={3} />}
+
+      {history !== null && (
+        <div className="flex flex-col gap-2">
+          {history.map((f) => (
+            <Card key={f.id} className="border-border bg-card">
+              <CardContent className="px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="outline"
+                        className={`shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${SEVERITY_COLOR[f.severity] || "text-muted-foreground"}`}
+                      >
+                        {f.severity}
+                      </Badge>
+                      <span className="truncate text-sm font-medium text-foreground">{f.title}</span>
+                    </div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">
+                      {f.tool} · {f.file_path}
+                      {f.line_start ? `:${f.line_start}` : ""} · {f.rule_id}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Requested by {f.ignore_requested_by}: {f.ignore_requested_reason}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {f.ignore_status === "approved" ? "Approved" : "Rejected"} by {f.ignore_reviewed_by}
+                      {f.ignore_reviewed_at ? ` · ${new Date(f.ignore_reviewed_at).toLocaleString()}` : ""}
+                    </div>
+                  </div>
+                  <Badge variant="outline" className={`shrink-0 ${IGNORE_STATUS_COLOR[f.ignore_status] || "text-muted-foreground"}`}>
+                    {f.ignore_status}
+                  </Badge>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {history.length === 0 && (
+            <p className="text-sm text-muted-foreground">No ignore requests reviewed yet.</p>
           )}
         </div>
       )}

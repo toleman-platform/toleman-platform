@@ -111,6 +111,19 @@ personal access token, nothing to install.
 }
 ```
 
+This repo's own `.mcp.json` (checked in at the repo root) has this same entry
+pointed at the production deployment, reading the token from a
+`TOLEMAN_API_TOKEN` env var rather than a hardcoded value, so it's safe to
+commit — set that env var in your Claude Code client (or, for a Claude Code
+on the web / remote environment, as an environment variable on the
+environment itself; see the "Environment variables" section of
+[the docs](https://code.claude.com/docs/en/claude-code-on-the-web)) and any
+Claude Code session opened in this repo picks up the `toleman` MCP server
+automatically (`.claude/settings.json` pre-trusts it via
+`enabledMcpjsonServers`). Note that MCP servers are attached when a session
+*starts* — adding or changing `TOLEMAN_API_TOKEN` takes effect on the next
+new session, not the one already running.
+
 ## Development
 
 ```bash

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "toleman": {
+      "url": "https://toleman-api.oasisgoods.store/mcp",
+      "headers": {
+        "Authorization": "Bearer ${TOLEMAN_API_TOKEN}"
+      }
+    }
+  }
+}

@@ -13,7 +13,17 @@ const STATES = ["Open", "Accepted Risk", "False Positive", "Won't Fix", "Mitigat
 const SELECT_CLASS =
   "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
-export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[]; tools: string[]; groups: Group[] }) {
+export function FindingsFilterBar({
+  targets,
+  tools,
+  categories,
+  groups,
+}: {
+  targets: Target[];
+  tools: string[];
+  categories: string[];
+  groups: Group[];
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -32,7 +42,7 @@ export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[
     updateParam("search", search);
   }
 
-  const hasFilters = ["severity", "tool", "state", "target_id", "group_id", "search", "fixability"].some((k) => searchParams.get(k));
+  const hasFilters = ["severity", "tool", "category", "state", "target_id", "group_id", "search", "fixability"].some((k) => searchParams.get(k));
 
   function clearAll() {
     setSearch("");
@@ -95,6 +105,23 @@ export function FindingsFilterBar({ targets, tools, groups }: { targets: Target[
         {tools.map((t) => (
           <option key={t} value={t}>
             {t}
+          </option>
+        ))}
+      </select>
+
+      {/* Vulnerability-type category (Code/SAST, Secret, OSS/SCA, License,
+          IaC, AI/ML, ...), same vocabulary Tool Marketplace already shows;
+          derived server-side from tool, see app.core.tool_registry. */}
+      <select
+        aria-label="Filter by category"
+        className={SELECT_CLASS}
+        value={searchParams.get("category") ?? ""}
+        onChange={(e) => updateParam("category", e.target.value)}
+      >
+        <option value="">All categories</option>
+        {categories.map((c) => (
+          <option key={c} value={c}>
+            {c}
           </option>
         ))}
       </select>

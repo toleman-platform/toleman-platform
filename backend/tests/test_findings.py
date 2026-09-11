@@ -133,6 +133,58 @@ def test_filter_by_tool(client, engine):
     assert body["items"][0]["tool"] == "trivy"
 
 
+def test_finding_out_includes_derived_category(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Semgrep finding", rule_id="r1", tool="semgrep")
+    _make_finding(engine, target_id, title="Gitleaks finding", rule_id="r2", tool="gitleaks")
+    _make_finding(engine, target_id, title="Custom CI finding", rule_id="r3", tool="some-external-ci-tool")
+
+    resp = client.get("/api/findings")
+    categories = {f["title"]: f["category"] for f in resp.json()["items"]}
+    assert categories["Semgrep finding"] == "SAST"
+    assert categories["Gitleaks finding"] == "Secrets"
+    # A tool Toleman's own registry doesn't recognize (e.g. a CI pipeline's
+    # free-form POST /api/ingest/{target_id} upload) still gets a real
+    # category, "Other", not an empty/missing one.
+    assert categories["Custom CI finding"] == "Other"
+
+
+def test_filter_by_category(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Semgrep finding", rule_id="r1", tool="semgrep")
+    _make_finding(engine, target_id, title="Trivy finding", rule_id="r2", tool="trivy")
+
+    resp = client.get("/api/findings", params={"category": "SCA"})
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["title"] == "Trivy finding"
+
+
+def test_filter_by_category_other_excludes_every_known_tool(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    _make_finding(engine, target_id, title="Semgrep finding", rule_id="r1", tool="semgrep")
+    _make_finding(engine, target_id, title="Custom CI finding", rule_id="r2", tool="some-external-ci-tool")
+
+    resp = client.get("/api/findings", params={"category": "Other"})
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["title"] == "Custom CI finding"
+
+
+def test_category_facets_lists_every_known_category(client, engine):
+    _login(client, engine)
+    resp = client.get("/api/findings/facets/categories")
+    assert resp.status_code == 200
+    categories = resp.json()
+    assert "SAST" in categories
+    assert "Secrets" in categories
+    assert "SCA" in categories
+    assert "Other" in categories
+
+
 def test_filter_by_state(client, engine):
     _login(client, engine)
     target_id = _make_target(engine)

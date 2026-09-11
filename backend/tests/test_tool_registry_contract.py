@@ -18,9 +18,14 @@ import pytest
 from app.core.tool_registry import (
     BUNDLED_TOOLS,
     TOOL_REGISTRY,
+    UNKNOWN_TOOL_CATEGORY,
     USAGE_SURFACES,
+    all_categories,
+    all_known_tools,
     default_usage_for,
     registry_with_integration_status,
+    tool_category,
+    tools_in_category,
 )
 from app.scanners.runner import TOOL_COMMANDS
 
@@ -119,6 +124,55 @@ def test_non_integrated_tools_default_every_usage_surface_off():
             }, "nuclei must default on for api_scan only; every other surface stays off"
             continue
         assert not any(usage[s] for s in USAGE_SURFACES), entry["tool"]
+
+
+# --- Findings-page category derivation (tool_category et al.) -------------
+
+
+@pytest.mark.parametrize("entry", TOOL_REGISTRY, ids=ALL_TOOLS)
+def test_tool_category_matches_the_registry_entry(entry):
+    assert tool_category(entry["tool"]) == entry["category"]
+
+
+def test_tool_category_covers_finding_tool_values_outside_the_registry():
+    # Real Finding.tool values that never go through TOOL_REGISTRY at all
+    # (see tool_registry.py's own comment on _EXTRA_TOOL_CATEGORIES): nuclei
+    # findings are persisted tool="api-scan", not "nuclei", and malicious-
+    # package findings are persisted tool="osv-malware" by a path that
+    # bypasses the registry entirely.
+    assert tool_category("api-scan") == "API/DAST"
+    assert tool_category("osv-malware") == "Malicious Package"
+
+
+def test_tool_category_falls_back_to_other_for_an_unrecognized_tool():
+    # Reachable in practice via POST /api/ingest/{target_id}, which accepts
+    # any caller-supplied `tool` string from a CI pipeline's own upload.
+    assert tool_category("some-external-ci-tool") == UNKNOWN_TOOL_CATEGORY
+
+
+def test_tools_in_category_is_the_exact_reverse_of_tool_category():
+    for entry in TOOL_REGISTRY:
+        assert entry["tool"] in tools_in_category(entry["category"])
+    for cat in all_categories():
+        for t in tools_in_category(cat):
+            assert tool_category(t) == cat
+
+
+def test_all_known_tools_matches_every_non_other_tool_category():
+    known = set(all_known_tools())
+    assert known == {e["tool"] for e in TOOL_REGISTRY} | {"api-scan", "osv-malware"}
+    for t in known:
+        assert tool_category(t) != UNKNOWN_TOOL_CATEGORY
+
+
+def test_all_categories_includes_other_and_every_registry_category():
+    cats = all_categories()
+    assert UNKNOWN_TOOL_CATEGORY in cats
+    for entry in TOOL_REGISTRY:
+        assert entry["category"] in cats
+    # Sorted, stable order for a UI dropdown -- not required to look a
+    # particular way, just not to silently reorder between requests.
+    assert cats == sorted(cats)
 
 
 @pytest.mark.skipif(

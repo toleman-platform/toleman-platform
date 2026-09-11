@@ -52,7 +52,7 @@ def _resolve_workspace_token(session: Session, workspace_id: int) -> str | None:
         session.delete(row)
         session.commit()
         # workspace_id only, never the token value.
-        logger.info("Purged expired GitHub token for workspace %s", workspace_id)  # nosemgrep: python.lang.security.audit.logging.python-logger-credential-disclosure
+        logger.info("Purged expired GitHub token for workspace %s", workspace_id)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         return None
 
     try:

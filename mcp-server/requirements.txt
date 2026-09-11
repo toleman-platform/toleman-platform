@@ -1,4 +1,8 @@
-mcp==1.28.1
+# 1.30.0: needed for reliable per-request access to the incoming HTTP
+# request (ctx.request_context.request) in streamable-http mode, which
+# server.py's multi-tenant _resolve_token depends on. Zero known
+# vulnerabilities against this version per `pip-audit` at pin time.
+mcp==1.30.0
 httpx==0.28.1
 # (#239) Not a direct requirement of anything above, pip resolved it
 # transitively at 70.3.0, which carries CVE-2025-47273 (HIGH, path

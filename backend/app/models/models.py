@@ -322,6 +322,40 @@ class Scan(SQLModel, table=True):
     error: str = ""
 
 
+class SnippetScanRun(SQLModel, table=True):
+    """An ephemeral pre-commit vulnerability check (issue #108 follow-up to
+    the Toleman MCP server): scans a code snippet an MCP client (e.g.
+    Claude Code, mid-edit) hands over directly, so a vulnerability can be
+    caught *while it's being written*, not just after it lands in the
+    Findings inventory via a real scan. Deliberately NOT a Target/Scan/
+    Finding: this content was never associated with any repo Toleman
+    actually scans, so persisting it as real Findings would misrepresent
+    the platform's own posture data (dashboards, security score) with rows
+    for code that may never even be committed.
+
+    `content` itself is never stored on this row, only `filename` (for the
+    poll response to echo back what was scanned) -- the raw snippet is
+    passed straight through to the Celery task as an argument and only
+    ever touches disk inside a temp dir the task removes when done, same
+    "don't persist what doesn't need to persist" instinct as ApiToken only
+    storing a hash of the plaintext token.
+
+    Async (same create-row-then-`.delay()` shape as Scan/DiscoveryRun/
+    ToolInstallRun): semgrep's `--config=auto` can hit the network on a
+    cold rule cache, too slow/unpredictable to run inside a request
+    handler (see app.scanners.runner's own module docstring on why every
+    real scanner invocation in this codebase already goes through Celery,
+    never synchronously in a request handler)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", index=True)
+    filename: str
+    status: str = "running"  # running, completed, failed
+    findings_json: str = "[]"
+    error: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
+    completed_at: Optional[datetime] = None
+
+
 class ToolInstallRun(SQLModel, table=True):
     """One admin-triggered scanner install (#216).
 

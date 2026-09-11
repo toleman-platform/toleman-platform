@@ -10,16 +10,24 @@ secure and keep stable across internal refactors. `/api/public/v1` so a
 breaking v2 can exist alongside v1 rather than forcing every integration
 to update in lockstep.
 """
+import json
+from pathlib import Path
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_api_token_user, require_api_token_write_scope
 from app.api.deps import get_session
+from app.core.async_jobs import create_running_row
+from app.core.autofix import AutofixError, Patch, open_fix_pr, suggest_fix
 from app.core.rate_limit import enforce_rate_limit
-from app.models.models import Finding, Scan, Target, User
+from app.models.models import Finding, Scan, SnippetScanRun, Target, User
 from app.scanners import parsers
 from app.core.tool_usage import tools_for_surface
 from app.tasks.scan_tasks import run_scan
+from app.tasks.snippet_scan_tasks import run_snippet_scan
 
 router = APIRouter(prefix="/api/public/v1", tags=["public-api"])
 
@@ -146,3 +154,188 @@ def trigger_scan(
     run_scan.delay(target_id=target.id, tool=tool, scan_id=scan.id)
 
     return {"scan_id": scan.id, "status": scan.status}
+
+
+# ---------------------------------------------------------------------------
+# Autofix (issue #108 follow-up): the same suggest-fix/raise-pr split
+# GET/POST /api/findings/{id}/suggest-fix and /raise-pr already expose to
+# the frontend (see FindingSuggestFixResponse's docstring in
+# app/api/findings.py for why this is two calls, not one) -- mirrored here
+# so a public-API/MCP caller gets the identical capability: read a
+# recommendation + diff first, only commit a PR on an explicit second call
+# for the *exact* patch just shown, never a freshly-regenerated one.
+# ---------------------------------------------------------------------------
+
+
+class SuggestFixResponse(BaseModel):
+    recommendation: str
+    strategy: Literal["ai", "deterministic_sca"] | None = None
+    diff: str | None = None
+    file_path: str | None = None
+    new_content: str | None = None
+    ref: str | None = None
+    explanation: str | None = None
+
+
+class RaiseFixPrRequest(BaseModel):
+    file_path: str
+    new_content: str
+    ref: str
+    strategy: Literal["ai", "deterministic_sca"]
+    explanation: str = ""
+
+
+@router.post("/findings/{finding_id}/suggest-fix")
+def suggest_fix_endpoint(
+    finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_api_token_user)
+) -> SuggestFixResponse:
+    """Read-scoped: never writes anywhere, same permission level as every
+    other GET-shaped endpoint on this router."""
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    _get_target_scoped(finding.target_id, session, user)
+    return SuggestFixResponse(**suggest_fix(session, finding))
+
+
+@router.post("/findings/{finding_id}/raise-pr")
+def raise_fix_pr_endpoint(
+    finding_id: int,
+    payload: RaiseFixPrRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_api_token_user),
+    _write_scope: None = Depends(require_api_token_write_scope),
+) -> dict:
+    """Requires a read_write-scoped token (writes a branch/PR to the
+    target's real GitHub repo). `file_path` must match the finding's own
+    file, same guard the internal endpoint applies, so this can only ever
+    commit a fix to the file the finding actually points at."""
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    target = _get_target_scoped(finding.target_id, session, user)
+    if payload.file_path != finding.file_path:
+        raise HTTPException(status_code=400, detail="file_path does not match this finding")
+
+    patch = Patch(
+        file_path=payload.file_path,
+        old_content="",  # unused by open_fix_pr; only unified_diff() (suggest-fix) needs it
+        new_content=payload.new_content,
+        ref=payload.ref,
+        strategy=payload.strategy,
+        explanation=payload.explanation,
+    )
+    try:
+        return open_fix_pr(session, target, finding, patch)
+    except AutofixError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Snippet scan (issue #108 follow-up): "find vulns when it's getting
+# written", not just after it's already committed -- scans a code snippet
+# an MCP client hands over directly (e.g. Claude Code, mid-edit), no Target
+# required. See app.tasks.snippet_scan_tasks and SnippetScanRun's own
+# docstring for why this is async (create-row-then-.delay(), same as
+# POST /scans above) and why nothing here is persisted as a real Finding.
+# ---------------------------------------------------------------------------
+
+# semgrep/semgrep-llm (SAST) and gitleaks (secrets) cover the common "did I
+# just write something dangerous" case fast; trivy/noseyparker/modelscan are
+# deliberately excluded (they want a real manifest/lockfile, a full git
+# history, or a model file respectively -- meaningless against one arbitrary
+# snippet, at best a guaranteed ToolNotApplicable). checkov/tfsec/trivy-
+# license/gosec are still allowed on request (e.g. an agent writing a single
+# Terraform/Go file), just not run by default.
+DEFAULT_SNIPPET_TOOLS = ["semgrep", "gitleaks"]
+ALLOWED_SNIPPET_TOOLS = {"semgrep", "semgrep-llm", "gitleaks", "checkov", "tfsec", "trivy-license", "gosec"}
+
+# A real subprocess (semgrep/gitleaks) invocation per call, same rate-limit
+# rationale as SCAN_RUN_RATE_LIMIT above; snippet scans are expected to be
+# called far more often though (an agent checking as it writes), hence the
+# higher ceiling.
+SNIPPET_SCAN_RATE_LIMIT = 30
+SNIPPET_SCAN_RATE_WINDOW_SECONDS = 60
+
+# Keeps a runaway/malicious payload from tying up a worker slot or ballooning
+# the Celery broker's message size; large enough for any single real source
+# file.
+MAX_SNIPPET_CONTENT_BYTES = 200_000
+
+
+class ScanSnippetRequest(BaseModel):
+    filename: str
+    content: str
+    tools: list[str] | None = None
+
+
+class ScanSnippetFinding(BaseModel):
+    tool: str
+    rule_id: str
+    title: str
+    description: str
+    file_path: str
+    line_start: int | None = None
+    line_end: int | None = None
+    severity: str
+    snippet: str
+
+
+class ScanSnippetRunOut(BaseModel):
+    id: int
+    status: str
+    filename: str
+    findings: list[ScanSnippetFinding] | None = None
+    error: str = ""
+
+
+@router.post("/scan-snippet")
+def create_snippet_scan(
+    payload: ScanSnippetRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_api_token_user),
+) -> dict:
+    """Read-scoped: this never touches a real target/repo, so no elevated
+    token scope is required, same reasoning as suggest-fix above."""
+    enforce_rate_limit(
+        key=f"public_api_scan_snippet:user:{user.id}",
+        limit=SNIPPET_SCAN_RATE_LIMIT,
+        window_seconds=SNIPPET_SCAN_RATE_WINDOW_SECONDS,
+    )
+
+    relative = payload.filename.lstrip("/")
+    if not relative or ".." in Path(relative).parts:
+        raise HTTPException(status_code=400, detail="invalid filename")
+    if len(payload.content.encode("utf-8")) > MAX_SNIPPET_CONTENT_BYTES:
+        raise HTTPException(
+            status_code=400, detail=f"content too large (max {MAX_SNIPPET_CONTENT_BYTES} bytes)"
+        )
+    tools = payload.tools or DEFAULT_SNIPPET_TOOLS
+    unknown = sorted(set(tools) - ALLOWED_SNIPPET_TOOLS)
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"unsupported tool(s) for snippet scanning: {unknown}")
+
+    run = create_running_row(
+        session, SnippetScanRun(user_id=user.id, filename=payload.filename, status="running")
+    )
+    run_snippet_scan.delay(run_id=run.id, filename=payload.filename, content=payload.content, tools=tools)
+    return {"run_id": run.id, "status": run.status}
+
+
+@router.get("/scan-snippet/{run_id}")
+def get_snippet_scan(
+    run_id: int, session: Session = Depends(get_session), user: User = Depends(current_api_token_user)
+) -> ScanSnippetRunOut:
+    run = session.get(SnippetScanRun, run_id)
+    # Owner-scoped, not workspace-scoped: this content was never associated
+    # with any target/workspace at all, so the only real ownership boundary
+    # is "the same user who submitted it" -- same as ApiToken itself.
+    if not run or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="snippet scan run not found")
+    return ScanSnippetRunOut(
+        id=run.id,
+        status=run.status,
+        filename=run.filename,
+        findings=json.loads(run.findings_json) if run.status == "completed" else None,
+        error=run.error,
+    )

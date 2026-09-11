@@ -26,6 +26,7 @@ celery_app = Celery(
         "app.tasks.api_scan_tasks",
         "app.tasks.tool_install_tasks",
         "app.tasks.github_sync_tasks",
+        "app.tasks.snippet_scan_tasks",
     ],
 )
 celery_app.conf.task_routes = {
@@ -62,6 +63,10 @@ celery_app.conf.task_routes = {
     # webhook instead. Same queue, for the same reason api_scan_tasks is:
     # off the request thread, behind the one worker this deployment runs.
     "app.tasks.github_sync_tasks.*": {"queue": "scans"},
+    # snippet_scan_tasks (issue #108 follow-up, MCP pre-commit check): a
+    # real subprocess (semgrep/gitleaks) invocation against a temp dir,
+    # same class of off-request-thread work as scan_tasks/api_scan_tasks.
+    "app.tasks.snippet_scan_tasks.*": {"queue": "scans"},
 }
 
 # task_acks_late + reject_on_worker_lost: if a worker dies mid-scan (OOM, pod

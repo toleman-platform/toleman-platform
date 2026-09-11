@@ -342,6 +342,25 @@ export type FindingEnrichment = {
   fetched_at: string | null;
 };
 
+// Autofix + fix recommendation (app.core.autofix) for one finding. Always
+// carries `recommendation`; `mode` says what else came with it -- "pr" (a
+// real fix PR was opened against the target's repo), "diff" (a patch was
+// generated but no PR could be opened, e.g. no GitHub App installed for
+// this target), or "recommendation_only" (no automated patch could be
+// generated for this finding at all -- still a real recommendation, never
+// a fabricated diff).
+export type FindingFix = {
+  mode: "pr" | "diff" | "recommendation_only";
+  recommendation: string;
+  strategy: "ai" | "deterministic_sca" | null;
+  diff: string | null;
+  file_path: string | null;
+  pr_url: string | null;
+  pr_number: number | null;
+  branch: string | null;
+  warning: string | null;
+};
+
 export type AiProvider = "anthropic" | "openai_compatible";
 
 export type AiStatus = {
@@ -1513,6 +1532,7 @@ export const api = {
     return res.blob();
   },
   findingEnrichment: (findingId: number) => jsonFetch<FindingEnrichment>(`/api/findings/${findingId}/enrichment`),
+  fixFinding: (findingId: number) => jsonFetch<FindingFix>(`/api/findings/${findingId}/fix`, { method: "POST" }),
   aiStatus: () => jsonFetch<AiStatus>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),

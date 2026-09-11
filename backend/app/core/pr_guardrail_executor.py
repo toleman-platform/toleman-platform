@@ -196,9 +196,59 @@ def finding_summary(f: dict) -> dict:
     }
 
 
-def _persist_findings(session: Session, pr_scan_id: int, net_new: list[dict]) -> list[PRGuardrailFinding]:
+def _carry_forward_approved_ignore(
+    session: Session, target_id: int, pr_number: int, tool: str, rule_id: str, file_path: str, line_start: int | None
+) -> PRGuardrailFinding | None:
+    """A security reviewer approving an ignore on one scan of a PR is a
+    decision about that PR, not just that one scan snapshot. Without this,
+    the next scan of the same PR (e.g. after an unrelated commit) re-surfaces
+    the identical finding as a fresh row with ignore_status="none" -- net-new
+    vs the default branch is still technically correct, but it looks exactly
+    like an unaddressed issue a reviewer never saw, when they already
+    approved it. Matched the same way _sync_approved_ignore_to_main_findings
+    (app/api/pr_guardrail.py) matches a main Finding: tool/rule_id/file_path
+    /line_start, since PRGuardrailFinding has no snippet to build a real
+    dedup_hash from. Most-recently-approved instance wins if there happen to
+    be more than one (there normally won't be)."""
+    query = select(PRGuardrailFinding).where(
+        PRGuardrailFinding.pr_scan_id.in_(
+            select(PRGuardrailScan.id).where(
+                PRGuardrailScan.target_id == target_id, PRGuardrailScan.pr_number == pr_number
+            )
+        ),
+        PRGuardrailFinding.tool == tool,
+        PRGuardrailFinding.rule_id == rule_id,
+        PRGuardrailFinding.file_path == file_path,
+        PRGuardrailFinding.ignore_status == IgnoreStatus.APPROVED,
+    )
+    query = query.where(
+        PRGuardrailFinding.line_start.is_(None) if line_start is None else PRGuardrailFinding.line_start == line_start
+    )
+    query = query.order_by(PRGuardrailFinding.ignore_reviewed_at.desc())
+    return session.exec(query).first()
+
+
+def _carry_forward_approvals(session: Session, target_id: int, pr_number: int, net_new: list[dict]) -> list[PRGuardrailFinding | None]:
+    """One prior-approval lookup per net_new item, computed once and reused
+    by both the blocking-severity filter (a carried-forward finding must not
+    keep re-blocking the PR on every subsequent scan) and _persist_findings
+    (which stamps the carried-forward status onto the new row) -- rather
+    than each querying independently and disagreeing if the DB changed
+    between the two calls within the same scan."""
+    return [
+        _carry_forward_approved_ignore(
+            session, target_id, pr_number,
+            f.get("tool") or GUARDRAIL_FALLBACK_TOOL, f.get("rule_id", ""), f.get("file_path", ""), f.get("line_start"),
+        )
+        for f in net_new
+    ]
+
+
+def _persist_findings(
+    session: Session, pr_scan_id: int, net_new: list[dict], prior_approvals: list[PRGuardrailFinding | None]
+) -> list[PRGuardrailFinding]:
     rows = []
-    for f in net_new[:MAX_NEW_FINDINGS_IN_RESPONSE]:
+    for f, prior_approval in list(zip(net_new, prior_approvals))[:MAX_NEW_FINDINGS_IN_RESPONSE]:
         row = PRGuardrailFinding(
             pr_scan_id=pr_scan_id,
             tool=f.get("tool") or GUARDRAIL_FALLBACK_TOOL,
@@ -208,6 +258,12 @@ def _persist_findings(session: Session, pr_scan_id: int, net_new: list[dict]) ->
             line_start=f.get("line_start"),
             severity=_severity_str(f.get("severity")),
         )
+        if prior_approval:
+            row.ignore_status = IgnoreStatus.APPROVED
+            row.ignore_requested_by = prior_approval.ignore_requested_by
+            row.ignore_requested_reason = prior_approval.ignore_requested_reason
+            row.ignore_reviewed_by = prior_approval.ignore_reviewed_by
+            row.ignore_reviewed_at = prior_approval.ignore_reviewed_at
         session.add(row)
         rows.append(row)
     session.commit()
@@ -347,18 +403,24 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
         if f.line_start:
             loc += f":{f.line_start}"
         ref_link = f"{FRONTEND_URL}/pr-history?target_id={target_id}&pr_scan_id={pr_scan_id}#finding-{f.id}"
-        # A dedicated, minimal page (frontend/src/app/ignore-request/...), not
-        # /pr-history: that page carries the full dashboard layout (sidebar,
-        # a live GitHub-PRs fetch, the whole PR Audit log for the target),
-        # all of it irrelevant to this one action and slow to clear before
-        # the user sees anything. This route does the one API call it needs
-        # and shows the result -- "Requested" or whatever the finding's
-        # state already is -- with nothing else in the way.
-        ignore_link = f"{FRONTEND_URL}/ignore-request/{pr_scan_id}/{f.id}"
-        lines.append(
-            f"| {f.severity} | `{f.rule_id}` | {f.title} | `{loc}` | "
-            f"[view]({ref_link}) &middot; [request ignore]({ignore_link}) |"
-        )
+        if f.ignore_status == IgnoreStatus.APPROVED:
+            # #401: this row's ignore_status can arrive already "approved"
+            # at render time -- carried forward from an earlier scan of the
+            # same PR (_carry_forward_approved_ignore) -- and must not offer
+            # "request ignore" again as if nobody had acted on it yet.
+            action = f"[view]({ref_link}) &middot; ✅ approved to ignore"
+        else:
+            # A dedicated, minimal page (frontend/src/app/ignore-request/...),
+            # not /pr-history: that page carries the full dashboard layout
+            # (sidebar, a live GitHub-PRs fetch, the whole PR Audit log for
+            # the target), all of it irrelevant to this one action and slow
+            # to clear before the user sees anything. This route does the
+            # one API call it needs and shows the result -- "Requested" or
+            # whatever the finding's state already is -- with nothing else
+            # in the way.
+            ignore_link = f"{FRONTEND_URL}/ignore-request/{pr_scan_id}/{f.id}"
+            action = f"[view]({ref_link}) &middot; [request ignore]({ignore_link})"
+        lines.append(f"| {f.severity} | `{f.rule_id}` | {f.title} | `{loc}` | {action} |")
     return "\n".join(lines)
 
 
@@ -739,7 +801,7 @@ def set_commit_status(session: Session, target: Target, sha: str, state: str, de
     return ""
 
 
-def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) -> dict:
+def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, pr_scan_id: int | None = None) -> dict:
     """Diff-only scan: scan the PR's head branch, diff findings against the
     target's default-branch Open findings and API endpoints against the
     persisted default-branch discovery set, persist a PRGuardrailScan +
@@ -752,13 +814,30 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
     this target/PR at all, no clone, no PRGuardrailScan row, no PR comment,
     no commit status. "block"/"alert" both run the full scan below; the
     difference between them only affects the commit status sent to GitHub
-    at the end (see the set_commit_status call)."""
+    at the end (see the set_commit_status call).
+
+    pr_scan_id (#401): the webhook path pre-creates the PRGuardrailScan row
+    synchronously at webhook-receipt time (see app/api/webhooks.py) so the
+    dashboard has something to show as "running" immediately, rather than
+    only once this function's own GitHub-API PR fetch below completes. When
+    given, that row is reused (updated in place) instead of a second one
+    being created; None (the on-demand route's case, which already runs
+    synchronously on the request thread with no such gap to close) keeps
+    the original create-fresh behavior."""
     enforcement_mode = resolve_enforcement_mode(session, target)
     if enforcement_mode == "disabled":
         logger.info(
             "PR guardrail: enforcement_mode=disabled for target %s, skipping scan for PR #%s",
             target.id, pr_number,
         )
+        if pr_scan_id is not None:
+            # "disabled" means no PRGuardrailScan row at all (see docstring
+            # above) -- must not leave the webhook path's placeholder
+            # stuck RUNNING forever.
+            placeholder = session.get(PRGuardrailScan, pr_scan_id)
+            if placeholder:
+                session.delete(placeholder)
+                session.commit()
         return {
             "pr_scan_id": None,
             "status": "disabled",
@@ -779,13 +858,19 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
     head_sha = pr["head"]["sha"]
     pr_title = pr.get("title", "")
 
-    pr_scan = PRGuardrailScan(
-        target_id=target.id,
-        pr_number=pr_number,
-        pr_title=pr_title,
-        branch=head_branch,
-        status=PRGuardrailStatus.RUNNING,
-    )
+    pr_scan = session.get(PRGuardrailScan, pr_scan_id) if pr_scan_id is not None else None
+    if pr_scan is not None:
+        pr_scan.pr_title = pr_title
+        pr_scan.branch = head_branch
+        pr_scan.status = PRGuardrailStatus.RUNNING
+    else:
+        pr_scan = PRGuardrailScan(
+            target_id=target.id,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            branch=head_branch,
+            status=PRGuardrailStatus.RUNNING,
+        )
     session.add(pr_scan)
     session.commit()
     session.refresh(pr_scan)
@@ -879,7 +964,15 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         ).all()
         net_new, blocking_severities = apply_policies(net_new, policies)
 
-        status = PRGuardrailStatus.BLOCKED if should_block(net_new, blocking_severities) else PRGuardrailStatus.PASSED
+        # #401: excluded from the blocking calculation up front, not just
+        # cosmetically labeled after the fact -- a finding a reviewer
+        # already approved-to-ignore on an earlier scan of this same PR
+        # must not keep the PR BLOCKED again on every subsequent scan just
+        # because an unrelated commit re-triggered the same diff.
+        prior_approvals = _carry_forward_approvals(session, target.id, pr_number, net_new)
+        blocking_net_new = [item for item, prior in zip(net_new, prior_approvals) if prior is None]
+
+        status = PRGuardrailStatus.BLOCKED if should_block(blocking_net_new, blocking_severities) else PRGuardrailStatus.PASSED
 
         new_endpoints = _diff_new_endpoints(session, target, repo_path)
 
@@ -900,7 +993,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session) 
         session.commit()
         session.refresh(pr_scan)
 
-        persisted_findings = _persist_findings(session, pr_scan.id, net_new)
+        persisted_findings = _persist_findings(session, pr_scan.id, net_new, prior_approvals)
 
         comment_body = render_comment(
             persisted_findings,

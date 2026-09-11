@@ -1,9 +1,8 @@
 """Autofix: generate a fix recommendation for a finding, and where possible
-an actual patch, delivered as a GitHub PR (or an in-app diff when a PR can't
-be opened).
+an actual patch -- as two deliberately separate steps, `suggest_fix` and
+`open_fix_pr`, so generating a suggestion never itself writes to a repo.
 
-Two independent things happen for every call to `fix_finding`, and both
-always run:
+`suggest_fix` always runs two independent things:
 
   * a plain-text recommendation -- AI-generated when a provider is
     configured (Admin > Global Integrations, same config app/api/ai.py
@@ -19,13 +18,14 @@ always run:
     fabricates a diff it cannot back with a verified, unique match against
     the file as it actually exists in the repo.
 
-Delivery for a real patch: open a PR via the GitHub App's installation
-token (mirrors app.core.pipeline_pr's branch+commit+PR flow) when the App
-is installed for the finding's target/workspace; otherwise return the
-unified diff for the caller to show in-app. Reading the *current* file
-content (both to build a correct patch and to open the PR against real
-content) goes through app.core.github_token.resolve_github_token, which
-also accepts a plain PAT -- independent of whether the GitHub App is
+Opening a PR is a second, explicit step (`open_fix_pr`, wired to
+POST /{finding_id}/raise-pr): via the GitHub App's installation token
+(mirrors app.core.pipeline_pr's branch+commit+PR flow), only when the App
+is installed for the finding's target/workspace -- the caller (the API
+layer) is responsible for falling back to showing the diff when it isn't.
+Reading the *current* file content, to build a correct patch in
+`suggest_fix`, goes through app.core.github_token.resolve_github_token,
+which also accepts a plain PAT -- independent of whether the GitHub App is
 installed, so a patch/diff can still be produced even when a PR cannot be
 opened.
 """
@@ -511,50 +511,35 @@ def open_fix_pr(session: Session, target: Target, finding: Finding, patch: Patch
 # ---------------------------------------------------------------------------
 
 
-def fix_finding(session: Session, target: Target, finding: Finding) -> dict:
-    """Always returns a recommendation. `mode` says what else came with it:
-    "pr" (a real PR was opened), "diff" (a patch was generated but no PR
-    could be opened -- no GitHub App installed, or the PR attempt failed),
-    or "recommendation_only" (no automated patch could be generated at all,
-    e.g. an IaC/secrets finding with no AI provider configured)."""
+def suggest_fix(session: Session, finding: Finding) -> dict:
+    """Recommendation + (if one could be built) a patch -- this never opens
+    a PR. Raising a PR is a separate, explicit action (see open_fix_pr /
+    the POST /{finding_id}/raise-pr endpoint), so a click on "Suggest fix"
+    only ever generates something to look at, never writes to the repo.
+
+    `new_content`/`ref`/`strategy`/`explanation` are the exact patch fields
+    the caller must send back to /raise-pr verbatim: nothing here is cached
+    server-side, so what's rendered as the diff is guaranteed to be what
+    gets committed (no risk of an AI patch regenerating differently between
+    "show me the fix" and "open the PR")."""
     recommendation = build_recommendation(session, finding)
     patch = build_patch(session, finding)
     if patch is None:
         return {
-            "mode": "recommendation_only",
             "recommendation": recommendation,
             "strategy": None,
             "diff": None,
             "file_path": None,
-            "pr_url": None,
-            "pr_number": None,
-            "branch": None,
-            "warning": None,
+            "new_content": None,
+            "ref": None,
+            "explanation": None,
         }
-
-    diff = unified_diff(patch)
-    try:
-        pr = open_fix_pr(session, target, finding, patch)
-        return {
-            "mode": "pr",
-            "recommendation": recommendation,
-            "strategy": patch.strategy,
-            "diff": diff,
-            "file_path": patch.file_path,
-            "pr_url": pr["pr_url"],
-            "pr_number": pr["pr_number"],
-            "branch": pr["branch"],
-            "warning": None,
-        }
-    except AutofixError as exc:
-        return {
-            "mode": "diff",
-            "recommendation": recommendation,
-            "strategy": patch.strategy,
-            "diff": diff,
-            "file_path": patch.file_path,
-            "pr_url": None,
-            "pr_number": None,
-            "branch": None,
-            "warning": str(exc),
-        }
+    return {
+        "recommendation": recommendation,
+        "strategy": patch.strategy,
+        "diff": unified_diff(patch),
+        "file_path": patch.file_path,
+        "new_content": patch.new_content,
+        "ref": patch.ref,
+        "explanation": patch.explanation,
+    }

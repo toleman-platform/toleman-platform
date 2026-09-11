@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronRight, ExternalLink, GitPullRequest, Info, Wrench } from "lucide-react";
-import { Finding, FindingEnrichment, FindingFix, api, githubBlobUrl } from "@/lib/api";
+import { ExternalLink, GitPullRequest, Info, X } from "lucide-react";
+import { Finding, FindingEnrichment, FindingSuggestFix, RaiseFixPrResult, api, githubBlobUrl } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import {
   EPSS_BADGE_COLOR,
@@ -260,108 +261,215 @@ function FindingEnrichmentPanel({ finding }: { finding: Finding }) {
   );
 }
 
-// POST /api/findings/{id}/fix (app.core.autofix), triggered by the
-// "Suggest Fix" button below -- deliberately click-to-run, not automatic:
-// a real request per finding, potentially opening a PR against the
-// target's repo, so it should only happen when someone actually asks for
-// it. `result` distinguishes the three modes the endpoint can return:
-// "pr" (a real fix PR was opened), "diff" (a patch exists but no PR could
-// be opened, e.g. no GitHub App installed), and "recommendation_only" (no
-// automated patch was possible for this finding at all -- still a real,
-// non-fabricated recommendation).
-function FixPanel({ finding }: { finding: Finding }) {
-  const [result, setResult] = useState<FindingFix | null>(null);
-  const [loading, setLoading] = useState(false);
+// Suggested-fix section inside FindingDetailDialog below. Fetches
+// POST /api/findings/{id}/suggest-fix once when the dialog opens --
+// generative but never writes anywhere by itself (app.core.autofix.
+// suggest_fix never opens a PR; that's the separate, explicit "Raise PR"
+// button here). `raiseResult`/`raiseError` are local to *this* generated
+// patch: reopening the dialog or regenerating clears them, since a PR
+// already opened for a since-replaced patch shouldn't look reusable.
+function SuggestedFixSection({ finding }: { finding: Finding }) {
+  const [data, setData] = useState<FindingSuggestFix | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [raising, setRaising] = useState(false);
+  const [raiseResult, setRaiseResult] = useState<RaiseFixPrResult | null>(null);
+  const [raiseError, setRaiseError] = useState<string | null>(null);
 
-  function runFix() {
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .suggestFix(finding.id)
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "fix suggestion request failed");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [finding.id]);
+
+  // User-triggered re-generation (the "regenerate" link below, or retrying
+  // after an error) -- a click handler, not an effect, so setting loading
+  // back to true synchronously here is fine.
+  function generate() {
     setLoading(true);
     setError(null);
+    setRaiseResult(null);
+    setRaiseError(null);
     api
-      .fixFinding(finding.id)
-      .then(setResult)
-      .catch((e) => setError(e instanceof Error ? e.message : "autofix request failed"))
+      .suggestFix(finding.id)
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : "fix suggestion request failed"))
       .finally(() => setLoading(false));
   }
 
+  function raisePr() {
+    if (!data || !data.file_path || data.new_content === null || !data.ref || !data.strategy) return;
+    setRaising(true);
+    setRaiseError(null);
+    api
+      .raiseFixPr(finding.id, {
+        file_path: data.file_path,
+        new_content: data.new_content,
+        ref: data.ref,
+        strategy: data.strategy,
+        explanation: data.explanation ?? "",
+      })
+      .then(setRaiseResult)
+      .catch((e) => setRaiseError(e instanceof Error ? e.message : "raising the PR failed"))
+      .finally(() => setRaising(false));
+  }
+
   if (loading) {
-    return <p className="mt-2 text-xs text-muted-foreground">Generating a fix...</p>;
+    return <p className="text-xs text-muted-foreground">Generating a fix suggestion...</p>;
   }
   if (error) {
     return (
-      <div className="mt-2 flex items-center gap-2">
+      <div className="flex items-center gap-2">
         <p className="text-xs text-destructive">{error}</p>
-        <button onClick={runFix} className="text-xs text-muted-foreground underline hover:text-foreground">
+        <button onClick={generate} className="text-xs text-muted-foreground underline hover:text-foreground">
           retry
         </button>
       </div>
     );
   }
-  if (!result) {
-    return (
-      <button
-        onClick={runFix}
-        className="mt-2 flex items-center gap-1 text-xs text-muted-foreground underline hover:text-foreground"
-      >
-        <Wrench className="h-3 w-3" />
-        Suggest fix
-      </button>
-    );
-  }
+  if (!data) return null;
+
+  const canRaisePr = Boolean(data.diff && data.file_path && data.new_content !== null && data.ref && data.strategy);
 
   return (
-    <div className="mt-3 rounded-md border border-border bg-secondary/40 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suggested Fix</span>
-        <Badge
-          variant="outline"
-          className="px-1.5 py-0 text-[10px] text-muted-foreground"
-          title={result.strategy === "ai" ? "Generated by the configured AI provider" : result.strategy === "deterministic_sca" ? "Deterministic dependency-version upgrade, no AI involved" : undefined}
-        >
-          {result.strategy === "ai" ? "AI-generated" : result.strategy === "deterministic_sca" ? "no AI · dependency upgrade" : "guidance only"}
-        </Badge>
+        {data.strategy && (
+          <Badge
+            variant="outline"
+            className="px-1.5 py-0 text-[10px] text-muted-foreground"
+            title={data.strategy === "ai" ? "Generated by the configured AI provider" : "Deterministic dependency-version upgrade, no AI involved"}
+          >
+            {data.strategy === "ai" ? "AI-generated" : "no AI · dependency upgrade"}
+          </Badge>
+        )}
       </div>
 
-      <p className="whitespace-pre-wrap text-xs text-foreground">{result.recommendation}</p>
+      <p className="whitespace-pre-wrap text-sm text-foreground">{data.recommendation}</p>
 
-      {result.mode === "pr" && result.pr_url && (
-        <a
-          href={safeHref(result.pr_url)}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-strong underline"
-        >
-          <GitPullRequest className="h-3 w-3" />
-          Fix PR opened{result.pr_number ? ` (#${result.pr_number})` : ""}
-        </a>
+      {!data.diff && (
+        <p className="text-xs text-muted-foreground">
+          No automated patch could be generated for this finding -- the recommendation above is the fix.
+        </p>
       )}
 
-      {result.mode === "diff" && result.warning && (
-        <p className="mt-2 text-xs text-muted-foreground">Couldn&apos;t open a PR automatically: {result.warning}</p>
-      )}
-
-      {result.diff && (
-        <div className="mt-2">
-          <button
-            onClick={() => setDiffOpen((v) => !v)}
-            className="text-xs text-muted-foreground underline hover:text-foreground"
-          >
-            {diffOpen ? "Hide diff" : `Show diff${result.file_path ? ` (${result.file_path})` : ""}`}
+      {data.diff && (
+        <div>
+          <button onClick={() => setDiffOpen((v) => !v)} className="text-xs text-muted-foreground underline hover:text-foreground">
+            {diffOpen ? "Hide diff" : `Show diff${data.file_path ? ` (${data.file_path})` : ""}`}
           </button>
           {diffOpen && (
-            <pre className="mt-1 max-h-64 overflow-auto rounded border border-border bg-background p-2 text-[11px] leading-relaxed">
-              {result.diff}
+            <pre className="mt-1 max-h-64 overflow-auto rounded border border-border bg-secondary/40 p-2 text-[11px] leading-relaxed">
+              {data.diff}
             </pre>
           )}
         </div>
       )}
 
-      <button onClick={runFix} className="mt-2 block text-xs text-muted-foreground underline hover:text-foreground">
+      {canRaisePr && !raiseResult && (
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={raisePr} disabled={raising} className="self-start">
+            <GitPullRequest className="h-3.5 w-3.5" />
+            {raising ? "Raising PR..." : "Raise PR"}
+          </Button>
+          {raiseError && <p className="text-xs text-destructive">{raiseError}</p>}
+        </div>
+      )}
+
+      {raiseResult && (
+        <a
+          href={safeHref(raiseResult.pr_url)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex w-fit items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-1 text-xs font-medium text-success"
+        >
+          <GitPullRequest className="h-3.5 w-3.5" />
+          PR opened (#{raiseResult.pr_number})
+        </a>
+      )}
+
+      <button onClick={generate} className="w-fit text-xs text-muted-foreground underline hover:text-foreground">
         regenerate
       </button>
     </div>
+  );
+}
+
+// Clicking a finding's title opens this, replacing the old inline
+// chevron-expand (which wasn't self-explanatory: nothing signaled that
+// vulnerability detail *and* a fix suggestion lived behind an expand
+// toggle). Everything about the finding -- description, no-AI CVE/CWE/OSV
+// enrichment, and the suggested fix -- lives in one obviously-interactive
+// popup instead.
+function FindingDetailDialog({ finding, open, onClose }: { finding: Finding; open: boolean; onClose: () => void }) {
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  if (!open || typeof document === "undefined") return null;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="finding-detail-dialog-title"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-card shadow-lg"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className={`px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${SEVERITY_COLOR[finding.severity]}`}>
+                {finding.severity}
+              </Badge>
+              <span id="finding-detail-dialog-title" className="truncate font-medium text-foreground">
+                {finding.title}
+              </span>
+            </div>
+            <span className="truncate text-xs text-muted-foreground">
+              {finding.tool} · {finding.file_path}
+              {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
+            </span>
+          </div>
+          <button onClick={onClose} aria-label="Close" className="shrink-0 text-muted-foreground hover:text-foreground">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex flex-col gap-4 overflow-y-auto px-5 py-4">
+          {finding.description && <p className="text-sm text-muted-foreground">{finding.description}</p>}
+          <FindingEnrichmentPanel finding={finding} />
+          <div className="rounded-md border border-border bg-secondary/40 p-3">
+            <SuggestedFixSection finding={finding} />
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -468,15 +576,10 @@ export function FindingRow({
                   </Badge>
                 )}
                 <button
-                  onClick={() => setDetailsOpen((v) => !v)}
+                  onClick={() => setDetailsOpen(true)}
                   className="flex min-w-0 items-center gap-1 truncate text-left text-sm font-medium text-foreground hover:underline"
-                  title="Show details"
+                  title="View vulnerability details and suggested fix"
                 >
-                  {detailsOpen ? (
-                    <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground" />
-                  )}
                   <TruncateTooltip
                     text={finding.title}
                     subtext={`${finding.rule_id} · ${finding.tool}`}
@@ -535,13 +638,7 @@ export function FindingRow({
           </div>
         </div>
 
-        {detailsOpen && (
-          <div className="mt-2">
-            {finding.description && <p className="text-xs text-muted-foreground">{finding.description}</p>}
-            <FindingEnrichmentPanel finding={finding} />
-            <FixPanel finding={finding} />
-          </div>
-        )}
+        <FindingDetailDialog finding={finding} open={detailsOpen} onClose={() => setDetailsOpen(false)} />
 
         <div className={open ? "mt-2" : "density-comfortable-only mt-2"}>
           {!open ? (

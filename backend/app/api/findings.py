@@ -10,7 +10,7 @@ from sqlmodel import Session, and_, func, or_, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
-from app.core.autofix import fix_finding
+from app.core.autofix import AutofixError, Patch, open_fix_pr, suggest_fix
 from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
@@ -173,21 +173,39 @@ class FindingEnrichmentResponse(BaseModel):
     fetched_at: datetime | None = None
 
 
-class FindingFixResponse(BaseModel):
-    """Autofix + fix recommendation (app.core.autofix), always populated
-    with `recommendation`; `mode` says what else came with it -- "pr" (a
-    real fix PR was opened), "diff" (a patch was generated but no PR could
-    be opened, e.g. no GitHub App installed), or "recommendation_only" (no
-    automated patch could be generated for this finding at all)."""
-    mode: Literal["pr", "diff", "recommendation_only"]
+class FindingSuggestFixResponse(BaseModel):
+    """Fix recommendation + (if one could be built) a patch to review --
+    app.core.autofix.suggest_fix. Never opens a PR by itself; `recommendation`
+    is always populated, the rest is None when no automated patch could be
+    generated for this finding at all (still not a failure). `new_content`/
+    `ref`/`strategy`/`explanation` must be sent back verbatim to
+    POST /{finding_id}/raise-pr to actually open the PR for this exact
+    patch -- nothing here is cached server-side, so what raise-pr commits
+    is guaranteed to be exactly the diff shown here."""
     recommendation: str
     strategy: Literal["ai", "deterministic_sca"] | None = None
     diff: str | None = None
     file_path: str | None = None
-    pr_url: str | None = None
-    pr_number: int | None = None
-    branch: str | None = None
-    warning: str | None = None
+    new_content: str | None = None
+    ref: str | None = None
+    explanation: str | None = None
+
+
+class RaiseFixPrRequest(BaseModel):
+    """The exact patch fields FindingSuggestFixResponse returned -- sent
+    back verbatim so the PR committed is exactly the diff the caller
+    reviewed, not a freshly (and possibly differently) regenerated one."""
+    file_path: str
+    new_content: str
+    ref: str
+    strategy: Literal["ai", "deterministic_sca"]
+    explanation: str = ""
+
+
+class RaiseFixPrResponse(BaseModel):
+    pr_url: str
+    pr_number: int
+    branch: str
 
 
 def _filtered_findings_query(
@@ -607,18 +625,40 @@ def triage_finding(
     return finding
 
 
-@router.post("/{finding_id}/fix")
-def fix_finding_endpoint(
+@router.post("/{finding_id}/suggest-fix")
+def suggest_fix_endpoint(
     finding_id: int,
     session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> FindingSuggestFixResponse:
+    """Fix recommendation + (if possible) a patch to review
+    (app.core.autofix.suggest_fix). Read-only/generative, same permission
+    level as POST /api/ai/analyze/{finding_id} -- this never writes to the
+    target's repo, so no elevated role is required; only actually raising
+    the PR (POST /{finding_id}/raise-pr) does."""
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        target = session.get(Target, finding.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="finding not found")
+    return FindingSuggestFixResponse(**suggest_fix(session, finding))
+
+
+@router.post("/{finding_id}/raise-pr")
+def raise_fix_pr_endpoint(
+    finding_id: int,
+    payload: RaiseFixPrRequest,
+    session: Session = Depends(get_session),
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
-) -> FindingFixResponse:
-    """Autofix + fix recommendation for one finding (app.core.autofix):
-    always returns a recommendation; opens a real fix PR via the GitHub
-    App when a patch can be generated and the App is installed for this
-    target, falls back to returning the diff otherwise. DEVELOPER role
-    required, same gate as /triage, since a successful call can write a
-    branch/PR to the target's real GitHub repo."""
+) -> RaiseFixPrResponse:
+    """Opens the fix PR for the exact patch a prior POST /{finding_id}/suggest-fix
+    returned (see RaiseFixPrRequest). DEVELOPER role required, same gate as
+    /triage, since this writes a branch/PR to the target's real GitHub repo.
+    `file_path` must match the finding's own file -- this can only commit a
+    fix to the file the finding actually points at, not an arbitrary path."""
     finding = session.get(Finding, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
@@ -628,7 +668,22 @@ def fix_finding_endpoint(
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and target.workspace_id not in ws_ids:
         raise HTTPException(status_code=404, detail="finding not found")
-    return FindingFixResponse(**fix_finding(session, target, finding))
+    if payload.file_path != finding.file_path:
+        raise HTTPException(status_code=400, detail="file_path does not match this finding")
+
+    patch = Patch(
+        file_path=payload.file_path,
+        old_content="",  # unused by open_fix_pr; only unified_diff() (suggest-fix) needs it
+        new_content=payload.new_content,
+        ref=payload.ref,
+        strategy=payload.strategy,
+        explanation=payload.explanation,
+    )
+    try:
+        pr = open_fix_pr(session, target, finding, patch)
+    except AutofixError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return RaiseFixPrResponse(**pr)
 
 
 @router.get("/{finding_id}/history")

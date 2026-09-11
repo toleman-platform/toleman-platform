@@ -37,6 +37,7 @@ export function GlobalIntegrations() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [revoking, setRevoking] = useState(false);
 
   // Slack (issue #74)
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
@@ -304,6 +305,29 @@ export function GlobalIntegrations() {
     }
   }
 
+  // Revoke the currently-stored key for whichever provider is selected --
+  // clears it server-side (POST /api/config with "" -- see
+  // UpdateConfigRequest's None-vs-"" convention) rather than just blanking
+  // the local input, so AI Analysis and Autofix's AI-generated patches stop
+  // working immediately, not just on this admin's next visit.
+  async function revokeAiKey() {
+    setRevoking(true);
+    setError(null);
+    setSaved(false);
+    try {
+      const payload: Parameters<typeof api.updateConfig>[0] =
+        provider === "anthropic" ? { anthropic_api_key: "" } : { openai_compatible_api_key: "" };
+      await api.updateConfig(payload);
+      setApiKey("");
+      setCompatKey("");
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed to revoke key");
+    } finally {
+      setRevoking(false);
+    }
+  }
+
   const configuredNow =
     config &&
     (provider === "anthropic" ? config.anthropic_api_key_set : Boolean(config.openai_compatible_base_url && config.openai_compatible_model));
@@ -553,15 +577,24 @@ export function GlobalIntegrations() {
             </div>
           )}
 
-          <Button onClick={save} disabled={saving || !canSave} className="self-start">
-            {saving ? "Saving..." : "Save"}
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={save} disabled={saving || !canSave} className="self-start">
+              {saving ? "Saving..." : "Save"}
+            </Button>
+            {((provider === "anthropic" && config?.anthropic_api_key_set) ||
+              (provider === "openai_compatible" && config?.openai_compatible_api_key_set)) && (
+              <Button variant="outline" onClick={revokeAiKey} disabled={revoking} className="self-start text-destructive">
+                {revoking ? "Revoking..." : "Revoke key"}
+              </Button>
+            )}
+          </div>
 
           {saved && !error && <p className="text-xs text-chart-5">Saved.</p>}
           {error && <p className="text-xs text-destructive">{error}</p>}
           <p className="text-xs text-muted-foreground">
             Stored in the database (Admin-only). The Anthropic key takes precedence over ANTHROPIC_API_KEY in backend
-            .env when that provider is selected.
+            .env when that provider is selected. Revoke key immediately clears the stored key -- AI Analysis and
+            Autofix&apos;s AI-generated patches fall back to no-AI behavior until a new key is saved.
           </p>
         </CardContent>
       </Card>

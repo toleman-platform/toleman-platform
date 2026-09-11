@@ -342,23 +342,28 @@ export type FindingEnrichment = {
   fetched_at: string | null;
 };
 
-// Autofix + fix recommendation (app.core.autofix) for one finding. Always
-// carries `recommendation`; `mode` says what else came with it -- "pr" (a
-// real fix PR was opened against the target's repo), "diff" (a patch was
-// generated but no PR could be opened, e.g. no GitHub App installed for
-// this target), or "recommendation_only" (no automated patch could be
-// generated for this finding at all -- still a real recommendation, never
-// a fabricated diff).
-export type FindingFix = {
-  mode: "pr" | "diff" | "recommendation_only";
+// Fix recommendation + (if one could be built) a patch to review
+// (app.core.autofix.suggest_fix). Generating this NEVER opens a PR by
+// itself -- `recommendation` is always populated; the rest is null when no
+// automated patch could be generated for this finding at all (still not a
+// failure, just nothing to raise a PR from). `new_content`/`ref`/`strategy`/
+// `explanation` must be sent back verbatim to api.raiseFixPr so the PR
+// opened is guaranteed to match exactly the diff shown here, not a
+// freshly (and possibly differently) regenerated one.
+export type FindingSuggestFix = {
   recommendation: string;
   strategy: "ai" | "deterministic_sca" | null;
   diff: string | null;
   file_path: string | null;
-  pr_url: string | null;
-  pr_number: number | null;
-  branch: string | null;
-  warning: string | null;
+  new_content: string | null;
+  ref: string | null;
+  explanation: string | null;
+};
+
+export type RaiseFixPrResult = {
+  pr_url: string;
+  pr_number: number;
+  branch: string;
 };
 
 export type AiProvider = "anthropic" | "openai_compatible";
@@ -1558,7 +1563,16 @@ export const api = {
     return res.blob();
   },
   findingEnrichment: (findingId: number) => jsonFetch<FindingEnrichment>(`/api/findings/${findingId}/enrichment`),
-  fixFinding: (findingId: number) => jsonFetch<FindingFix>(`/api/findings/${findingId}/fix`, { method: "POST" }),
+  suggestFix: (findingId: number) =>
+    jsonFetch<FindingSuggestFix>(`/api/findings/${findingId}/suggest-fix`, { method: "POST" }),
+  raiseFixPr: (
+    findingId: number,
+    patch: { file_path: string; new_content: string; ref: string; strategy: "ai" | "deterministic_sca"; explanation: string }
+  ) =>
+    jsonFetch<RaiseFixPrResult>(`/api/findings/${findingId}/raise-pr`, {
+      method: "POST",
+      body: JSON.stringify(patch),
+    }),
   aiStatus: () => jsonFetch<AiStatus>("/api/ai/status"),
   analyzeFinding: (findingId: number) =>
     jsonFetch<{ finding_id: number; analysis: string }>(`/api/ai/analyze/${findingId}`, { method: "POST" }),

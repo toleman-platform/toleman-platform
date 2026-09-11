@@ -1,4 +1,5 @@
-"""Tests for app.core.autofix and POST /api/findings/{id}/fix.
+"""Tests for app.core.autofix and POST /api/findings/{id}/suggest-fix
+and /raise-pr.
 
 Follows the TestClient + in-memory SQLite harness pattern already
 established in tests/test_ai.py and tests/test_remediation.py.
@@ -328,25 +329,25 @@ def test_build_patch_returns_none_when_nothing_available(engine):
 
 
 # ---------------------------------------------------------------------------
-# POST /api/findings/{id}/fix: mode dispatch end to end
+# POST /api/findings/{id}/suggest-fix: generates only, never opens a PR
 # ---------------------------------------------------------------------------
 
 
-def test_fix_endpoint_returns_recommendation_only_when_no_patch_possible(client, engine):
+def test_suggest_fix_endpoint_returns_recommendation_only_when_no_patch_possible(client, engine):
     _login(client, engine)
     target_id = _make_target(engine)
     finding_id = _make_finding(engine, target_id, tool="checkov", rule_id="CKV_AWS_1")
 
-    resp = client.post(f"/api/findings/{finding_id}/fix")
+    resp = client.post(f"/api/findings/{finding_id}/suggest-fix")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["mode"] == "recommendation_only"
     assert body["recommendation"]
     assert body["diff"] is None
-    assert body["pr_url"] is None
+    assert body["new_content"] is None
+    assert body["strategy"] is None
 
 
-def test_fix_endpoint_returns_diff_when_no_github_app_installed(client, engine, monkeypatch):
+def test_suggest_fix_endpoint_returns_diff_and_never_calls_open_fix_pr(client, engine, monkeypatch):
     _login(client, engine)
     target_id = _make_target(engine)
     with Session(engine) as session:
@@ -361,58 +362,33 @@ def test_fix_endpoint_returns_diff_when_no_github_app_installed(client, engine, 
     _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
 
     monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.39.0\n", "sha1"))
-    # No GitHub App installed for this workspace -> _installation_token_or_none
-    # returns None -> open_fix_pr raises AutofixError -> endpoint falls back.
 
-    resp = client.post(f"/api/findings/{finding_id}/fix")
+    def fail_if_called(*a, **k):
+        raise AssertionError("suggest-fix must never open a PR")
+
+    monkeypatch.setattr(autofix, "open_fix_pr", fail_if_called)
+
+    resp = client.post(f"/api/findings/{finding_id}/suggest-fix")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["mode"] == "diff"
     assert body["strategy"] == "deterministic_sca"
     assert "starlette==0.40.0" in body["diff"]
-    assert body["pr_url"] is None
-    assert body["warning"]
+    assert body["new_content"] == "starlette==0.40.0\n"
+    assert body["file_path"] == "requirements.txt"
+    assert body["ref"] == "main"
 
 
-def test_fix_endpoint_opens_pr_when_patch_and_app_available(client, engine, monkeypatch):
+def test_suggest_fix_endpoint_returns_404_for_missing_finding(client, engine):
     _login(client, engine)
-    target_id = _make_target(engine)
-    with Session(engine) as session:
-        finding = Finding(
-            target_id=target_id, dedup_hash="h", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
-            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
-        )
-        session.add(finding)
-        session.commit()
-        session.refresh(finding)
-        finding_id = finding.id
-    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
-
-    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.39.0\n", "sha1"))
-    monkeypatch.setattr(
-        autofix, "open_fix_pr",
-        lambda session, target, finding, patch: {"pr_url": "https://github.com/a/b/pull/1", "pr_number": 1, "branch": "toleman/fix-1"},
-    )
-
-    resp = client.post(f"/api/findings/{finding_id}/fix")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["mode"] == "pr"
-    assert body["pr_url"] == "https://github.com/a/b/pull/1"
-    assert body["pr_number"] == 1
-    assert body["branch"] == "toleman/fix-1"
-    assert body["warning"] is None
-
-
-def test_fix_endpoint_returns_404_for_missing_finding(client, engine):
-    _login(client, engine)
-    resp = client.post("/api/findings/99999/fix")
+    resp = client.post("/api/findings/99999/suggest-fix")
     assert resp.status_code == 404
 
 
-def test_fix_endpoint_requires_developer_role(client, engine):
+def test_suggest_fix_endpoint_does_not_require_developer_role(client, engine):
+    """Read-only/generative, same permission level as /api/ai/analyze --
+    any workspace member can ask for a suggestion; only raise-pr writes."""
     target_id = _make_target(engine)
-    finding_id = _make_finding(engine, target_id)
+    finding_id = _make_finding(engine, target_id, tool="checkov", rule_id="CKV_AWS_1")
     with Session(engine) as session:
         target = session.get(Target, target_id)
         workspace_id = target.workspace_id
@@ -425,5 +401,116 @@ def test_fix_endpoint_requires_developer_role(client, engine):
         token = create_session_token(viewer.id, viewer.token_version)
     client.cookies.set("toleman_session", token)
 
-    resp = client.post(f"/api/findings/{finding_id}/fix")
+    resp = client.post(f"/api/findings/{finding_id}/suggest-fix")
+    assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# POST /api/findings/{id}/raise-pr: opens the PR for a caller-supplied patch
+# ---------------------------------------------------------------------------
+
+
+def test_raise_pr_endpoint_opens_pr_for_the_supplied_patch(client, engine, monkeypatch):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id, tool="trivy", file_path="requirements.txt")
+
+    captured = {}
+
+    def fake_open_fix_pr(session, target, finding, patch):
+        captured["patch"] = patch
+        return {"pr_url": "https://github.com/a/b/pull/1", "pr_number": 1, "branch": "toleman/fix-1"}
+
+    monkeypatch.setattr("app.api.findings.open_fix_pr", fake_open_fix_pr)
+
+    resp = client.post(
+        f"/api/findings/{finding_id}/raise-pr",
+        json={
+            "file_path": "requirements.txt",
+            "new_content": "starlette==0.40.0\n",
+            "ref": "main",
+            "strategy": "deterministic_sca",
+            "explanation": "Upgrade starlette to 0.40.0.",
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"pr_url": "https://github.com/a/b/pull/1", "pr_number": 1, "branch": "toleman/fix-1"}
+    assert captured["patch"].new_content == "starlette==0.40.0\n"
+    assert captured["patch"].strategy == "deterministic_sca"
+
+
+def test_raise_pr_endpoint_rejects_file_path_mismatch(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id, tool="trivy", file_path="requirements.txt")
+
+    resp = client.post(
+        f"/api/findings/{finding_id}/raise-pr",
+        json={
+            "file_path": "some/other/file.txt",
+            "new_content": "x",
+            "ref": "main",
+            "strategy": "deterministic_sca",
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_raise_pr_endpoint_surfaces_autofix_error_as_502(client, engine, monkeypatch):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id, tool="trivy", file_path="requirements.txt")
+
+    def boom(session, target, finding, patch):
+        raise autofix.AutofixError("no GitHub App installed")
+
+    monkeypatch.setattr("app.api.findings.open_fix_pr", boom)
+
+    resp = client.post(
+        f"/api/findings/{finding_id}/raise-pr",
+        json={
+            "file_path": "requirements.txt",
+            "new_content": "starlette==0.40.0\n",
+            "ref": "main",
+            "strategy": "deterministic_sca",
+        },
+    )
+    assert resp.status_code == 502
+    assert "no GitHub App installed" in resp.json()["detail"]
+
+
+def test_raise_pr_endpoint_returns_404_for_missing_finding(client, engine):
+    _login(client, engine)
+    resp = client.post(
+        "/api/findings/99999/raise-pr",
+        json={"file_path": "x", "new_content": "x", "ref": "main", "strategy": "deterministic_sca"},
+    )
+    assert resp.status_code == 404
+
+
+def test_raise_pr_endpoint_requires_developer_role(client, engine):
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id, tool="trivy", file_path="requirements.txt")
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        workspace_id = target.workspace_id
+        viewer = User(email="viewer@e.com", name="V", password_hash=hash_password("whatever123"), role=UserRole.VIEWER)
+        session.add(viewer)
+        session.commit()
+        session.refresh(viewer)
+        session.add(WorkspaceMembership(user_id=viewer.id, workspace_id=workspace_id, role=WorkspaceRole.VIEWER))
+        session.commit()
+        token = create_session_token(viewer.id, viewer.token_version)
+    client.cookies.set("toleman_session", token)
+
+    resp = client.post(
+        f"/api/findings/{finding_id}/raise-pr",
+        json={
+            "file_path": "requirements.txt",
+            "new_content": "starlette==0.40.0\n",
+            "ref": "main",
+            "strategy": "deterministic_sca",
+        },
+    )
     assert resp.status_code == 403

@@ -50,8 +50,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             otherwise end this tag early. The value comes from our own
             environment, not from user input, but a script-tag injection that
             is only safe because of where the data happens to come from is
-            one refactor away from not being safe. */}
+            one refactor away from not being safe. This is also the only way
+            to emit an inline <script> tag in React, so the prop itself can't
+            be avoided; the escaping above is the actual mitigation. */}
         <script
+          // nosemgrep: this line's dangerouslySetInnerHTML is escaped above (JSON.stringify + neutralizing `<`), not raw user input
           dangerouslySetInnerHTML={{
             __html: `window.__TOLEMAN_API_URL__=${JSON.stringify(publicApiUrl).replace(/</g, "\\u003c")};`,
           }}

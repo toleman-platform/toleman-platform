@@ -336,4 +336,10 @@ USER toleman
 
 EXPOSE 8000
 
+# curl is installed above (needed at build time for the scanner downloads)
+# and stays in the final image since this is a single-stage build, so it's
+# available here for free.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

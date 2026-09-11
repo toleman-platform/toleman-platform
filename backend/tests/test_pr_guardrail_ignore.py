@@ -518,10 +518,12 @@ def test_approving_ignore_does_not_reopen_an_already_resolved_finding(client, en
 
 
 # ---------------------------------------------------------------------------
-# revoke-ignore: undoes approve-ignore -- finding back to "none", a synced
-# main Finding back to REOPENED, the PR comment's approved row back to a
-# live "request ignore" link (unless the PR is already merged), and the scan
-# re-evaluated in case this was the one finding keeping it unblocked.
+# revoke-ignore: undoes approve-ignore -- finding marked REVOKED (a distinct
+# terminal state, kept visible in History rather than reset to "none"), a
+# synced main Finding back to REOPENED, the PR comment's approved row back
+# to a live "request ignore" link (unless the PR is already merged), and
+# the scan re-evaluated in case this was the one finding keeping it
+# unblocked.
 # ---------------------------------------------------------------------------
 
 
@@ -555,11 +557,27 @@ def test_security_engineer_can_revoke_ignore(client, engine, monkeypatch):
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
     assert res.status_code == 200
     body = res.json()
-    assert body["ignore_status"] == "none"
-    assert body["ignore_requested_by"] == ""
-    assert body["ignore_requested_reason"] == ""
-    assert body["ignore_reviewed_by"] == ""
-    assert body["ignore_reviewed_at"] is None
+    # REVOKED, not NONE: a finding whose approval was explicitly undone
+    # must keep showing up in the Approval Queue's History tab, not vanish
+    # as if nobody had ever acted on it.
+    assert body["ignore_status"] == "revoked"
+    assert body["ignore_reviewed_by"] == "security_engineer@example.com"
+    assert body["ignore_reviewed_at"] is not None
+
+
+def test_revoked_ignore_still_appears_in_history(client, engine, monkeypatch):
+    _patch_github(monkeypatch)
+    target_id = _make_target(engine)
+    _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
+    client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
+
+    res = client.get("/api/pr-guardrail/ignore-requests/history")
+    assert res.status_code == 200
+    body = res.json()["items"]
+    ids = {f["id"]: f["ignore_status"] for f in body}
+    assert ids.get(finding_id) == "revoked"
 
 
 def test_revoking_ignore_reopens_the_matching_main_finding(client, engine, monkeypatch):

@@ -445,16 +445,25 @@ export type SecurityScore = {
 
 export type FindingListResult = { items: Finding[]; total: number };
 
+// target_id/state/severity/tool/fixability are multi-select on the
+// Findings page's filter bar: a single value still works (backward
+// compatible with every other caller of api.findings/findingCategories,
+// e.g. a target's own Vulnerabilities tab passing one target_id), but each
+// also accepts an array to filter by more than one value at once.
 export type FindingsQuery = {
-  target_id?: number;
+  target_id?: number | number[];
   group_id?: number;
-  state?: string;
-  severity?: string;
-  tool?: string;
+  state?: string | string[];
+  severity?: string | string[];
+  tool?: string | string[];
   category?: string;
   // (#246) "fixable" | "no_known_fix" | "unknown". Filters to what can
   // actually be closed today.
-  fixability?: string;
+  fixability?: string | string[];
+  // Open vs Resolved split on the Findings page: undefined = every other
+  // caller, unaffected; false = Open (Open/Reopened); true = Resolved
+  // (Accepted Risk/False Positive/Won't Fix/Mitigated).
+  resolved?: boolean;
   search?: string;
   page?: number;
   page_size?: number;
@@ -1144,6 +1153,21 @@ export async function fetchWithConnectionRetry(url: string, init: RequestInit): 
   throw lastError;
 }
 
+// Appends a multi-select query param: a single value behaves exactly like
+// `params.set` always did (backward compatible with callers passing a
+// bare number/string), an array appends one entry per value so the
+// backend sees repeated params (`?severity=Critical&severity=High`),
+// matching FastAPI's `Query(default=None)` list parsing in
+// app/api/findings.py. Falsy/empty values add nothing.
+function appendMulti(params: URLSearchParams, key: string, value: string | number | (string | number)[] | undefined) {
+  if (value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const v of value) params.append(key, String(v));
+  } else if (value !== "") {
+    params.set(key, String(value));
+  }
+}
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init?.headers as Record<string, string> | undefined) };
 
@@ -1230,13 +1254,14 @@ export const api = {
     jsonFetch<Target>("/api/targets", { method: "POST", body: JSON.stringify(t) }),
   findings: (query: FindingsQuery = {}) => {
     const params = new URLSearchParams();
-    if (query.target_id) params.set("target_id", String(query.target_id));
+    appendMulti(params, "target_id", query.target_id);
     if (query.group_id) params.set("group_id", String(query.group_id));
-    if (query.state) params.set("state", query.state);
-    if (query.severity) params.set("severity", query.severity);
-    if (query.tool) params.set("tool", query.tool);
+    appendMulti(params, "state", query.state);
+    appendMulti(params, "severity", query.severity);
+    appendMulti(params, "tool", query.tool);
     if (query.category) params.set("category", query.category);
-    if (query.fixability) params.set("fixability", query.fixability);
+    appendMulti(params, "fixability", query.fixability);
+    if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
     if (query.search) params.set("search", query.search);
     if (query.page) params.set("page", String(query.page));
     if (query.page_size) params.set("page_size", String(query.page_size));
@@ -1293,12 +1318,13 @@ export const api = {
   findingTools: () => jsonFetch<string[]>("/api/findings/facets/tools"),
   findingCategories: (query: CategoryFacetsQuery = {}) => {
     const params = new URLSearchParams();
-    if (query.target_id) params.set("target_id", String(query.target_id));
+    appendMulti(params, "target_id", query.target_id);
     if (query.group_id) params.set("group_id", String(query.group_id));
-    if (query.state) params.set("state", query.state);
-    if (query.severity) params.set("severity", query.severity);
-    if (query.tool) params.set("tool", query.tool);
-    if (query.fixability) params.set("fixability", query.fixability);
+    appendMulti(params, "state", query.state);
+    appendMulti(params, "severity", query.severity);
+    appendMulti(params, "tool", query.tool);
+    appendMulti(params, "fixability", query.fixability);
+    if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
     if (query.search) params.set("search", query.search);
     return jsonFetch<CategoryFacet[]>(`/api/findings/facets/categories?${params.toString()}`);
   },

@@ -7,20 +7,28 @@ import { SEVERITY_ORDER } from "@/lib/severity";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { GroupFilter } from "@/components/group-filter";
+import { MultiSelectFilter } from "@/components/multi-select-filter";
 
-const STATES = ["Open", "Accepted Risk", "False Positive", "Won't Fix", "Mitigated", "Reopened"];
-
-const SELECT_CLASS =
-  "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
+// Open-view and Resolved-view offer different states to filter within
+// (see findings/page.tsx's Open/Resolved tabs): picking "Mitigated" while
+// looking at Open findings would be a dead end, so the option isn't shown
+// there at all rather than silently doing nothing.
+const OPEN_STATES = ["Open", "Reopened"];
+const RESOLVED_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Mitigated"];
 
 export function FindingsFilterBar({
   targets,
   tools,
   groups,
+  resolved,
 }: {
   targets: Target[];
   tools: string[];
   groups: Group[];
+  // Which Findings page tab is active: false = Open, true = Resolved.
+  // Narrows the State filter's own options to match (see OPEN_STATES /
+  // RESOLVED_STATES above).
+  resolved: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -40,16 +48,24 @@ export function FindingsFilterBar({
     updateParam("search", search);
   }
 
-  const hasFilters = ["severity", "tool", "state", "target_id", "group_id", "search", "fixability"].some((k) => searchParams.get(k));
+  const hasFilters = ["severity", "tool", "state", "target_id", "group_id", "search", "fixability"].some(
+    (k) => searchParams.getAll(k).length > 0
+  );
+  const stateOptions = (resolved ? RESOLVED_STATES : OPEN_STATES).map((s) => ({ value: s, label: s }));
 
-  // "category" is deliberately not part of hasFilters/clearAll: it's the
-  // active tab (FindingsCategoryTabs), a location rather than a filter, so
-  // clearing filters refines within the current tab instead of navigating
-  // away from it.
+  // "category" and "resolved" are deliberately not part of hasFilters/
+  // clearAll: both are active tabs (FindingsCategoryTabs, the Open/
+  // Resolved split), locations rather than filters, so clearing filters
+  // refines within the current tab/view instead of navigating away from it.
   function clearAll() {
     setSearch("");
+    const params = new URLSearchParams();
     const category = searchParams.get("category");
-    router.push(category ? `${pathname}?category=${encodeURIComponent(category)}` : pathname);
+    const resolvedParam = searchParams.get("resolved");
+    if (category) params.set("category", category);
+    if (resolvedParam) params.set("resolved", resolvedParam);
+    const qs = params.toString();
+    router.push(qs ? `${pathname}?${qs}` : pathname);
   }
 
   return (
@@ -67,78 +83,36 @@ export function FindingsFilterBar({
         </Button>
       </form>
 
-      <select
-        aria-label="Filter by severity"
-        className={SELECT_CLASS}
-        value={searchParams.get("severity") ?? ""}
-        onChange={(e) => updateParam("severity", e.target.value)}
-      >
-        <option value="">All severities</option>
-        {SEVERITY_ORDER.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </select>
+      <MultiSelectFilter
+        label="All severities"
+        paramKey="severity"
+        options={SEVERITY_ORDER.map((s) => ({ value: s, label: s }))}
+      />
 
       {/* (#246) "Which of these can I close today?", the question severity
           cannot answer. "Unknown" is offered as its own choice rather than
           folded into "No known fix": for most SAST and secrets findings we
           have no advisory to look up, and claiming there is no fix for a
           hardcoded secret would be plainly wrong. */}
-      <select
-        aria-label="Filter by fixability"
-        className={SELECT_CLASS}
-        value={searchParams.get("fixability") ?? ""}
-        onChange={(e) => updateParam("fixability", e.target.value)}
-      >
-        <option value="">Any fixability</option>
-        <option value="fixable">Fix available</option>
-        <option value="no_known_fix">No known fix</option>
-        <option value="unknown">Fixability unknown</option>
-      </select>
+      <MultiSelectFilter
+        label="Any fixability"
+        paramKey="fixability"
+        options={[
+          { value: "fixable", label: "Fix available" },
+          { value: "no_known_fix", label: "No known fix" },
+          { value: "unknown", label: "Fixability unknown" },
+        ]}
+      />
 
-      <select
-        aria-label="Filter by tool"
-        className={SELECT_CLASS}
-        value={searchParams.get("tool") ?? ""}
-        onChange={(e) => updateParam("tool", e.target.value)}
-      >
-        <option value="">All tools</option>
-        {tools.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-      </select>
+      <MultiSelectFilter label="All tools" paramKey="tool" options={tools.map((t) => ({ value: t, label: t }))} />
 
-      <select
-        aria-label="Filter by state"
-        className={SELECT_CLASS}
-        value={searchParams.get("state") ?? ""}
-        onChange={(e) => updateParam("state", e.target.value)}
-      >
-        <option value="">All states</option>
-        {STATES.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </select>
+      <MultiSelectFilter label="All states" paramKey="state" options={stateOptions} />
 
-      <select
-        aria-label="Filter by target"
-        className={SELECT_CLASS}
-        value={searchParams.get("target_id") ?? ""}
-        onChange={(e) => updateParam("target_id", e.target.value)}
-      >
-        <option value="">All targets</option>
-        {targets.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-      </select>
+      <MultiSelectFilter
+        label="All targets"
+        paramKey="target_id"
+        options={targets.map((t) => ({ value: String(t.id), label: t.name }))}
+      />
 
       {groups.length > 0 && <GroupFilter groups={groups} />}
 

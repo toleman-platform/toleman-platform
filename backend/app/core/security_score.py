@@ -52,7 +52,16 @@ from sqlmodel import Session, select
 
 from app.core.sla import CLOSED_STATES, compute_sla_status
 from app.core.time import utcnow
-from app.models.models import Finding, FindingState, FindingStateLog, Scan, SEVERITY_WEIGHT, Target, TargetGroup
+from app.models.models import (
+    Finding,
+    FindingState,
+    FindingStateLog,
+    OPEN_FINDING_STATES as OPEN_STATES,
+    Scan,
+    SEVERITY_WEIGHT,
+    Target,
+    TargetGroup,
+)
 
 # ---------------------------------------------------------------------------
 # Tunable constants, documented here, not buried in the formula.
@@ -82,8 +91,6 @@ assert FINDINGS_WEIGHT + SLA_WEIGHT + COVERAGE_WEIGHT + FP_WEIGHT + TREND_WEIGHT
 # Letter grade thresholds, highest first; first threshold the composite
 # score meets or exceeds wins.
 GRADE_THRESHOLDS: list[tuple[int, str]] = [(90, "A"), (80, "B"), (70, "C"), (60, "D"), (0, "F")]
-
-OPEN_STATES = (FindingState.OPEN, FindingState.REOPENED)
 
 
 def _grade(score: float) -> str:

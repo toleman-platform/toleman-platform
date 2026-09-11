@@ -22,13 +22,13 @@ from app.core.fp_learning import AUTO_SUPPRESS_REASON_PREFIX
 from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
 from app.core.time import utcnow
-from app.models.models import Finding, FindingState, Severity, Target
+from app.models.models import Finding, FindingState, OPEN_FINDING_STATES as OPEN_STATES, Severity, Target
 
 WidgetResolver = Callable[[Session, "list[int] | None", dict], Any]
 
 # Findings still counted as "open" for KPI/trend/ranking purposes, mirrors
 # app.core.sla.CLOSED_STATES's complement (Reopened still counts as open).
-OPEN_STATES = (FindingState.OPEN, FindingState.REOPENED)
+# (Imported as OPEN_FINDING_STATES from app.models.models above.)
 
 
 def _scoped_targets(session: Session, ws_ids: "list[int] | None") -> list[Target]:

@@ -435,7 +435,23 @@ export function PrGuardrailLog({
                         whole-repo assurance it never had. */}
                     {entry.scan_scope === "diff" && (
                       <div className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                        Diff-scoped, {entry.files_scanned ?? 0} changed file(s) only, not the full repo
+                        {(entry.blast_radius_files ?? 0) > 0
+                          ? /* (#244) Saying "changed file(s) only" here would
+                               understate a scan that deliberately reached past
+                               the diff, and a reader judging what the scan
+                               covered needs the split, not just the total. */
+                            `Diff-scoped, ${entry.files_scanned ?? 0} file(s): the ${(entry.files_scanned ?? 0) - (entry.blast_radius_files ?? 0)} changed in this PR plus ${entry.blast_radius_files} that import them, not the full repo`
+                          : `Diff-scoped, ${entry.files_scanned ?? 0} changed file(s) only, not the full repo`}
+                      </div>
+                    )}
+                    {/* (#244) Why a target opted into diff scoping still got a
+                        full scan (an unreadable import graph, a radius too wide
+                        to still count as narrow). Without it the row shows
+                        "full" with no way to tell a deliberate full scan from
+                        an escalated one. */}
+                    {entry.scan_scope === "full" && entry.scope_reason && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Full scan: {entry.scope_reason}
                       </div>
                     )}
                     {(entry.tools_skipped?.length ?? 0) > 0 && (

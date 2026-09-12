@@ -197,6 +197,13 @@ def _scan_out(
         "tools_skipped": [t for t in s.tools_skipped.split(",") if t],
         "scan_scope": s.scan_scope,
         "files_scanned": s.files_scanned,
+        # (#244) How many of files_scanned the import graph pulled in rather
+        # than the PR changing them, and why the scope ended up what it is.
+        # Persisted since #244 but never serialized, which left the UI
+        # describing every diff-scoped scan as "changed files only" even
+        # when it had deliberately scanned past the diff.
+        "blast_radius_files": s.blast_radius_files,
+        "scope_reason": s.scope_reason,
         # (GH-04) "" when the commit status reached GitHub.
         "status_delivery_error": s.status_delivery_error,
         "override_reason": s.override_reason,
@@ -580,6 +587,8 @@ def override_pr_guardrail_scan(
         "tools_skipped": [t for t in pr_scan.tools_skipped.split(",") if t],
         "scan_scope": pr_scan.scan_scope,
         "files_scanned": pr_scan.files_scanned,
+        "blast_radius_files": pr_scan.blast_radius_files,
+        "scope_reason": pr_scan.scope_reason,
         "status_delivery_error": pr_scan.status_delivery_error,
         "override_reason": pr_scan.override_reason,
         "created_at": pr_scan.created_at,

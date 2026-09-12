@@ -418,3 +418,89 @@ class TestEndToEnd:
         assert result["new_findings_count"] == 1
         assert "diff could not be read" in posted[0]
         assert "introduced by this PR" not in posted[0]
+
+
+class TestBlastRadiusStaysAttributable:
+    """#244 and this filter pull in opposite directions, and the naive
+    combination cancels #244 out entirely.
+
+    #244 expands a diff-scoped scan to the *importers* of the changed files,
+    precisely because editing A.py can make existing code in B.py
+    vulnerable. B.py is, by definition, not in the diff -- so attributing
+    strictly by changed lines would discard every finding the expansion
+    exists to surface, leaving a scan that pays for the wider radius and
+    then throws the result away. Expanded paths are attributed as
+    WHOLE_FILE instead, and a file neither changed nor in the radius is
+    still dropped.
+    """
+
+    @pytest.fixture()
+    def engine(self):
+        eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(eng)
+        return eng
+
+    def _diff_scoped_target(self, engine):
+        target_id = TestEndToEnd()._make_target(engine)
+        with Session(engine) as session:
+            target = session.get(Target, target_id)
+            target.diff_scoped_pr_scans = True
+            session.add(target)
+            session.commit()
+        return target_id
+
+    CHANGED = "backend/app/core/dedup.py"
+    IMPORTER = "backend/app/core/ingest.py"
+    UNRELATED = "backend/app/api/github_token.py"
+
+    PR_FILES = [{
+        "filename": CHANGED,
+        "status": "modified",
+        "patch": "@@ -10,3 +10,4 @@ def hash_finding():\n     pass\n+    return 1\n",
+    }]
+
+    def _wire_radius(self, monkeypatch, findings):
+        posted = TestEndToEnd()._wire(monkeypatch, findings, self.PR_FILES)
+        monkeypatch.setattr(
+            executor.code_graph,
+            "resolve_blast_radius",
+            lambda session, target, repo_path, changed, commit_sha=None: (
+                [self.CHANGED, self.IMPORTER], 1, "1 importer",
+            ),
+        )
+        return posted
+
+    def test_a_finding_in_an_importer_pulled_in_by_the_radius_is_reported(self, engine, monkeypatch):
+        target_id = self._diff_scoped_target(engine)
+        posted = self._wire_radius(monkeypatch, [finding(self.IMPORTER, 88, rule="sql-injection")])
+
+        with Session(engine) as session:
+            result = executor.execute_pr_guardrail_scan(session.get(Target, target_id), 7, session)
+
+        assert result["new_findings_count"] == 1
+        assert "sql-injection" in posted[0]
+
+    def test_a_finding_outside_both_the_diff_and_the_radius_is_still_dropped(self, engine, monkeypatch):
+        """The interop must not degrade into "attribute everything": a file
+        the scan never had a reason to look at stays unattributed."""
+        target_id = self._diff_scoped_target(engine)
+        posted = self._wire_radius(monkeypatch, [finding(self.UNRELATED, 55, rule="logger-credential-leak")])
+
+        with Session(engine) as session:
+            result = executor.execute_pr_guardrail_scan(session.get(Target, target_id), 7, session)
+
+        assert result["new_findings_count"] == 0
+        assert "github_token.py" not in posted[0]
+
+    def test_the_changed_file_itself_is_still_filtered_to_its_changed_lines(self, engine, monkeypatch):
+        """setdefault, not assignment: a file that really is in the diff keeps
+        the real line set rather than being widened to WHOLE_FILE by the
+        radius pass."""
+        target_id = self._diff_scoped_target(engine)
+        posted = self._wire_radius(monkeypatch, [finding(self.CHANGED, 4, rule="untouched-line")])
+
+        with Session(engine) as session:
+            result = executor.execute_pr_guardrail_scan(session.get(Target, target_id), 7, session)
+
+        assert result["new_findings_count"] == 0
+        assert "untouched-line" not in posted[0]

@@ -102,6 +102,12 @@ export type Target = {
   // enforcement_mode; it trades coverage for speed, so it is switched on
   // one target at a time rather than defaulted from above.
   diff_scoped_pr_scans: boolean;
+  // (#298) Clone credentials for a VPN-gated or client-cert-gated repo host.
+  // The PEMs themselves are never serialized; these say only whether one is
+  // stored, the same shape GET /api/github-token uses for its token.
+  client_cert_set?: boolean;
+  client_key_set?: boolean;
+  clone_proxy_url?: string;
   // (#330) Outcome of the automatic GitHub Dependency Graph import that runs
   // when a target is created. null status = never attempted (a target that
   // predates this), which is not the same as "unavailable": that one means
@@ -960,6 +966,12 @@ export type PrGuardrailLogEntry = {
   tools_skipped?: string[];
   scan_scope?: "full" | "diff";
   files_scanned?: number;
+  // (#244) The subset of files_scanned the import graph added because the
+  // PR's changed files are imported by them; 0 means the scan really was
+  // just the diff. scope_reason says why a scan escalated to full (or how
+  // the radius resolved), and is "" when there is nothing to explain.
+  blast_radius_files?: number;
+  scope_reason?: string;
   // (GH-04) Non-empty when the commit status never reached GitHub. The scan
   // itself is still valid; this says the *decision* was not delivered, so
   // the PR is unmarked on GitHub even though Toleman reached a verdict.
@@ -1391,6 +1403,19 @@ export const api = {
   targetsSummary: () => jsonFetch<TargetSummary>("/api/targets/summary"),
   updateTarget: (id: number, patch: Partial<Target>) =>
     jsonFetch<Target>(`/api/targets/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  // (#298) mTLS client cert/key for cloning a target behind a VPN or on a
+  // client-cert-gated host. Separate from updateTarget because these are
+  // secrets: they are encrypted at rest and the response reports only
+  // whether each is now set, never the PEM itself. An omitted field leaves
+  // the stored one alone; an empty string clears it.
+  saveCloneCredentials: (
+    id: number,
+    payload: { client_cert_pem?: string; client_key_pem?: string },
+  ) =>
+    jsonFetch<{ client_cert_set: boolean; client_key_set: boolean }>(
+      `/api/targets/${id}/clone-credentials`,
+      { method: "PUT", body: JSON.stringify(payload) },
+    ),
   // Issue #109: personal access tokens for the public API
   // (/api/public/v1/*, Bearer-token auth); distinct from the workspace
   // API key above, which is CI-ingest-only and shared workspace-wide.

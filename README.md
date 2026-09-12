@@ -67,6 +67,8 @@ gh attestation verify oci://ghcr.io/toleman-platform/toleman-platform-backend:ed
 
 Releases build for `linux/amd64` and `linux/arm64`; `edge` is amd64 only, since emulated arm64 builds are too slow to justify on every merge. On Apple Silicon, either use a released tag or build from source with `docker compose up --build`.
 
+**Smaller/cheaper backend image:** every backend tag above also publishes a `-hardened` variant (`edge-hardened`, `sha-abc1234-hardened`, etc.), built from `backend/Dockerfile.hardened`: same scanners, same app code, but on a distroless runtime instead of `python:3.12-slim`. ~15% smaller (so cheaper to store and pull, and it's what a multi-replica/autoscaled deployment pulls on every new Pod) and roughly half the CRITICAL+HIGH Trivy findings, entirely from dropping the Debian OS-package layer; see that file's own header comment for the measurement. Not the default: it has no shell, so `docker compose exec backend sh -c '...'` (the scanner-version check above) and anything else that assumes a shell inside the container won't work against it.
+
 This builds and starts five containers:
 
 - `postgres` (16) and `redis` (7), each gated by a real healthcheck (`pg_isready`, `redis-cli ping`)

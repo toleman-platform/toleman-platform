@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, EnforcementMode, Group, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,16 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { EnforcementModeSelect } from "@/components/enforcement-mode-select";
 import { Building2, FolderTree, Tag, Trash2 } from "lucide-react";
 
-const SWATCHES = ["#e11d48", "#ea580c", "#ca8a04", "#16a34a", "#0891b2", "#2563eb", "#7c3aed", "#c026d3"];
+const SWATCHES = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--accent-strong)",
+  "var(--destructive)",
+  "var(--warning)",
+];
 
 // Issue #61: workspace-scoped tags/groups ("production", "PCI-scope",
 // "internal-tool", ...) for organizing Targets at scale, foundation for
@@ -99,6 +108,7 @@ export function Groups() {
       setMutationError(e instanceof Error ? e.message : "failed to delete group");
     }
   }
+
 
   return (
     <div className="flex flex-col gap-4">

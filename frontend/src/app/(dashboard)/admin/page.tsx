@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
 import { Users, Plug, Wrench, Store, Lock, ShieldAlert, type LucideIcon } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
 import { UserManagement } from "./user-management";
 import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
@@ -51,10 +52,10 @@ export default function AdminPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Control Plane</h1>
-        <p className="text-sm text-muted-foreground">Users, integrations, and scanner health</p>
-      </div>
+      <PageHeader
+        title="Control Plane"
+        description="Users, integrations, and scanner health"
+      />
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap gap-2">

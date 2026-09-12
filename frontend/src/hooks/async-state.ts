@@ -105,3 +105,5 @@ export function toError(thrown: unknown): Error {
   if (typeof thrown === "string") return new Error(thrown);
   return new Error("Something went wrong");
 }
+
+

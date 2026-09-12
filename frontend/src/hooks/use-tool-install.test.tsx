@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { useToolInstall } from "./use-tool-install";
+import { useToolInstall } from "@/hooks/features/use-tool-install";
 
 const installTool = vi.hoisted(() => vi.fn());
 const getToolInstall = vi.hoisted(() => vi.fn());

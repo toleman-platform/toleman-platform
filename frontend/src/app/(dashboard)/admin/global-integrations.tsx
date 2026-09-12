@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { AlertTriangle, BrainCircuit, CheckCircle2, Key, MessageSquare, Send, Ticket } from "lucide-react";
-import { ConnectGithubCard } from "@/components/connect-github-card";
+import { ConnectGithubCard } from "@/components/features/integrations";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
 
@@ -59,9 +59,9 @@ export function GlobalIntegrations() {
   const [jiraError, setJiraError] = useState<string | null>(null);
   const [jiraTestResult, setJiraTestResult] = useState<string | null>(null);
 
-  // SIEM export (issue #114)
+  // SIEM Webhook
   const [siemWebhookUrl, setSiemWebhookUrl] = useState("");
-  const [siemExportSeverity, setSiemExportSeverity] = useState("");
+  const [siemExportSeverity, setSiemExportSeverity] = useState("High");
   const [siemSaving, setSiemSaving] = useState(false);
   const [siemTesting, setSiemTesting] = useState(false);
   const [siemSaved, setSiemSaved] = useState(false);
@@ -83,12 +83,12 @@ export function GlobalIntegrations() {
     }
   }
 
-  // GitHub token (issue #227)
+  // Workspace-scoped GitHub Personal Access Token (issue #74)
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [githubWorkspaceId, setGithubWorkspaceId] = useState<number | null>(null);
-  const [githubTokenView, setGithubTokenView] = useState<GithubTokenView | null>(null);
   const [githubToken, setGithubToken] = useState("");
   const [githubTtl, setGithubTtl] = useState("");
+  const [githubTokenView, setGithubTokenView] = useState<GithubTokenView | null>(null);
   const [githubSaving, setGithubSaving] = useState(false);
   const [githubTesting, setGithubTesting] = useState(false);
   const [githubDeleting, setGithubDeleting] = useState(false);
@@ -96,36 +96,36 @@ export function GlobalIntegrations() {
   const [githubError, setGithubError] = useState<string | null>(null);
   const [githubTestResult, setGithubTestResult] = useState<string | null>(null);
 
-  function refresh() {
-    api.getConfig().then((c) => {
-      setConfig(c);
-      setProvider(c.ai_provider);
-      setBaseUrl(c.openai_compatible_base_url);
-      setModel(c.openai_compatible_model);
-      setJiraUrl(c.jira_url);
-      setJiraProjectKey(c.jira_project_key);
-      setJiraIssueType(c.jira_issue_type || "Task");
-      setJiraAutoCreateSeverity(c.jira_auto_create_severity || "");
-      setSiemExportSeverity(c.siem_export_severity || "");
-    });
-  }
-
-  useEffect(refresh, []);
-
   function loadGithubToken(workspaceId: number) {
     setGithubWorkspaceId(workspaceId);
     setGithubTokenView(null);
     setGithubError(null);
     setGithubTestResult(null);
+    setGithubSaved(false);
     api.getGithubToken(workspaceId).then(setGithubTokenView).catch(() => {});
   }
 
-  useEffect(() => {
+  function refresh() {
+    api.getConfig().then((c) => {
+      setConfig(c);
+      setProvider(c.ai_provider || "anthropic");
+      setBaseUrl(c.openai_compatible_base_url || "");
+      setModel(c.openai_compatible_model || "");
+      setJiraUrl(c.jira_url || "");
+      setJiraProjectKey(c.jira_project_key || "");
+      setJiraIssueType(c.jira_issue_type || "Task");
+      setJiraAutoCreateSeverity(c.jira_auto_create_severity || "");
+      setSiemExportSeverity(c.siem_export_severity || "High");
+    });
     api.workspaces().then((ws) => {
       setWorkspaces(ws);
-      if (ws.length > 0) loadGithubToken(ws[0].id);
+      if (ws.length > 0) {
+        loadGithubToken(ws[0].id);
+      }
     });
-  }, []);
+  }
+
+  useEffect(refresh, []);
 
   async function saveGithubToken() {
     if (!githubToken.trim()) return;

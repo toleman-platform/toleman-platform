@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ScanProgress, ScanStatusBadge, formatDuration, scanProgressLabel } from "./scan-status";
+import { ScanProgress, ScanStatusBadge, formatDuration, scanProgressLabel } from "@/components/features/scans/scan-status";
 
 describe("formatDuration", () => {
   it("shows seconds under a minute", () => {

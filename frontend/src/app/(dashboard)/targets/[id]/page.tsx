@@ -8,6 +8,7 @@ import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
 import { TargetEnforcement } from "./target-enforcement";
 import { TargetDiffScope } from "./target-diff-scope";
+import { TargetCloneCredentials } from "./target-clone-credentials";
 import { TargetIdBadge } from "./target-id-badge";
 import { ApiScanConfig } from "./api-scan-config";
 import { TargetTabs, normalizeTab } from "./target-tabs";
@@ -134,6 +135,16 @@ export default async function TargetDetailPage({
                 initialEnabled={target.diff_scoped_pr_scans ?? false}
               />
             </div>
+          </div>
+
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Clone access</h2>
+            <TargetCloneCredentials
+              targetId={targetId}
+              initialCertSet={target.client_cert_set ?? false}
+              initialKeySet={target.client_key_set ?? false}
+              initialProxyUrl={target.clone_proxy_url ?? ""}
+            />
           </div>
 
           <div>

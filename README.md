@@ -19,9 +19,12 @@ See the [architecture](ARCHITECTURE.md) for the full design. Full docs, includin
 - [Getting Started](#getting-started)
   - [Quickstart (Docker Compose)](#quickstart-docker-compose)
   - [Manual setup (macOS/Linux/Windows)](#manual-setup-macoslinuxwindows)
+- [Upgrading](#upgrading)
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
   - [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades)
+  - [Managed Cloud DB (RDS / Cloud SQL / etc.)](#managed-cloud-db-rds--cloud-sql--etc)
+  - [Logging and error tracking](#logging-and-error-tracking)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
 - [Contributing](#contributing)
@@ -67,6 +70,8 @@ gh attestation verify oci://ghcr.io/toleman-platform/toleman-platform-backend:ed
 
 Releases build for `linux/amd64` and `linux/arm64`; `edge` is amd64 only, since emulated arm64 builds are too slow to justify on every merge. On Apple Silicon, either use a released tag or build from source with `docker compose up --build`.
 
+**Smaller/cheaper backend image:** every backend tag above also publishes a `-hardened` variant (`edge-hardened`, `sha-abc1234-hardened`, etc.), built from `backend/Dockerfile.hardened`: same scanners, same app code, but on a distroless runtime instead of `python:3.12-slim`. ~15% smaller (so cheaper to store and pull, and it's what a multi-replica/autoscaled deployment pulls on every new Pod) and roughly half the CRITICAL+HIGH Trivy findings, entirely from dropping the Debian OS-package layer; see that file's own header comment for the measurement. Not the default: it has no shell, so `docker compose exec backend sh -c '...'` (the scanner-version check above) and anything else that assumes a shell inside the container won't work against it.
+
 This builds and starts five containers:
 
 - `postgres` (16) and `redis` (7), each gated by a real healthcheck (`pg_isready`, `redis-cli ping`)
@@ -91,6 +96,31 @@ Bootstrap a workspace and register a target the same way as the manual setup bel
 See `.env.example` for every variable Compose reads (Postgres credentials, backend secrets, `NEXT_PUBLIC_API_URL`) and what happens if you leave it at its default. `.env` is git-ignored, so it's safe to put real secrets there once you have any (`GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, etc.).
 
 To stop everything: `docker compose down` (add `-v` to also drop the Postgres volume and start fully fresh next time).
+
+### Kubernetes (Helm)
+
+An out-of-the-box Helm chart lives at [`charts/toleman`](charts/toleman), covering the same five services as the Docker Compose stack above (bundled Postgres StatefulSet + PVC, bundled Redis, backend, celery-worker, frontend), plus an optional Ingress.
+
+```bash
+helm install toleman charts/toleman \
+  --set-string secrets.sessionSecret="$(openssl rand -hex 32)" \
+  --set-string secrets.adminPassword="a real password" \
+  --set-string secrets.platformEncryptionKey="$(python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')" \
+  --set-string postgres.password="$(openssl rand -hex 24)" \
+  --set config.publicBaseUrl="https://toleman.example.com" \
+  --set config.publicApiUrl="https://api.toleman.example.com" \
+  --set ingress.enabled=true \
+  --set ingress.className=nginx \
+  --set ingress.frontendHost=toleman.example.com \
+  --set ingress.backendHost=api.toleman.example.com \
+  --set ingress.tls[0].hosts[0]=toleman.example.com \
+  --set ingress.tls[0].hosts[1]=api.toleman.example.com \
+  --set ingress.tls[0].secretName=toleman-tls
+```
+
+`config.environment` defaults to `production`, so the `secrets.*` values and `postgres.password` above are required; the chart's own render fails without them (see `charts/toleman/templates/secret.yaml`) rather than silently deploying with an empty session-signing key/admin password/encryption key, or a bundled Postgres reachable with its publicly-documented default password. `config.publicBaseUrl`/`config.publicApiUrl` are just what the app *tells itself* its own address is (used to build links/CORS/webhook URLs); they don't make it reachable at those hosts on their own, hence the matching `ingress.*` values above (swap `ingress.className` and the TLS secret name for whatever your cluster's ingress controller/cert-manager setup expects), or point your own load balancer at the `frontend`/`backend` Services instead. Use `https://` for `public*Url` for anything but throwaway testing: `config.cookieSecure` defaults to `"True"`, and a browser will not send a `Secure` session cookie over plain HTTP, so login fails. Put TLS in front of the deployment (an Ingress with `ingress.tls` configured, as above, or your own load balancer) rather than setting `config.cookieSecure` to `"False"`, which is for non-production HTTP testing only.
+
+See `charts/toleman/values.yaml` for every option, including how to point at a managed Postgres/Redis instead of the bundled ones (`postgres.enabled: false` / `redis.enabled: false` plus `externalDatabaseUrl` / `externalRedisUrl`, a full SQLAlchemy connection string; `app/core/config.py` doesn't distinguish a managed DB from the bundled one) and how to enable the Ingress (`ingress.enabled: true`, plus `ingress.tls` for HTTPS). `helm install`'s NOTES output repeats the port-forward command, prints `http`/`https` in the Ingress URLs it shows based on whether `ingress.tls` is set, and warns if secure cookies are enabled without it.
 
 ### Manual setup (macOS/Linux/Windows)
 
@@ -182,13 +212,60 @@ Open http://localhost:3000, redirects to `/login`. Sign in with the seeded admin
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
 
+## Upgrading
+
+Which path applies depends on how you're running Toleman, not on what changed upstream: both paths pick up every change, the only difference is who builds the image.
+
+**Running from prebuilt GHCR images** (the `docker-compose.ghcr.yml` override above): pull the new tag and recreate the containers.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+```
+
+If you pinned a version or `sha-` tag in your override (recommended for anything but a throwaway environment), bump it there first; `edge` and `latest` re-resolve to the newest image on `pull` without an edit.
+
+**Building from source** (the default `docker compose up --build`): pull the new commit and rebuild.
+
+```bash
+git pull
+docker compose up --build -d
+```
+
+Either way, no separate migration step: `backend`'s startup hook runs `alembic upgrade head` against `DATABASE_URL` before it starts serving (see [Database migrations](#database-migrations-alembic)), and `celery-worker` waits for `backend`'s healthcheck before it starts, so it never runs against a schema older than what it expects. Compose recreates only the services whose image or config actually changed, so `postgres` and `redis` keep running (and keep their data) through an upgrade of `backend`/`celery-worker`/`frontend`.
+
+There's no rollback tooling beyond re-pointing at the previous tag/commit and re-running the same command, and that alone does **not** undo a schema change already applied by a migration that ran forward: `alembic upgrade head` only applies pending upgrades, so an older image can fail its startup migration because it can no longer locate the revision the database is recorded at. An older application image is unsupported until the schema is restored from a backup taken before the upgrade, or the migration is proven backward-compatible; see [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades) for the tested restore procedure. No tagged release has shipped yet, so there's no cross-version upgrade to test against — this section will grow real "upgrading from 1.x to 2.x" notes once one exists.
+
 ---
 
 ## Development
 
+### Scanning targets behind a VPN or requiring client certs (#298)
+
+`repo_url` is normally restricted to `https://github.com/<org>/<repo>` (an
+open allowlist would let a Target point `git clone` at an arbitrary host -
+an SSRF vector, e.g. a cloud metadata endpoint). To scan a target on an
+internal GitHub Enterprise Server, GitLab, or Gitea instance reachable only
+over a VPN or requiring a client certificate:
+
+1. The operator adds that host to `EXTRA_CLONE_HOSTS` (comma-separated) in
+   `.env`/the deployment's environment, e.g. `EXTRA_CLONE_HOSTS=gitlab.internal.corp`.
+   Deliberately operator-set only, never anything an API caller can
+   influence, the same trust boundary `EXTRA_CORS_ORIGINS` already uses.
+2. Create/point a Target's `repo_url` at that host.
+3. If the host requires an mTLS client certificate, set it via
+   `PUT /api/targets/{id}/clone-credentials` with `client_cert_pem`/
+   `client_key_pem` (PEM text). Encrypted at rest the same way as the
+   per-workspace GitHub token, and never echoed back by any GET/PATCH; the
+   API reports only `client_cert_set`/`client_key_set`.
+4. If cloning needs to go through a VPN gateway or other HTTP(S) proxy, set
+   it via `PATCH /api/targets/{id}` with `clone_proxy_url`.
+
 ### Database migrations (Alembic)
 
 The backend's startup hook (`app/core/db.py:init_db`, called from `app/main.py`) runs `alembic upgrade head` automatically against `DATABASE_URL` every time it starts; both `uvicorn app.main:app` and the Docker Compose `backend` service. There's no separate manual migration step for the common case of running the app.
+
+Safe to run from more than one replica at once: `init_db` holds a Postgres session-level advisory lock (`pg_advisory_lock`) for the duration of the upgrade, so a multi-replica deployment (Kubernetes/Helm, `docker compose up --scale backend=N`) has every replica queue up on the same lock instead of racing the same `ALTER TABLE`/`CREATE TYPE` statements against each other on a rolling restart. Whichever replica gets the lock first does the real upgrade; the rest find the schema already at `head` and return immediately.
 
 You only need to touch Alembic directly when you change `app/models/models.py`:
 
@@ -221,6 +298,30 @@ If something goes wrong, restore the backup taken just before the upgrade:
 For a Kubernetes deployment (`charts/toleman`), the equivalent is `kubectl exec` into the postgres Pod with the same `pg_dump`/`psql` invocations the scripts above use; there's no in-cluster backup CronJob yet (tracked as a follow-up), so back up before every Helm upgrade the same way.
 
 Postgres's data itself already survives a `docker compose down` (no `-v`) or a Pod restart via the named volume/PVC; these scripts are for the case a completed migration needs to be undone, not for routine restarts.
+
+### Managed Cloud DB (RDS / Cloud SQL / etc.)
+
+The bundled `postgres` container in `docker-compose.yml` is a convenience, not a requirement. `DATABASE_URL` is a plain setting (`app/core/config.py`), read by the same code path whether it points at that container or at a managed instance, so pointing `backend`/`celery-worker` at RDS, Cloud SQL, Azure Database for PostgreSQL, or any Postgres 16-compatible managed service works today: set `DATABASE_URL` to the managed instance's connection string and drop (or ignore) the `postgres` service.
+
+```
+DATABASE_URL=postgresql+psycopg://<user>:<password>@<managed-host>:5432/<db>?sslmode=require
+```
+
+`sslmode=require` (or `verify-full` with the provider's CA bundle) is a query parameter on the URL itself, `psycopg` reads it directly; there's no separate TLS setting in the app. Most managed providers reject plaintext connections by default, so this is usually required, not optional.
+
+With the bundled `docker-compose.yml` specifically: `backend`/`celery-worker`'s `DATABASE_URL` there is hardcoded to the `postgres` service (`@postgres:5432/...`), since that's what makes the zero-config Quickstart work. To point that same Compose stack at a managed DB instead, either edit those two `DATABASE_URL` lines directly or add an override file (the same pattern `docker-compose.ghcr.yml` uses for images) rather than fighting the `POSTGRES_*`-derived default; either way, drop the `postgres` service too so nothing depends on it.
+
+The connection pool is tuned for this case specifically, not just the bundled container:
+
+- `pool_pre_ping` is always on: a managed DB, its connection proxy (RDS Proxy, Cloud SQL Auth Proxy), or a load balancer in front of it can silently drop an idle connection, which the bundled container never does. Without this, the first query after a quiet period fails instead of transparently reconnecting.
+- `DB_POOL_RECYCLE_SECONDS` (default `600`) retires a pooled connection before the far end's own idle/connection-lifetime cutoff closes it out from under an in-flight query (RDS Proxy defaults to a 15-minute idle timeout; other proxies sit lower).
+- `DB_POOL_SIZE` (default `5`) and `DB_MAX_OVERFLOW` (default `10`) cap how many connections each `backend`/`celery-worker` process opens. A managed instance's `max_connections` is often lower than a self-hosted default, and every replica of both services counts against it, size these down (or raise the DB's own limit) before scaling replicas up.
+
+### Logging and error tracking
+
+The backend logs structured JSON to stdout (`app/core/logging.py`), one object per line with `timestamp`/`level`/`logger`/`message`/`request_id`, and a stack trace under `exception` when there is one. `LOG_LEVEL` (default `INFO`) controls verbosity. Every response carries an `X-Request-ID` header (generated, or echoed back if the caller already set one), and every log line emitted while handling that request carries the same id, so a support report ("what happened for X-Request-ID abc123") can be grepped straight out of the logs.
+
+An exception a route handler doesn't turn into an `HTTPException` (i.e. a real bug, not an expected 4xx) is caught, logged with its full traceback, and turned into a generic `{"detail": "Internal server error", "request_id": "..."}` 500 rather than leaking internals to the caller or vanishing without a trace. See `RequestIDMiddleware` in `app/core/logging.py` for why this lives in that middleware specifically rather than a `@app.exception_handler(Exception)`.
 
 ### Pre-commit hooks
 

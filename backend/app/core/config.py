@@ -9,6 +9,25 @@ DEFAULT_ADMIN_PASSWORD = "changeme123"
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://toleman:toleman@localhost:5432/toleman"
+    # Pool knobs, tuned for a managed DB (RDS/Cloud SQL/etc.), not just the
+    # bundled docker-compose postgres. Managed proxies (RDS Proxy, Cloud SQL
+    # Auth Proxy, pgbouncer) and the DB itself both silently drop idle
+    # connections after their own timeout, which the bundled postgres
+    # container never does; pool_pre_ping (always on, not configurable, the
+    # cost is one cheap round-trip only on a pooled-out connection) is what
+    # turns that into a transparent reconnect instead of the first request
+    # after a quiet period failing with an OperationalError. Defaults are
+    # deliberately small: they must fit under whatever max_connections the
+    # target DB enforces, which a managed instance often caps lower than a
+    # self-hosted one, times however many backend + celery-worker replicas
+    # are running.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    # Recycle before most managed DBs' own idle/connection-lifetime cutoff
+    # (RDS Proxy defaults to 15 min idle; Cloud SQL Auth Proxy and most
+    # cloud LBs sit lower still), so a connection is retired on our terms
+    # before the far end closes it out from under an in-flight query.
+    db_pool_recycle_seconds: int = 600
     redis_url: str = "redis://localhost:6379/0"
     workspace_api_key: str = "dev-local-key"
     scan_workdir: str = "/tmp/toleman-scans"
@@ -93,6 +112,21 @@ class Settings(BaseSettings):
     # second port). See cors_allow_origins below.
     extra_cors_origins: str = ""
 
+    # (#298) Extra git-clone hosts, comma-separated, beyond github.com.
+    # app/scanners/runner.py's ALLOWED_CLONE_HOSTS exists specifically to
+    # stop a Target.repo_url (any authenticated user who can create a
+    # Target controls this value) from pointing `git clone` at an
+    # arbitrary host, an SSRF vector, e.g. a cloud metadata endpoint or an
+    # internal admin panel. That defense only works as long as the
+    # allowlist is something an end user can never influence: this setting
+    # extends it, but it's an operator-set env var (deployment-time), not
+    # anything reachable from the API. A workspace that needs to scan an
+    # internal GitHub Enterprise Server, GitLab, or Gitea instance -
+    # exactly the case a VPN-gated or client-cert-protected host implies -
+    # gets there by the operator deliberately adding that host here, the
+    # same trust boundary EXTRA_CORS_ORIGINS already uses.
+    extra_clone_hosts: str = ""
+
     # (BLD-01) Build identity, surfaced by GET /health and in the sidebar.
     #
     # An external evaluator built a fresh stack while a previously-running
@@ -108,6 +142,10 @@ class Settings(BaseSettings):
     # rather than a fabricated version number.
     build_version: str = "dev"
     build_commit: str = ""
+
+    # Python logging level name (DEBUG/INFO/WARNING/ERROR/CRITICAL) for the
+    # JSON logging configured by app/core/logging.py's configure_logging().
+    log_level: str = "INFO"
 
     class Config:
         env_file = ".env"
@@ -128,6 +166,14 @@ class Settings(BaseSettings):
             if extra and extra not in origins:
                 origins.append(extra)
         return origins
+
+    @property
+    def extra_clone_hosts_set(self) -> set[str]:
+        """Operator-configured hosts to add to ALLOWED_CLONE_HOSTS. See
+        extra_clone_hosts's own docstring for why this must stay
+        operator-set (an env var) rather than anything an API caller can
+        influence."""
+        return {h.strip() for h in self.extra_clone_hosts.split(",") if h.strip()}
 
 
 settings = Settings()

@@ -3,7 +3,7 @@ import { AuditLogFilterBar } from "@/components/audit-log-filter-bar";
 import { AuditLogList } from "@/components/audit-log-list";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
-import { settleOrNull } from "@/lib/settle";
+import { settleOrNull } from "@/std-lib";
 // Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.
 import { pageSizeFromParams } from "@/lib/pagination";

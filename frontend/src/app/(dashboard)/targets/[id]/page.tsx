@@ -14,7 +14,7 @@ import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
 import { TargetHistory } from "./target-history";
-import { settleOrNull } from "@/lib/settle";
+import { settleOrNull } from "@/std-lib";
 import { pageSizeFromParams } from "@/lib/pagination";
 
 // Issue #197: the target detail page used to be one long scroll stacking

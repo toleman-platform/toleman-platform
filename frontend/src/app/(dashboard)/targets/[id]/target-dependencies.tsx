@@ -1,5 +1,5 @@
 import { api, SbomComponent, Target } from "@/lib/api";
-import { settleOrNull } from "@/lib/settle";
+import { settleOrNull } from "@/std-lib";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";

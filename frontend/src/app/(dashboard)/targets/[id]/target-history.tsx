@@ -1,5 +1,5 @@
 import { api, ScanHistoryEntry } from "@/lib/api";
-import { settleOrNull } from "@/lib/settle";
+import { settleOrNull } from "@/std-lib";
 import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";

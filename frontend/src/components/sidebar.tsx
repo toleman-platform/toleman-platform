@@ -188,7 +188,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
   }
 
   const initials = user?.name
-    ? user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase()
+    ? user.name.split(" ").map((p: string) => p[0]).slice(0, 2).join("").toUpperCase()
     : "?";
 
   // True icon-rail mode: collapsed AND not the full-width mobile drawer.

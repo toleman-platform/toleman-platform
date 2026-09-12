@@ -267,6 +267,10 @@ class TestCommentTellsTheTruth:
 
 
 class TestChangedFiles:
+    """`_pr_files` fetches and pages; `_changed_paths` reduces that to the
+    paths worth scanning. Split apart so the changed-line map used for
+    authorship attribution can read the same fetch."""
+
     def _fake_github_get(self, monkeypatch, pages):
         calls = {"n": 0}
 
@@ -294,14 +298,14 @@ class TestChangedFiles:
             {"filename": "kept.py", "status": "modified"},
             {"filename": "gone.py", "status": "removed"},
         ]])
-        assert executor._changed_files("o/r", 1) == ["kept.py"]
+        assert executor._changed_paths(executor._pr_files("o/r", 1)) == ["kept.py"]
 
     def test_token_is_threaded_through(self, monkeypatch):
         """Regression: this call used to run unauthenticated, which 404s on
         a private repo and silently falls back to a full scan instead of
         surfacing the auth failure."""
         calls = self._fake_github_get(monkeypatch, [[]])
-        executor._changed_files("o/r", 1, "tok-123")
+        executor._pr_files("o/r", 1, "tok-123")
         assert calls["tokens"] == ["tok-123"]
 
     def test_api_failure_returns_none_not_empty(self, monkeypatch):
@@ -311,13 +315,13 @@ class TestChangedFiles:
             raise RuntimeError("GitHub is down")
 
         monkeypatch.setattr(executor, "github_get", boom)
-        assert executor._changed_files("o/r", 1) is None
+        assert executor._pr_files("o/r", 1) is None
 
     def test_pagination_is_followed(self, monkeypatch):
         page1 = [{"filename": f"f{i}.py", "status": "modified"} for i in range(100)]
         page2 = [{"filename": "last.py", "status": "modified"}]
         self._fake_github_get(monkeypatch, [page1, page2])
-        result = executor._changed_files("o/r", 1)
+        result = executor._changed_paths(executor._pr_files("o/r", 1))
         assert len(result) == 101
         assert result[-1] == "last.py"
 

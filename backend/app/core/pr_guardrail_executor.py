@@ -7,6 +7,7 @@ webhook-driven (real-time, PR opened/synchronize) path call the exact same
 logic instead of two copies drifting apart.
 """
 import logging
+import re
 from datetime import datetime
 
 import httpx
@@ -19,7 +20,14 @@ from app.core.github import github_get, repo_slug_from_url
 from app.core.github_app import get_installation_token, resolve_config_for_installation, resolve_installation_for_repo
 from app.core.github_token import resolve_github_token
 from app.core.policy import apply_policies, effective_blocking_severities
-from app.core.pr_guardrail import SEVERITY_ORDER, compute_net_new, highest_severity, should_block
+from app.core.pr_guardrail import (
+    SEVERITY_ORDER,
+    WHOLE_FILE,
+    attributable_to_diff,
+    compute_net_new,
+    highest_severity,
+    should_block,
+)
 from app.models.models import (
     ApiEndpoint,
     Finding,
@@ -127,23 +135,23 @@ def _run_guardrail_tools(
 MAX_DIFF_SCOPED_FILES = 300
 
 
-def _changed_files(slug: str, pr_number: int, token: str = "") -> list[str] | None:
-    """Repo-relative paths the PR adds or modifies.
+def _pr_files(slug: str, pr_number: int, token: str = "") -> list[dict] | None:
+    """Raw `GET /pulls/{n}/files` entries for the PR, all pages.
 
-    Returns None when the list can't be established, which the caller must
-    treat as "fall back to a full scan"; never as "nothing changed".
-
-    Deleted files are excluded: there is no file left to scan, and their
-    findings disappear from the head branch anyway. Renames report only the
-    new path, which is what exists in the checkout.
+    Returns None when the list can't be established, which every caller must
+    treat as "we do not know what this PR changed"; never as "nothing
+    changed". Both things derived from it -- the diff-scoped scan path list
+    (#243) and the changed-line map used for authorship attribution -- have
+    a defined, non-suppressing behavior for None, and neither may invent an
+    empty diff out of an API failure.
 
     ``token`` should be the caller's already-resolved
     ``resolve_github_token(...)`` credential; without it this call runs
     unauthenticated and 404s on any private repo, which the except-branch
-    below would silently read as "fall back to a full scan" rather than the
-    auth failure it actually is.
+    below would silently read as a missing diff rather than the auth failure
+    it actually is.
     """
-    paths: list[str] = []
+    entries: list[dict] = []
     page = 1
     while True:
         try:
@@ -152,25 +160,115 @@ def _changed_files(slug: str, pr_number: int, token: str = "") -> list[str] | No
             batch = res.json()
         except Exception:
             logger.warning(
-                "pr guardrail: could not list changed files for %s#%s; falling back to a full scan",
+                "pr guardrail: could not list changed files for %s#%s",
                 slug, pr_number, exc_info=True,
+            )
+            return None
+        if not isinstance(batch, list):
+            # Not a file list. An error object served with a 200, a proxy's
+            # HTML, anything: it tells us nothing about what changed, so it
+            # takes the same path as an outright failure rather than being
+            # iterated into nonsense.
+            logger.warning(
+                "pr guardrail: unexpected files payload for %s#%s (%s)",
+                slug, pr_number, type(batch).__name__,
             )
             return None
         if not batch:
             break
-        for entry in batch:
-            if entry.get("status") == "removed":
-                continue
-            filename = entry.get("filename")
-            if filename:
-                paths.append(filename)
+        entries.extend(batch)
         if len(batch) < 100:
             break
         page += 1
         if page > 30:  # 3000 files; far past MAX_DIFF_SCOPED_FILES anyway
             logger.warning("pr guardrail: %s#%s has more files than we will page", slug, pr_number)
             return None
+    return entries
+
+
+def _changed_paths(entries: list[dict]) -> list[str]:
+    """Repo-relative paths the PR adds or modifies, out of `_pr_files` entries.
+
+    Deleted files are excluded: there is no file left to scan, and their
+    findings disappear from the head branch anyway. Renames report only the
+    new path, which is what exists in the checkout.
+    """
+    paths: list[str] = []
+    for entry in entries:
+        if entry.get("status") == "removed":
+            continue
+        filename = entry.get("filename")
+        if filename:
+            paths.append(filename)
     return paths
+
+
+# `@@ -old,count +new,count @@`; only the head-side start matters here,
+# since attribution is about lines that exist in the PR's checkout.
+_HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+
+
+def _added_lines_from_patch(patch: str) -> set[int]:
+    """Head-side line numbers a unified-diff patch adds or rewrites.
+
+    Only `+` lines count. A `-` line is code the author deleted -- there is
+    nothing left in the checkout for a scanner to flag -- and a context line
+    is code they left alone, which is the whole point of this filter.
+    """
+    added: set[int] = set()
+    line_no = 0
+    in_hunk = False
+    for raw in patch.splitlines():
+        header = _HUNK_HEADER.match(raw)
+        if header:
+            line_no = int(header.group(1))
+            in_hunk = True
+            continue
+        if not in_hunk:
+            # Anything before the first `@@` has no head-side line number to
+            # attribute it to. Counting it would number lines from zero.
+            continue
+        if not raw:
+            # An empty line in a patch body is an unchanged blank line (the
+            # leading space is often stripped in transit). Advance, count
+            # nothing.
+            line_no += 1
+            continue
+        marker = raw[0]
+        if marker == "+":
+            added.add(line_no)
+            line_no += 1
+        elif marker == "-":
+            continue
+        elif marker == "\\":
+            # "\ No newline at end of file"; metadata, not a line.
+            continue
+        else:
+            line_no += 1
+    return added
+
+
+def _changed_line_map(entries: list[dict]) -> dict[str, set[int] | None]:
+    """Map each non-deleted path in the PR to the head-side lines it changed,
+    or to ``WHOLE_FILE`` when GitHub gives no patch to read them from.
+
+    GitHub omits `patch` for binary files and for diffs past its inline size
+    limit, and a pure rename carries no hunks. In all three the file is
+    genuinely part of this PR, so it maps to ``WHOLE_FILE`` (attribute
+    everything in it) rather than to an empty set (attribute nothing) --
+    this filter exists to stop blaming authors for code they did not touch,
+    not to become a new way for a real finding to disappear.
+    """
+    out: dict[str, set[int] | None] = {}
+    for entry in entries:
+        if entry.get("status") == "removed":
+            continue
+        filename = entry.get("filename")
+        if not filename:
+            continue
+        patch = entry.get("patch")
+        out[filename] = _added_lines_from_patch(patch) if patch else WHOLE_FILE
+    return out
 
 
 def _severity_str(severity) -> str:
@@ -341,6 +439,29 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
     return [d for d in discovered if (d["method"], d["route"], d["file"]) not in existing]
 
 
+def _attributable_endpoints(endpoints: list[dict], changed_lines: dict[str, set[int] | None] | None) -> list[dict]:
+    """The endpoint list has the same false-attribution failure the finding
+    list does, and for the same reason: "absent from the persisted baseline"
+    is not "added by this PR". A baseline that predates a route, or a
+    discovery pass that has improved since it was written, announces
+    endpoints in files the author never opened -- the reported case had 15
+    of them on a PR that changed one workflow file.
+
+    Informational or not, that is still the comment telling a reviewer this
+    PR did something it did not do. Filtered through the same diff.
+
+    ``None`` (diff unavailable) returns the list untouched, matching the
+    findings path: unknown authorship is never resolved by hiding things.
+    """
+    if changed_lines is None:
+        return endpoints
+    shaped = [
+        {"file_path": e.get("file", ""), "line_start": e.get("line"), "_endpoint": e}
+        for e in endpoints
+    ]
+    return [item["_endpoint"] for item in attributable_to_diff(shaped, changed_lines)]
+
+
 # Hidden HTML marker embedded in every comment `render_comment()` produces,
 # used by `post_pr_comment()` to find a prior Toleman comment on the PR and
 # PATCH it in place instead of posting a new one on every rescan (#127).
@@ -478,6 +599,7 @@ def render_comment(
     files_scanned: int = 0,
     baseline_missing: bool = False,
     scanned_at: datetime | None = None,
+    diff_attributed: bool | None = None,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
     predating the multi-tool guardrail (GH-01); None means "don't render a
@@ -504,7 +626,15 @@ def render_comment(
     diff against anything.
 
     `scanned_at` (#271) is when this scan ran. None omits the staleness
-    footer entirely, same backwards-compatible default as everything above."""
+    footer entirely, same backwards-compatible default as everything above.
+
+    `diff_attributed` is three-valued, following the same
+    None-means-render-what-you-used-to convention as everything above.
+    True: findings were filtered down to the lines this PR changed, so the
+    headline may claim this PR introduced them. False: the PR's diff could
+    not be read, so they are net-new-against-the-baseline only and that gap
+    is called out. None (default): a caller predating this filter, rendered
+    exactly as before."""
     lines = [COMMENT_MARKER, "**Toleman PR Guardrail**", "", _severity_badge(status), ""]
 
     if baseline_missing:
@@ -530,6 +660,19 @@ def render_comment(
             f"🔍 **Diff-scoped scan**, only the {files_scanned} file(s) changed in this PR were "
             "examined, not the whole repository. Pre-existing issues elsewhere in the codebase "
             "would not appear here."
+        )
+        lines.append("")
+
+    if diff_attributed is False:
+        # Rendered with the other caveats, above the result: the difference
+        # between "this PR introduced these" and "these are absent from the
+        # last baseline scan, cause unknown" is the whole question a reader
+        # is asking when a finding points at a file they never opened.
+        lines.append(
+            "⚠️ **This PR's diff could not be read**, so findings below could not be "
+            "attributed to the lines it changed. They are net-new against the default "
+            "branch's last scan, which can include pre-existing code whose finding moved "
+            "(a renamed scanner rule, a stale baseline) rather than anything this PR wrote."
         )
         lines.append("")
 
@@ -564,6 +707,8 @@ def render_comment(
                 "No net-new findings or API changes in the changed files. "
                 "This covers the diff only; see the scope note above."
             )
+        elif diff_attributed:
+            lines.append("No net-new findings or API changes introduced by this PR. ✅")
         else:
             lines.append("No net-new findings or API changes vs the default branch. ✅")
         if tools_run:
@@ -575,7 +720,8 @@ def render_comment(
         return "\n".join(lines)
 
     if findings:
-        lines.append(f"**{len(findings)} net-new vulnerability finding(s)** vs the default branch:")
+        headline = "introduced by this PR's changes" if diff_attributed else "vs the default branch"
+        lines.append(f"**{len(findings)} net-new vulnerability finding(s)** {headline}:")
         lines.append("")
         lines.append(_severity_count_table(findings))
         lines.append("")
@@ -1018,6 +1164,12 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
         )
         guardrail_tools = _resolve_guardrail_tools(session, target)
 
+        # One fetch, two consumers: the changed-line map every scan needs to
+        # decide which net-new findings this PR's author actually introduced,
+        # and the optional diff-scoped scan path list below.
+        pr_file_entries = _pr_files(slug, pr_number, resolve_github_token(session, target.workspace_id, slug) or "")
+        changed_lines = _changed_line_map(pr_file_entries) if pr_file_entries is not None else None
+
         # (#243) Scope the scan to the PR's changed files when the target
         # opts in. Every path back to a full scan is explicit, and the scope
         # actually used is persisted; a diff scan and a full scan report
@@ -1025,7 +1177,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
         # each other in the PR comment or the audit trail.
         scan_paths: list[str] | None = None
         if target.diff_scoped_pr_scans:
-            changed = _changed_files(slug, pr_number, resolve_github_token(session, target.workspace_id, slug) or "")
+            changed = _changed_paths(pr_file_entries) if pr_file_entries is not None else None
             if changed is None:
                 logger.info("pr guardrail: full scan for %s#%s (changed files unavailable)", slug, pr_number)
             elif len(changed) > MAX_DIFF_SCOPED_FILES:
@@ -1089,6 +1241,27 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             )
             net_new = compute_net_new(parsed, existing_hashes)
 
+        # Net-new is necessary but not sufficient. A finding's dedup hash can
+        # stop matching the baseline for reasons that have nothing to do with
+        # this PR -- an upstream semgrep rule renamed under --config=auto, a
+        # scanner upgrade, a tool enabled for the PR surface but not for the
+        # default-branch scan, a baseline that simply hasn't been refreshed --
+        # and the result was this guardrail reporting a repo's pre-existing
+        # findings against whichever PR happened to be scanned next, in files
+        # its author never opened. Authorship is decided by the diff.
+        attribution_unavailable = changed_lines is None
+        if attribution_unavailable:
+            # Same rule the rest of this module follows: something that could
+            # not be established is never quietly resolved in the direction
+            # that hides findings. Report the unfiltered set and say so.
+            logger.warning(
+                "pr guardrail: no diff available for %s#%s; reporting net-new findings "
+                "without attributing them to changed lines",
+                slug, pr_number,
+            )
+        else:
+            net_new = attributable_to_diff(net_new, changed_lines)
+
         # Policy-as-code (ROADMAP Sprint 4): apply the target's workspace
         # active policy rules (org-level suppression + severity threshold
         # override) before deciding whether to block. No policies configured
@@ -1111,7 +1284,9 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
 
         status = PRGuardrailStatus.BLOCKED if should_block(blocking_net_new, blocking_severities) else PRGuardrailStatus.PASSED
 
-        new_endpoints = _diff_new_endpoints(session, target, repo_path)
+        new_endpoints = _attributable_endpoints(
+            _diff_new_endpoints(session, target, repo_path), changed_lines
+        )
 
         pr_scan.status = status
         pr_scan.new_findings_count = len(net_new)
@@ -1144,6 +1319,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             scan_scope=pr_scan.scan_scope,
             files_scanned=pr_scan.files_scanned,
             baseline_missing=baseline_missing,
+            diff_attributed=not attribution_unavailable,
             # (#271) completed_at is set just above this call; falling back
             # to now() keeps the footer honest rather than omitting it if
             # that ordering ever changes.

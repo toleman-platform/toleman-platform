@@ -1,0 +1,29 @@
+"""trivy's `--scanners` selection (#244 benchmarking, 2026-08-22).
+
+trivy fs defaults to [vuln, secret], not [vuln, misconfig]. The secret
+scanner walks every file in the target and its result was never consumed --
+parsers.parse_trivy only reads Vulnerabilities and Misconfigurations from
+the JSON -- so it was pure wasted work (measured 22x on a venv-inclusive
+checkout, 3.5x on a real multi-ecosystem repo). Pinning to `--scanners vuln`
+removes that waste with zero change to the findings this codebase actually
+parses.
+"""
+from app.scanners import runner
+
+
+def test_trivy_pins_scanners_to_vuln_only():
+    cmd = runner.TOOL_COMMANDS["trivy"]("/some/repo")
+    assert "--scanners" in cmd
+    idx = cmd.index("--scanners")
+    assert cmd[idx + 1] == "vuln"
+
+
+def test_trivy_license_entry_is_unaffected():
+    # trivy-license already pins its own --scanners license, and must not
+    # gain "--scanners vuln" from the change above. (This also covered
+    # trivy-sbom when it was written; that entry is gone -- GitHub's
+    # Dependency Graph replaced the CycloneDX enumeration as the SBOM
+    # inventory source, so there is no trivy-sbom command left to assert on.)
+    license_cmd = runner.TOOL_COMMANDS["trivy-license"]("/some/repo")
+    assert "--scanners" in license_cmd
+    assert license_cmd[license_cmd.index("--scanners") + 1] == "license"

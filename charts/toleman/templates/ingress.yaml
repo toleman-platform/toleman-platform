@@ -1,0 +1,45 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "toleman.fullname" . }}
+  labels:
+    {{- include "toleman.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- if .Values.ingress.frontendHost }}
+    - host: {{ .Values.ingress.frontendHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "toleman.fullname" . }}-frontend
+                port:
+                  number: {{ .Values.frontend.service.port }}
+    {{- end }}
+    {{- if .Values.ingress.backendHost }}
+    - host: {{ .Values.ingress.backendHost | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "toleman.fullname" . }}-backend
+                port:
+                  number: {{ .Values.backend.service.port }}
+    {{- end }}
+{{- end }}

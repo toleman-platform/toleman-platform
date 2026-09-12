@@ -223,8 +223,10 @@ def eager_celery():
     celery_app.conf.task_eager_propagates = original_propagates
 
 
-def _fake_clone_repo(repo_url, branch, github_token="", scan_id=None):
+def _fake_clone_repo(repo_url, branch, github_token="", scan_id=None, **kwargs):
     # Stand-in checkout dir; real clone_repo/git is never invoked in tests.
+    # **kwargs absorbs clone_kwargs_for_target's client_cert_pem/
+    # client_key_pem/proxy_url (#298), which callers always pass now.
     return Path("/tmp")
 
 

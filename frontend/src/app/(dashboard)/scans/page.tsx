@@ -4,7 +4,7 @@ import { ScansFilterBar } from "@/components/scans-filter-bar";
 import { ScansList } from "./scans-list";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
-import { settleOrNull } from "@/lib/settle";
+import { settleOrNull } from "@/std-lib";
 
 // Issue #120: rebuild of the flat, unfiltered ~165-button scan-trigger grid
 // (33 targets x 5 tools each) into the same search/filter/multi-select

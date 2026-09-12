@@ -15,7 +15,7 @@ yet", which app.core.code_graph resolves by building one. Nothing about
 existing targets changes when this runs.
 
 Revision ID: c3e8b7a2d4f1
-Revises: c3f7b9a1e4d2
+Revises: 4d3ccef7ff1e
 Create Date: 2026-08-22
 
 """
@@ -26,7 +26,7 @@ from alembic import op
 import sqlmodel
 
 revision: str = "c3e8b7a2d4f1"
-down_revision: Union[str, None] = "c3f7b9a1e4d2"
+down_revision: Union[str, None] = "4d3ccef7ff1e"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

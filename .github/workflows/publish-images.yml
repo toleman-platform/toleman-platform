@@ -86,6 +86,8 @@ jobs:
           push: true
           tags: ${{ steps.backend-meta.outputs.tags }}
           labels: ${{ steps.backend-meta.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
           # (BLD-01) Stamp the real build identity into the image so a
           # running instance can say which one it is; GET /health and the
           # sidebar both surface it. A published image with version "dev"
@@ -115,6 +117,8 @@ jobs:
           push: true
           tags: ${{ steps.frontend-meta.outputs.tags }}
           labels: ${{ steps.frontend-meta.outputs.labels }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
           # Baked in at build time because Next.js inlines NEXT_PUBLIC_*
           # into the client bundle. It is only a fallback: the dashboard
           # layout injects `window.__TOLEMAN_API_URL__` from PUBLIC_API_URL

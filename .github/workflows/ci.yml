@@ -130,6 +130,15 @@ jobs:
       - name: Lint
         run: npm run lint -- --max-warnings=0
 
+      - name: Restore Next.js cache
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf # v4
+        with:
+          path: |
+            frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/src/**', 'frontend/public/**', 'frontend/next.config.*') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-
+
       - name: Build (also generates Next.js route types and type-checks)
         run: npm run build
         env:

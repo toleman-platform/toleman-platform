@@ -17,6 +17,7 @@ from app.api.github_app import BACKEND_URL
 from app.core.github_app import target_has_pr_guardrail_coverage
 from app.core.security_score import OPEN_STATES
 from app.core.staleness import mark_stale_if_needed
+from app.core.tool_registry import vulnerability_tools
 from app.models.models import (
     WORKSPACE_ROLE_RANK,
     Finding,
@@ -196,7 +197,11 @@ def targets_summary(
     answer; which of these repos actually needs attention. This is the
     same default-branch + open-state scoping the Posture dashboard and the
     security score already use (app.core.security_score.OPEN_STATES), so the
-    number here can't disagree with those surfaces.
+    number here can't disagree with those surfaces. License findings are
+    excluded for the same reason the security score zeroes them out
+    (app.core.security_score.CATEGORY_RISK_WEIGHT): a legal/compliance
+    signal, not something that makes a repo "need attention" the way an
+    open vulnerability does.
 
     Declared before /{target_id} so "summary" isn't captured as a target id.
     One query for findings plus one for targets, not N+1.
@@ -217,6 +222,7 @@ def targets_summary(
         select(Finding.target_id, Finding.severity, Finding.branch).where(
             Finding.target_id.in_(list(default_branch_by_target.keys())),
             Finding.state.in_(OPEN_STATES),
+            Finding.tool.in_(vulnerability_tools()),
         )
     ).all()
 

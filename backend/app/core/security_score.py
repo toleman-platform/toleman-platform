@@ -64,7 +64,7 @@ from sqlmodel import Session, select
 
 from app.core.sla import CLOSED_STATES, compute_sla_status
 from app.core.time import utcnow
-from app.core.tool_registry import tool_category
+from app.core.tool_registry import NON_VULNERABILITY_CATEGORIES, tool_category
 from app.models.models import (
     Finding,
     FindingState,
@@ -92,16 +92,17 @@ SEVERITY_POINTS_TO_ZERO = 20.0
 # trend_score: severity already says how bad a finding is *within* its
 # category, this says how much a category's worst case should move a
 # security *posture* score at all. Deliberately narrow -- only License is
-# called out, at a fraction of full weight, because it's a legal/compliance
-# signal (a scanner can grade a copyleft license "Critical" for licensing
-# reasons that have nothing to do with exploitability) rather than a
-# security risk in the same sense as an exploitable code vuln, a leaked
-# secret, or a vulnerable dependency. Every other category (including ones
-# added to the registry later) defaults to DEFAULT_CATEGORY_RISK_WEIGHT via
-# `.get`, so severity alone keeps doing the differentiating work there,
-# unchanged from before this multiplier existed.
+# called out, at zero weight, because it's a legal/compliance signal (a
+# scanner can grade a copyleft license "Critical" for licensing reasons
+# that have nothing to do with exploitability) rather than a security risk
+# in the same sense as an exploitable code vuln, a leaked secret, or a
+# vulnerable dependency -- it should never move this score, not just move
+# it less. Every other category (including ones added to the registry
+# later) defaults to DEFAULT_CATEGORY_RISK_WEIGHT via `.get`, so severity
+# alone keeps doing the differentiating work there, unchanged from before
+# this multiplier existed.
 CATEGORY_RISK_WEIGHT = {
-    "License": 0.3,
+    "License": 0.0,
 }
 DEFAULT_CATEGORY_RISK_WEIGHT = 1.0
 
@@ -177,7 +178,16 @@ def _findings_score(open_default_branch: list[Finding], targets_by_id: dict[int,
 def _sla_score(session: Session, open_default_branch: list[Finding]) -> dict:
     with_sla = 0
     in_violation = 0
+    # SlaRule is keyed purely on severity (app.core.sla), with no category
+    # awareness -- a workspace's "High: fix within 30 days" rule would
+    # otherwise apply just as literally to a License finding a scanner
+    # happens to grade High (e.g. a copyleft license) as to an actually
+    # exploitable one. A license is not something anyone "fixes" on a
+    # days-to-fix clock, so it's excluded here the same way it's zeroed out
+    # of findings_score/trend_score via CATEGORY_RISK_WEIGHT.
     for f in open_default_branch:
+        if tool_category(f.tool) in NON_VULNERABILITY_CATEGORIES:
+            continue
         sla_days, violated = compute_sla_status(session, f)
         if sla_days is None:
             continue

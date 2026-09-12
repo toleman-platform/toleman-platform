@@ -17,6 +17,7 @@ import pytest
 
 from app.core.tool_registry import (
     BUNDLED_TOOLS,
+    NON_VULNERABILITY_CATEGORIES,
     TOOL_REGISTRY,
     UNKNOWN_TOOL_CATEGORY,
     USAGE_SURFACES,
@@ -26,6 +27,7 @@ from app.core.tool_registry import (
     registry_with_integration_status,
     tool_category,
     tools_in_category,
+    vulnerability_tools,
 )
 from app.scanners.runner import TOOL_COMMANDS
 
@@ -173,6 +175,24 @@ def test_all_categories_includes_other_and_every_registry_category():
     # Sorted, stable order for a UI dropdown -- not required to look a
     # particular way, just not to silently reorder between requests.
     assert cats == sorted(cats)
+
+
+# --- vulnerability/license segregation (app.core.security_score's --------
+# CATEGORY_RISK_WEIGHT draws the same line for scoring purposes) -----------
+
+
+def test_vulnerability_tools_excludes_license_category_tools():
+    vuln_tools = vulnerability_tools()
+    assert "trivy-license" not in vuln_tools
+    for t in vuln_tools:
+        assert tool_category(t) not in NON_VULNERABILITY_CATEGORIES
+
+
+def test_vulnerability_tools_includes_every_other_known_tool():
+    vuln_tools = set(vulnerability_tools())
+    license_tools = set(tools_in_category("License"))
+    assert vuln_tools == set(all_known_tools()) - license_tools
+    assert vuln_tools  # never empty -- would silently zero out every dashboard
 
 
 @pytest.mark.skipif(

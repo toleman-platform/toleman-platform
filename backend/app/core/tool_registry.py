@@ -370,6 +370,26 @@ def all_categories() -> list[str]:
     return sorted(cats)
 
 
+# A License finding (e.g. "MIT license detected in some-package") is a
+# legal/compliance signal, not a security vulnerability -- same distinction
+# app.core.security_score.CATEGORY_RISK_WEIGHT already draws for scoring
+# purposes. Kept here, next to tool_category, so every "open vulnerability"
+# surface (dashboard stats/posture/summary, target summaries, SLA
+# compliance) can share one definition of "not actually a vulnerability
+# category" instead of each hand-rolling its own exclusion list.
+NON_VULNERABILITY_CATEGORIES = frozenset({"License"})
+
+
+def vulnerability_tools() -> list[str]:
+    """Tool names outside NON_VULNERABILITY_CATEGORIES, for filtering
+    Findings down to actual vulnerabilities at the SQL level
+    (Finding.tool.in_(...)) -- the counterpart to tools_in_category() for
+    "every category except the compliance/legal ones". A License finding
+    still exists and is still visible via its own Findings-page category
+    tab; it just shouldn't inflate a vulnerability count or posture score."""
+    return [t for t in all_known_tools() if tool_category(t) not in NON_VULNERABILITY_CATEGORIES]
+
+
 def registry_with_integration_status() -> list[dict]:
     """Registry entries plus a computed `integrated` flag; True only when
     the tool has a real TOOL_COMMANDS entry (i.e. Toleman can actually execute

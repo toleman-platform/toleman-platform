@@ -217,7 +217,20 @@ def suggest_fix(ctx: Context, finding_id: int) -> dict:
     -- you already have the repo, if this is a Claude Code session working
     in it -- and call raise_fix_pr with strategy="mcp_client" and the full
     corrected file content. Toleman still opens the PR (it holds the GitHub
-    App installation token); only the patch generation moves to you."""
+    App installation token); only the patch generation moves to you.
+
+    If you conclude this finding is a false positive, already-mitigated,
+    or an accepted risk rather than something to fix: do NOT "fix" it by
+    adding a suppression comment (# nosemgrep, # noqa, # nosec,
+    eslint-disable, checkov:skip, etc.) -- that silences the *scanner*,
+    not the issue, so the finding vanishes from every future scan with no
+    review and no audit trail. Toleman rejects a raise_fix_pr patch that
+    does this anyway (see raise_fix_pr's docstring), so it isn't a
+    shortcut, just a wasted call. Tell the user what you found and ask
+    them to triage it themselves in Toleman (Findings page -> Triage ->
+    False Positive / Accepted Risk / Won't Fix) -- that's a real,
+    audited decision the platform already supports; nothing here does it
+    on their behalf."""
     with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.post(f"/findings/{finding_id}/suggest-fix")
         r.raise_for_status()
@@ -251,7 +264,13 @@ def raise_fix_pr(
        patch.
 
     Requires a read_write-scoped token, since this writes a branch/PR to
-    the target's real GitHub repo."""
+    the target's real GitHub repo.
+
+    `new_content` must actually fix the issue: Toleman rejects (400) any
+    patch that adds a scanner-suppression comment (# nosemgrep, # noqa,
+    # nosec, eslint-disable, checkov:skip, ...) on the finding's own
+    flagged line(s), whatever the strategy. If that's what you were about
+    to do, stop -- see suggest_fix's docstring for what to do instead."""
     with _client(_resolve_token(ctx), _resolve_agent(ctx)) as c:
         r = c.post(
             f"/findings/{finding_id}/raise-pr",

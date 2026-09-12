@@ -10,7 +10,7 @@ from sqlmodel import Session, and_, func, or_, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
-from app.core.autofix import AutofixError, Patch, open_fix_pr, suggest_fix
+from app.core.autofix import AutofixError, Patch, find_suppression_comment, open_fix_pr, suggest_fix
 from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
@@ -674,6 +674,16 @@ def raise_fix_pr_endpoint(
         raise HTTPException(status_code=404, detail="finding not found")
     if payload.file_path != finding.file_path:
         raise HTTPException(status_code=400, detail="file_path does not match this finding")
+    suppression = find_suppression_comment(payload.new_content, finding)
+    if suppression:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This patch adds a suppression comment ('{suppression}') on the flagged line instead of "
+                "fixing the underlying issue -- Toleman doesn't accept that as a fix. If this is a false "
+                "positive or an accepted risk, triage it directly in Toleman instead of editing the code."
+            ),
+        )
 
     patch = Patch(
         file_path=payload.file_path,

@@ -73,7 +73,12 @@ jobs:
         run: pip install semgrep "setuptools<81"
 
       - name: Run Semgrep
-        run: semgrep scan --config=auto --json --output=semgrep.json || true
+        # --disable-nosem: don't let a `# nosemgrep` comment silently drop a
+        # finding before it's ever reported -- see runner.py's
+        # TOOL_COMMANDS (this repo's own native scan path) for the same fix
+        # applied there; this workflow runs semgrep independently, so it
+        # needs the flag too.
+        run: semgrep scan --config=auto --disable-nosem --json --output=semgrep.json || true
 
       - name: Summarize
         run: |

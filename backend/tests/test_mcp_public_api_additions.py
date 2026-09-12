@@ -259,6 +259,35 @@ def test_public_raise_pr_rejects_unknown_strategy(client, engine):
     assert res.status_code == 422
 
 
+def test_public_raise_pr_rejects_a_suppression_comment_on_the_flagged_line(client, engine, monkeypatch):
+    """A real incident: an MCP client "fixed" a finding by adding a bare
+    `# nosemgrep` on the flagged line instead of the actual issue -- this
+    must be rejected before it ever reaches open_fix_pr/GitHub, and logged
+    (success=False) same as any other rejected/failed MCP action."""
+    ws_id, target_id = _make_workspace_and_target(engine)
+    client, uid = _login(client, engine)
+    _assign(engine, uid, ws_id)
+    token = _make_token_for_user(engine, uid, scope=ApiTokenScope.READ_WRITE)
+    finding_id = _make_finding(engine, target_id, tool="semgrep", file_path="app.py", line_start=2)
+
+    called = {"open_fix_pr": False}
+    monkeypatch.setattr(public_api_module, "open_fix_pr", lambda *a, **kw: called.update(open_fix_pr=True))
+
+    res = client.post(
+        f"/api/public/v1/findings/{finding_id}/raise-pr",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "file_path": "app.py",
+            "new_content": "line 1\nsubprocess.run(cmd, shell=True)  # nosemgrep\nline 3\n",
+            "ref": "main",
+            "strategy": "mcp_client",
+        },
+    )
+    assert res.status_code == 400
+    assert "suppression comment" in res.json()["detail"]
+    assert called["open_fix_pr"] is False
+
+
 def test_public_raise_pr_rejects_file_path_mismatch(client, engine):
     ws_id, target_id = _make_workspace_and_target(engine)
     client, uid = _login(client, engine)

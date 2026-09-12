@@ -21,7 +21,7 @@ from sqlmodel import Session, func, select
 from app.api.auth import accessible_workspace_ids, current_api_token_user, require_api_token_write_scope
 from app.api.deps import get_session
 from app.core.async_jobs import create_running_row
-from app.core.autofix import AutofixError, Patch, open_fix_pr, suggest_fix
+from app.core.autofix import AutofixError, Patch, find_suppression_comment, open_fix_pr, suggest_fix
 from app.core.mcp_audit import log_mcp_action
 from app.core.rate_limit import enforce_rate_limit
 from app.models.models import Finding, Scan, SnippetScanRun, Target, User
@@ -290,6 +290,23 @@ def raise_fix_pr_endpoint(
     target = _get_target_scoped(finding.target_id, session, user)
     if payload.file_path != finding.file_path:
         raise HTTPException(status_code=400, detail="file_path does not match this finding")
+    suppression = find_suppression_comment(payload.new_content, finding)
+    if suppression:
+        log_mcp_action(
+            session, user, agent=agent, tool="raise_fix_pr",
+            summary=f"rejected: patch for finding #{finding.id} adds a suppression comment instead of a fix",
+            target_id=finding.target_id, finding_id=finding.id, success=False,
+            error=f"suppression comment detected: {suppression}",
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This patch adds a suppression comment ('{suppression}') on the flagged line instead of "
+                "fixing the underlying issue -- Toleman doesn't accept that as a fix. If this is a false "
+                "positive or an accepted risk, tell the user to triage it directly in Toleman "
+                "(Findings page) rather than editing the code."
+            ),
+        )
 
     patch = Patch(
         file_path=payload.file_path,

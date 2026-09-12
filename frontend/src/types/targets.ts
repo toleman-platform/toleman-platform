@@ -95,7 +95,7 @@ export type PipelineBatchItemStatus =
  */
 export type PipelineBatchItem = {
   target_id: number;
-  target_name: string;
+  target_name: Nullable<string>;
   repo_url: Nullable<string>;
   status: PipelineBatchItemStatus;
   error: string;
@@ -158,11 +158,10 @@ export type Group = {
   workspace_id: number;
   name: string;
   color: string;
-  target_count?: number;
-  enforcement_mode: Nullable<EnforcementMode>;
-  effective_enforcement_mode?: EnforcementMode;
-  enforcement_mode_source?: EnforcementModeSource;
   created_at: string;
+  // Issue #62: group-level enforcement-mode override, applied to every
+  // target carrying this group (null = no override, inherit from workspace).
+  enforcement_mode: Nullable<EnforcementMode>;
 };
 
 /**

@@ -30,7 +30,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, AuthUser, BuildInfo, type Nullable } from "@/lib/api";
+import { api, AuthUser, BuildInfo } from "@/lib/api";
 import { GlobalSearch } from "@/components/global-search";
 import { DensityToggle } from "@/components/density-toggle";
 import { ThemeToggle, Theme } from "@/components/theme-toggle";
@@ -110,13 +110,13 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-export function Sidebar({ user, initialTheme }: { user: Nullable<AuthUser>; initialTheme?: Theme }) {
+export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initialTheme?: Theme }) {
   const pathname = usePathname();
   const router = useRouter();
   // (BLD-01) Which backend is actually answering. A stale instance holding
   // the same port is otherwise indistinguishable from a fresh one, an
   // evaluator lost an hour to exactly that.
-  const [build, setBuild] = useState<Nullable<BuildInfo>>(null);
+  const [build, setBuild] = useState<BuildInfo | null>(null);
   useEffect(() => {
     let cancelled = false;
     api

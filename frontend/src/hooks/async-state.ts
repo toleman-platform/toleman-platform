@@ -17,10 +17,6 @@
  *   2. A rejected request never clears previously good data. Showing stale
  *      rows next to an error banner is more useful than showing nothing, and
  *      the caller can still tell the difference.
- */
-
-import type { Nullable } from "@/std-lib";
-
 /** Discrete lifecycle state. `idle` exists so a request can be deferred
  * (e.g. waiting on a workspace selection) without faking a loading spinner
  * for something that was never requested. */
@@ -28,8 +24,8 @@ export type AsyncStatus = "idle" | "loading" | "success" | "error";
 
 export type AsyncState<T> = {
   status: AsyncStatus;
-  data: Nullable<T>;
-  error: Nullable<Error>;
+  data: T | null;
+  error: Error | null;
   /** True while a request is in flight *and* previous data is still shown. */
   isRefreshing: boolean;
   /** Monotonic id of the most recently *started* request. Used to discard
@@ -44,7 +40,7 @@ export type AsyncAction<T> =
   | { type: "resolve"; requestId: number; data: T }
   | { type: "reject"; requestId: number; error: Error };
 
-export function initialAsyncState<T>(initialData: Nullable<T> = null): AsyncState<T> {
+export function initialAsyncState<T>(initialData: T | null = null): AsyncState<T> {
   return {
     status: initialData === null ? "idle" : "success",
     data: initialData,

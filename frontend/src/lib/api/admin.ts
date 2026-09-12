@@ -393,21 +393,6 @@ export function search(q: string): Promise<SearchResults> {
 }
 
 /**
- * Generates a direct GitHub blob link pointing to a file and optional line number.
- */
-export function githubBlobUrl(
-  repoUrl: string,
-  branch: string,
-  filePath: string,
-  lineStart?: Nullable<number>,
-): string {
-  const repoPath = new URL(repoUrl).pathname.replace(/\.git$/, "").replace(/^\//, "");
-  const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
-  const url = `https://github.com/${repoPath}/blob/${encodeURIComponent(branch)}/${encodedFilePath}`;
-  return lineStart ? `${url}#L${lineStart}` : url;
-}
-
-/**
  * Formats a workspace display label, disambiguating duplicates with `#id` if names collide.
  */
 export function workspaceDisplayName(

@@ -6,7 +6,17 @@ from sqlmodel import Session, create_engine
 
 from app.core.config import settings
 
-engine = create_engine(settings.database_url, echo=False)
+# pool_pre_ping + pool_recycle: see Settings.db_pool_size's docstring
+# (app/core/config.py) for why a managed DB needs both, not just the
+# bundled docker-compose postgres.
+engine = create_engine(
+    settings.database_url,
+    echo=False,
+    pool_pre_ping=True,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_recycle=settings.db_pool_recycle_seconds,
+)
 
 # backend/alembic.ini, two levels up from this file (app/core/db.py ->
 # app/ -> backend/). Resolved absolutely so this works regardless of the

@@ -402,8 +402,9 @@ export function githubBlobUrl(
   lineStart?: Nullable<number>,
 ): string {
   const repoPath = new URL(repoUrl).pathname.replace(/\.git$/, "").replace(/^\//, "");
-  const base = `https://github.com/${repoPath}/blob/${branch}/${filePath}`;
-  return lineStart ? `${base}#L${lineStart}` : base;
+  const encodedFilePath = filePath.split("/").map(encodeURIComponent).join("/");
+  const url = `https://github.com/${repoPath}/blob/${encodeURIComponent(branch)}/${encodedFilePath}`;
+  return lineStart ? `${url}#L${lineStart}` : url;
 }
 
 /**

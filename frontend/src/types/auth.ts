@@ -103,3 +103,46 @@ export type AuditLogResult = {
   items: AuditEvent[];
   total: number;
 };
+
+/**
+ * Event types recorded in the admin-only security audit log.
+ */
+export type AuthEventType =
+  | "login_success"
+  | "login_failed"
+  | "logout"
+  | "password_changed"
+  | "role_changed"
+  | "workspace_role_changed"
+  | "workspace_role_removed";
+
+/**
+ * Admin-only security audit log entry.
+ */
+export type AuthAuditLogEntry = {
+  id: number;
+  event_type: AuthEventType;
+  actor: string;
+  target_email: string;
+  detail: string;
+  ip_address: string;
+  created_at: string;
+};
+
+/**
+ * Filter parameters for querying the admin security audit log.
+ */
+export type SecurityAuditLogQuery = {
+  event_type?: AuthEventType;
+  email?: string;
+  page?: number;
+  page_size?: number;
+};
+
+/**
+ * Paginated response for the admin security audit log.
+ */
+export type SecurityAuditLogResult = {
+  items: AuthAuditLogEntry[];
+  total: number;
+};

@@ -126,10 +126,16 @@ export function pipelineWorkflow(targetId: number): Promise<PipelineWorkflow> {
 /**
  * Opens a pull request against the target's GitHub repository adding the scanning workflow.
  */
-export function integratePipeline(targetId: number): Promise<PipelineIntegrateResult | { error: string }> {
-  return jsonFetch<PipelineIntegrateResult | { error: string }>(`/api/targets/${targetId}/pipeline-integrate`, {
-    method: "POST",
-  });
+export function integratePipeline(
+  targetId: number,
+  force = false,
+): Promise<PipelineIntegrateResult | { error: string }> {
+  return jsonFetch<PipelineIntegrateResult | { error: string }>(
+    `/api/targets/${targetId}/pipeline-integrate${force ? "?force=true" : ""}`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 /**
@@ -137,10 +143,12 @@ export function integratePipeline(targetId: number): Promise<PipelineIntegrateRe
  */
 export function bulkPipelineIntegrate(
   targetIds: number[],
+  force = false,
+  workflowTemplateId?: number,
 ): Promise<{ batch_id: number; total: number; status: RunStatus }> {
   return jsonFetch<{ batch_id: number; total: number; status: RunStatus }>("/api/targets/bulk-pipeline-integrate", {
     method: "POST",
-    body: JSON.stringify({ target_ids: targetIds }),
+    body: JSON.stringify({ target_ids: targetIds, force, workflow_template_id: workflowTemplateId }),
   });
 }
 
@@ -159,6 +167,7 @@ export function massPipelineRollout(payload: {
   workspace_id?: number;
   group_id?: number;
   workflow_template_id?: number;
+  force?: boolean;
 }): Promise<{ batch_id: number; total: number; status: RunStatus; scope_label: string }> {
   return jsonFetch<{ batch_id: number; total: number; status: RunStatus; scope_label: string }>(
     "/api/targets/mass-pipeline-rollout",

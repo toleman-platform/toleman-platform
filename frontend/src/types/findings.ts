@@ -35,6 +35,8 @@ export type Finding = {
   sla_violated: boolean;
   /** Fixability classification from advisory metadata */
   fixability?: "fixable" | "no_known_fix" | "unknown";
+  /** Vulnerability-type grouping (Code/SAST, Secret, OSS/SCA, License, IaC, AI/ML, ...) */
+  category: string;
 };
 
 /**
@@ -49,15 +51,52 @@ export type FindingListResult = {
  * Filter query parameters for the /api/findings endpoint.
  */
 export type FindingsQuery = {
-  target_id?: number;
+  target_id?: number | number[];
   group_id?: number;
-  state?: string;
-  severity?: string;
-  tool?: string;
-  fixability?: string;
+  state?: string | string[];
+  severity?: string | string[];
+  tool?: string | string[];
+  category?: string;
+  fixability?: string | string[];
+  resolved?: boolean;
   search?: string;
   page?: number;
   page_size?: number;
+};
+
+/**
+ * Per-category finding counts query for category facets.
+ */
+export type CategoryFacetsQuery = Omit<FindingsQuery, "category" | "page" | "page_size">;
+
+/**
+ * Count breakdown for a single vulnerability category facet.
+ */
+export type CategoryFacet = {
+  category: string;
+  count: number;
+};
+
+/**
+ * Automated fix recommendation and patch preview for a finding.
+ */
+export type FindingSuggestFix = {
+  recommendation: string;
+  strategy: Nullable<"ai" | "deterministic_sca">;
+  diff: Nullable<string>;
+  file_path: Nullable<string>;
+  new_content: Nullable<string>;
+  ref: Nullable<string>;
+  explanation: Nullable<string>;
+};
+
+/**
+ * Outcome of opening a pull request with an automated fix patch.
+ */
+export type RaiseFixPrResult = {
+  pr_url: string;
+  pr_number: number;
+  branch: string;
 };
 
 /**

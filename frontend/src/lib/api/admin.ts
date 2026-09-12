@@ -14,6 +14,8 @@ import type {
   GitHubAppInstallation,
   AuditLogQuery,
   AuditLogResult,
+  SecurityAuditLogQuery,
+  SecurityAuditLogResult,
   CommitEvent,
   OrgActivityQuery,
   OrgActivityResult,
@@ -63,6 +65,19 @@ export function deleteUser(id: number): Promise<{ ok: boolean }> {
  */
 export function workspaces(): Promise<WorkspaceSummary[]> {
   return jsonFetch<WorkspaceSummary[]>("/api/workspaces");
+}
+
+/**
+ * Creates a new workspace and optional parent organization.
+ */
+export function createWorkspace(body: {
+  name: string;
+  organization_name?: string;
+}): Promise<WorkspaceSummary> {
+  return jsonFetch<WorkspaceSummary>("/api/workspaces", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 /**
@@ -297,6 +312,13 @@ export function updateWebhookSecret(
 }
 
 /**
+ * Deletes a registered GitHub App integration.
+ */
+export function deleteGithubApp(configId: number): Promise<{ ok: boolean }> {
+  return jsonFetch<{ ok: boolean }>(`/api/github-app/${configId}`, { method: "DELETE" });
+}
+
+/**
  * Retrieves paginated audit log events.
  */
 export function auditLog(query: AuditLogQuery = {}): Promise<AuditLogResult> {
@@ -315,6 +337,25 @@ export function auditLog(query: AuditLogQuery = {}): Promise<AuditLogResult> {
  */
 export function auditActors(): Promise<string[]> {
   return jsonFetch<string[]>("/api/audit/actors");
+}
+
+/**
+ * Retrieves paginated admin security audit log events.
+ */
+export function securityAuditLog(query: SecurityAuditLogQuery = {}): Promise<SecurityAuditLogResult> {
+  const params = new URLSearchParams();
+  if (query.event_type) params.set("event_type", query.event_type);
+  if (query.email) params.set("email", query.email);
+  if (query.page) params.set("page", String(query.page));
+  if (query.page_size) params.set("page_size", String(query.page_size));
+  return jsonFetch<SecurityAuditLogResult>(`/api/audit/security-log?${params.toString()}`);
+}
+
+/**
+ * Retrieves the list of actors from the security audit log.
+ */
+export function securityAuditActors(): Promise<string[]> {
+  return jsonFetch<string[]>("/api/audit/security-log/actors");
 }
 
 /**

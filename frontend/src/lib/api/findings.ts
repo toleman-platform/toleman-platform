@@ -1,9 +1,13 @@
-import { jsonFetch } from "./client";
+import { jsonFetch, appendMulti } from "./client";
 import type {
   Finding,
   FindingListResult,
   FindingsQuery,
   FindingEnrichment,
+  CategoryFacetsQuery,
+  CategoryFacet,
+  FindingSuggestFix,
+  RaiseFixPrResult,
   SlaRule,
   SlaComplianceData,
 } from "@/types";
@@ -14,12 +18,14 @@ import type { Nullable } from "@/std-lib";
  */
 export function findings(query: FindingsQuery = {}): Promise<FindingListResult> {
   const params = new URLSearchParams();
-  if (query.target_id) params.set("target_id", String(query.target_id));
+  appendMulti(params, "target_id", query.target_id);
   if (query.group_id) params.set("group_id", String(query.group_id));
-  if (query.state) params.set("state", query.state);
-  if (query.severity) params.set("severity", query.severity);
-  if (query.tool) params.set("tool", query.tool);
-  if (query.fixability) params.set("fixability", query.fixability);
+  appendMulti(params, "state", query.state);
+  appendMulti(params, "severity", query.severity);
+  appendMulti(params, "tool", query.tool);
+  if (query.category) params.set("category", query.category);
+  appendMulti(params, "fixability", query.fixability);
+  if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
   if (query.search) params.set("search", query.search);
   if (query.page) params.set("page", String(query.page));
   if (query.page_size) params.set("page_size", String(query.page_size));
@@ -58,10 +64,52 @@ export function findingTools(): Promise<string[]> {
 }
 
 /**
+ * Retrieves per-category finding counts for category tabs.
+ */
+export function findingCategories(query: CategoryFacetsQuery = {}): Promise<CategoryFacet[]> {
+  const params = new URLSearchParams();
+  appendMulti(params, "target_id", query.target_id);
+  if (query.group_id) params.set("group_id", String(query.group_id));
+  appendMulti(params, "state", query.state);
+  appendMulti(params, "severity", query.severity);
+  appendMulti(params, "tool", query.tool);
+  appendMulti(params, "fixability", query.fixability);
+  if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
+  if (query.search) params.set("search", query.search);
+  return jsonFetch<CategoryFacet[]>(`/api/findings/facets/categories?${params.toString()}`);
+}
+
+/**
  * Retrieves CVE, CWE, CVSS, and package fix-version enrichment data for a finding.
  */
 export function findingEnrichment(findingId: number): Promise<FindingEnrichment> {
   return jsonFetch<FindingEnrichment>(`/api/findings/${findingId}/enrichment`);
+}
+
+/**
+ * Generates an automated fix recommendation and patch preview for a finding.
+ */
+export function suggestFix(findingId: number): Promise<FindingSuggestFix> {
+  return jsonFetch<FindingSuggestFix>(`/api/findings/${findingId}/suggest-fix`, { method: "POST" });
+}
+
+/**
+ * Opens a pull request against GitHub with the suggested remediation patch.
+ */
+export function raiseFixPr(
+  findingId: number,
+  patch: {
+    file_path: string;
+    new_content: string;
+    ref: string;
+    strategy: "ai" | "deterministic_sca";
+    explanation: string;
+  },
+): Promise<RaiseFixPrResult> {
+  return jsonFetch<RaiseFixPrResult>(`/api/findings/${findingId}/raise-pr`, {
+    method: "POST",
+    body: JSON.stringify(patch),
+  });
 }
 
 /**

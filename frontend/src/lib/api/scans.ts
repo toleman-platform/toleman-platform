@@ -1,4 +1,5 @@
 import { jsonFetch } from "./client";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 import type {
   ScanRun,
   RunStatus,
@@ -13,6 +14,7 @@ import type {
   PrGuardrailLogEntry,
   PrGuardrailOrgLog,
   PrGuardrailFinding,
+  PrGuardrailFindingPage,
 } from "@/types";
 import type { Nullable } from "@/std-lib";
 
@@ -166,6 +168,15 @@ export function overridePrGuardrail(prScanId: number, reason: string): Promise<P
 }
 
 /**
+ * Retrieves PR Guardrail scan metadata (PR number, URL).
+ */
+export function getPrGuardrailScan(
+  prScanId: number,
+): Promise<{ pr_number: number; pr_url: Nullable<string> }> {
+  return jsonFetch<{ pr_number: number; pr_url: Nullable<string> }>(`/api/pr-guardrail/${prScanId}`);
+}
+
+/**
  * Retrieves the findings generated during a PR Guardrail scan.
  */
 export function getPrGuardrailFindings(prScanId: number): Promise<PrGuardrailFinding[]> {
@@ -183,10 +194,27 @@ export function requestIgnoreFinding(findingId: number, reason: string): Promise
 }
 
 /**
- * Retrieves all pending ignore requests awaiting security review.
+ * Retrieves paginated pending ignore requests awaiting security review.
  */
-export function getPendingIgnoreRequests(): Promise<PrGuardrailFinding[]> {
-  return jsonFetch<PrGuardrailFinding[]>("/api/pr-guardrail/ignore-requests/pending");
+export function getPendingIgnoreRequests(
+  page = 1,
+  pageSize = DEFAULT_PAGE_SIZE,
+): Promise<PrGuardrailFindingPage> {
+  return jsonFetch<PrGuardrailFindingPage>(
+    `/api/pr-guardrail/ignore-requests/pending?page=${page}&page_size=${pageSize}`,
+  );
+}
+
+/**
+ * Retrieves paginated historical ignore request review decisions.
+ */
+export function getIgnoreRequestHistory(
+  page = 1,
+  pageSize = DEFAULT_PAGE_SIZE,
+): Promise<PrGuardrailFindingPage> {
+  return jsonFetch<PrGuardrailFindingPage>(
+    `/api/pr-guardrail/ignore-requests/history?page=${page}&page_size=${pageSize}`,
+  );
 }
 
 /**
@@ -201,4 +229,11 @@ export function approveIgnore(findingId: number): Promise<PrGuardrailFinding> {
  */
 export function rejectIgnore(findingId: number): Promise<PrGuardrailFinding> {
   return jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/reject-ignore`, { method: "POST" });
+}
+
+/**
+ * Revokes a previously approved ignore request.
+ */
+export function revokeIgnore(findingId: number): Promise<PrGuardrailFinding> {
+  return jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/revoke-ignore`, { method: "POST" });
 }

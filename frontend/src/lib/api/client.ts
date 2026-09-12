@@ -134,3 +134,21 @@ export async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T>
 
   return res.json();
 }
+
+/**
+ * Appends a multi-select query param: a single value behaves like `params.set`,
+ * an array appends one entry per value so the backend receives repeated params.
+ */
+export function appendMulti(
+  params: URLSearchParams,
+  key: string,
+  value: string | number | (string | number)[] | undefined,
+): void {
+  if (value === undefined) return;
+  if (Array.isArray(value)) {
+    for (const v of value) params.append(key, String(v));
+  } else if (value !== "") {
+    params.set(key, String(value));
+  }
+}
+

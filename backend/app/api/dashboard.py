@@ -7,6 +7,7 @@ from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
+from app.core.tool_registry import vulnerability_tools
 from app.core.widgets import WIDGET_CATALOG, build_default_layout
 from app.core.time import utcnow
 from app.models.models import DashboardLayout, Finding, FindingState, Target, User
@@ -25,14 +26,18 @@ def _scoped_targets_query(ws_ids: list[int] | None):
 def stats(session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Aggregate counts for dashboard charts. Default-branch, Open findings
     only, scoped to the caller's workspaces (issue #57: admins still see
-    everything)."""
+    everything). License findings are excluded -- a legal/compliance signal,
+    not a vulnerability count (see app.core.tool_registry.vulnerability_tools
+    and the same exclusion in security_score/targets summary)."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return {"open": 0, "by_severity": {}, "by_tool": {}}
 
     targets = {t.id: t for t in session.exec(_scoped_targets_query(ws_ids)).all()}
 
-    open_findings = session.exec(select(Finding).where(Finding.state == FindingState.OPEN)).all()
+    open_findings = session.exec(
+        select(Finding).where(Finding.state == FindingState.OPEN, Finding.tool.in_(vulnerability_tools()))
+    ).all()
     open_default_branch = [
         f for f in open_findings if targets.get(f.target_id) and f.branch == targets[f.target_id].default_branch
     ]
@@ -53,7 +58,8 @@ def stats(session: Session = Depends(get_session), user: User = Depends(current_
 @router.get("/posture")
 def posture(session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Main Posture Dashboard: org health, default branches only, scoped to
-    the caller's workspaces (issue #57)."""
+    the caller's workspaces (issue #57). License findings are excluded, same
+    reasoning as GET /stats above."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
@@ -63,7 +69,11 @@ def posture(session: Session = Depends(get_session), user: User = Depends(curren
     for t in targets:
         rows = session.exec(
             select(Finding.severity, Finding.state, func.count())
-            .where(Finding.target_id == t.id, Finding.branch == t.default_branch)
+            .where(
+                Finding.target_id == t.id,
+                Finding.branch == t.default_branch,
+                Finding.tool.in_(vulnerability_tools()),
+            )
             .group_by(Finding.severity, Finding.state)
         ).all()
         breakdown = {}
@@ -75,12 +85,13 @@ def posture(session: Session = Depends(get_session), user: User = Depends(curren
 
 @router.get("/summary")
 def summary(session: Session = Depends(get_session), user: User = Depends(current_user)):
-    """Scoped to the caller's workspaces (issue #57)."""
+    """Scoped to the caller's workspaces (issue #57). License findings are
+    excluded, same reasoning as GET /stats above."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return {"total": 0, "open": 0, "mitigated": 0}
 
-    base = select(Finding)
+    base = select(Finding).where(Finding.tool.in_(vulnerability_tools()))
     if ws_ids is not None:
         base = base.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
 
@@ -96,12 +107,19 @@ def sla_compliance(session: Session = Depends(get_session), user: User = Depends
     unresolved) findings that a real SlaRule actually applies to, how many
     are past their days-to-fix window. Computed live via
     app.core.sla.compute_sla_status (query-time, no background job);
-    scoped to the caller's workspaces (issue #57)."""
+    scoped to the caller's workspaces (issue #57). License findings are
+    excluded: SlaRule is keyed purely on severity, with no category
+    awareness, so a workspace's severity-based rule would otherwise apply
+    just as literally to a license flagged e.g. High as to an actually
+    exploitable finding -- same reasoning as security_score._sla_score."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return {"with_sla": 0, "in_violation": 0, "compliant": 0}
 
-    query = select(Finding).where(Finding.state.in_([FindingState.OPEN, FindingState.REOPENED]))
+    query = select(Finding).where(
+        Finding.state.in_([FindingState.OPEN, FindingState.REOPENED]),
+        Finding.tool.in_(vulnerability_tools()),
+    )
     if ws_ids is not None:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     open_findings = session.exec(query).all()

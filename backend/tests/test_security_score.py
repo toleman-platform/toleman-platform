@@ -271,10 +271,10 @@ def test_findings_component_same_criticality_everywhere_is_unaffected(engine):
 
 def test_findings_component_discounts_license_findings(engine):
     """A License-category finding (tool="trivy-license") graded Critical by
-    the scanner for legal/compliance reasons should not tank the score the
-    same way an actually-exploitable Critical would: weighted contribution
-    is SEVERITY_WEIGHT(5) x criticality(1) x CATEGORY_RISK_WEIGHT["License"]
-    (0.3) = 1.5, not 5."""
+    the scanner for legal/compliance reasons should not move the score at
+    all the way an actually-exploitable Critical would: weighted
+    contribution is SEVERITY_WEIGHT(5) x criticality(1) x
+    CATEGORY_RISK_WEIGHT["License"] (0.0) = 0, not 5."""
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
     _make_finding(engine, target_id, severity=Severity.CRITICAL, tool="trivy-license")
@@ -283,8 +283,8 @@ def test_findings_component_discounts_license_findings(engine):
         result = compute_security_score(session, [target_id])
 
     f = result["components"]["findings"]
-    assert f["weighted_severity_sum"] == pytest.approx(1.5)
-    assert f["score"] == pytest.approx(92.5)
+    assert f["weighted_severity_sum"] == pytest.approx(0.0)
+    assert f["score"] == pytest.approx(100.0)
 
 
 def test_findings_component_ignores_non_default_branch(engine):
@@ -316,6 +316,33 @@ def test_sla_component_hand_calculated(engine):
     assert sla["with_sla"] == 2
     assert sla["in_violation"] == 1
     assert sla["score"] == 50.0
+
+
+def test_sla_component_excludes_license_findings(engine):
+    """SlaRule is keyed purely on severity, with no category awareness, so a
+    workspace's "Critical: 1 day" rule would otherwise apply just as
+    literally to a License finding a scanner happens to grade Critical (e.g.
+    a copyleft license) as to an actually exploitable one. A stale-by-5-days
+    License finding must not be counted as with_sla/in_violation, and must
+    not drag the score below the neutral 100 a findings-free scope gets."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _make_rule(engine, ws_id, None, Severity.CRITICAL, 1)
+    _make_finding(
+        engine,
+        target_id,
+        severity=Severity.CRITICAL,
+        tool="trivy-license",
+        first_seen=utcnow() - timedelta(days=5),
+    )
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    sla = result["components"]["sla"]
+    assert sla["with_sla"] == 0
+    assert sla["in_violation"] == 0
+    assert sla["score"] == 100.0
 
 
 def test_coverage_component_hand_calculated(engine):

@@ -252,6 +252,45 @@ def test_dashboard_summary_empty_for_user_with_no_membership(client, engine):
     assert res.json() == {"total": 0, "open": 0, "mitigated": 0}
 
 
+def test_dashboard_summary_excludes_license_findings(client, engine):
+    """A trivy-license finding is a legal/compliance signal, not a
+    vulnerability -- same reasoning as security_score.CATEGORY_RISK_WEIGHT.
+    It must not inflate GET /api/dashboard/summary's counts."""
+    ws_a = _make_workspace(engine, "ws-license")
+    target_a = _make_target(engine, ws_a, "target-license")
+    _make_finding(engine, target_a, rule_id="r-a")
+    _make_finding(engine, target_a, rule_id="license:MIT", tool="trivy-license", dedup_hash="license-1")
+    client, uid = _login(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a)
+
+    res = client.get("/api/dashboard/summary")
+    assert res.status_code == 200
+    assert res.json()["total"] == 1
+    assert res.json()["open"] == 1
+
+
+def test_dashboard_stats_excludes_license_findings(client, engine):
+    ws_a = _make_workspace(engine, "ws-license-stats")
+    target_a = _make_target(engine, ws_a, "target-license-stats")
+    _make_finding(engine, target_a, rule_id="r-a", severity=Severity.CRITICAL)
+    _make_finding(
+        engine,
+        target_a,
+        rule_id="license:MIT",
+        tool="trivy-license",
+        dedup_hash="license-2",
+        severity=Severity.HIGH,
+    )
+    client, uid = _login(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a)
+
+    res = client.get("/api/dashboard/stats")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["open"] == 1
+    assert body["by_tool"] == {"semgrep": 1}
+
+
 def test_dashboard_posture_scoped_to_caller_workspace(client, engine):
     ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
     client, uid = _login(client, engine, role=UserRole.VIEWER)

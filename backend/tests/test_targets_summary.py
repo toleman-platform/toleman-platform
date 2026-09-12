@@ -174,6 +174,42 @@ def test_only_default_branch_findings_are_counted(client, engine):
     assert body[str(target_id)]["open"] == 1
 
 
+def test_license_findings_are_excluded_from_the_count(client, engine):
+    """A trivy-license finding is a legal/compliance signal, not a
+    vulnerability -- same reasoning as security_score.CATEGORY_RISK_WEIGHT
+    and dashboard.py's GET /stats. It must not inflate the count that drives
+    Repo Sync's "needs attention" indicator."""
+    _login(client, engine)
+    ws = _make_workspace(engine)
+    target_id = _make_target(engine, ws)
+    with Session(engine) as session:
+        session.add(
+            Finding(
+                target_id=target_id,
+                dedup_hash="license-1",
+                tool="trivy-license",
+                rule_id="license:LGPL-3.0-or-later",
+                title="LGPL license detected",
+                file_path="requirements.txt",
+                severity=Severity.HIGH,
+                state=FindingState.OPEN,
+                branch="main",
+            )
+        )
+        session.commit()
+    _make_finding(engine, target_id, "h1", severity=Severity.CRITICAL)
+
+    body = client.get("/api/targets/summary").json()
+    assert body[str(target_id)] == {
+        "open": 1,
+        "critical": 1,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "informational": 0,
+    }
+
+
 def test_target_with_no_findings_reports_zero_not_missing(client, engine):
     """The client distinguishes "scanned and clean" from "no data"; a target
     present with a zero count is the former, an absent key is the latter."""

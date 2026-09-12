@@ -22,23 +22,6 @@ export function isDefinedNotNull<T>(value: T): value is IsDefinedNotNull<T> {
 }
 
 /**
- * Type guard predicate asserting that a value is `null` or `undefined`.
- *
- * @param value The value to inspect
- * @returns `true` if `value` is `null` or `undefined`, otherwise `false`
- *
- * @example
- * ```ts
- * if (isNullable(input)) {
- *   // input is null | undefined here
- * }
- * ```
- */
-export function isNullable<T>(value: T): value is Extract<T, null | undefined> {
-  return value === null || value === undefined;
-}
-
-/**
  * Type guard asserting that an array is non-empty (contains at least one element).
  *
  * @param value The array to inspect

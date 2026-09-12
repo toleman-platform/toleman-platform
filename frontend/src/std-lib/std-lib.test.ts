@@ -5,7 +5,6 @@ import {
   type Optional,
   type ValueOf,
   isDefinedNotNull,
-  isNullable,
   isNonEmptyArray,
   clamp,
   formatPercent,
@@ -19,6 +18,7 @@ import {
   paginateSlice,
   truncate,
   capitalize,
+  githubBlobUrl,
 } from "./index";
 
 describe("std-lib type primitives", () => {
@@ -99,21 +99,6 @@ describe("isDefinedNotNull", () => {
     const clean = raw.filter(isDefinedNotNull);
     expectTypeOf(clean).toEqualTypeOf<(string | number)[]>();
     expect(clean).toEqual(["alpha", 42, "beta"]);
-  });
-});
-
-describe("isNullable", () => {
-  it("returns true for null and undefined", () => {
-    expect(isNullable(null)).toBe(true);
-    expect(isNullable(undefined)).toBe(true);
-  });
-
-  it("returns false for defined values", () => {
-    expect(isNullable(0)).toBe(false);
-    expect(isNullable("")).toBe(false);
-    expect(isNullable(false)).toBe(false);
-    expect(isNullable("value")).toBe(false);
-    expect(isNullable({})).toBe(false);
   });
 });
 
@@ -296,5 +281,24 @@ describe("string utilities", () => {
     expect(capitalize("hello")).toBe("Hello");
     expect(capitalize("alreadyCapital")).toBe("AlreadyCapital");
     expect(capitalize("")).toBe("");
+  });
+
+  it("githubBlobUrl formats and properly encodes GitHub links", () => {
+    // Basic file URL
+    expect(githubBlobUrl("https://github.com/org/repo.git", "main", "src/index.ts")).toBe(
+      "https://github.com/org/repo/blob/main/src/index.ts",
+    );
+
+    // Line start appended
+    expect(githubBlobUrl("https://github.com/org/repo", "main", "src/index.ts", 42)).toBe(
+      "https://github.com/org/repo/blob/main/src/index.ts#L42",
+    );
+
+    // Branch with slashes and special characters
+    expect(
+      githubBlobUrl("https://github.com/org/repo", "feature/my branch #1", "dir space/file [1].ts", 10),
+    ).toBe(
+      "https://github.com/org/repo/blob/feature%2Fmy%20branch%20%231/dir%20space/file%20%5B1%5D.ts#L10",
+    );
   });
 });

@@ -158,7 +158,7 @@ export type Group = {
   workspace_id: number;
   name: string;
   color: string;
-  target_count: number;
+  target_count?: number;
   enforcement_mode: Nullable<EnforcementMode>;
   effective_enforcement_mode?: EnforcementMode;
   enforcement_mode_source?: EnforcementModeSource;

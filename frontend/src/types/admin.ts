@@ -103,6 +103,7 @@ export type GitHubAppInstallation = {
   app_id: string;
   app_slug: string;
   html_url: string;
+  manage_url: string;
   webhook_secret_set: boolean;
   installations: GitHubAppInstalledAccount[];
 };

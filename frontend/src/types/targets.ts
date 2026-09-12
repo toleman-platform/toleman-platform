@@ -87,7 +87,8 @@ export type PipelineBatchItemStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "already_integrated";
+  | "already_integrated"
+  | "skipped_webhook_reachable";
 
 /**
  * Individual target status item in a bulk rollout batch.
@@ -113,6 +114,8 @@ export type PipelineIntegrationBatch = {
   succeeded: number;
   failed: number;
   already_integrated: number;
+  skipped_webhook_reachable: number;
+  force: boolean;
   started_at: string;
   completed_at: Nullable<string>;
   items: PipelineBatchItem[];

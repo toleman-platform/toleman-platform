@@ -151,7 +151,15 @@ export type PrGuardrailScanResult = {
 /**
  * Approval status for developer ignore requests on PR Guardrail findings.
  */
-export type IgnoreStatus = "none" | "requested" | "approved" | "rejected";
+export type IgnoreStatus = "none" | "requested" | "approved" | "rejected" | "revoked";
+
+/**
+ * Paginated response wrapper for PR Guardrail ignore requests.
+ */
+export type PrGuardrailFindingPage = {
+  items: PrGuardrailFinding[];
+  total: number;
+};
 
 /**
  * Persisted PR Guardrail finding with ignore workflow tracking.

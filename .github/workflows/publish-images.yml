@@ -40,6 +40,13 @@ env:
   # from source (the default `docker compose up --build` path) or use a
   # tagged release.
   PLATFORMS: ${{ github.ref_type == 'tag' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+  # Cache scope key for the buildx GHA cache below. It cannot just be
+  # PLATFORMS: a buildx cache spec is a comma-separated list of key=value
+  # attributes, so the comma inside `linux/amd64,linux/arm64` would end the
+  # scope value and leave `linux/arm64` parsed as a bogus attribute on tag
+  # builds. This is the same distinction (multi-arch release vs amd64-only
+  # edge) expressed as a single comma-free token.
+  CACHE_SCOPE: ${{ github.ref_type == 'tag' && 'multi' || 'amd64' }}
 
 jobs:
   publish:
@@ -86,6 +93,13 @@ jobs:
           push: true
           tags: ${{ steps.backend-meta.outputs.tags }}
           labels: ${{ steps.backend-meta.outputs.labels }}
+          # GHA-backed layer cache, scoped by CACHE_SCOPE so the amd64-only
+          # edge builds and the amd64+arm64 release builds don't thrash a
+          # shared cache with each other's layers (unlike docker-images.yml's
+          # PR build, nothing here needs a from-scratch build to catch
+          # dependency drift).
+          cache-from: type=gha,scope=backend-${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=backend-${{ env.CACHE_SCOPE }}
           # (BLD-01) Stamp the real build identity into the image so a
           # running instance can say which one it is; GET /health and the
           # sidebar both surface it. A published image with version "dev"
@@ -115,6 +129,8 @@ jobs:
           push: true
           tags: ${{ steps.frontend-meta.outputs.tags }}
           labels: ${{ steps.frontend-meta.outputs.labels }}
+          cache-from: type=gha,scope=frontend-${{ env.CACHE_SCOPE }}
+          cache-to: type=gha,mode=max,scope=frontend-${{ env.CACHE_SCOPE }}
           # Baked in at build time because Next.js inlines NEXT_PUBLIC_*
           # into the client bundle. It is only a fallback: the dashboard
           # layout injects `window.__TOLEMAN_API_URL__` from PUBLIC_API_URL

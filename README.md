@@ -22,6 +22,7 @@ See the [architecture](ARCHITECTURE.md) for the full design. Full docs, includin
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
   - [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades)
+  - [Logging and error tracking](#logging-and-error-tracking)
   - [Pre-commit hooks](#pre-commit-hooks)
 - [Architecture decisions made during build](#architecture-decisions-made-during-build-deltas-from-the-design-doc)
 - [Contributing](#contributing)
@@ -221,6 +222,12 @@ If something goes wrong, restore the backup taken just before the upgrade:
 For a Kubernetes deployment (`charts/toleman`), the equivalent is `kubectl exec` into the postgres Pod with the same `pg_dump`/`psql` invocations the scripts above use; there's no in-cluster backup CronJob yet (tracked as a follow-up), so back up before every Helm upgrade the same way.
 
 Postgres's data itself already survives a `docker compose down` (no `-v`) or a Pod restart via the named volume/PVC; these scripts are for the case a completed migration needs to be undone, not for routine restarts.
+
+### Logging and error tracking
+
+The backend logs structured JSON to stdout (`app/core/logging.py`), one object per line with `timestamp`/`level`/`logger`/`message`/`request_id`, and a stack trace under `exception` when there is one. `LOG_LEVEL` (default `INFO`) controls verbosity. Every response carries an `X-Request-ID` header (generated, or echoed back if the caller already set one), and every log line emitted while handling that request carries the same id, so a support report ("what happened for X-Request-ID abc123") can be grepped straight out of the logs.
+
+An exception a route handler doesn't turn into an `HTTPException` (i.e. a real bug, not an expected 4xx) is caught, logged with its full traceback, and turned into a generic `{"detail": "Internal server error", "request_id": "..."}` 500 rather than leaking internals to the caller or vanishing without a trace. See `RequestIDMiddleware` in `app/core/logging.py` for why this lives in that middleware specifically rather than a `@app.exception_handler(Exception)`.
 
 ### Pre-commit hooks
 

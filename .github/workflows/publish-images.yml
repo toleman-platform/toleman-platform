@@ -109,7 +109,7 @@ jobs:
       # docs/tag-strategy section.
       - name: Backend (hardened) tags
         id: backend-hardened-meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.BACKEND_IMAGE }}
           # latest=false: metadata-action's own implicit `latest` tag (fired
@@ -131,7 +131,7 @@ jobs:
 
       - name: Build + push backend (hardened)
         id: backend-hardened-build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: backend
           file: backend/Dockerfile.hardened
@@ -198,7 +198,7 @@ jobs:
       - name: Attest backend (hardened) provenance
         id: backend-hardened-attest
         continue-on-error: true
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-name: ${{ env.BACKEND_IMAGE }}
           subject-digest: ${{ steps.backend-hardened-build.outputs.digest }}

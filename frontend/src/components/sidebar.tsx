@@ -60,25 +60,14 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/scans", label: "On-Demand Scan", icon: Scan },
       { href: "/sbom", label: "SBOM & OSS Vulns", icon: Package },
       { href: "/malicious-packages", label: "Malicious Packages", icon: Bug },
-      // IA review (#224): AI-repo detection (#185), ModelScan (#186) and
-      // the LLM ruleset (#189) had no dedicated nav entry at all; findable
-      // only by already knowing to filter Findings by tool name.
       { href: "/ai-security", label: "AI Security", icon: Bot },
     ],
   },
   {
     label: "Triage",
     items: [
-      // Nav label unified to "Findings" (#116); was "Vulnerabilities" here
-      // while the page header said "Findings" and the dashboard KPI said
-      // "Open Vulnerabilities"; all three now agree on one term.
       { href: "/findings", label: "Findings", icon: ShieldAlert },
       { href: "/pr-history", label: "PR History", icon: GitPullRequest },
-      // IA review (#224): daily security-review work, not admin config;
-      // moved out from under /admin. Deliberately NOT adminOnly: the page
-      // itself already gates on admin/security_engineer, this just gives
-      // security_engineer users (who could always reach it by typing the
-      // old /admin URL, but had no link) an actual nav entry.
       { href: "/approval-queue", label: "Approval Queue", icon: ClipboardCheck },
     ],
   },
@@ -101,15 +90,19 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/audit-log", label: "Audit Log", icon: ScrollText },
       { href: "/github-org-logs", label: "GitHub Org Logs", icon: Github },
       { href: "/settings", label: "Settings", icon: Settings },
-      // IA review (#224): workspace rename, API key and role assignment used
-      // to be split between a target-picker-driven card in Settings and a
-      // flat tab in Admin. Both moved into this one page.
       { href: "/workspaces", label: "Workspaces", icon: Building2, adminOnly: true },
       { href: "/admin", label: "Control Plane", icon: UserCog, adminOnly: true },
     ],
   },
 ];
 
+/**
+ * Primary navigation sidebar regrouped by security workflow stage (#116).
+ *
+ * Automatically adapts across viewports: expands to 240px on desktop, collapses
+ * to an icon rail on tablet (768px-1023px), and becomes an off-canvas drawer on mobile (<768px).
+ * Filters navigation items based on user role (e.g. admin/security_engineer).
+ */
 export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initialTheme?: Theme }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -212,7 +205,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
         <item.icon className={cn("h-4 w-4 shrink-0", isActive && "text-accent-strong")} />
         {!iconRail && <span className="flex-1">{item.label}</span>}
         {!iconRail && item.adminOnly && (
-          <span className="rounded border border-warning/30 bg-warning/10 px-1 py-0.5 font-mono text-[8px] tracking-wide text-warning">
+          <span className="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wider text-warning">
             ADMIN
           </span>
         )}

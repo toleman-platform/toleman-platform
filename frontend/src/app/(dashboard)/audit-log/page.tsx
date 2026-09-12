@@ -1,8 +1,8 @@
 import { api } from "@/lib/api";
-import { AuditLogFilterBar } from "@/components/audit-log-filter-bar";
-import { AuditLogList } from "@/components/audit-log-list";
+import { AuditLogFilterBar, AuditLogList } from "@/components/features/logs";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
+import { PageHeader } from "@/components/ui/page-header";
 import { settleOrNull } from "@/lib/settle";
 // Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.
@@ -37,13 +37,10 @@ export default async function AuditLogPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Audit Log</h1>
-        <p className="text-sm text-muted-foreground">
-          Every triage decision and scan run recorded against your data, {result.total} events, most recent first. A
-          bulk triage action shows up as one grouped entry you can expand, not one card per finding.
-        </p>
-      </div>
+      <PageHeader
+        title="Audit Log"
+        description={`Every triage decision and scan run recorded against your data, ${result.total} events, most recent first.`}
+      />
       <AuditLogFilterBar actors={actors} />
       {auditResult === null ? (
         <ErrorState description="The audit log couldn't be loaded from the API." action={<ReloadButton />} />

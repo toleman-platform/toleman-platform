@@ -3,20 +3,20 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { api, ApiError, Target, PullRequest } from "@/lib/api";
-import { safeHref } from "@/lib/utils";
+import { api, ApiError, type Target, type PullRequest } from "@/lib/api";
+import { safeHref } from "@/lib/security/safe-href";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
-import { PrScanAction } from "@/components/pr-scan-action";
-import { PrGuardrailLog } from "@/components/pr-guardrail-log";
+import { PrScanAction, PrGuardrailLog } from "@/components/features/scans";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
-import { DocGenStep, DocumentGeneratorPanel } from "@/components/document-generator-panel";
+import { DocumentGeneratorPanel, DocGenStep } from "@/components/features/intelligence";
 import { GitPullRequest } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
 import { ActivityPagination } from "@/components/activity-pagination";
 import { pageSizeFromParams } from "@/lib/pagination";
 
@@ -80,13 +80,10 @@ export default function PrHistoryPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">PR History</h1>
-        <p className="text-sm text-muted-foreground">
-          Live pull requests from GitHub. Trigger a PR Guardrail diff-scan on any open PR to
-          surface net-new vulnerabilities before merge.
-        </p>
-      </div>
+      <PageHeader
+        title="PR History"
+        description="Live pull requests from GitHub. Trigger a PR Guardrail diff-scan on any open PR to surface net-new vulnerabilities before merge."
+      />
 
       <DocumentGeneratorPanel
         layout="stacked"
@@ -140,13 +137,17 @@ export default function PrHistoryPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline">{pr.state}</Badge>
+                      <StatusBadge
+                        status={pr.state === "open" ? "running" : pr.state === "merged" ? "completed" : "blocked"}
+                        label={pr.state}
+                      />
                       {pr.state === "open" && targetId !== null ? (
                         <PrScanAction targetId={targetId} prNumber={pr.number} />
                       ) : (
-                        <Badge variant="outline" className="text-muted-foreground">
-                          {pr.scan_status}
-                        </Badge>
+                        <StatusBadge
+                          status={pr.scan_status === "passed" ? "completed" : pr.scan_status === "failed" ? "failed" : "queued"}
+                          label={pr.scan_status}
+                        />
                       )}
                     </div>
                   </CardContent>

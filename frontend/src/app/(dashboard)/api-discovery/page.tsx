@@ -1,19 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { api, Target, ScanRun } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, type Target, type ScanRun } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useScanRun } from "@/hooks/use-scan-run";
-import { ScanProgress } from "@/components/scan-status";
+import { useScanRun } from "@/hooks/features/use-scan-run";
+import { ScanProgress } from "@/components/features/scans";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { TargetPicker } from "@/components/target-picker";
+import { TargetPicker } from "@/components/features/targets";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { DocGenStep, DocumentGeneratorPanel, WhatsIncludedCard } from "@/components/document-generator-panel";
+import { BulkActionBar } from "@/components/ui/bulk-action-bar";
+import { SelectAllVisible } from "@/components/ui/list-row";
+import { useSelection } from "@/hooks/use-selection";
+import { DocGenStep, DocumentGeneratorPanel, WhatsIncludedCard } from "@/components/features/intelligence";
+import { PageHeader } from "@/components/ui/page-header";
 import { Globe } from "lucide-react";
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
@@ -43,7 +47,6 @@ export default function ApiDiscoveryPage() {
   const cancelPollRef = useRef<(() => void) | null>(null);
 
   // Issue #72: Active API Scanning against the endpoints listed above.
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const scanTargetRef = useRef<number | null>(null);
   const [apiScanError, setApiScanError] = useState<string | null>(null);
   const [apiScanResult, setApiScanResult] = useState<{ targetId: number; scan: ScanRun } | null>(null);
@@ -78,6 +81,8 @@ export default function ApiDiscoveryPage() {
     { enabled: targetId !== null, deps: [targetId] },
   );
   const endpoints = persisted?.endpoints ?? null;
+  const endpointIds = useMemo(() => (endpoints ?? []).map((e) => e.id), [endpoints]);
+  const selection = useSelection(endpointIds);
   const scanSummary = lastRun && lastRun.targetId === targetId ? lastRun : null;
   // A scan just run in this session wins over the persisted "latest scan";
   // both are keyed to their target so switching repos never shows another
@@ -127,19 +132,6 @@ export default function ApiDiscoveryPage() {
     }
   }
 
-  function toggleEndpoint(id: number, checked: boolean) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  function toggleAll(checked: boolean) {
-    setSelected(checked && endpoints ? new Set(endpoints.map((e) => e.id)) : new Set());
-  }
-
   async function runApiScan() {
     if (targetId === null) return;
     const scanTargetId = targetId;
@@ -154,7 +146,10 @@ export default function ApiDiscoveryPage() {
       // a DAST run (which is typically the longest-running scan here)
       // reports progress the same way a SAST run does instead of showing a
       // bare "Scanning...".
-      const dispatch = await api.runApiScan(scanTargetId, selected.size > 0 ? Array.from(selected) : undefined);
+      const dispatch = await api.runApiScan(
+        scanTargetId,
+        selection.count > 0 ? selection.selectedIds : undefined,
+      );
       apiScan.track(dispatch.scan_id);
     } catch (e) {
       apiScan.fail(e instanceof Error ? e.message : "active scan failed to start");
@@ -165,14 +160,10 @@ export default function ApiDiscoveryPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">API Discovery</h1>
-        <p className="text-sm text-muted-foreground">
-          Static route extraction over the target&apos;s source (Flask/FastAPI/Express/Gin/Django/Spring patterns),
-          real grep matches with file:line provenance, not an inferred/mocked inventory. Results are persisted, so
-          this view reflects the last scan even after a reload.
-        </p>
-      </div>
+      <PageHeader
+        title="API Discovery"
+        description="Static route extraction over the target's source (Flask/FastAPI/Express/Gin/Django/Spring patterns), real grep matches with file:line provenance, not an inferred/mocked inventory. Results are persisted, so this view reflects the last scan even after a reload."
+      />
 
       <DocumentGeneratorPanel
         layout="stacked"
@@ -221,37 +212,31 @@ export default function ApiDiscoveryPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">{endpoints.length} endpoints found</p>
             {endpoints.length > 0 && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input
-                  type="checkbox"
-                  aria-label="Select all endpoints"
-                  className="h-4 w-4 accent-primary"
-                  checked={selected.size > 0 && selected.size === endpoints.length}
-                  onChange={(e) => toggleAll(e.target.checked)}
-                />
-                <span>Select all</span>
-              </div>
+              <SelectAllVisible
+                allSelected={selection.allVisibleSelected}
+                someSelected={selection.someVisibleSelected}
+                onChange={selection.toggleAllVisible}
+              />
             )}
           </div>
 
           {endpoints.length > 0 && (
-            <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-secondary/50 p-3">
-              <span className="text-xs font-medium text-foreground">
-                {selected.size > 0 ? `${selected.size} endpoint${selected.size === 1 ? "" : "s"} selected` : "Active API Scanning"}
-              </span>
-              <Button
-                size="sm"
-                className="h-7 text-xs"
-                onClick={runApiScan}
-                disabled={apiScanRunning || !currentTarget?.api_base_url}
-                aria-label={selected.size > 0 ? `Scan ${selected.size} selected endpoints for vulnerabilities` : "Scan all discovered endpoints for vulnerabilities"}
-              >
-                {apiScanRunning
-                  ? "Scanning..."
-                  : selected.size > 0
-                    ? `Scan ${selected.size} selected for vulnerabilities`
-                    : "Scan all for vulnerabilities"}
-              </Button>
+            <BulkActionBar
+              count={selection.count}
+              itemNoun="endpoint"
+              onClear={selection.clear}
+              actions={[
+                {
+                  label: apiScanRunning
+                    ? "Scanning..."
+                    : selection.count > 0
+                      ? `Scan ${selection.count} selected for vulnerabilities`
+                      : "Scan all for vulnerabilities",
+                  onClick: runApiScan,
+                  disabled: apiScanRunning || !currentTarget?.api_base_url,
+                },
+              ]}
+            >
               {!currentTarget?.api_base_url && (
                 <span className="text-xs text-muted-foreground">
                   Set this target&apos;s API base URL on its{" "}
@@ -261,7 +246,7 @@ export default function ApiDiscoveryPage() {
                   first.
                 </span>
               )}
-            </div>
+            </BulkActionBar>
           )}
 
           {apiScanRunning && apiScan.phase && (
@@ -300,9 +285,9 @@ export default function ApiDiscoveryPage() {
                   <input
                     type="checkbox"
                     aria-label={`Select ${e.method} ${e.route}`}
-                    className="h-4 w-4 accent-primary"
-                    checked={selected.has(e.id)}
-                    onChange={(ev) => toggleEndpoint(e.id, ev.target.checked)}
+                    className="h-4 w-4 shrink-0 accent-primary"
+                    checked={selection.isSelected(e.id)}
+                    onChange={(ev) => selection.toggle(e.id, ev.target.checked)}
                   />
                   <Badge variant="outline">{e.method}</Badge>
                   <span className="font-mono text-sm text-foreground">{e.route}</span>

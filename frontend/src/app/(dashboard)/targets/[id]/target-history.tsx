@@ -1,16 +1,14 @@
-import { api, ScanHistoryEntry } from "@/lib/api";
+import { api, type ScanHistoryEntry } from "@/lib/api";
 import { settleOrNull } from "@/lib/settle";
 import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { History } from "lucide-react";
 
-const STATUS_CLASS: Record<string, string> = {
-  completed: "border-emerald-600/30 bg-emerald-600/10 text-emerald-700 dark:text-emerald-400",
-  failed: "border-destructive/30 bg-destructive/10 text-destructive",
-  running: "border-border bg-muted text-muted-foreground",
-};
+function truncate(str: string, maxLen: number): string {
+  return str.length > maxLen ? str.slice(0, maxLen) + "…" : str;
+}
 
 function duration(entry: ScanHistoryEntry): string {
   if (!entry.completed_at) return "—";
@@ -65,28 +63,26 @@ export async function TargetHistory({ targetId }: { targetId: number }) {
               <tbody>
                 {history.items.map((entry) => (
                   <tr key={entry.scan_id} className="border-b border-border/50 last:border-0">
-                    <td className="px-4 py-2 text-foreground">{entry.tool}</td>
-                    <td className="px-4 py-2">
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] ${STATUS_CLASS[entry.status] ?? "text-muted-foreground"}`}
-                      >
-                        {entry.status}
-                      </Badge>
+                    <td className="px-4 py-2.5 text-foreground">{entry.tool}</td>
+                    <td className="px-4 py-2.5">
+                      <StatusBadge
+                        status={entry.status === "completed" ? "completed" : entry.status === "failed" ? "failed" : "running"}
+                        size="sm"
+                      />
                       {/* Surfaced, not hidden behind a hover: a failed scan
                           whose reason is invisible reads as "nothing
                           happened", which is the shape #253 was about. */}
                       {entry.error && (
                         <span className="ml-2 text-xs text-destructive" title={entry.error}>
-                          {entry.error.length > 60 ? `${entry.error.slice(0, 60)}…` : entry.error}
+                          {truncate(entry.error, 60)}
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-2 text-muted-foreground">
+                    <td className="px-4 py-2.5 text-muted-foreground">
                       {entry.status === "completed" ? entry.findings_count : "—"}
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{duration(entry)}</td>
-                    <td className="px-4 py-2 text-xs text-muted-foreground">{timeAgo(entry.started_at)}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{duration(entry)}</td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{timeAgo(entry.started_at)}</td>
                   </tr>
                 ))}
               </tbody>

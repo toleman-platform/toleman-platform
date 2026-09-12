@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api, EnforcementMode, EnforcementModeSource } from "@/lib/api";
-import { EnforcementModeLabel, EnforcementModeSelect } from "@/components/enforcement-mode-select";
+import { EnforcementModeLabel, EnforcementModeSelect } from "@/components/features/targets";
 
 // Issue #62: set this target's own PR Guardrail enforcement-mode override
 // (Inherit/Block/Alert/Disabled) and show the effective resolved mode +

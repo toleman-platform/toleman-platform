@@ -3,11 +3,11 @@
 import { ChangeEvent, useEffect, useRef, useState } from "react";
 import {
   api,
-  Target,
-  SbomExportFormat,
-  Finding,
-  OrgSbomComponent,
-  OrgSbomResult,
+  type Target,
+  type SbomExportFormat,
+  type Finding,
+  type OrgSbomComponent,
+  type OrgSbomResult,
 } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
@@ -17,19 +17,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
 import { useSearchParams } from "next/navigation";
-import { AiBomPanel } from "@/components/aibom-panel";
+import { AiBomPanel } from "@/components/features/intelligence";
 import { ActivityPagination } from "@/components/activity-pagination";
 import { pageSizeFromParams } from "@/lib/pagination";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FindingsList } from "@/components/findings-list";
+import { FindingsList } from "@/components/features/findings";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import {
   DocGenStep,
   DocGenToggle,
   DocGenOption,
   DocumentGeneratorPanel,
   WhatsIncludedCard,
-} from "@/components/document-generator-panel";
+} from "@/components/features/intelligence";
 import { cn } from "@/lib/utils";
 import { Package, PackageSearch } from "lucide-react";
 
@@ -133,8 +135,9 @@ export default function SbomPage() {
   const cancelPollRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    // Stop polling if the component unmounts (e.g. navigating away) mid-run.
-    return () => cancelPollRef.current?.();
+    return () => {
+      cancelPollRef.current?.();
+    };
   }, []);
 
   const {
@@ -160,9 +163,7 @@ export default function SbomPage() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setOrgExportError(
-        e instanceof Error ? e.message : "organization SBOM export failed",
-      );
+      setOrgExportError(e instanceof Error ? e.message : "organization SBOM export failed");
     } finally {
       setOrgExporting(false);
     }
@@ -200,8 +201,7 @@ export default function SbomPage() {
   // standing up a parallel endpoint.
   const { data: ossFindings, isInitialLoading: ossLoading } = useAsyncData<Finding[]>(
     () =>
-      api
-        .findings({ target_id: targetId!, tool: "trivy", page_size: 500 })
+      api.findings({ target_id: targetId!, tool: "trivy", page_size: 500 })
         .then((res) => res.items.filter((f) => !!f.cve_id)),
     { enabled: targetId !== null && targetId !== ALL_TARGETS, deps: [targetId] },
   );
@@ -306,17 +306,10 @@ export default function SbomPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">
-          SBOM & OSS Vulnerabilities
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Real dependency inventory for the target, imported from
-          GitHub&apos;s Dependency Graph and uploaded CycloneDX/SPDX JSON
-          documents. No mocked or inferred data. Results are persisted, so
-          this view reflects the last generation even after a reload.
-        </p>
-      </div>
+      <PageHeader
+        title="SBOM & OSS Vulnerabilities"
+        description="Real dependency inventory for the target, imported from GitHub's Dependency Graph and uploaded CycloneDX/SPDX JSON documents. Results are persisted."
+      />
 
       <DocumentGeneratorPanel
         layout="stacked"
@@ -411,29 +404,16 @@ export default function SbomPage() {
 
           {!orgLoading && orgSbom && (
             <>
-              <div className="flex flex-wrap gap-4">
-                <Card className="border-border bg-card">
-                  <CardContent className="px-4 py-2.5">
-                    <p className="text-xs text-muted-foreground">
-                      Targets with SBOM
-                    </p>
-                    <p className="text-lg font-semibold text-foreground">
-                      {orgSbom.targets_with_sbom_count} /{" "}
-                      {orgSbom.total_targets_count}
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card className="border-border bg-card">
-                  <CardContent className="px-4 py-2.5">
-                    <p className="text-xs text-muted-foreground">
-                      Unique components
-                    </p>
-                    <p className="text-lg font-semibold text-foreground">
-                      {orgSbom.unique_component_count}
-                    </p>
-                  </CardContent>
-                </Card>
-              </div>
+              <StatGrid columns={2}>
+                <StatCard
+                  label="Targets with SBOM"
+                  value={`${orgSbom.targets_with_sbom_count} / ${orgSbom.total_targets_count}`}
+                />
+                <StatCard
+                  label="Unique components"
+                  value={orgSbom.unique_component_count}
+                />
+              </StatGrid>
 
               <Input
                 placeholder="Search components by name..."

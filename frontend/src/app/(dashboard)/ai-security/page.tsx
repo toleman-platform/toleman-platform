@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { Bot, Boxes, Radar, ShieldOff } from "lucide-react";
-import { api, Target } from "@/lib/api";
+import { api, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { StatCard } from "@/components/ui/stat-card";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
+import { AlertBanner } from "@/components/ui/alert-banner";
 
 // Issue #224: AI/ML repo detection (#185), ModelScan (#186) and the LLM
 // SAST ruleset (#189) shipped with zero dedicated frontend surface; the
@@ -26,7 +28,7 @@ export default function AiSecurityPage() {
 
   // Two org-wide queries, one per AI-specific tool, then grouped by target
   // client-side; the same shape sbom/page.tsx already uses for its OSS
-  // Vulnerabilities tab (api.findings({ tool, page_size: 500 })). No
+  // Vulnerabilities tab (fetchFindings({ tool, page_size: 500 })). No
   // dedicated aggregate endpoint exists yet, and these two tools only ever
   // run against the handful of AI-flagged repos, so this stays cheap.
   const { data: modelscanFindings, isInitialLoading: modelscanLoading } = useAsyncData(
@@ -46,16 +48,14 @@ export default function AiSecurityPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">AI Security</h1>
-        <p className="text-sm text-muted-foreground">
-          Repos detected as using AI/ML, and what ModelScan and Toleman&apos;s LLM ruleset found in them.
-        </p>
-      </div>
+      <PageHeader
+        title="AI Security"
+        description="Repositories detected as using AI/ML, and vulnerability findings from ModelScan and LLM rulesets."
+      />
 
-      {targetsError && <p className="text-sm text-destructive">{targetsError.message}</p>}
+      {targetsError && <AlertBanner tone="critical">{targetsError.message}</AlertBanner>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <StatGrid columns={3}>
         <StatCard
           label="AI/ML repos"
           value={aiTargets.length}
@@ -79,7 +79,7 @@ export default function AiSecurityPage() {
           tone={(semgrepLlmFindings ?? []).length > 0 ? "attention" : "default"}
           unknown={semgrepLlmLoading}
         />
-      </div>
+      </StatGrid>
 
       <div className="flex flex-col gap-3">
         <h2 className="text-sm font-medium text-foreground">AI/ML-flagged repos</h2>

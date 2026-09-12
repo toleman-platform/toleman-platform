@@ -19,6 +19,7 @@ See the [architecture](ARCHITECTURE.md) for the full design. Full docs, includin
 - [Getting Started](#getting-started)
   - [Quickstart (Docker Compose)](#quickstart-docker-compose)
   - [Manual setup (macOS/Linux/Windows)](#manual-setup-macoslinuxwindows)
+- [Upgrading](#upgrading)
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
   - [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades)
@@ -181,6 +182,30 @@ npm run dev
 Open http://localhost:3000, redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@toleman.local` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API, no mock data.
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
+
+## Upgrading
+
+Which path applies depends on how you're running Toleman, not on what changed upstream: both paths pick up every change, the only difference is who builds the image.
+
+**Running from prebuilt GHCR images** (the `docker-compose.ghcr.yml` override above): pull the new tag and recreate the containers.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml pull
+docker compose -f docker-compose.yml -f docker-compose.ghcr.yml up -d
+```
+
+If you pinned a version or `sha-` tag in your override (recommended for anything but a throwaway environment), bump it there first; `edge` and `latest` re-resolve to the newest image on `pull` without an edit.
+
+**Building from source** (the default `docker compose up --build`): pull the new commit and rebuild.
+
+```bash
+git pull
+docker compose up --build -d
+```
+
+Either way, no separate migration step: `backend`'s startup hook runs `alembic upgrade head` against `DATABASE_URL` before it starts serving (see [Database migrations](#database-migrations-alembic)), and `celery-worker` waits for `backend`'s healthcheck before it starts, so it never runs against a schema older than what it expects. Compose recreates only the services whose image or config actually changed, so `postgres` and `redis` keep running (and keep their data) through an upgrade of `backend`/`celery-worker`/`frontend`.
+
+There's no rollback tooling beyond re-pointing at the previous tag/commit and re-running the same command, and that alone does **not** undo a schema change already applied by a migration that ran forward: `alembic upgrade head` only applies pending upgrades, so an older image can fail its startup migration because it can no longer locate the revision the database is recorded at. An older application image is unsupported until the schema is restored from a backup taken before the upgrade, or the migration is proven backward-compatible; see [Backups and zero data loss during upgrades](#backups-and-zero-data-loss-during-upgrades) for the tested restore procedure. No tagged release has shipped yet, so there's no cross-version upgrade to test against — this section will grow real "upgrading from 1.x to 2.x" notes once one exists.
 
 ---
 

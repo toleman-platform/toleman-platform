@@ -451,7 +451,7 @@ function FindingDetailDialog({ finding, open, onClose }: { finding: Finding; ope
               </span>
             </div>
             <span className="truncate text-xs text-muted-foreground">
-              {finding.tool} · {finding.file_path}
+              #{finding.id} · {finding.tool} · {finding.file_path}
               {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
             </span>
           </div>
@@ -593,7 +593,7 @@ export function FindingRow({
               <div className="density-stack">
                 <div className="mt-1 flex items-center gap-1 truncate text-xs text-muted-foreground">
                   <span className="truncate">
-                    {finding.tool} · {finding.file_path}
+                    #{finding.id} · {finding.tool} · {finding.file_path}
                     {finding.line_start ? `:${finding.line_start}` : ""} · {finding.rule_id}
                   </span>
                   {repoUrl && finding.file_path && (

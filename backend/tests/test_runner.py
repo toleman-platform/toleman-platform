@@ -207,3 +207,15 @@ def test_repo_clone_error_message_is_safe_and_descriptive(recorded_calls):
         assert clone_error_message(exc) == str(exc)
     else:
         pytest.fail("expected RepoCloneError")
+
+
+def test_semgrep_commands_disable_nosem_suppression():
+    """semgrep respects a trailing `# nosemgrep`/`# nosem` comment by
+    default, silently dropping that finding before it's even reported --
+    a security *scanner* can't allow whoever can edit a file to blind it
+    to their own vulnerable line this way. --disable-nosem makes semgrep
+    report regardless of the comment; every entry that shells out to
+    semgrep must carry it."""
+    for tool in ("semgrep", "semgrep-llm"):
+        cmd = runner.TOOL_COMMANDS[tool]("/tmp/some-path")
+        assert "--disable-nosem" in cmd

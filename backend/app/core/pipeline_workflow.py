@@ -105,7 +105,12 @@ _SEMGREP_JOB = """
       - name: Install Semgrep
         run: pip install semgrep
       - name: Run Semgrep
-        run: semgrep scan --config=auto --sarif --output=semgrep.sarif || true
+        # --disable-nosem: don't let a `# nosemgrep` comment in the target's
+        # own source silently drop a finding before it ever reaches Toleman
+        # -- see runner.py's TOOL_COMMANDS for the same reasoning, applied
+        # here too since this workflow runs semgrep independently in the
+        # target repo's own CI, not through runner.py at all.
+        run: semgrep scan --config=auto --disable-nosem --sarif --output=semgrep.sarif || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: semgrep-results

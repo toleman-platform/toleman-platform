@@ -415,6 +415,68 @@ def test_strategy_label_covers_every_known_strategy():
 
 
 # ---------------------------------------------------------------------------
+# find_suppression_comment: a real incident (an MCP client "fixed" a finding
+# by adding a bare `# nosemgrep` on the flagged line instead of fixing the
+# actual issue) -- raise_fix_pr_endpoint must reject that, not just have a
+# docstring asking callers not to.
+# ---------------------------------------------------------------------------
+
+
+def _finding_at(line_start=10, line_end=None, **overrides):
+    defaults = dict(
+        target_id=1, dedup_hash="h", tool="semgrep", rule_id="r", title="t",
+        file_path="app.py", line_start=line_start, line_end=line_end, severity=Severity.HIGH,
+    )
+    defaults.update(overrides)
+    return Finding(**defaults)
+
+
+def test_find_suppression_comment_detects_nosemgrep_on_the_flagged_line():
+    finding = _finding_at(line_start=2)
+    content = "line 1\nsubprocess.run(cmd, shell=True)  # nosemgrep\nline 3\n"
+    assert autofix.find_suppression_comment(content, finding) is not None
+
+
+@pytest.mark.parametrize(
+    "comment",
+    ["# nosemgrep", "# nosem", "# noqa", "# nosec", "# pylint: disable=x", "// eslint-disable-next-line",
+     "# checkov:skip=CKV_1", "# tfsec:ignore:x", "// nolint", "# gitleaks:allow", "# .trivyignore"],
+)
+def test_find_suppression_comment_covers_common_cross_language_directives(comment):
+    finding = _finding_at(line_start=1)
+    content = f"some vulnerable line here  {comment}\n"
+    assert autofix.find_suppression_comment(content, finding) is not None
+
+
+def test_find_suppression_comment_ignores_matches_outside_the_flagged_lines():
+    """A legitimate fix elsewhere in the file that happens to mention one of
+    these words (a docstring, an unrelated comment) must never be rejected --
+    only the finding's own flagged line(s) are checked."""
+    finding = _finding_at(line_start=5)
+    content = "# this file has no noqa anywhere near line 5\n" * 3 + "line 4\nfixed_line_5\nline 6\n"
+    assert autofix.find_suppression_comment(content, finding) is None
+
+
+def test_find_suppression_comment_checks_the_full_line_range():
+    finding = _finding_at(line_start=2, line_end=4)
+    content = "line 1\nline 2\nline 3  # nosec\nline 4\nline 5\n"
+    assert autofix.find_suppression_comment(content, finding) is not None
+
+
+def test_find_suppression_comment_none_for_a_clean_fix():
+    finding = _finding_at(line_start=2)
+    content = "line 1\nsubprocess.run(cmd, shell=False)\nline 3\n"
+    assert autofix.find_suppression_comment(content, finding) is None
+
+
+def test_find_suppression_comment_returns_none_without_a_line_start():
+    """A finding with no line_start (e.g. a manifest-level SCA finding) has
+    no single line to check against -- always passes rather than raising."""
+    finding = _finding_at(line_start=None)
+    assert autofix.find_suppression_comment("anything  # nosemgrep\n", finding) is None
+
+
+# ---------------------------------------------------------------------------
 # POST /api/findings/{id}/raise-pr: opens the PR for a caller-supplied patch
 # ---------------------------------------------------------------------------
 
@@ -508,6 +570,29 @@ def test_raise_pr_endpoint_rejects_file_path_mismatch(client, engine):
         },
     )
     assert resp.status_code == 400
+
+
+def test_raise_pr_endpoint_rejects_a_suppression_comment_on_the_flagged_line(client, engine, monkeypatch):
+    _login(client, engine)
+    target_id = _make_target(engine)
+    finding_id = _make_finding(engine, target_id, tool="semgrep", file_path="app.py", line_start=2)
+
+    called = {"open_fix_pr": False}
+    monkeypatch.setattr("app.api.findings.open_fix_pr", lambda *a, **kw: called.update(open_fix_pr=True))
+
+    resp = client.post(
+        f"/api/findings/{finding_id}/raise-pr",
+        json={
+            "file_path": "app.py",
+            "new_content": "line 1\nsubprocess.run(cmd, shell=True)  # nosemgrep\nline 3\n",
+            "ref": "main",
+            "strategy": "mcp_client",
+        },
+    )
+    assert resp.status_code == 400
+    assert "suppression comment" in resp.json()["detail"]
+    # Never even reaches GitHub -- rejected before open_fix_pr is called.
+    assert called["open_fix_pr"] is False
 
 
 def test_raise_pr_endpoint_surfaces_autofix_error_as_502(client, engine, monkeypatch):

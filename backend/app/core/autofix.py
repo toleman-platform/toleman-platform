@@ -79,6 +79,46 @@ class Patch:
     explanation: str
 
 
+# A patch that "fixes" a finding by adding a scanner-suppression comment on
+# the flagged line doesn't fix anything -- it mutes the *scanner*, so the
+# finding vanishes from every future scan without the underlying issue
+# having changed at all, and without going through either of the platform's
+# two real dismissal paths: Toleman's own triage (False Positive/Accepted
+# Risk/Won't Fix, self-service but audited -- app.api.findings.triage) or
+# PR Guardrail's request-ignore (not self-service at all; goes to the
+# security team for approval -- app.api.pr_guardrail.request_ignore). This
+# happened for real (an MCP client raising a PR whose "fix" was a bare
+# `# nosemgrep` comment on the flagged line) which is why
+# raise_fix_pr_endpoint checks for it below rather than only documenting
+# "don't do this" in the MCP tool descriptions and trusting the caller.
+# Not exhaustive -- new tools add new directives -- but covers the common
+# cross-language ones; matched against the finding's own flagged line(s)
+# only, so a legitimate fix that happens to mention "noqa" in a comment or
+# string elsewhere in the file is never rejected.
+SUPPRESSION_COMMENT_PATTERNS = re.compile(
+    r"nosemgrep|nosem\b|noqa|nosec|pylint:\s*disable|eslint-disable|"
+    r"checkov:skip|tfsec:ignore|nolint\b|gitleaks:allow|trivyignore",
+    re.IGNORECASE,
+)
+
+
+def find_suppression_comment(new_content: str, finding: Finding) -> str | None:
+    """The matched suppression token (see SUPPRESSION_COMMENT_PATTERNS) if
+    `new_content` introduces one on the finding's own flagged line(s),
+    else None. `line_start`/`line_end` are 1-indexed and inclusive, same
+    as everywhere else this codebase uses them; a finding with no
+    line_start (e.g. a dependency-manifest-level SCA finding) has no
+    single line to check and always passes."""
+    if not finding.line_start:
+        return None
+    lines = new_content.splitlines()
+    start = max(0, finding.line_start - 1)
+    end = min(len(lines), finding.line_end or finding.line_start)
+    window = "\n".join(lines[start:end])
+    match = SUPPRESSION_COMMENT_PATTERNS.search(window)
+    return match.group(0) if match else None
+
+
 # Labels the PR body under open_fix_pr uses to say how a patch was produced.
 # "mcp_client" (issue #108 follow-up): an MCP client -- typically Claude Code,
 # already holding the repo and able to read the flagged file directly -- read

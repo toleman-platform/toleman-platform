@@ -31,7 +31,18 @@ ALLOWED_CLONE_HOSTS = {"github.com"}
 LLM_RULES_DIR = Path(__file__).parent / "rules" / "llm"
 
 TOOL_COMMANDS = {
-    "semgrep": lambda path: ["semgrep", "scan", "--config=auto", "--json", "--quiet", path],
+    # --disable-nosem: semgrep respects a `# nosemgrep` (or `# nosem`) trailing
+    # comment by default, silently dropping that finding before it's even
+    # written to stdout -- exactly the kind of source-level suppression a
+    # security *scanner* can't allow, since it lets whoever can edit a file
+    # (a careless commit, a compromised dependency, an overly-helpful
+    # coding agent papering over a real finding instead of fixing it) blind
+    # this tool to their own vulnerable line. This flag makes semgrep report
+    # regardless of the comment; nothing downstream (this scanner, PR
+    # Guardrail, the MCP server's check_code_for_vulnerabilities, which all
+    # share this same TOOL_COMMANDS entry via run_tool) ever sees a
+    # nosemgrep-suppressed line as anything but a real, reported finding.
+    "semgrep": lambda path: ["semgrep", "scan", "--config=auto", "--disable-nosem", "--json", "--quiet", path],
     # Issue #189: the LLM ruleset runs as its own tool rather than as an extra
     # --config on the semgrep entry above. Findings then carry tool
     # "semgrep-llm", so per-tool coverage reporting, usage assignment (#75)
@@ -39,7 +50,7 @@ TOOL_COMMANDS = {
     # "Toleman's LLM rules" instead of merging them into one bucket. Same
     # reasoning as trivy vs trivy-license already being separate entries.
     "semgrep-llm": lambda path: [
-        "semgrep", "scan", f"--config={LLM_RULES_DIR}", "--json", "--quiet", path
+        "semgrep", "scan", f"--config={LLM_RULES_DIR}", "--disable-nosem", "--json", "--quiet", path
     ],
     # `--report-path` was /dev/stdout until #253. That is not portable: where
     # /dev/stdout isn't writable by the process, gitleaks aborts with

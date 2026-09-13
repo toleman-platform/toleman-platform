@@ -691,12 +691,42 @@ class TestNuclei:
         assert "-duc" not in captured["cmd"]
 
     def test_an_empty_template_directory_does_not_count_as_present(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("NUCLEI_TEMPLATES_DIR", str(tmp_path / "templates"))
+        """Absent, present-but-empty, and populated are three distinct answers.
+
+        Driven through $HOME rather than an override, because $HOME is the
+        only thing nuclei itself consults -- run_nuclei passes it no
+        template-directory flag. A test that pointed this function at some
+        other directory would be asserting agreement with a location nuclei
+        never opens.
+        """
+        monkeypatch.setattr(runner.Path, "home", classmethod(lambda cls: tmp_path))
+        templates = tmp_path / "nuclei-templates"
+
         assert runner.nuclei_templates_present() is False
-        (tmp_path / "templates").mkdir()
+        templates.mkdir()
         assert runner.nuclei_templates_present() is False
-        (tmp_path / "templates" / "cve.yaml").write_text("id: x")
+        (templates / "cve.yaml").write_text("id: x")
         assert runner.nuclei_templates_present() is True
+
+    def test_the_template_store_is_not_redirectable_by_environment(self, tmp_path, monkeypatch):
+        """The removed NUCLEI_TEMPLATES_DIR knob must not come back.
+
+        It could only ever create the false positive nuclei_templates_present
+        exists to avoid: a directory this process can see, nuclei cannot, and
+        `-duc` passed to a scanner with no checks loaded. Pinned as a test
+        because the next person to want a configurable path will find the
+        idea reasonable.
+        """
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "cve.yaml").write_text("id: x")
+
+        empty_home = tmp_path / "home"
+        empty_home.mkdir()
+        monkeypatch.setattr(runner.Path, "home", classmethod(lambda cls: empty_home))
+        monkeypatch.setenv("NUCLEI_TEMPLATES_DIR", str(elsewhere))
+
+        assert runner.nuclei_templates_present() is False
 
 
 # ---------------------------------------------------------------------------

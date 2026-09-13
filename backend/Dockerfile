@@ -206,23 +206,6 @@ RUN set -eux; \
     rm -f /tmp/nuclei.zip; \
     nuclei -version
 
-# (#229) Install the template set at build time.
-#
-# run_nuclei passes `-duc` (disable update check) so a scan can never be the
-# process rewriting the shared template store while another scan reads it --
-# the same race that made trivy report a repo with five live CVEs as clean.
-# But nuclei's fresh-install path sits behind that same update check, so on
-# an image with no templates `-duc` would leave it with nothing to scan
-# with: exit 0, zero findings, from a scanner that loaded no checks at all.
-# runner.nuclei_templates_present() withholds the flag in that case rather
-# than risk it; baking the templates in is what makes the isolated path the
-# normal one. `|| true` because template fetch is a network call at build
-# time and an image that can still scan (with the update check enabled) is
-# better than a build that fails.
-RUN set -eux; \
-    nuclei -update-templates -silent || true; \
-    nuclei -templates-version || true
-
 # --- Python dependencies + Semgrep (SAST) -----------------------------
 # Semgrep isn't in requirements.txt (it's a standalone CLI, same as the other
 # three scanners); installed the same way CI installs it in
@@ -350,6 +333,35 @@ ENV HOME=/home/toleman \
     XDG_CACHE_HOME=/home/toleman/.cache
 
 USER toleman
+
+# (#229) Install the template set at build time -- deliberately AFTER
+# `USER toleman` and the `ENV HOME=` above, not with the other scanner
+# downloads.
+#
+# nuclei resolves its template store from $HOME and takes no directory flag
+# from run_nuclei, so where it writes at build time has to be the same place
+# it reads at runtime. Run as root earlier in this file it wrote into
+# /root, while the app runs as toleman with HOME=/home/toleman -- the
+# templates existed in the image and `nuclei_templates_present()` still
+# answered False, so `-duc` was never applied and the fix was inert. Running
+# it here, as the runtime user, makes the two paths the same by
+# construction rather than by a variable both sides have to agree on.
+#
+# Why the flag matters: run_nuclei passes `-duc` (disable update check) so a
+# scan can never be the process rewriting the shared template store while
+# another scan reads it -- the same race that made trivy report a repo with
+# five live CVEs as clean. But nuclei's fresh-install path sits behind that
+# same update check, so on an image with no templates `-duc` would leave it
+# with nothing to scan with: exit 0, zero findings, from a scanner that
+# loaded no checks at all. `nuclei_templates_present()` withholds the flag
+# in that case rather than risk it; baking the templates in is what makes
+# the isolated path the normal one.
+#
+# `|| true` because the fetch is a network call at build time, and an image
+# that can still scan (with the update check enabled) beats a failed build.
+RUN set -eux; \
+    nuclei -update-templates -silent || true; \
+    nuclei -templates-version || true
 
 EXPOSE 8000
 

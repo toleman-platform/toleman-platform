@@ -8,6 +8,7 @@ that feature ships.
 import base64
 import fcntl
 import json
+import logging
 import os
 import re
 import shutil
@@ -23,6 +24,8 @@ from urllib.parse import urlparse
 
 from app.core.config import settings
 from app.core.scan_health import ScanHealth
+
+logger = logging.getLogger(__name__)
 
 # Hosts clone_repo will actually clone from. github.com is the only host this
 # platform integrates with today (see repo_slug_from_url in app/core/github.py,
@@ -558,19 +561,27 @@ def run_nuclei(urls: list[str]) -> list[dict]:
     return results
 
 
-# Where nuclei keeps the templates it scans with. NUCLEI_TEMPLATES_DIR is
-# honoured first so an operator can point at a store they manage; the rest
-# are the defaults nuclei itself has used across v2 and v3.
+# Where nuclei keeps the templates it scans with: the defaults nuclei itself
+# has used across v2 and v3, resolved from $HOME.
+#
+# Deliberately NOT configurable by an environment variable. An earlier
+# version honoured a NUCLEI_TEMPLATES_DIR override, which was unsafe in one
+# direction: run_nuclei passes nuclei no template-directory flag, so nuclei
+# reads from $HOME regardless of what that variable said. Pointing it at a
+# store nuclei does not use would make nuclei_templates_present() answer
+# "definitely yes" for a directory nuclei never opens, `-duc` would be
+# passed, and the scan would run with an empty template set -- exit 0, zero
+# findings, reported as a clean API. That is precisely the false positive
+# the docstring below says this function must never produce, so the knob is
+# gone rather than documented. If a template store ever does need to move,
+# it has to move for nuclei too (a flag in run_nuclei), not just for us.
 def _nuclei_template_dirs() -> list[Path]:
-    configured = os.environ.get("NUCLEI_TEMPLATES_DIR")
-    candidates = [Path(configured)] if configured else []
     home = Path.home()
-    candidates += [
+    return [
         home / "nuclei-templates",
         home / ".local" / "nuclei-templates",
         home / ".config" / "nuclei" / "nuclei-templates",
     ]
-    return candidates
 
 
 def nuclei_templates_present() -> bool:
@@ -937,7 +948,7 @@ TRIVY_DB_METADATA_PATH = "db/metadata.json"
 # truncation check -- a partially-written or zero-length file is the shape a
 # mid-download or mid-replacement read leaves behind, and that file must
 # never be read as "checked, nothing found".
-MIN_TRIVY_DB_BYTES = 1024 * 1024
+MIN_TRIVY_DB_BYTES = 32 * 1024 * 1024
 
 # How far past trivy's own declared NextUpdate the DB has to be before a run
 # against it stops counting as evidence. NextUpdate passing is routine
@@ -951,6 +962,16 @@ TRIVY_DB_STALE_GRACE_HOURS = 72
 # a Celery task: the first of six concurrent scans downloads while the other
 # five wait here, which is the point, but none of them may wait forever.
 WARM_LOCK_TIMEOUT_SECONDS = 600
+
+# How long the download itself may take, bounded separately from the lock.
+# It runs while holding LOCK_EX, so an unbounded download is an unbounded
+# hold: every other scan in a fan-out queues behind it, and Celery's own
+# stale_job_timeout_seconds (900) keeps counting meanwhile. Left unbounded,
+# one slow first download could get the rest of the fan-out marked
+# stale-failed -- the warming path manufacturing the outage it exists to
+# prevent. Deliberately well inside that 900s budget so a scan that waited
+# still has time to clone and run.
+WARM_DOWNLOAD_TIMEOUT_SECONDS = 420
 SEED_LOCK_TIMEOUT_SECONDS = 60
 
 # Lockfiles whose presence means this repository's dependencies really are
@@ -1065,24 +1086,43 @@ def sweep_stale_run_caches() -> int:
     Cheap enough to run at the start of every run (one listdir), which is
     the only sweeper this gets: there is no cron in this project, and a
     directory that only grows is how a disk fills up quietly.
+
+    Covers two roots, because warming leaves its own debris. A SIGKILL or
+    OOM between ensure_warm_trivy_db's two renames strands a
+    ``trivy-warm.replaced-*`` directory, and one during the download
+    strands a ``trivy-staging-*`` one -- each a full copy of the database,
+    which is the largest thing this platform writes to disk. The happy
+    paths remove both; nothing else did.
     """
-    root = _run_cache_root()
-    if not root.is_dir():
-        return 0
     cutoff = time.time() - RUN_CACHE_MAX_AGE_SECONDS
     removed = 0
-    try:
-        entries = list(root.iterdir())
-    except OSError:
-        return 0
-    for entry in entries:
+
+    def _sweep(root: Path, matches) -> int:
+        if not root.is_dir():
+            return 0
         try:
-            if entry.stat().st_mtime >= cutoff:
-                continue
+            entries = list(root.iterdir())
         except OSError:
-            continue
-        shutil.rmtree(entry, ignore_errors=True)
-        removed += 1
+            return 0
+        count = 0
+        for entry in entries:
+            if not matches(entry):
+                continue
+            try:
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+            except OSError:
+                continue
+            shutil.rmtree(entry, ignore_errors=True)
+            count += 1
+        return count
+
+    removed += _sweep(_run_cache_root(), lambda _entry: True)
+    removed += _sweep(
+        tool_cache_root(),
+        lambda entry: entry.name.startswith(TRIVY_STAGING_PREFIX)
+        or entry.name.startswith(f"{TRIVY_WARM_DIRNAME}.replaced-"),
+    )
     return removed
 
 
@@ -1187,6 +1227,27 @@ def ensure_warm_trivy_db(timeout_seconds: float = WARM_LOCK_TIMEOUT_SECONDS) -> 
     Publication is a whole-directory replace, never an in-place write, so a
     hardlink taken from a published generation can never be modified
     underneath the run holding it.
+
+    NEVER RAISES. Every failure comes back as ``(False, detail)``. That is a
+    requirement rather than an observation: both callers treat warming as
+    best-effort and neither wraps it, so an exception here would take down
+    the thing it exists to speed up. In run_scan it would fail the scan; in
+    the PR Guardrail executor the call sits outside the per-tool try, so it
+    would abort every tool on the PR. The guard lives here, with the
+    contract, rather than at each call site where a third caller would have
+    to remember it.
+    """
+    try:
+        return _warm_trivy_db_unguarded(timeout_seconds)
+    except Exception as exc:  # noqa: BLE001 -- see NEVER RAISES above
+        logger.warning("trivy DB warming failed unexpectedly", exc_info=True)
+        return False, f"warming failed unexpectedly ({exc.__class__.__name__})"
+
+
+def _warm_trivy_db_unguarded(timeout_seconds: float) -> tuple[bool, str]:
+    """The real work. Call ensure_warm_trivy_db, which guarantees the
+    no-raise contract; this one may raise from anything it touches --
+    tempfile.mkdtemp, or _cache_lock's own mkdir/open before it yields.
     """
     warm = trivy_warm_dir()
     ok, _ = trivy_db_state(warm)
@@ -1203,14 +1264,16 @@ def ensure_warm_trivy_db(timeout_seconds: float = WARM_LOCK_TIMEOUT_SECONDS) -> 
             return True, "warmed by another process"
 
         root = tool_cache_root()
-        staging = Path(tempfile.mkdtemp(prefix=TRIVY_STAGING_PREFIX, dir=str(root)))
+        staging = None
+        previous = None
         try:
+            staging = Path(tempfile.mkdtemp(prefix=TRIVY_STAGING_PREFIX, dir=str(root)))
             # `trivy image --download-db-only` is the documented way to
             # fetch the DB and nothing else; it contacts no registry and
             # needs no image or daemon despite the subcommand's name.
             proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
                 ["trivy", "image", "--download-db-only", "--cache-dir", str(staging)],
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=WARM_DOWNLOAD_TIMEOUT_SECONDS,
             )
             if proc.returncode != 0:
                 detail = _strip_ansi(proc.stderr or "").strip().splitlines()
@@ -1221,14 +1284,41 @@ def ensure_warm_trivy_db(timeout_seconds: float = WARM_LOCK_TIMEOUT_SECONDS) -> 
                 # not be published; publishing it would hand every
                 # subsequent scan a verified-looking database that is not
                 # one.
+                #
+                # Note what this check is and is not. The real completeness
+                # evidence is the exit code above: `--download-db-only`
+                # verifies the OCI layer it pulled. trivy_db_state is a
+                # structural sanity check, and it is deliberately the same
+                # predicate every scan applies at read time -- which is
+                # exactly why it must not be the only gate. One bad
+                # publication that satisfies it would look verified to every
+                # subsequent scan for as long as the DB stays inside its
+                # freshness window.
                 return False, f"downloaded database is not usable: {reason}"
-            previous = root / f"{TRIVY_WARM_DIRNAME}.replaced-{uuid.uuid4().hex}"
+
+            # Rotate-then-publish, with a rollback. The window between these
+            # two renames is short but not empty, and a failure inside it
+            # used to leave the install with no warm copy at all: every
+            # later scan would run unseeded and re-download, which is the
+            # cost this whole path exists to remove.
             if warm.exists():
+                previous = root / f"{TRIVY_WARM_DIRNAME}.replaced-{uuid.uuid4().hex}"
                 os.replace(warm, previous)
-            os.replace(staging, warm)
+            try:
+                os.replace(staging, warm)
+            except OSError:
+                if previous is not None and not warm.exists():
+                    # Put the working copy back before giving up.
+                    try:
+                        os.replace(previous, warm)
+                        previous = None
+                    except OSError:
+                        pass
+                raise
             staging = None  # published; do not remove it below
-            shutil.rmtree(previous, ignore_errors=True)
             return True, "downloaded"
+        except subprocess.TimeoutExpired:
+            return False, f"the database download exceeded {WARM_DOWNLOAD_TIMEOUT_SECONDS:.0f}s"
         except FileNotFoundError:
             # No trivy binary on this host. Never fatal here: warming is a
             # best-effort optimisation, and a scan that cannot find trivy
@@ -1239,6 +1329,8 @@ def ensure_warm_trivy_db(timeout_seconds: float = WARM_LOCK_TIMEOUT_SECONDS) -> 
         finally:
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
+            if previous is not None:
+                shutil.rmtree(previous, ignore_errors=True)
 
 
 def _seed_trivy_cache(private: Path) -> bool:
@@ -1254,11 +1346,30 @@ def _seed_trivy_cache(private: Path) -> bool:
     if not source.is_dir():
         return False
     destination = private / "db"
+
+    def _link_or_copy(src: str, dst: str) -> None:
+        """Hardlink the database itself; copy everything beside it.
+
+        The database file is hundreds of megabytes and trivy has no reason
+        to rewrite it under --skip-db-update, so linking it is what makes
+        seeding cheap. Its metadata is a few hundred bytes, and a hardlink
+        there is a standing bet that trivy never touches it in place -- a
+        bet that costs the whole warm copy if it is ever wrong, because the
+        write would land in the published generation every other run is
+        linked to, the fingerprints would stop matching, and trivy would
+        read as suspect on every scan from then on. Copying the small file
+        removes the bet instead of testing it.
+        """
+        if Path(src).name == Path(TRIVY_DB_FILE_PATH).name:
+            os.link(src, dst)
+        else:
+            shutil.copy2(src, dst)
+
     with _cache_lock(exclusive=False, timeout_seconds=SEED_LOCK_TIMEOUT_SECONDS) as acquired:
         if not acquired:
             return False
         try:
-            shutil.copytree(source, destination, copy_function=os.link, dirs_exist_ok=True)
+            shutil.copytree(source, destination, copy_function=_link_or_copy, dirs_exist_ok=True)
         except (OSError, shutil.Error):
             # Both directories live under settings.tool_cache_dir, so a
             # cross-device link should be impossible; if it happens anyway,

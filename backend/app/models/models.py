@@ -246,7 +246,11 @@ class Target(SQLModel, table=True):
     # private repo with no token, 403/404); it is NOT an empty inventory,
     # and must never render as clean. "ok" with a count of 0 is the only
     # thing that means "GitHub says this repo has no dependencies".
-    dependency_sync_status: Optional[str] = None   # pending / ok / unavailable / failed
+    # "skipped" (#273) is the import declining to run because the target is
+    # deactivated: not a failure, and distinct from "unavailable" (GitHub
+    # refused to answer) -- nothing here needs fixing, the inventory is just
+    # frozen at whatever was last imported.
+    dependency_sync_status: Optional[str] = None   # pending / ok / unavailable / failed / skipped
     dependency_sync_error: Optional[str] = None
     dependency_sync_at: Optional[datetime] = None
     dependency_component_count: Optional[int] = None

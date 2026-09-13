@@ -340,6 +340,30 @@ def sync_dependency_graph(target_id: int):
         if not target:
             return {"error": "target not found"}
 
+        # (#273) The last inventory write that was not behind a lifecycle
+        # gate. Genuinely hard to reach -- no clone, no findings, and only
+        # dispatched at target creation or GitHub App import, so it fires
+        # for a deactivated target only if the deactivation lands inside
+        # that window -- but "hard to reach" is not a reason for one write
+        # path to disagree with the other eleven.
+        #
+        # Recorded as its own "skipped" status rather than "failed": nothing
+        # failed, and a red badge on the Dependencies tab would send someone
+        # hunting for a GitHub problem that does not exist. Returning
+        # silently is not an option either -- queue_dependency_graph_sync
+        # has already written "pending", and leaving it there is a spinner
+        # that never resolves, which this codebase treats as its own bug.
+        refusal = target_lifecycle.scan_refusal_reason(target)
+        if refusal:
+            target.dependency_sync_status = "skipped"
+            target.dependency_sync_error = refusal
+            target.dependency_sync_at = utcnow()
+            target.dependency_component_count = None
+            session.add(target)
+            session.commit()
+            logger.info("dependency graph sync skipped for target %s: %s", target_id, refusal)
+            return {"target_id": target_id, "status": "skipped", "count": 0}
+
         status, error, count = "ok", None, 0
         try:
             token = resolve_github_token(session, target.workspace_id, repo_slug_from_url(target.repo_url))

@@ -43,6 +43,9 @@ from app.models.models import (
     Finding,
     FindingState,
     Organization,
+    PRGuardrailScan,
+    PRGuardrailStatus,
+    SbomComponent,
     SbomRun,
     Scan,
     Severity,
@@ -1099,11 +1102,20 @@ class TestDeletedTargetsDisappear:
 
 
 class TestAggregatesExcludeDeletedTargets:
-    """Per-aggregate, not sampled. Each of these is a separately-written
-    query with its own scoping shape, and the ones that join Target only
-    for non-admin callers are exactly where a single missed predicate hides
-    -- it is invisible to a workspace-scoped test and only shows up for an
-    admin."""
+    """Per-aggregate, not sampled: each of these is a separately-written
+    query with its own scoping shape, so one passing says nothing about the
+    next.
+
+    Several exercise the admin path (`ws_ids=None`) specifically. To be
+    precise about why, since an earlier version of this comment overstated
+    it: a workspace-scoped test detects a *missing* predicate perfectly
+    well, because the workspace join filters on `workspace_id`, not on
+    `deleted_at`. What the admin path uniquely catches is a plausible
+    *wrong fix* -- hanging the soft-delete predicate off the workspace join
+    instead of applying it independently. That version passes every scoped
+    test and silently leaks deleted targets to admins, and it is tempting
+    enough that four comments in this PR exist to warn against it.
+    """
 
     def test_the_live_scan_activity_widget_drops_them(self, engine):
         """The twin of GET /api/scans/active's filter. This resolver builds
@@ -1122,8 +1134,8 @@ class TestAggregatesExcludeDeletedTargets:
         _soft_delete(engine, gone)
 
         with Session(engine) as session:
-            # ws_ids=None is the admin path: the one that skips the Target
-            # join entirely, and the only one a workspace-scoped test misses.
+            # ws_ids=None is the admin path: no Target join at all, so a
+            # predicate wrongly attached to that join would do nothing here.
             data = widgets.resolve_live_scan_activity(session, None, {})
 
         assert {item["target_id"] for item in data["items"]} == {kept}
@@ -1142,8 +1154,9 @@ class TestAggregatesExcludeDeletedTargets:
         assert client.get("/api/findings/facets/environments").json() == ["production"]
 
     def test_the_scans_summary_drops_them_for_an_admin(self, client, engine):
-        """Admin callers never join Target, so this is the case the
-        subquery exists for."""
+        """Run as an admin, where no Target join exists to hang the
+        predicate off -- the shape that catches the wrong fix, not just the
+        missing one."""
         ws = _workspace(engine)
         gone = _target(engine, ws, name="gone")
         with Session(engine) as session:
@@ -1162,6 +1175,97 @@ class TestAggregatesExcludeDeletedTargets:
         client.delete(f"/api/targets/{tid}")
 
         assert client.get(f"/api/scans/history?target_id={tid}").status_code == 404
+
+    def test_the_org_sbom_aggregate_drops_them(self, client, engine):
+        """"Which of my repos still use package X" must not answer with a
+        repo that no longer exists -- the component row survives the soft
+        delete, so only the target filter keeps it out."""
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone")
+        kept = _target(engine, ws, name="kept")
+        with Session(engine) as session:
+            for tid in (gone, kept):
+                session.add(
+                    SbomComponent(
+                        target_id=tid, branch="main", name="left-pad",
+                        version="1.0.0", package_type="npm", purl="pkg:npm/left-pad@1.0.0",
+                    )
+                )
+            session.commit()
+        _login(client, engine)
+
+        before = client.get("/api/sbom/org").json()
+        assert {t["id"] for c in before["components"] for t in c["targets"]} == {gone, kept}
+
+        client.delete(f"/api/targets/{gone}")
+        after = client.get("/api/sbom/org").json()
+        assert {t["id"] for c in after["components"] for t in c["targets"]} == {kept}
+
+    def test_the_org_pr_guardrail_log_drops_them(self, client, engine):
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone")
+        kept = _target(engine, ws, name="kept")
+        with Session(engine) as session:
+            for tid in (gone, kept):
+                session.add(
+                    PRGuardrailScan(
+                        target_id=tid, pr_number=7, pr_title="t", branch="feat",
+                        status=PRGuardrailStatus.PASSED,
+                    )
+                )
+            session.commit()
+        _login(client, engine)
+
+        assert client.get("/api/pr-guardrail/log").json()["stats"]["total"] == 2
+        client.delete(f"/api/targets/{gone}")
+
+        after = client.get("/api/pr-guardrail/log").json()
+        assert after["stats"]["total"] == 1
+        assert {s["target_id"] for s in after["scans"]} == {kept}
+
+    def test_active_scans_drops_them_for_an_admin(self, client, engine):
+        """Same admin-path shape as the scans summary above: the deleted
+        target's running scan must not keep the Targets list showing work in
+        flight for a repo that is gone."""
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone")
+        kept = _target(engine, ws, name="kept")
+        with Session(engine) as session:
+            session.add(Scan(target_id=gone, tool="semgrep", branch="main", status="running"))
+            session.add(Scan(target_id=kept, tool="semgrep", branch="main", status="running"))
+            session.commit()
+        _login(client, engine)
+
+        assert set(client.get("/api/scans/active").json()) == {str(gone), str(kept)}
+        client.delete(f"/api/targets/{gone}")
+        assert set(client.get("/api/scans/active").json()) == {str(kept)}
+
+    def test_org_activity_does_not_call_github_for_a_deleted_target(self, client, engine, monkeypatch):
+        """Asserted on the outbound calls, not just the response: this
+        endpoint makes one real GitHub API request per target, so a missed
+        filter is a wasted call against a repo we were told to forget as
+        well as a row that should not render."""
+        from app.api import github as github_module
+
+        called_paths: list[str] = []
+
+        class _NoContent:
+            status_code = 304  # anything non-200; the handler skips the repo
+
+        def fake_get(path, params=None, token=""):
+            called_paths.append(path)
+            return _NoContent()
+
+        monkeypatch.setattr(github_module, "github_get", fake_get)
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone")
+        _target(engine, ws, name="kept")
+        _login(client, engine)
+        client.delete(f"/api/targets/{gone}")
+
+        assert client.get("/api/github/org-activity").status_code == 200
+        assert not any("gone" in p for p in called_paths)
+        assert any("kept" in p for p in called_paths), "the live target is still fetched"
 
 
 class TestDeactivationIsVisibleInAggregates:

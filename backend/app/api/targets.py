@@ -435,11 +435,23 @@ def _audit_target_event(
     to be written identically every time for the admin security log to be
     greppable. repo_url is included, not just the display name: a name can
     be edited before the delete, the clone URL is what actually identifies
-    the repository afterwards."""
+    the repository afterwards.
+
+    `target_email` is passed explicitly even though log_auth_event would
+    default it to `actor` anyway. The default exists for the self-service
+    events (login/logout/password), where "the user the event is about" and
+    "the user who did it" are genuinely the same person; that reasoning does
+    not transfer here, since these events are about a *repository* and
+    AuthAuditLog has no column for one. Setting it deliberately keeps every
+    row findable under the security log's email filter (which matches actor
+    OR target_email) and means this behaviour is a decision recorded here
+    rather than an accident of another function's default.
+    """
     log_auth_event(
         session,
         event_type,
         actor=user.email,
+        target_email=user.email,
         detail=f"target #{target.id} {target.name} ({target.repo_url})",
         ip_address=request.client.host if request.client else "unknown",
     )

@@ -17,6 +17,7 @@ import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { SelectAllVisible } from "@/components/ui/list-row";
 import { useSelection } from "@/hooks/use-selection";
 import { Scan as ScanIcon } from "lucide-react";
+import { parseServerTimestamp } from "@/lib/format/date";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -50,7 +51,7 @@ type DispatchState = "idle" | "dispatching" | "dispatched" | "error";
 
 function lastScannedBucket(lastScanAt: string | null): string {
   if (!lastScanAt) return "never";
-  const ageMs = Date.now() - new Date(lastScanAt).getTime();
+  const ageMs = Date.now() - parseServerTimestamp(lastScanAt);
   const day = 24 * 60 * 60 * 1000;
   if (ageMs <= day) return "24h";
   if (ageMs <= 7 * day) return "7d";

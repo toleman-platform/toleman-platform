@@ -21,6 +21,7 @@ import { SEVERITY_COLOR } from "@/lib/severity";
 import { PageHeader } from "@/components/ui/page-header";
 import { ActivityPagination } from "@/components/activity-pagination";
 import { pageSizeFromParams } from "@/lib/pagination";
+import { serverDate } from "@/lib/format/date";
 
 function isSessionError(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;
@@ -129,8 +130,8 @@ function PrRow({
                 #{pr.number} {pr.title}
               </a>
               <div className="mt-1 text-xs text-muted-foreground">
-                {pr.author} · opened {new Date(pr.created_at).toLocaleDateString()}
-                {pr.merged_at ? ` · merged ${new Date(pr.merged_at).toLocaleDateString()}` : ""}
+                {pr.author} · opened {serverDate(pr.created_at).toLocaleDateString()}
+                {pr.merged_at ? ` · merged ${serverDate(pr.merged_at).toLocaleDateString()}` : ""}
               </div>
               {hasFindings && (
                 <div className="mt-1 flex items-center gap-2 text-xs">

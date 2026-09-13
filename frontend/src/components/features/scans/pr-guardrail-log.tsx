@@ -15,6 +15,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { IGNORE_STATUS_COLOR, SEVERITY_COLOR } from "@/lib/severity";
 import { ALL_TARGETS } from "@/components/features/targets";
+import { serverDate } from "@/lib/format/date";
 
 function isSessionError(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;
@@ -234,7 +235,7 @@ function PrGuardrailFindingRow({
           {(finding.ignore_status === "approved" || finding.ignore_status === "rejected") && (
             <div className="mt-1 text-xs text-muted-foreground">
               Ignore {finding.ignore_status} by {finding.ignore_reviewed_by}
-              {finding.ignore_reviewed_at ? ` · ${new Date(finding.ignore_reviewed_at).toLocaleString()}` : ""}
+              {finding.ignore_reviewed_at ? ` · ${serverDate(finding.ignore_reviewed_at).toLocaleString()}` : ""}
             </div>
           )}
         </div>
@@ -466,8 +467,8 @@ export function PrGuardrailLog({
                       )}
                     </div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">
-                      {entry.branch} · created {new Date(entry.created_at).toLocaleString()}
-                      {entry.completed_at ? ` · completed ${new Date(entry.completed_at).toLocaleString()}` : ""}
+                      {entry.branch} · created {serverDate(entry.created_at).toLocaleString()}
+                      {entry.completed_at ? ` · completed ${serverDate(entry.completed_at).toLocaleString()}` : ""}
                     </div>
                     {entry.status === "overridden" && entry.override_reason && (
                       <div className="mt-1 text-xs text-muted-foreground">Override reason: {entry.override_reason}</div>

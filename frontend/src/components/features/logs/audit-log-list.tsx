@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination } from "@/components/activity-pagination";
+import { serverDate } from "@/lib/format/date";
 
 /**
  * Issue #123: a single bulk-triage action used to write one FindingStateLog
@@ -44,7 +45,7 @@ function AuditEventCard({ event }: { event: AuditEvent }) {
               {event.type}
             </Badge>
             <span className="text-xs text-muted-foreground">{event.actor}</span>
-            <span className="text-xs text-muted-foreground">{new Date(event.timestamp).toLocaleString()}</span>
+            <span className="text-xs text-muted-foreground">{serverDate(event.timestamp).toLocaleString()}</span>
           </div>
         </div>
 
@@ -56,7 +57,7 @@ function AuditEventCard({ event }: { event: AuditEvent }) {
                   {item.from_state} &rarr; {item.to_state}
                   {item.title ? `: ${item.title}` : ""}
                 </span>
-                <span>{new Date(item.timestamp).toLocaleTimeString()}</span>
+                <span>{serverDate(item.timestamp).toLocaleTimeString()}</span>
               </div>
             ))}
           </div>

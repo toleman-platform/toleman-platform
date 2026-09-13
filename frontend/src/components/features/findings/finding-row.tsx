@@ -21,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { CriticalityChip } from "@/components/features/targets";
+import { parseServerTimestamp, serverDate } from "@/lib/format/date";
 
 // Issue #117: the risk/priority score was a bare number (360, 320, 240...)
 // with no explanation of what it meant. Mirrors the real formula in
@@ -129,7 +130,7 @@ function SlaBadge({ finding }: { finding: Finding }) {
   const [now] = useState(() => Date.now());
   if (finding.sla_days === null || finding.sla_days === undefined) return null;
 
-  const firstSeen = new Date(finding.first_seen).getTime();
+  const firstSeen = parseServerTimestamp(finding.first_seen);
   const deadline = firstSeen + finding.sla_days * 24 * 60 * 60 * 1000;
   // Captured once at mount rather than read during every render: the
   // countdown is day-granular, so re-reading the clock changes nothing a user
@@ -142,7 +143,7 @@ function SlaBadge({ finding }: { finding: Finding }) {
     return (
       <Badge
         variant="outline"
-        title={`SLA: ${finding.sla_days}d to fix, first seen ${new Date(finding.first_seen).toLocaleDateString()}`}
+        title={`SLA: ${finding.sla_days}d to fix, first seen ${serverDate(finding.first_seen).toLocaleDateString()}`}
         className="shrink-0 border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
       >
         Overdue by {daysLeft}d

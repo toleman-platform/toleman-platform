@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
 from app.api.deps import get_session
-from app.models.models import Severity, SlaRule, User, WorkspaceRole
+from app.models.models import Severity, SlaRule, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/sla-rules", tags=["sla-rules"])
 
@@ -74,6 +74,27 @@ def create_sla_rule(
     # /api/groups checks explicitly instead of using a Depends-based
     # require_workspace_role (see groups.py's create_group).
     enforce_workspace_role(session, user, WorkspaceRole.SECURITY_ENGINEER, workspace_id=payload.workspace_id)
+    # (#356) SlaRule.workspace_id is a real FK and the role check above does
+    # not prove the row exists: it returns immediately for a global admin,
+    # and for everyone else it only asks whether a WorkspaceMembership
+    # exists, which for a nonexistent workspace simply doesn't, so that path
+    # 403s before reaching here. Without this, an admin's stale workspace_id
+    # reached commit(), Postgres raised ForeignKeyViolation, and the
+    # unhandled IntegrityError escaped CORSMiddleware before it had built a
+    # response; the browser then reported a CORS error for what is really a
+    # bad id. See create_target in app/api/targets.py for the full path.
+    #
+    # The group branch below already catches this when group_id is supplied
+    # (a group resolves to a real workspace, and the cross-check rejects a
+    # mismatch), which is exactly why the gap only shows up on the
+    # workspace-default rule, where group_id is null and nothing else
+    # touches the workspace row.
+    #
+    # After the role check, not before, so a caller outside the workspace
+    # still gets the same 403 and can't use the 404 to probe which
+    # workspace ids are real.
+    if not session.get(Workspace, payload.workspace_id):
+        raise HTTPException(status_code=404, detail="workspace not found")
 
     if payload.group_id is not None:
         from app.models.models import Group

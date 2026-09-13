@@ -39,12 +39,15 @@ explainable rather than asserted; a priority score is the most-looked-at
 number in the product and was the least explained.
 """
 
+import logging
 from dataclasses import dataclass, field
 from math import isfinite
 from typing import Mapping
 
 from app.core.cvss import CvssDecomposition
 from app.models.models import ScoringSignal, Severity, SEVERITY_WEIGHT
+
+logger = logging.getLogger(__name__)
 
 # --- the original hardcoded constants, now the baseline's calibration ---
 
@@ -242,12 +245,30 @@ def resolve_exposure(label: str | None, environment: str | None) -> ExposureSign
             )
         return ExposureSignal(0.0, True, detail)
 
-    if lowered_env in PRODUCTION_VALUES or lowered_label in PRODUCTION_VALUES:
-        where = raw_env or raw_label
+    env_is_production = lowered_env in PRODUCTION_VALUES
+    label_is_production = lowered_label in PRODUCTION_VALUES
+    if env_is_production or label_is_production:
+        # Name the field that actually matched. An earlier `raw_env or
+        # raw_label` rendered label="prod", environment="staging" as
+        # 'target runs in "staging"; production' -- a sentence that
+        # contradicts itself, in the panel whose entire job is that the
+        # detail is true.
+        if env_is_production and label_is_production:
+            source = f'target is labelled "{raw_label}" and runs in "{raw_env}"'
+        elif env_is_production:
+            source = f'target runs in "{raw_env}"'
+        elif lowered_env in NON_PRODUCTION_VALUES:
+            # The label says production and the environment says otherwise.
+            # Label wins (see this function's docstring), but showing only
+            # the winner would hide a disagreement someone probably wants to
+            # go and resolve.
+            source = f'target is labelled "{raw_label}", which wins over its "{raw_env}" environment'
+        else:
+            source = f'target is labelled "{raw_label}"'
         return ExposureSignal(
             PRODUCTION_EXPOSURE_FACTOR,
             True,
-            f'target runs in "{where}"; production, but not positively recorded as internet-facing',
+            f"{source}; production, but not positively recorded as internet-facing",
         )
 
     if lowered_env in NON_PRODUCTION_VALUES:
@@ -338,21 +359,52 @@ def resolve_weights(overrides: Mapping[ScoringSignal, float] | None = None) -> d
     every findings list and every scan in that workspace. Scoring must
     degrade to "the operator configured something silly" rather than to a
     stack trace, so garbage is dropped here and the baseline stands in.
+
+    Every discard is logged, because the symptom is otherwise invisible: a
+    dropped row scores exactly like an unconfigured one, which looks
+    completely normal. Volume is bounded -- `workspace_scoring_weights`
+    resolves raw rows once per ingestion run or request, and the second
+    pass this function makes from inside `compute_score_breakdown` is over
+    an already-clean dict, so it logs nothing.
     """
     weights = dict(BASELINE_WEIGHTS)
     for signal, value in (overrides or {}).items():
         if signal not in weights:
+            logger.warning(
+                "Ignoring scoring weight for unrecognised signal %r; scoring on the baseline set", signal
+            )
             continue
         try:
             candidate = float(value)
         except (TypeError, ValueError):
-            continue  # keep the baseline rather than scoring on garbage
+            # Logged, not swallowed. A discarded row is invisible by
+            # construction -- the score it produces is simply the baseline's,
+            # which looks entirely normal -- so without a line here the only
+            # evidence that a workspace is not scoring the way its
+            # configuration says would be someone reading the table by hand.
+            logger.warning(
+                "Scoring weight for %s is not a number (%r); falling back to the baseline %.2f",
+                signal.value, value, weights[signal],
+            )
+            continue
         if not isfinite(candidate):
             # NaN or +/-inf. Deliberately the baseline, not MAX_WEIGHT:
             # silently promoting a corrupt row to the strongest possible
             # setting would be a worse outcome than ignoring it.
+            logger.warning(
+                "Scoring weight for %s is not finite (%r); falling back to the baseline %.2f. "
+                "Postgres float8 accepts 'Infinity'/'NaN', so this row was almost certainly "
+                "written outside the API, which rejects both.",
+                signal.value, value, weights[signal],
+            )
             continue
-        weights[signal] = min(MAX_WEIGHT, max(MIN_WEIGHT, candidate))
+        clamped = min(MAX_WEIGHT, max(MIN_WEIGHT, candidate))
+        if clamped != candidate:
+            logger.warning(
+                "Scoring weight for %s (%.4f) is outside [%.1f, %.1f]; clamped to %.2f",
+                signal.value, candidate, MIN_WEIGHT, MAX_WEIGHT, clamped,
+            )
+        weights[signal] = clamped
     return weights
 
 

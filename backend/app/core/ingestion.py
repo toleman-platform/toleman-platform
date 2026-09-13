@@ -167,11 +167,20 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
         warm_cve_enrichment(session, cve_ids)
 
     # Read after the warm-up so this run's findings are scored against what
-    # it just fetched. Still only a cache read: a CVE the warm-up could not
-    # resolve (upstream down, or beyond this run's lookup budget) leaves
-    # both signals unestablished, which contributes nothing rather than
-    # subtracting anything, and a later scan re-scores it upward once the
-    # data lands. The failsafe direction.
+    # it just fetched. Still only a cache read: a CVE the warm-up did not
+    # resolve leaves both signals unestablished, which contributes nothing
+    # rather than subtracting anything -- the failsafe direction.
+    #
+    # Whether a later scan picks it up depends on *why* it was unresolved,
+    # and the two cases differ:
+    #   - beyond this run's lookup budget: never attempted, so the next scan
+    #     tries it and the score rises once the data lands.
+    #   - the upstream fetch failed: get_cve_enrichment caches a
+    #     both-not-found row and never re-fetches (#71's forever-cache), so
+    #     the signal stays unestablished for that CVE until something
+    #     invalidates the row. An outage during a scan therefore leaves a
+    #     durable hole rather than a retried one. Acknowledged, tracked
+    #     separately; it never lowers a score, only withholds an uplift.
     enrichments = enrichment_map(session, cve_ids)
 
     def score_for(severity, finding_cve_id, epss_score, kev_listed) -> int:

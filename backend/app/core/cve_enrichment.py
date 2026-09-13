@@ -68,9 +68,20 @@ def warm_cve_enrichment(session: Session, cve_ids: list[str]) -> int:
     calls it made before #201 -- the cost arrives with the feature, not with
     the upgrade.
 
-    Best-effort throughout: `get_cve_enrichment` already swallows upstream
-    failures (caching a not-found row), and anything unexpected is logged
-    and skipped. A scan must not fail because NVD is down.
+    Best-effort throughout: anything unexpected is logged and skipped. A
+    scan must not fail because NVD is down.
+
+    One known sharp edge, inherited rather than introduced: on an upstream
+    failure `get_cve_enrichment` caches a both-not-found row and never
+    re-fetches it (#71's deliberate forever-cache). When the only caller was
+    a human clicking a finding during an outage that cost one row; running
+    unattended on the scoring path it can cost a whole batch, and those CVEs
+    keep an unestablished CVSS/fixability signal until something invalidates
+    the row. It never *lowers* a score -- an unresolved CVE withholds an
+    uplift, it does not subtract -- so this is a coverage gap, not a
+    correctness one, and a retry policy for the not-found case is tracked
+    separately (it needs no schema change; see get_cve_enrichment's
+    docstring).
     """
     if not cve_ids:
         return 0

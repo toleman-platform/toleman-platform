@@ -354,8 +354,9 @@ def test_adding_any_single_signal_can_only_raise_a_score():
     failsafe rule needs -- knowing something is never worse than knowing
     nothing -- across every signal. It is NOT exhaustive over combinations,
     and the CVSS sub-score is deliberately not monotonic in how *much* of a
-    vector was decoded (see test_partial_vector_is_never_worse_than_no_vector
-    in this file and the note in app/core/cvss.py)."""
+    vector was decoded -- see test_partial_vector_is_never_worse_than_no_vector
+    and test_the_mean_is_not_monotonic_in_how_much_was_decoded in
+    tests/test_cvss.py, plus the note in app/core/cvss.py."""
     base = compute_score_breakdown(Severity.MEDIUM, 2, weights=ALL_ON).score
     for extra in (
         dict(cvss=parse_cvss_vector(V31_WORST)),
@@ -439,6 +440,25 @@ def test_public_label_still_beats_a_non_production_environment():
 def test_production_uplift_still_applies_with_no_label_conflict():
     for label in (None, "", "tier-1"):
         assert resolve_exposure(label, "production").factor == PRODUCTION_EXPOSURE_FACTOR
+
+
+def test_production_detail_names_the_field_that_actually_matched():
+    """Regression: `raw_env or raw_label` picked the environment even when
+    the *label* was what matched, so label="prod", environment="staging"
+    rendered 'target runs in "staging"; production' -- a sentence
+    contradicting itself, in the panel whose whole job is being true."""
+    by_label = resolve_exposure("prod", "staging")
+    assert by_label.factor == PRODUCTION_EXPOSURE_FACTOR
+    assert 'runs in "staging"; production' not in by_label.detail
+    # Names the label that decided it, and the environment it overrode.
+    assert '"prod"' in by_label.detail and '"staging"' in by_label.detail
+
+    by_env = resolve_exposure("tier-1", "production")
+    assert 'runs in "production"' in by_env.detail
+    assert "tier-1" not in by_env.detail  # did not decide anything
+
+    both = resolve_exposure("prod", "live")
+    assert '"prod"' in both.detail and '"live"' in both.detail
 
 
 def test_nothing_recorded_is_unknown_not_internal():

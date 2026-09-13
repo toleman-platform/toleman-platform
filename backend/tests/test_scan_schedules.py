@@ -33,6 +33,8 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core import scan_schedules as core
 from app.core.time import utcnow
 from app.models.models import (
@@ -659,3 +661,483 @@ def test_the_dispatcher_ticks_far_more_often_than_any_cadence():
     from app.tasks.celery_app import SCHEDULE_DISPATCH_INTERVAL
 
     assert SCHEDULE_DISPATCH_INTERVAL < timedelta(hours=core.MIN_INTERVAL_HOURS)
+
+
+# ---------------------------------------------------------------------------
+# Claiming: the claim-before-dispatch ordering is not enough on its own
+#
+# due_schedules materialises the whole list at the top of a pass, but a row
+# is only claimed when the loop reaches it -- after every earlier row has
+# finished fanning out, which for a platform-wide scan is minutes. These
+# exercise that window. The sequential-restart tests above cannot: moving
+# the claim to *after* the fan-out leaves every one of them green.
+#
+# A caveat these state rather than paper over: SQLite with StaticPool gives
+# every Session the same underlying connection, so "two workers" here is
+# sequencing, not true parallelism. What that still pins down is the
+# property the real race depends on -- the due-ness predicate is
+# re-evaluated by the database at write time, so a second caller holding a
+# row it read while due cannot claim it again.
+# ---------------------------------------------------------------------------
+
+
+def test_claiming_a_due_schedule_twice_only_succeeds_once(engine):
+    now = utcnow()
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        row = _schedule(session, ws, interval_hours=6, next_run_at=now - timedelta(minutes=1))
+
+        with Session(engine) as other:
+            same_row = other.get(ScanSchedule, row.id)
+
+            assert core.claim_due_schedule(session, row, now) is True
+            # The second caller read the row while it was still due.
+            assert core.claim_due_schedule(other, same_row, now) is False
+
+
+def test_claiming_clears_the_previous_dispatch_count(engine):
+    """last_dispatched_count is written after the fan-out, so a crash
+    mid-pass would otherwise leave the previous pass's count sitting next to
+    this pass's fresh last_run_at -- a confident report of something that
+    never finished. NULL means "not known for this run", which is true."""
+    now = utcnow()
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        row = _schedule(
+            session, ws, next_run_at=now - timedelta(minutes=1),
+            last_run_at=now - timedelta(days=1), last_dispatched_count=7,
+        )
+
+        assert core.claim_due_schedule(session, row, now) is True
+        session.refresh(row)
+
+        assert row.last_dispatched_count is None
+        assert row.last_run_at == now
+
+
+def test_an_overlapping_pass_mid_fanout_does_not_re_dispatch(engine, monkeypatch):
+    """The regression test for claim-before-dispatch.
+
+    A second complete pass starts *while the first is still fanning out*,
+    which is the window sequential passes never reproduce. With the claim
+    taken first, the inner pass finds nothing due and every target is
+    scanned exactly once. Move the claim to after the fan-out and the inner
+    pass sees the row still due and scans everything a second time.
+    """
+    import app.tasks.scan_tasks as scan_tasks
+
+    dispatched: list[str] = []
+    reentered = {"done": False}
+
+    def _queue(session, target):
+        dispatched.append(target.name)
+        # Re-enter exactly once, from inside the first target's dispatch,
+        # i.e. with the pass half-finished.
+        if not reentered["done"]:
+            reentered["done"] = True
+            with Session(engine) as nested:
+                schedule_tasks.dispatch_due_scan_schedules(nested)
+        return [1]
+
+    monkeypatch.setattr(scan_tasks, "queue_full_scan", _queue)
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        _make_target(session, ws, "a")
+        _make_target(session, ws, "b")
+        _schedule(session, ws, interval_hours=24, next_run_at=utcnow() - timedelta(minutes=1))
+
+        schedule_tasks.dispatch_due_scan_schedules(session)
+
+    assert sorted(dispatched) == ["a", "b"], (
+        f"each target must be dispatched exactly once per cycle, got {dispatched}"
+    )
+
+
+def test_a_schedule_claimed_after_selection_is_skipped_not_dispatched(engine, no_dispatch, monkeypatch):
+    """The same window from the other side: the row was genuinely due when
+    this pass selected it, and somebody else claimed it before this pass
+    reached it. That is a normal outcome to count, not an error to log."""
+    full, _api = no_dispatch
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        _make_target(session, ws)
+        row = _schedule(session, ws, next_run_at=utcnow() - timedelta(minutes=1))
+
+        def _stale_due(s, now):
+            with Session(engine) as other:
+                core.claim_due_schedule(other, other.get(ScanSchedule, row.id), now)
+            return [row]
+
+        monkeypatch.setattr(schedule_tasks, "due_schedules", _stale_due)
+
+        summary = schedule_tasks.dispatch_due_scan_schedules(session)
+
+        full.assert_not_called()
+        assert summary["already_claimed"] == 1
+        assert summary["schedules_fired"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Duplicate workspace-default rows
+#
+# A second target_id-NULL row for the same (workspace, scan type) would come
+# due alongside the first, cover every target in the workspace, and double
+# every cycle's dispatch forever -- invisibly, because every read path takes
+# .first(). The UniqueConstraint cannot stop it (Postgres treats NULL as
+# distinct), so a partial unique index does.
+# ---------------------------------------------------------------------------
+
+
+def test_a_second_workspace_default_row_is_rejected_by_the_database(engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        _schedule(session, ws, scan_type=ScanScheduleType.FULL_SCAN)
+
+        session.add(
+            ScanSchedule(workspace_id=ws.id, target_id=None, scan_type=ScanScheduleType.FULL_SCAN)
+        )
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+
+
+def test_the_partial_index_still_allows_a_target_row_alongside_the_default(engine):
+    """The index is partial for a reason: it must constrain only the
+    workspace-default rows. A target override for the same scan type is a
+    different, legitimate row."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws)
+        _schedule(session, ws, scan_type=ScanScheduleType.FULL_SCAN)
+        _schedule(session, ws, scan_type=ScanScheduleType.FULL_SCAN, target=target)
+
+        assert len(session.exec(select(ScanSchedule)).all()) == 2
+
+
+def test_each_workspace_gets_its_own_default(engine):
+    with Session(engine) as session:
+        ws_a = _make_workspace(session, "a")
+        ws_b = _make_workspace(session, "b")
+        _schedule(session, ws_a, scan_type=ScanScheduleType.FULL_SCAN)
+        _schedule(session, ws_b, scan_type=ScanScheduleType.FULL_SCAN)
+
+        assert len(session.exec(select(ScanSchedule)).all()) == 2
+
+
+def test_seeding_survives_losing_the_insert_race(engine, monkeypatch):
+    """ensure_workspace_default_rows is lookup-then-insert and runs
+    unattended on every tick, so the race is real rather than theoretical.
+    The loser must roll back and carry on, not crash the pass."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        real_commit = session.commit
+        calls = {"n": 0}
+
+        def _commit_that_loses_once():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                # The winner's row landing between our lookup and our insert.
+                raise IntegrityError("duplicate", None, Exception("duplicate"))
+            return real_commit()
+
+        monkeypatch.setattr(session, "commit", _commit_that_loses_once)
+
+        # Must not raise.
+        created = core.ensure_workspace_default_rows(session)
+
+        monkeypatch.undo()
+        assert len(created) == len(list(ScanScheduleType)) - 1
+        assert ws.id is not None
+
+
+# ---------------------------------------------------------------------------
+# Clock arithmetic: no per-cycle drift, no synchronised platform-wide burst
+# ---------------------------------------------------------------------------
+
+
+def test_advancing_anchors_to_the_previous_due_time(engine):
+    """A tick that arrives four minutes late must not push the next run four
+    minutes later and keep sliding; without an anchor a "daily" scan walks
+    off its hour over a few weeks."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        due = utcnow() - timedelta(minutes=4)
+        row = _schedule(session, ws, interval_hours=24, next_run_at=due)
+
+        assert core.compute_next_run_at(session, row, utcnow()) == due + timedelta(hours=24)
+
+
+def test_advancing_falls_back_to_now_after_a_long_outage(engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        row = _schedule(session, ws, interval_hours=1, next_run_at=utcnow() - timedelta(days=2))
+
+        now = utcnow()
+
+        assert core.compute_next_run_at(session, row, now) == now + timedelta(hours=1)
+
+
+def test_seeded_defaults_are_jittered_forward_only(engine):
+    """Without jitter every workspace seeded by the same tick shares one
+    `now` and they all come due together forever after -- the whole
+    platform's scheduled scans arriving as one burst. Forward-only, so a
+    jittered schedule never fires earlier than its configured interval."""
+    with Session(engine) as session:
+        for i in range(6):
+            _make_workspace(session, f"ws{i}")
+
+        now = utcnow()
+        created = core.ensure_workspace_default_rows(session, now=now)
+
+        full_scan_rows = [r for r in created if r.scan_type == ScanScheduleType.FULL_SCAN]
+        assert len(full_scan_rows) == 6
+        floor = now + timedelta(hours=24)
+        for row in full_scan_rows:
+            assert floor <= row.next_run_at <= floor + core.MAX_JITTER
+        # Not a strict guarantee of distinctness (random can repeat), but
+        # six identical values would mean jitter is not being applied.
+        assert len({r.next_run_at for r in full_scan_rows}) > 1
+
+
+# ---------------------------------------------------------------------------
+# The API write path must not let a clock reset become a way to defer a scan
+# ---------------------------------------------------------------------------
+
+
+def test_a_no_op_save_does_not_push_the_next_run_out(engine):
+    """A PUT that changes nothing (the panel re-saving the same values) used
+    to reset the clock a full interval, so repeatedly saving kept a daily
+    scan permanently deferred."""
+    from app.api.scan_schedules import UpsertScanScheduleRequest, _apply
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        due = utcnow() + timedelta(hours=3)
+        row = _schedule(session, ws, enabled=True, interval_hours=24, next_run_at=due)
+
+        _apply(
+            session, row, workspace_id=ws.id, target_id=None,
+            scan_type=ScanScheduleType.FULL_SCAN,
+            payload=UpsertScanScheduleRequest(enabled=True, interval_hours=24),
+            fields_set={"enabled", "interval_hours"},
+        )
+        session.refresh(row)
+
+        assert row.next_run_at == due
+
+
+def test_pausing_does_not_push_the_next_run_out(engine):
+    """Resuming recomputes from now (a schedule that sat paused has a
+    genuinely stale due time); the pause itself must not move it, or a
+    pause-and-undo would silently cost a cycle."""
+    from app.api.scan_schedules import UpsertScanScheduleRequest, _apply
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        due = utcnow() + timedelta(hours=3)
+        row = _schedule(session, ws, enabled=True, interval_hours=24, next_run_at=due)
+
+        _apply(
+            session, row, workspace_id=ws.id, target_id=None,
+            scan_type=ScanScheduleType.FULL_SCAN,
+            payload=UpsertScanScheduleRequest(enabled=False),
+            fields_set={"enabled"},
+        )
+        session.refresh(row)
+
+        assert row.next_run_at == due
+
+
+def test_changing_the_interval_does_reset_the_clock(engine):
+    """The stored due time was computed against a cadence that no longer
+    applies; shortening an interval must not leave a mid-cycle schedule
+    sitting overdue and fire the instant the dispatcher next ticks."""
+    from app.api.scan_schedules import UpsertScanScheduleRequest, _apply
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        due = utcnow() + timedelta(hours=20)
+        row = _schedule(session, ws, enabled=True, interval_hours=24, next_run_at=due)
+
+        _apply(
+            session, row, workspace_id=ws.id, target_id=None,
+            scan_type=ScanScheduleType.FULL_SCAN,
+            payload=UpsertScanScheduleRequest(interval_hours=6),
+            fields_set={"interval_hours"},
+        )
+        session.refresh(row)
+
+        assert row.next_run_at < due
+        assert row.next_run_at >= utcnow() + timedelta(hours=6) - timedelta(seconds=5)
+
+
+# ---------------------------------------------------------------------------
+# Target lifecycle: a schedule is not consent to scan something switched off
+#
+# #273 (target deactivate / soft-delete) lands on a parallel branch and adds
+# the deactivated_at/deleted_at columns these read. is_dispatchable_target
+# reads them defensively so this branch works standalone and gates for real
+# the moment they exist; see its docstring.
+# ---------------------------------------------------------------------------
+
+
+class _LifecycleStub:
+    """Stands in for a Target carrying #273's columns, which do not exist on
+    this branch yet."""
+
+    def __init__(self, deactivated_at=None, deleted_at=None):
+        self.deactivated_at = deactivated_at
+        self.deleted_at = deleted_at
+
+
+def test_a_target_without_the_lifecycle_columns_is_dispatchable(engine):
+    """Today's state: the columns are absent, so nothing is gated and
+    behaviour is unchanged."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws)
+
+        assert core.is_dispatchable_target(target) is True
+
+
+def test_a_deactivated_target_is_not_dispatchable():
+    assert core.is_dispatchable_target(_LifecycleStub(deactivated_at=utcnow())) is False
+
+
+def test_a_soft_deleted_target_is_not_dispatchable():
+    assert core.is_dispatchable_target(_LifecycleStub(deleted_at=utcnow())) is False
+
+
+def test_the_dispatcher_skips_a_target_the_lifecycle_gate_rejects(engine, no_dispatch, monkeypatch):
+    """The gate is wired into targets_covered_by, not merely defined.
+    Without it a deactivated target would get a Scan row every single tick,
+    which #273's worker-side gate then immediately fails -- forever."""
+    full, _api = no_dispatch
+    monkeypatch.setattr(core, "is_dispatchable_target", lambda t: t.name != "switched-off")
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        _make_target(session, ws, "live")
+        _make_target(session, ws, "switched-off")
+        _schedule(session, ws, next_run_at=utcnow() - timedelta(minutes=1))
+
+        schedule_tasks.dispatch_due_scan_schedules(session)
+
+        assert [c.args[1].name for c in full.call_args_list] == ["live"]
+
+
+def test_a_target_scoped_schedule_also_honours_the_lifecycle_gate(engine, no_dispatch, monkeypatch):
+    full, _api = no_dispatch
+    monkeypatch.setattr(core, "is_dispatchable_target", lambda t: False)
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws, "switched-off")
+        row = _schedule(session, ws, target=target, next_run_at=utcnow() - timedelta(minutes=1))
+
+        schedule_tasks.dispatch_due_scan_schedules(session)
+        session.refresh(row)
+
+        full.assert_not_called()
+        assert row.last_dispatched_count == 0
+
+
+# ---------------------------------------------------------------------------
+# API-scan readiness: every refusal is reportable, not just api_base_url
+#
+# One function, read by both the dispatcher and the scheduling panel, so an
+# armed schedule can never render as healthy while the worker skips it every
+# cycle. Two of the three refusals used to be invisible in the UI.
+# ---------------------------------------------------------------------------
+
+
+def _discoverable(session, target):
+    session.add(
+        ApiEndpoint(
+            target_id=target.id, branch="main", framework="fastapi",
+            method="GET", route="/v1/users", file_path="app/main.py", line=1,
+        )
+    )
+    session.commit()
+
+
+def test_readiness_is_ready_for_a_fully_configured_target(engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws, api_base_url="https://api.example.com")
+        _discoverable(session, target)
+
+        readiness = core.describe_api_scan_readiness(session, target)
+
+        assert readiness.ready is True
+        assert readiness.reason is None
+
+
+def test_readiness_reports_a_disabled_tool(engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws, api_base_url="https://api.example.com")
+        _discoverable(session, target)
+        session.add(WorkspaceToolConfig(workspace_id=ws.id, tool="nuclei", api_scan=False))
+        session.commit()
+
+        readiness = core.describe_api_scan_readiness(session, target)
+
+        assert readiness.ready is False
+        assert readiness.reason == "tool_disabled"
+        assert readiness.detail
+
+
+def test_readiness_reports_a_missing_api_base_url(engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws, api_base_url=None)
+        _discoverable(session, target)
+
+        readiness = core.describe_api_scan_readiness(session, target)
+
+        assert readiness.ready is False
+        assert readiness.reason == "no_api_base_url"
+
+
+def test_readiness_reports_no_discovered_endpoints(engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws, api_base_url="https://api.example.com")
+
+        readiness = core.describe_api_scan_readiness(session, target)
+
+        assert readiness.ready is False
+        assert readiness.reason == "no_endpoints"
+
+
+def test_readiness_reports_an_inactive_target(engine, monkeypatch):
+    monkeypatch.setattr(core, "is_dispatchable_target", lambda t: False)
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws, api_base_url="https://api.example.com")
+        _discoverable(session, target)
+
+        readiness = core.describe_api_scan_readiness(session, target)
+
+        assert readiness.ready is False
+        assert readiness.reason == "target_inactive"
+
+
+def test_queue_api_scan_refuses_on_the_same_readiness_answer(engine, monkeypatch):
+    """The dispatcher and the panel must not be able to disagree: both read
+    describe_api_scan_readiness, so a refusal is never invisible."""
+    import app.tasks.api_scan_tasks as api_scan_tasks
+
+    run = MagicMock()
+    monkeypatch.setattr(api_scan_tasks.run_api_scan, "delay", run)
+    monkeypatch.setattr(core, "is_dispatchable_target", lambda t: False)
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        target = _make_target(session, ws, api_base_url="https://api.example.com")
+        _discoverable(session, target)
+
+        assert api_scan_tasks.queue_api_scan(session, target) is None
+        run.assert_not_called()

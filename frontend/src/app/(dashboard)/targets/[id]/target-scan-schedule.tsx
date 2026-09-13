@@ -75,14 +75,25 @@ export function TargetScanSchedule({ targetId }: { targetId: number }) {
             scope="target"
             busy={saving === view.scan_type}
             disabledReason={
-              // The one thing the schedule itself cannot tell you. Active
-              // API scanning only ever probes the host in this target's
-              // API base URL (it is never inferred from the repo URL), so a
-              // scheduled api_scan on a target that has none is armed and
-              // permanently inert. Better to say that here than to let it
-              // look healthy for a month.
-              view.scan_type === "api_scan" && view.enabled && !data.api_base_url_configured
-                ? "No API base URL is set for this target, so nothing will be probed. Set one under Active API Scanning below."
+              // The thing the schedule itself cannot tell you: an armed
+              // api_scan schedule can still be permanently inert, and there
+              // are four separate ways for that to happen (the target is
+              // deactivated, nuclei is off for the workspace's api_scan
+              // surface, there is no API base URL, or nothing has been
+              // discovered to probe). The server resolves which one from
+              // the same function the dispatcher refuses on, so this cannot
+              // drift from what actually happens at dispatch time.
+              view.scan_type === "api_scan" && view.enabled && !data.api_scan_readiness.ready
+                ? [
+                    data.api_scan_readiness.detail ??
+                      "This schedule will not probe anything in its current configuration.",
+                    // The one reason whose fix is on this same page.
+                    data.api_scan_readiness.reason === "no_api_base_url"
+                      ? "Set one under Active API Scanning below."
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
                 : null
             }
             onChange={(patch) => save(view.scan_type, patch)}

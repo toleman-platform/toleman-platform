@@ -206,12 +206,21 @@ export function ScanScheduleRow({
           )}
         </p>
 
+        {/* "on the scheduler's next pass" was wrong by up to a full
+            interval here, in exactly the never-fired state this panel
+            exists to expose: the scheduler creates the row on its next
+            pass, then first runs it one interval after that. And if beat is
+            not running at all, the answer is never. schedule_id tells the
+            two apart -- a null one means no row has been written yet, which
+            is the scheduler's own first job. */}
         <p className="text-muted-foreground">
           {!view.enabled
             ? "Next run: —"
-            : view.next_run_at === null
-              ? "Next run: on the scheduler's next pass"
-              : `Next run: ${timeUntil(view.next_run_at)}`}
+            : view.next_run_at !== null
+              ? `Next run: ${timeUntil(view.next_run_at)}`
+              : view.schedule_id === null
+                ? `Next run: not scheduled yet — the scheduler creates this schedule on its next pass, then first runs it about ${view.interval_hours}h later. Still saying this after a few minutes means the scheduler is not running.`
+                : "Next run: due on the scheduler's next pass"}
         </p>
 
         {disabledReason && <p className="text-destructive">{disabledReason}</p>}

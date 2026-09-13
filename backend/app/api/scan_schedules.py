@@ -29,7 +29,9 @@ from app.core.scan_schedules import (
     SHIPPED_DEFAULTS,
     ResolvedScanSchedule,
     ScanScheduleError,
-    advance_next_run_at,
+    describe_api_scan_readiness,
+    effective_for_row,
+    next_run_after,
     resolve_scan_schedule,
     target_row,
     validate_interval_hours,
@@ -159,16 +161,22 @@ def get_target_schedules(
     for scan_type in ScanScheduleType:
         resolved = resolve_scan_schedule(session, target, scan_type)
         out.append(_serialize(resolved, target_row(session, target_id, scan_type)))
+    # Every reason a scheduled active API scan would dispatch nothing, from
+    # the same function the dispatcher itself refuses on, so the panel can
+    # never show a schedule as armed and healthy while the worker is quietly
+    # skipping it. Previously only the api_base_url case was surfaced, which
+    # left "nuclei is off for this workspace" and "no endpoints discovered
+    # yet" rendering as a perfectly normal "Runs every 6 hours · Next run:
+    # in 4h" that then did nothing forever.
+    readiness = describe_api_scan_readiness(session, target)
     return {
         "target_id": target_id,
         "workspace_id": target.workspace_id,
-        # The one thing a scheduling panel cannot infer: active API scanning
-        # is only ever dispatched against an explicitly configured host (see
-        # Target.api_base_url / app.core.api_scan_targets). Surfaced so the
-        # UI can say "scheduled, but this target has no API base URL, so
-        # nothing will be probed" instead of showing a schedule that looks
-        # armed and silently does nothing.
-        "api_base_url_configured": bool(target.api_base_url),
+        "api_scan_readiness": {
+            "ready": readiness.ready,
+            "reason": readiness.reason,
+            "detail": readiness.detail,
+        },
         "schedules": out,
     }
 
@@ -184,6 +192,7 @@ def _apply(
     fields_set: set[str],
 ) -> ScanSchedule:
     now = utcnow()
+    is_new = row is None
     if row is None:
         row = ScanSchedule(
             workspace_id=workspace_id,
@@ -192,6 +201,10 @@ def _apply(
             created_at=now,
             updated_at=now,
         )
+        before: Optional[tuple[bool, int]] = None
+    else:
+        before = effective_for_row(session, row)
+
     if "enabled" in fields_set:
         row.enabled = payload.enabled
     if "interval_hours" in fields_set:
@@ -201,18 +214,35 @@ def _apply(
     session.commit()
     session.refresh(row)
 
-    # Recompute the due clock from the (possibly new) effective interval.
-    # From `now`, not from the stored next_run_at: shortening an interval
-    # must not leave a schedule that was mid-cycle sitting overdue and fire
-    # the moment the dispatcher next ticks, and lengthening it must not
-    # leave a stale earlier due time. Creating a row does the same, so
-    # switching a schedule on never triggers an immediate fan-out across
-    # every target it covers -- the "Scan now" button is what someone wants
-    # when they mean right now.
-    advance_next_run_at(session, row, now=now)
-    session.add(row)
-    session.commit()
-    session.refresh(row)
+    after = effective_for_row(session, row)
+    # Reset the due clock only when the change actually means something for
+    # when this schedule next runs:
+    #
+    #   * a brand-new row has no clock at all;
+    #   * the effective interval changed, so the stored due time was
+    #     computed against a cadence that no longer applies;
+    #   * the schedule went from paused to running, where the stored due
+    #     time is however stale it got while paused.
+    #
+    # Anything else leaves it alone. A PUT that changes nothing (the UI
+    # re-saving the same values), or a pause-then-unpause a minute later,
+    # used to push the next run a full interval into the future every time,
+    # which is a real way to keep a daily scan permanently deferred by
+    # fiddling with the panel.
+    interval_changed = before is not None and before[1] != after[1]
+    resumed = before is not None and after[0] and not before[0]
+    if is_new or interval_changed or resumed:
+        # From `now` plus the interval, not from the stored due time:
+        # shortening an interval must not leave a schedule sitting overdue
+        # and fire the instant the dispatcher next ticks, and switching one
+        # on must not trigger an immediate fan-out across every target it
+        # covers. The "Scan now" button is what someone wants when they mean
+        # right now. Jittered for the same reason the seeded defaults are.
+        row.next_run_at = next_run_after(after[1], now, jitter=True)
+        row.updated_at = now
+        session.add(row)
+        session.commit()
+        session.refresh(row)
     return row
 
 

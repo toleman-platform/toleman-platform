@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, Index, JSON, UniqueConstraint, text
 from sqlmodel import SQLModel, Field
 
 from app.core.time import utcnow
@@ -1176,16 +1176,40 @@ class ScanSchedule(SQLModel, table=True):
         UniqueConstraint(
             "workspace_id", "target_id", "scan_type", name="uq_scan_schedule_workspace_target_type"
         ),
+        # The constraint above cannot police the workspace-default rows,
+        # because Postgres treats NULL as distinct for uniqueness: two rows
+        # with target_id NULL, the same workspace and the same scan_type do
+        # not collide under it. That is not a cosmetic gap here. Both rows
+        # would pass due_schedules, both would cover every target in the
+        # workspace, and every target would be scanned twice per cycle
+        # forever -- while every read path (which takes .first()) kept
+        # showing exactly one healthy schedule, so nothing would ever
+        # surface it.
+        #
+        # SlaRule documents the same NULL gap and answers it with a
+        # lookup-then-write API guard. That is not enough for this table:
+        # the row that matters is created by ensure_workspace_default_rows
+        # running unattended every few minutes on every worker, where a
+        # lookup-then-insert is a real check-then-act race rather than a
+        # theoretical one. So it is enforced in the schema instead, as a
+        # partial unique index. Both dialects are spelled out because tests
+        # build this table from the model metadata on SQLite while
+        # deployments get it from the Alembic migration on Postgres, and an
+        # invariant that only exists in production is one nothing catches.
+        Index(
+            "uq_scan_schedule_workspace_default",
+            "workspace_id",
+            "scan_type",
+            unique=True,
+            postgresql_where=text("target_id IS NULL"),
+            sqlite_where=text("target_id IS NULL"),
+        ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     workspace_id: int = Field(foreign_key="workspace.id", index=True)
-    # NULL = the workspace-wide default for this scan type. Note Postgres
-    # treats NULL as distinct for uniqueness, so the constraint above does
-    # not by itself stop two NULL-target_id rows for the same
-    # (workspace_id, scan_type); app/api/scan_schedules.py upserts through a
-    # lookup-then-write path rather than blind-inserting, the same guard
-    # SlaRule's API uses for its own NULL-group_id default rows.
+    # NULL = the workspace-wide default for this scan type; kept unique by
+    # the partial index above, not by the UniqueConstraint.
     target_id: Optional[int] = Field(default=None, foreign_key="target.id", index=True)
     scan_type: ScanScheduleType = Field(index=True)
     interval_hours: Optional[int] = None

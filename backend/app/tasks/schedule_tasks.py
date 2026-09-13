@@ -23,7 +23,7 @@ from sqlmodel import Session
 
 from app.core.db import engine
 from app.core.scan_schedules import (
-    advance_next_run_at,
+    claim_due_schedule,
     due_schedules,
     ensure_workspace_default_rows,
     targets_covered_by,
@@ -66,7 +66,6 @@ def dispatch_due_scan_schedules(session: Session) -> dict:
     without Celery.
 
     Ordering inside the loop is the part that matters. Each row is *claimed*
-    (its `next_run_at` pushed forward and `last_run_at` stamped, committed)
     BEFORE its targets are dispatched, not after. Claiming first can lose a
     cycle if the process dies in the gap; stamping afterwards would instead
     re-dispatch everything a half-finished pass already dispatched. With
@@ -75,6 +74,17 @@ def dispatch_due_scan_schedules(session: Session) -> dict:
     that is not a theoretical ordering: the choice is between one missed
     cycle and a duplicated platform-wide fan-out, and the duplicate is the
     one that hurts (#229).
+
+    The claim itself is a conditional UPDATE with a rowcount check
+    (`claim_due_schedule`), not a read followed by a write. The ordering
+    above is not enough on its own: `due_schedules` materialises the whole
+    list up front, but a row is only claimed when the loop reaches it, after
+    every earlier row has finished fanning out -- minutes, for a
+    platform-wide scan. Two passes overlapping in that window would
+    otherwise both see the same row still due. That needs no second replica
+    to happen: this task is routed onto `scans`, the same queue the scans
+    land on, so a backed-up queue lets several accumulated ticks become
+    runnable together at worker concurrency.
 
     Per-row commits, rather than one commit at the end, for the same reason:
     a crash partway through a pass must not un-claim the rows that already
@@ -89,15 +99,16 @@ def dispatch_due_scan_schedules(session: Session) -> dict:
     if created:
         logger.info("materialised %d workspace-default scan schedule(s)", len(created))
 
-    summary = {"schedules_fired": 0, "scans_dispatched": 0, "targets_considered": 0}
+    summary = {"schedules_fired": 0, "scans_dispatched": 0, "targets_considered": 0, "already_claimed": 0}
     for row in due_schedules(session, now):
         try:
+            # Claim before dispatching, atomically; see the docstring. A
+            # lost race is a normal outcome (another pass is already doing
+            # this row's work), not an error.
+            if not claim_due_schedule(session, row, now):
+                summary["already_claimed"] += 1
+                continue
             targets = targets_covered_by(session, row)
-            # Claim before dispatching; see the docstring.
-            row.last_run_at = now
-            advance_next_run_at(session, row, now=now)
-            session.add(row)
-            session.commit()
 
             dispatched = 0
             for target in targets:

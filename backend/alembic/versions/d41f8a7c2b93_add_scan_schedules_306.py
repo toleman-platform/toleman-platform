@@ -66,9 +66,27 @@ def upgrade() -> None:
     # run every few minutes forever; indexed so that stays one cheap range
     # scan rather than a full table scan per tick.
     op.create_index(op.f("ix_scanschedule_next_run_at"), "scanschedule", ["next_run_at"], unique=False)
+    # At most one workspace-default row per (workspace, scan type). The
+    # UniqueConstraint above cannot express this: Postgres treats NULL as
+    # distinct, so two target_id-NULL rows slip straight through it. A
+    # duplicate here is not cosmetic -- both rows come due together, both
+    # cover every target in the workspace, and every target gets scanned
+    # twice per cycle from then on, invisibly, because every read path takes
+    # .first(). The writer that can produce one (ensure_workspace_default_
+    # rows) runs unattended every few minutes, so this is enforced in the
+    # schema rather than left to a lookup-then-insert check.
+    op.create_index(
+        "uq_scan_schedule_workspace_default",
+        "scanschedule",
+        ["workspace_id", "scan_type"],
+        unique=True,
+        postgresql_where=sa.text("target_id IS NULL"),
+        sqlite_where=sa.text("target_id IS NULL"),
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("uq_scan_schedule_workspace_default", table_name="scanschedule")
     op.drop_index(op.f("ix_scanschedule_next_run_at"), table_name="scanschedule")
     op.drop_index(op.f("ix_scanschedule_scan_type"), table_name="scanschedule")
     op.drop_index(op.f("ix_scanschedule_target_id"), table_name="scanschedule")

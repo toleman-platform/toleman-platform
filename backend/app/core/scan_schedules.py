@@ -27,13 +27,18 @@ cadence, which is exactly the kind of accidental config drift the
 "None = inherit" convention exists to prevent.
 """
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, Optional
 
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, or_, select
 
+from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
 from app.core.time import utcnow
+from app.core.tool_usage import is_nuclei_enabled_for_api_scan
 from app.models.models import ScanSchedule, ScanScheduleType, Target, Workspace
 
 logger = logging.getLogger(__name__)
@@ -111,8 +116,102 @@ class ResolvedScanSchedule:
     last_dispatched_count: Optional[int]
     # None when the governing row does not exist yet, or when the schedule
     # is disabled (a paused schedule has no next run; see
-    # advance_next_run_at for why the stored column is not trusted here).
+    # compute_next_run_at for why the stored column is not trusted here).
     next_run_at: Optional[datetime]
+
+
+def is_dispatchable_target(target: Target) -> bool:
+    """Whether scheduled work may be started against this target at all.
+
+    Deliberately written with getattr rather than direct attribute access.
+    Target deactivate/soft-delete (#273) is landing on a parallel branch
+    that adds `deactivated_at`/`deleted_at` and an
+    `app.core.target_lifecycle` module; those columns do not exist on this
+    branch yet. Importing that module, or reading the attributes directly,
+    would make this branch fail to import on its own; waiting for the stack
+    to merge would instead ship a dispatcher that creates a Scan row every
+    single tick for every deactivated target, which #273's worker-side gate
+    then immediately fails -- forever, unattended, one per target per cycle.
+    A permanently-red scan history nobody asked for is a worse outcome than
+    one defensive getattr.
+
+    So this is a no-op today (the attributes are absent, so both read None)
+    and becomes a real gate the moment those columns land, with no merge
+    conflict in either direction. Once #273 is in, this collapses to a
+    direct call into app.core.target_lifecycle and the getattr goes away.
+    """
+    return getattr(target, "deactivated_at", None) is None and getattr(target, "deleted_at", None) is None
+
+
+# Why a scheduled active API scan would not actually probe anything. The
+# codes are stable identifiers for the frontend to branch on; the messages
+# are what a person reads.
+ApiScanBlockReason = Literal["target_inactive", "tool_disabled", "no_api_base_url", "no_endpoints"]
+
+
+@dataclass(frozen=True)
+class ApiScanReadiness:
+    ready: bool
+    reason: Optional[ApiScanBlockReason]
+    detail: Optional[str]
+
+
+def describe_api_scan_readiness(session: Session, target: Target) -> ApiScanReadiness:
+    """Can a scheduled active API scan against this target actually do
+    anything, and if not, which of the refusals is stopping it.
+
+    One function so the dispatcher and the UI cannot disagree. Before this
+    existed, `queue_api_scan` checked three conditions and the scheduling
+    panel surfaced exactly one of them (`api_base_url`), so a target whose
+    workspace had nuclei switched off for the `api_scan` surface, or which
+    had no discovered endpoints yet, rendered as "Runs every 6 hours · Next
+    run: in 4h" and then silently did nothing, forever. That is the
+    skipped-check-must-not-read-as-passed rule this codebase applies
+    everywhere else (see app.core.tool_usage.tools_for_surface's docstring
+    on `[]` meaning "nothing was checked", not "checked and clean") pointed
+    at scheduling itself.
+
+    Order matters and mirrors the interactive route: the cheap, decisive
+    checks first, the endpoint query last.
+    """
+    if not is_dispatchable_target(target):
+        return ApiScanReadiness(
+            ready=False,
+            reason="target_inactive",
+            detail="This target is deactivated, so no scheduled scan will run against it.",
+        )
+    if not is_nuclei_enabled_for_api_scan(session, target.workspace_id):
+        return ApiScanReadiness(
+            ready=False,
+            reason="tool_disabled",
+            detail=(
+                "Active API scanning (nuclei) is switched off for this workspace in Tool Marketplace, "
+                "so this schedule will not probe anything."
+            ),
+        )
+    if not target.api_base_url:
+        return ApiScanReadiness(
+            ready=False,
+            reason="no_api_base_url",
+            detail=(
+                "No API base URL is set for this target, so nothing will be probed. "
+                "Active scanning never infers a host."
+            ),
+        )
+    try:
+        urls, _endpoints = build_scan_urls(session, target)
+    except ApiScanConfigError as exc:
+        return ApiScanReadiness(ready=False, reason="no_api_base_url", detail=str(exc))
+    if not urls:
+        return ApiScanReadiness(
+            ready=False,
+            reason="no_endpoints",
+            detail=(
+                "No API endpoints have been discovered for this target's default branch yet, "
+                "so this schedule will not probe anything. Run API Discovery first."
+            ),
+        )
+    return ApiScanReadiness(ready=True, reason=None, detail=None)
 
 
 def validate_interval_hours(interval_hours: Optional[int]) -> Optional[int]:
@@ -235,22 +334,112 @@ def effective_for_row(session: Session, row: ScanSchedule) -> tuple[bool, int]:
     return enabled, interval
 
 
-def advance_next_run_at(session: Session, row: ScanSchedule, now: Optional[datetime] = None) -> datetime:
-    """Set (and return) the row's next due time, one effective interval from
-    `now`.
+# Spread applied when a schedule's clock is first set, as a fraction of its
+# own interval and capped in absolute terms. Without it every workspace
+# seeded by the same dispatcher tick shares one `now`, so all of them come
+# due in the same tick forever after -- the entire platform's scheduled
+# scans arriving as one burst every 24 hours. That is not a volume change,
+# but it is the worst possible arrival pattern for the queue contention
+# #229 is about, and it would be locked in on the first tick after deploy.
+#
+# Forward-only, so a jittered schedule never fires *earlier* than its
+# configured interval; and applied when the clock is set rather than on
+# every advance, so the offset a workspace gets is stable instead of being
+# re-rolled (and re-clustered) every cycle.
+JITTER_FRACTION = 0.1
+MAX_JITTER = timedelta(minutes=30)
 
-    From `now`, not from the previous `next_run_at`. If a worker is down for
-    thirty hours, a schedule that ticks hourly must come back and fire
-    *once*, not replay thirty missed runs into the scan queue the moment it
-    reconnects. That catch-up storm is precisely the bulk-dispatch shape
-    #229 identifies as producing false all-clears, and it would arrive at
-    the worst possible moment, right after an outage.
+
+def _jittered_interval(interval_hours: int) -> timedelta:
+    interval = timedelta(hours=interval_hours)
+    spread = min(interval * JITTER_FRACTION, MAX_JITTER)
+    return interval + timedelta(seconds=random.uniform(0, spread.total_seconds()))
+
+
+def next_run_after(interval_hours: int, now: datetime, *, jitter: bool = False) -> datetime:
+    """The due time for a clock being set for the first time (a freshly
+    materialised default, or a schedule whose interval an operator just
+    changed)."""
+    return now + (_jittered_interval(interval_hours) if jitter else timedelta(hours=interval_hours))
+
+
+def compute_next_run_at(session: Session, row: ScanSchedule, now: datetime) -> datetime:
+    """The due time to advance an already-running schedule to.
+
+    Anchored to the row's previous `next_run_at` rather than to `now`, so a
+    tick that arrives four minutes late does not push the following run four
+    minutes later and keep sliding: without the anchor every cycle inherits
+    the last cycle's lateness, and a "daily" scan walks off its hour over a
+    few weeks. Anchoring also preserves the jitter offset the row was seeded
+    with, which is the point of seeding it.
+
+    Falls back to `now + interval` whenever the anchored answer would still
+    be in the past -- i.e. exactly the long-outage case. A worker down for
+    two days must come back and fire *once*, not replay forty-eight missed
+    hourly runs into the scan queue on reconnect; that catch-up storm is the
+    bulk-dispatch shape #229 describes, arriving at the worst possible
+    moment.
     """
-    now = now or utcnow()
     _, interval_hours = effective_for_row(session, row)
-    row.next_run_at = now + timedelta(hours=interval_hours)
-    row.updated_at = now
-    return row.next_run_at
+    interval = timedelta(hours=interval_hours)
+    if row.next_run_at is not None:
+        anchored = row.next_run_at + interval
+        if anchored > now:
+            return anchored
+    return now + interval
+
+
+def claim_due_schedule(session: Session, row: ScanSchedule, now: datetime) -> bool:
+    """Atomically take ownership of one due schedule. True if this caller
+    won it and should now dispatch; False if somebody else already did.
+
+    This is a conditional UPDATE with a rowcount check, not a read then a
+    write, and the distinction is the whole point. `due_schedules`
+    materialises the entire list at the top of a pass, but each row is only
+    claimed when the loop reaches it -- after every earlier row has finished
+    fanning out, which for a platform-wide full scan is minutes. Re-reading
+    the row and writing it back would leave that whole window open for a
+    second pass to see the same row still due and dispatch it again.
+
+    This needs no second replica to happen. The dispatcher is routed onto
+    `scans`, the same queue the scans themselves land on, so a backed-up
+    queue lets several accumulated ticks become runnable together at worker
+    concurrency. The `next_run_at <= now` predicate inside the UPDATE is
+    what makes the loser of that race see rowcount 0 and skip, instead of
+    both of them scanning every target.
+
+    `last_dispatched_count` is cleared in the same statement rather than
+    left alone. It is written after the fan-out, so a crash mid-pass would
+    otherwise leave the *previous* pass's count sitting next to this pass's
+    fresh `last_run_at`, which reads as a confident report of something that
+    never finished. NULL there means "this run's count is not known", which
+    is the truth in that window.
+    """
+    next_run_at = compute_next_run_at(session, row, now)
+    result = session.execute(
+        update(ScanSchedule)
+        .where(
+            ScanSchedule.id == row.id,
+            # The same due-ness predicate due_schedules selected on, re-
+            # evaluated by the database at write time. This is the lock.
+            or_(ScanSchedule.next_run_at.is_(None), ScanSchedule.next_run_at <= now),
+        )
+        .values(last_run_at=now, next_run_at=next_run_at, last_dispatched_count=None, updated_at=now)
+        # The in-memory object is refreshed explicitly below on the winning
+        # path, so there is nothing for SQLAlchemy's session synchronisation
+        # to do here except try to evaluate this WHERE clause in Python.
+        .execution_options(synchronize_session=False)
+    )
+    session.commit()
+    if result.rowcount != 1:
+        logger.info(
+            "scan schedule %s was already claimed by another dispatcher pass; skipping", row.id
+        )
+        return False
+    # The in-memory row still carries the pre-claim values; the caller reads
+    # scan_type/workspace_id off it immediately afterwards.
+    session.refresh(row)
+    return True
 
 
 def due_schedules(session: Session, now: Optional[datetime] = None) -> list[ScanSchedule]:
@@ -287,6 +476,11 @@ def targets_covered_by(session: Session, row: ScanSchedule) -> list[Target]:
     own for the same scan type; otherwise a target that had been given a
     faster cadence would also keep getting the workspace's, and would be
     scanned twice.
+
+    Deactivated and soft-deleted targets are excluded at both scopes (see
+    is_dispatchable_target). A schedule is not consent to scan a target
+    somebody explicitly switched off, and a nightly job that quietly undid
+    every deactivation would be the worst version of this feature.
     """
     if row.target_id is not None:
         target = session.get(Target, row.target_id)
@@ -302,7 +496,7 @@ def targets_covered_by(session: Session, row: ScanSchedule) -> list[Target]:
                 row.target_id,
             )
             return []
-        return [target]
+        return [target] if is_dispatchable_target(target) else []
 
     overridden = set(
         session.exec(
@@ -316,7 +510,7 @@ def targets_covered_by(session: Session, row: ScanSchedule) -> list[Target]:
     return [
         t
         for t in session.exec(select(Target).where(Target.workspace_id == row.workspace_id)).all()
-        if t.id not in overridden
+        if t.id not in overridden and is_dispatchable_target(t)
     ]
 
 
@@ -341,6 +535,18 @@ def ensure_workspace_default_rows(session: Session, now: Optional[datetime] = No
     with no baseline at all. `last_run_at` stays NULL: nothing has run yet,
     and saying otherwise on the first page load would be a fabricated
     timestamp.
+
+    The seeded due time carries jitter, so workspaces materialised by the
+    same tick do not all come due together forever after; see
+    JITTER_FRACTION.
+
+    The lookup-then-insert here is a genuine check-then-act race (this runs
+    unattended on every tick), so it is backed by the partial unique index
+    from the migration rather than trusted on its own: a loser gets an
+    IntegrityError, rolls back, and re-reads the row the winner committed.
+    Without the index a duplicate workspace-default row would double-scan
+    every target in the workspace on every cycle, invisibly, because every
+    read path takes .first().
     """
     now = now or utcnow()
     created: list[ScanSchedule] = []
@@ -361,12 +567,24 @@ def ensure_workspace_default_rows(session: Session, now: Optional[datetime] = No
                 interval_hours=None,
                 enabled=None,
                 last_run_at=None,
-                next_run_at=now + timedelta(hours=shipped.interval_hours),
+                next_run_at=next_run_after(shipped.interval_hours, now, jitter=True),
                 created_at=now,
                 updated_at=now,
             )
             session.add(row)
-            session.commit()
+            try:
+                session.commit()
+            except IntegrityError:
+                # Another dispatcher won the race between the lookup above
+                # and this insert. Its row is the one that exists; nothing
+                # to create and nothing to report.
+                session.rollback()
+                logger.info(
+                    "workspace-default %s schedule for workspace %s was created concurrently",
+                    scan_type,
+                    workspace.id,
+                )
+                continue
             session.refresh(row)
             created.append(row)
     return created

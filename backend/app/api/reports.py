@@ -148,6 +148,14 @@ def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Opt
                     "started_at": s.started_at.isoformat() + "Z",
                     "completed_at": (s.completed_at.isoformat() + "Z") if s.completed_at else "",
                     "findings_count": s.findings_count,
+                    # (#273) Without this column an auditor reads the last
+                    # scan date and concludes the target is covered. For a
+                    # deactivated target that date is frozen at whenever
+                    # scanning was switched off, and nothing will ever
+                    # advance it -- the single most consequential place this
+                    # state can be omitted, because a compliance report is
+                    # read precisely to answer "is this repo covered".
+                    "scanning": "on" if target_lifecycle.is_active(target) else "OFF (deactivated)",
                 }
             )
         if not all_scans:
@@ -160,6 +168,7 @@ def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Opt
                     "started_at": "",
                     "completed_at": "",
                     "findings_count": 0,
+                    "scanning": "on" if target_lifecycle.is_active(target) else "OFF (deactivated)",
                 }
             )
 
@@ -187,9 +196,24 @@ def build_posture_report(session: Session, target_id: Optional[int], ws_ids: Opt
         "scope": "org-wide (all targets)" if target_id is None else targets[0].name,
         "target_count": len(targets),
         "targets": [
-            {"id": t.id, "name": t.name, "repo_url": t.repo_url, "label": t.label, "default_branch": t.default_branch}
+            {
+                "id": t.id,
+                "name": t.name,
+                "repo_url": t.repo_url,
+                "label": t.label,
+                "default_branch": t.default_branch,
+                # (#273) A compliance report that lists a repo without saying
+                # its scanning is switched off is asserting coverage it does
+                # not have. Emitted as a real column in both renderers below,
+                # not left to the reader to cross-reference elsewhere.
+                "is_active": target_lifecycle.is_active(t),
+            }
             for t in targets
         ],
+        # Counted once here rather than recomputed in each renderer, and
+        # surfaced at the top of the report: "3 of 20 targets are not being
+        # scanned" is a headline fact about the estate, not a footnote.
+        "deactivated_target_count": sum(1 for t in targets if not target_lifecycle.is_active(t)),
         "totals_by_severity_state": totals_rows,
         "severity_state_rows": severity_state_rows,
         "open_age_rows": open_age_rows,
@@ -206,12 +230,16 @@ def render_csv(data: dict) -> str:
     writer.writerow(["Generated At", data["generated_at"]])
     writer.writerow(["Scope", data["scope"]])
     writer.writerow(["Target Count", data["target_count"]])
+    writer.writerow(["Deactivated Targets (not scanned)", data["deactivated_target_count"]])
     writer.writerow([])
 
     writer.writerow(["Targets"])
-    writer.writerow(["ID", "Name", "Repo URL", "Label", "Default Branch"])
+    writer.writerow(["ID", "Name", "Repo URL", "Label", "Default Branch", "Scanning"])
     for t in data["targets"]:
-        writer.writerow([t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"]])
+        writer.writerow([
+            t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"],
+            "on" if t["is_active"] else "OFF (deactivated)",
+        ])
     writer.writerow([])
 
     writer.writerow(["Finding Totals By Severity And State (all in-scope targets)"])
@@ -257,10 +285,15 @@ def render_csv(data: dict) -> str:
     writer.writerow([])
 
     writer.writerow(["Scan History / Coverage (latest run per tool)"])
-    writer.writerow(["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings Count"])
+    writer.writerow(
+        ["Target", "Scanning", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings Count"]
+    )
     for r in data["scan_rows"]:
         writer.writerow(
-            [r["target"], r["tool"], r["branch"], r["status"], r["started_at"], r["completed_at"], r["findings_count"]]
+            [
+                r["target"], r["scanning"], r["tool"], r["branch"], r["status"],
+                r["started_at"], r["completed_at"], r["findings_count"],
+            ]
         )
     writer.writerow([])
 
@@ -288,6 +321,16 @@ def render_pdf(data: dict) -> bytes:
     story.append(Paragraph(f"Generated: {data['generated_at']}", styles["Normal"]))
     story.append(Paragraph(f"Scope: {data['scope']}", styles["Normal"]))
     story.append(Paragraph(f"Targets in scope: {data['target_count']}", styles["Normal"]))
+    # (#273) Surfaced in the header, not just as a per-row column: a reader
+    # who skims the summary and never reaches the coverage table should
+    # still learn that part of this estate is not being scanned.
+    if data.get("deactivated_target_count"):
+        story.append(
+            Paragraph(
+                f"Deactivated (not scanned): {data['deactivated_target_count']}",
+                styles["Normal"],
+            )
+        )
     story.append(Spacer(1, 0.25 * inch))
 
     def add_table(heading: str, header: list[str], rows: list[list]):
@@ -315,8 +358,14 @@ def render_pdf(data: dict) -> bytes:
 
     add_table(
         "Targets in Scope",
-        ["ID", "Name", "Repo URL", "Label", "Default Branch"],
-        [[t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"]] for t in data["targets"]],
+        ["ID", "Name", "Repo URL", "Label", "Default Branch", "Scanning"],
+        [
+            [
+                t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"],
+                "on" if t["is_active"] else "OFF (deactivated)",
+            ]
+            for t in data["targets"]
+        ],
     )
 
     add_table(
@@ -352,9 +401,12 @@ def render_pdf(data: dict) -> bytes:
 
     add_table(
         "Scan History / Coverage (latest run per tool)",
-        ["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings"],
+        ["Target", "Scanning", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings"],
         [
-            [r["target"], r["tool"], r["branch"], r["status"], r["started_at"], r["completed_at"], r["findings_count"]]
+            [
+                r["target"], r["scanning"], r["tool"], r["branch"], r["status"],
+                r["started_at"], r["completed_at"], r["findings_count"],
+            ]
             for r in data["scan_rows"]
         ],
     )

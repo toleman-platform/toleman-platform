@@ -35,11 +35,15 @@ from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
 from app.main import app as fastapi_app
 from app.models.models import (
+    ApiToken,
+    ApiTokenScope,
     AuthAuditLog,
     AuthEventType,
+    DiscoveryRun,
     Finding,
     FindingState,
     Organization,
+    SbomRun,
     Scan,
     Severity,
     Target,
@@ -79,16 +83,28 @@ def client(engine):
 
 
 def _workspace(engine) -> int:
+    """Each call makes its own Organization + Workspace with a distinct
+    api_key. Distinct because the workspace-scoping tests create two, and a
+    shared key would make require_workspace resolve either of them -- the
+    test would pass for the wrong reason."""
     with Session(engine) as session:
         org = Organization(name="org")
         session.add(org)
         session.commit()
         session.refresh(org)
-        ws = Workspace(organization_id=org.id, name="ws", api_key="ws-key")
+        ws = Workspace(organization_id=org.id, name="ws", api_key="placeholder")
         session.add(ws)
         session.commit()
         session.refresh(ws)
+        ws.api_key = f"ws-key-{ws.id}"
+        session.add(ws)
+        session.commit()
         return ws.id
+
+
+def _workspace_key(engine, workspace_id: int) -> str:
+    with Session(engine) as session:
+        return session.get(Workspace, workspace_id).api_key
 
 
 def _target(engine, workspace_id: int, name: str = "repo", **kw) -> int:
@@ -140,6 +156,42 @@ def _finding(engine, target_id: int, **kw) -> int:
         session.commit()
         session.refresh(f)
         return f.id
+
+
+def _api_token(engine, *, scope=ApiTokenScope.READ_WRITE, email="tok@example.com") -> str:
+    """A Bearer token for the public API, plus the admin user behind it.
+    Same shape as test_public_api.py's own helper."""
+    from app.core.security import generate_api_token
+
+    plaintext, token_hash, token_prefix = generate_api_token()
+    with Session(engine) as session:
+        user = User(email=email, name="T", password_hash=hash_password("whatever123"), role=UserRole.ADMIN)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        session.add(
+            ApiToken(user_id=user.id, name="t", token_hash=token_hash, token_prefix=token_prefix, scope=scope)
+        )
+        session.commit()
+    return plaintext
+
+
+def _deactivate(engine, target_id: int) -> None:
+    """Flip the flag directly, for tests whose subject is a dispatch path
+    rather than the endpoint that sets it."""
+    from app.core import target_lifecycle
+
+    with Session(engine) as session:
+        target_lifecycle.deactivate(session.get(Target, target_id))
+        session.commit()
+
+
+def _soft_delete(engine, target_id: int) -> None:
+    from app.core import target_lifecycle
+
+    with Session(engine) as session:
+        target_lifecycle.soft_delete(session.get(Target, target_id))
+        session.commit()
 
 
 def _audit_rows(engine, event_type: AuthEventType) -> list[AuthAuditLog]:
@@ -324,7 +376,7 @@ class TestDeactivationBlocksScanDispatch:
         res = client.post(
             f"/api/ingest/{tid}",
             json={"runs": []},
-            headers={"X-API-Key": "ws-key"},
+            headers={"X-API-Key": _workspace_key(engine, ws)},
         )
         assert res.status_code == 200
         assert "deactivated" in res.json()["error"]
@@ -548,6 +600,285 @@ class TestDeactivationBlocksScanDispatch:
         assert client.post(f"/api/targets/{tid}/pipeline-integrate").status_code == 409
 
 
+class TestDeactivationBlocksFindingProducingWrites:
+    """The SBOM / dependency-inventory half of the product.
+
+    None of these clone a repo or spawn a subprocess, which is exactly why
+    the first pass missed them -- "does it run a scanner" was the wrong
+    test. The one that matters is "can this make a deactivated target
+    acquire new findings", and all four can: each reaches
+    check_and_ingest_malware, which persists Critical `Finding` rows and
+    fans out to Jira, SIEM and notifications.
+    """
+
+    def test_malware_recheck_is_refused(self, client, engine):
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        _login(client, engine)
+        client.post(f"/api/targets/{tid}/deactivate")
+
+        res = client.post(f"/api/sbom/{tid}/malware-check")
+        assert res.status_code == 409
+        assert "deactivated" in res.json()["detail"]
+
+    def test_github_dependency_sync_is_refused(self, client, engine):
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        _login(client, engine)
+        client.post(f"/api/targets/{tid}/deactivate")
+
+        assert client.post(f"/api/sbom/{tid}/github-sync").status_code == 409
+
+    def test_sbom_upload_is_refused(self, client, engine):
+        """The exact analogue of POST /api/ingest/{id}: an outside party
+        handing us scan-derived data for a target whose scanning is off."""
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        _login(client, engine)
+        client.post(f"/api/targets/{tid}/deactivate")
+
+        res = client.post(
+            f"/api/sbom/{tid}/upload",
+            files={"file": ("sbom.json", b'{"components": []}', "application/json")},
+        )
+        assert res.status_code == 409
+        assert "deactivated" in res.json()["detail"]
+
+    def test_no_finding_is_created_by_a_refused_malware_check(self, engine, client, monkeypatch):
+        """The assertion that actually matters: not just the status code,
+        but that nothing was written. A 409 with a Critical finding already
+        persisted behind it would be worse than no gate at all."""
+        from app.api import sbom as sbom_module
+
+        ingest = MagicMock()
+        monkeypatch.setattr(sbom_module, "check_and_ingest_malware", ingest)
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        _login(client, engine)
+        client.post(f"/api/targets/{tid}/deactivate")
+
+        client.post(f"/api/sbom/{tid}/malware-check")
+        ingest.assert_not_called()
+        with Session(engine) as session:
+            assert session.exec(select(Finding)).all() == []
+
+
+class TestWorkerLevelReChecks:
+    """A route-level 409 only closes the door at dispatch. Each of these
+    tasks re-loads the target by id, potentially minutes later, and clones
+    the repo -- so a deactivation landing inside that window has to be
+    honoured by the worker too."""
+
+    def test_discovery_worker_refuses_before_cloning(self, engine, monkeypatch):
+        from app.core import db as db_module
+        from app.tasks import discovery_tasks
+
+        monkeypatch.setattr(db_module, "engine", engine)
+        monkeypatch.setattr(discovery_tasks, "engine", engine)
+        clone = MagicMock()
+        monkeypatch.setattr(discovery_tasks.runner, "clone_repo", clone)
+
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        with Session(engine) as session:
+            run = DiscoveryRun(target_id=tid, branch="main", status="running")
+            session.add(run)
+            session.commit()
+            session.refresh(run)
+            run_id = run.id
+        _deactivate(engine, tid)
+
+        discovery_tasks.run_discovery.apply(kwargs={"target_id": tid, "run_id": run_id}).get()
+
+        clone.assert_not_called()
+        with Session(engine) as session:
+            settled = session.get(DiscoveryRun, run_id)
+            assert settled.status == "failed"
+            assert "deactivated" in settled.error
+
+    def test_sbom_worker_refuses_before_cloning(self, engine, monkeypatch):
+        from app.core import db as db_module
+        from app.tasks import sbom_tasks
+
+        monkeypatch.setattr(db_module, "engine", engine)
+        monkeypatch.setattr(sbom_tasks, "engine", engine)
+        clone = MagicMock()
+        monkeypatch.setattr(sbom_tasks.runner, "clone_repo", clone)
+        fetch = MagicMock()
+        monkeypatch.setattr(sbom_tasks, "fetch_dependency_graph", fetch)
+
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        with Session(engine) as session:
+            run = SbomRun(target_id=tid, branch="main", status="running")
+            session.add(run)
+            session.commit()
+            session.refresh(run)
+            run_id = run.id
+        _deactivate(engine, tid)
+
+        sbom_tasks.run_sbom_generation.apply(kwargs={"target_id": tid, "run_id": run_id}).get()
+
+        clone.assert_not_called()
+        fetch.assert_not_called()
+        with Session(engine) as session:
+            settled = session.get(SbomRun, run_id)
+            assert settled.status == "failed"
+            assert "deactivated" in settled.error
+
+    def test_api_scan_worker_refuses_before_probing(self, engine, monkeypatch):
+        """The highest-consequence window of the four: this one sends real
+        traffic at a real deployed host."""
+        from app.core import db as db_module
+        from app.tasks import api_scan_tasks
+
+        monkeypatch.setattr(db_module, "engine", engine)
+        monkeypatch.setattr(api_scan_tasks, "engine", engine)
+        nuclei = MagicMock()
+        monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", nuclei)
+
+        ws = _workspace(engine)
+        tid = _target(engine, ws, api_base_url="https://api.example.com")
+        with Session(engine) as session:
+            scan = Scan(target_id=tid, tool="api-scan", branch="main", status="running")
+            session.add(scan)
+            session.commit()
+            session.refresh(scan)
+            scan_id = scan.id
+        _deactivate(engine, tid)
+
+        api_scan_tasks.run_api_scan.apply(kwargs={"target_id": tid, "scan_id": scan_id}).get()
+
+        nuclei.assert_not_called()
+        with Session(engine) as session:
+            settled = session.get(Scan, scan_id)
+            assert settled.status == "failed"
+            assert "deactivated" in settled.error
+
+
+class TestRemainingDispatchPaths:
+    def test_public_api_scan_trigger_is_refused(self, client, engine, monkeypatch):
+        """A public API token must not be a way around a decision made in
+        the workspace's own configuration."""
+        from app.api import public_api as public_api_module
+
+        mock_delay = MagicMock()
+        monkeypatch.setattr(public_api_module.run_scan, "delay", mock_delay)
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        token = _api_token(engine)
+        _deactivate(engine, tid)
+
+        res = client.post(
+            f"/api/public/v1/scans?target_id={tid}&tool=semgrep",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert res.status_code == 409, res.text
+        assert "deactivated" in res.json()["detail"]
+        mock_delay.assert_not_called()
+
+    def test_public_api_scan_trigger_404s_a_deleted_target(self, client, engine):
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        token = _api_token(engine)
+        _soft_delete(engine, tid)
+
+        res = client.post(
+            f"/api/public/v1/scans?target_id={tid}&tool=semgrep",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert res.status_code == 404
+
+    def test_public_api_target_list_excludes_deleted(self, client, engine):
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone")
+        kept = _target(engine, ws, name="kept")
+        token = _api_token(engine)
+        _soft_delete(engine, gone)
+
+        res = client.get("/api/public/v1/targets", headers={"Authorization": f"Bearer {token}"})
+        assert [t["id"] for t in res.json()] == [kept]
+
+    def test_bulk_pipeline_integrate_drops_deactivated_targets(self, client, engine, monkeypatch):
+        """Dropped from the selection rather than failing the batch: the
+        caller sent a list of ids, possibly from a stale page, and one
+        switched-off repo should not cancel the rollout for the rest."""
+        from app.api import targets as targets_module
+
+        monkeypatch.setattr(targets_module.run_pipeline_integration_batch, "delay", MagicMock())
+        ws = _workspace(engine)
+        off_id = _target(engine, ws, name="switched-off")
+        on_id = _target(engine, ws, name="still-on")
+        _login(client, engine)
+        client.post(f"/api/targets/{off_id}/deactivate")
+
+        res = client.post(
+            "/api/targets/bulk-pipeline-integrate", json={"target_ids": [off_id, on_id]}
+        )
+        assert res.status_code == 202, res.text
+        assert res.json()["total"] == 1
+
+        batch = client.get(f"/api/targets/bulk-pipeline-integrate/{res.json()['batch_id']}").json()
+        assert [i["target_id"] for i in batch["items"]] == [on_id]
+
+    def test_bulk_pipeline_integrate_403s_when_only_deactivated_were_selected(self, client, engine):
+        """Nothing eligible left is the existing 403, not a 202 for an
+        empty batch that would report success having done nothing."""
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        _login(client, engine)
+        client.post(f"/api/targets/{tid}/deactivate")
+
+        res = client.post("/api/targets/bulk-pipeline-integrate", json={"target_ids": [tid]})
+        assert res.status_code == 403
+
+    def test_startup_baseline_catchup_skips_deactivated_targets(self, engine, monkeypatch):
+        """A worker restart must not become a way to scan a deactivated
+        target once."""
+        from app.tasks import scan_tasks
+
+        monkeypatch.setattr(
+            scan_tasks, "tools_for_surface", lambda session, workspace_id, surface: ["semgrep"]
+        )
+        mock_delay = MagicMock()
+        monkeypatch.setattr(scan_tasks.run_scan, "delay", mock_delay)
+
+        ws = _workspace(engine)
+        off_id = _target(engine, ws, name="switched-off")
+        on_id = _target(engine, ws, name="still-on")
+        _deactivate(engine, off_id)
+
+        with Session(engine) as session:
+            scan_tasks.queue_full_scan_for_targets_missing_a_baseline(session)
+
+        dispatched = {c.kwargs["target_id"] for c in mock_delay.call_args_list}
+        assert dispatched == {on_id}
+
+    def test_the_pr_merged_webhook_does_not_queue_a_scan(self, engine, monkeypatch):
+        from app.api import webhooks
+        from app.tasks import scan_tasks
+
+        mock_delay = MagicMock()
+        monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", mock_delay)
+
+        ws = _workspace(engine)
+        tid = _target(engine, ws, name="repo")
+        _deactivate(engine, tid)
+
+        with Session(engine) as session:
+            result = webhooks._handle_pull_request(
+                session,
+                {
+                    "action": "closed",
+                    "number": 7,
+                    "pull_request": {"merged": True, "base": {"ref": "main"}, "head": {"ref": "f", "sha": "a"}},
+                    "repository": {"clone_url": "https://github.com/acme/repo"},
+                },
+            )
+        assert result["skipped"] == "target deactivated"
+        mock_delay.assert_not_called()
+
+
 class TestReactivateRestoresDispatch:
     def test_scanning_resumes_after_reactivate(self, client, engine, monkeypatch):
         from app.api import scans as scans_module
@@ -765,6 +1096,181 @@ class TestDeletedTargetsDisappear:
                 for t in session.exec(target_lifecycle.live_targets(select(Target))).all()
             }
         assert "https://github.com/acme/repo" not in existing_urls
+
+
+class TestAggregatesExcludeDeletedTargets:
+    """Per-aggregate, not sampled. Each of these is a separately-written
+    query with its own scoping shape, and the ones that join Target only
+    for non-admin callers are exactly where a single missed predicate hides
+    -- it is invisible to a workspace-scoped test and only shows up for an
+    admin."""
+
+    def test_the_live_scan_activity_widget_drops_them(self, engine):
+        """The twin of GET /api/scans/active's filter. This resolver builds
+        its own query, and _target_names() correctly refuses to resolve a
+        deleted target -- so without the filter the widget renders the
+        literal fallback string "target #47" instead of a name."""
+        from app.core import widgets
+
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone")
+        kept = _target(engine, ws, name="kept")
+        with Session(engine) as session:
+            session.add(Scan(target_id=gone, tool="semgrep", branch="main", status="running"))
+            session.add(Scan(target_id=kept, tool="semgrep", branch="main", status="running"))
+            session.commit()
+        _soft_delete(engine, gone)
+
+        with Session(engine) as session:
+            # ws_ids=None is the admin path: the one that skips the Target
+            # join entirely, and the only one a workspace-scoped test misses.
+            data = widgets.resolve_live_scan_activity(session, None, {})
+
+        assert {item["target_id"] for item in data["items"]} == {kept}
+        assert data["count"] == 1
+        # The fallback string is what a missed filter would have rendered.
+        assert all("target #" not in item["target_name"] for item in data["items"])
+
+    def test_findings_facets_drop_a_deleted_targets_values(self, client, engine):
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone", owner="ghost-team", environment="retired")
+        _target(engine, ws, name="kept", owner="platform-team", environment="production")
+        _login(client, engine)
+        client.delete(f"/api/targets/{gone}")
+
+        assert client.get("/api/findings/facets/owners").json() == ["platform-team"]
+        assert client.get("/api/findings/facets/environments").json() == ["production"]
+
+    def test_the_scans_summary_drops_them_for_an_admin(self, client, engine):
+        """Admin callers never join Target, so this is the case the
+        subquery exists for."""
+        ws = _workspace(engine)
+        gone = _target(engine, ws, name="gone")
+        with Session(engine) as session:
+            session.add(Scan(target_id=gone, tool="semgrep", branch="main", status="completed"))
+            session.commit()
+        _login(client, engine)
+
+        assert str(gone) in client.get("/api/scans/summary").json()
+        client.delete(f"/api/targets/{gone}")
+        assert str(gone) not in client.get("/api/scans/summary").json()
+
+    def test_scan_history_404s_for_a_deleted_target(self, client, engine):
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        _login(client, engine)
+        client.delete(f"/api/targets/{tid}")
+
+        assert client.get(f"/api/scans/history?target_id={tid}").status_code == 404
+
+
+class TestDeactivationIsVisibleInAggregates:
+    """Deactivated targets are NOT excluded from aggregates -- their
+    findings still count, which is the point. But two surfaces have to
+    report the state rather than silently carrying a stale number."""
+
+    def test_the_compliance_report_says_which_targets_are_not_scanned(self, client, engine):
+        """The single most consequential place this could have been
+        omitted: an auditor reads the last scan date and concludes the
+        repo is covered, when nothing will ever advance that date again."""
+        ws = _workspace(engine)
+        tid = _target(engine, ws, name="payments-api")
+        with Session(engine) as session:
+            session.add(Scan(target_id=tid, tool="semgrep", branch="main", status="completed"))
+            session.commit()
+        _login(client, engine)
+        client.post(f"/api/targets/{tid}/deactivate")
+
+        body = client.get("/api/reports/posture").text
+        assert "payments-api" in body, "a deactivated target stays in the report"
+        assert "OFF (deactivated)" in body, "and the report says its scanning is off"
+
+    def test_an_active_targets_report_does_not_cry_wolf(self, client, engine):
+        ws = _workspace(engine)
+        _target(engine, ws, name="payments-api")
+        _login(client, engine)
+
+        assert "OFF (deactivated)" not in client.get("/api/reports/posture").text
+
+    def test_deactivated_targets_leave_the_coverage_denominator(self, client, engine):
+        """Otherwise the coverage component decays a little every day for a
+        repo nobody can scan, and the only way to recover the score is to
+        reactivate something you deliberately switched off."""
+        ws = _workspace(engine)
+        scanned = _target(engine, ws, name="scanned")
+        off = _target(engine, ws, name="switched-off")
+        with Session(engine) as session:
+            session.add(Scan(target_id=scanned, tool="semgrep", branch="main", status="completed"))
+            session.commit()
+        _login(client, engine)
+
+        before = client.get("/api/dashboard/security-score").json()["components"]["coverage"]
+        assert (before["scanned_targets"], before["total_targets"]) == (1, 2)
+
+        client.post(f"/api/targets/{off}/deactivate")
+        after = client.get("/api/dashboard/security-score").json()["components"]["coverage"]
+        assert (after["scanned_targets"], after["total_targets"]) == (1, 1)
+        assert after["score"] == 100.0
+        # The excluded count is reported, not silently dropped: "1 of 1"
+        # against a target list of 2 has to be reconcilable.
+        assert after["deactivated_targets"] == 1
+        assert "deactivated" in after["note"]
+
+    def test_an_entirely_deactivated_scope_is_neutral_not_zero(self, client, engine):
+        """Scoring 0 would say "you scan nothing" about an estate that was
+        switched off on purpose; neutral-100 matches _sla_score's own
+        nothing-in-scope handling rather than inventing a third convention."""
+        ws = _workspace(engine)
+        tid = _target(engine, ws)
+        _login(client, engine)
+        client.post(f"/api/targets/{tid}/deactivate")
+
+        coverage = client.get("/api/dashboard/security-score").json()["components"]["coverage"]
+        assert coverage["score"] == 100.0
+        assert coverage["deactivated_targets"] == 1
+
+
+class TestWorkspaceScopingOnTheNewEndpoints:
+    """#57's read-path scoping applies to the write paths added here too: a
+    non-admin must not be able to deactivate or delete a target in a
+    workspace they hold no membership in, and must not learn it exists."""
+
+    def _foreign_target(self, engine):
+        mine = _workspace(engine)
+        theirs = _workspace(engine)
+        return mine, _target(engine, theirs, name="not-mine")
+
+    def test_deactivate_404s_across_the_workspace_boundary(self, client, engine):
+        mine, foreign = self._foreign_target(engine)
+        _login(
+            client, engine, role=UserRole.USER, workspace_id=mine,
+            workspace_role=WorkspaceRole.SECURITY_ENGINEER, email="sec@example.com",
+        )
+        res = client.post(f"/api/targets/{foreign}/deactivate")
+        # 404, not 403: the existence of another tenant's target is itself
+        # information (the convention the rest of this file already uses).
+        assert res.status_code == 404
+        assert _reload(engine, foreign).deactivated_at is None
+
+    def test_delete_404s_across_the_workspace_boundary(self, client, engine):
+        mine, foreign = self._foreign_target(engine)
+        _login(
+            client, engine, role=UserRole.USER, workspace_id=mine,
+            workspace_role=WorkspaceRole.SECURITY_ENGINEER, email="sec@example.com",
+        )
+        assert client.delete(f"/api/targets/{foreign}").status_code == 404
+        assert _reload(engine, foreign).deleted_at is None
+
+    def test_no_audit_row_is_written_for_a_refused_action(self, client, engine):
+        """A refused attempt must not leave a row claiming the target was
+        deleted -- the audit trail would then contradict the database."""
+        mine, foreign = self._foreign_target(engine)
+        _login(
+            client, engine, role=UserRole.USER, workspace_id=mine,
+            workspace_role=WorkspaceRole.SECURITY_ENGINEER, email="sec@example.com",
+        )
+        client.delete(f"/api/targets/{foreign}")
+        assert _audit_rows(engine, AuthEventType.TARGET_DELETED) == []
 
 
 class TestTheAuditTrailSurvives:

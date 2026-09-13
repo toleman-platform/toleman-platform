@@ -173,6 +173,17 @@ export default function MaliciousPackagesPage() {
                       ) : (
                         <span>target #{f.target_id}</span>
                       )}
+                      {/* (#273) These findings outlive a deactivation by
+                          design -- history is retained. Saying so stops a
+                          reader assuming the repo is still being watched for
+                          newly-published malicious packages, which it is
+                          not: the OSV re-check refuses a deactivated
+                          target. */}
+                      {target?.is_active === false && (
+                        <Badge variant="warning" className="shrink-0 text-[10px]">
+                          Deactivated
+                        </Badge>
+                      )}
                       <span>·</span>
                       <span>{f.state}</span>
                     </div>
@@ -218,9 +229,22 @@ export default function MaliciousPackagesPage() {
                 {(() => {
                   const activeId = chosenTargetId ?? targets[0]?.id ?? null;
                   const label = activeId !== null ? checkState[activeId] : undefined;
+                  // (#273) Both endpoints this button calls (/github-sync
+                  // and /malware-check) refuse a deactivated target, because
+                  // both persist Critical findings and fan out to Jira/SIEM/
+                  // notifications. The button has to say so rather than
+                  // firing and reporting "check failed", which would read as
+                  // an OSV outage -- the opposite of what actually happened.
+                  const deactivated =
+                    activeId !== null && targetById.get(activeId)?.is_active === false;
                   return (
                     <>
-                      {label && label !== "checking" && (
+                      {deactivated && (
+                        <span className="text-xs text-warning">
+                          This repo is deactivated; scanning is off.
+                        </span>
+                      )}
+                      {!deactivated && label && label !== "checking" && (
                         <span
                           className={
                             label === "clean"
@@ -236,7 +260,12 @@ export default function MaliciousPackagesPage() {
                       <Button
                         size="sm"
                         onClick={() => activeId !== null && recheck(activeId)}
-                        disabled={activeId === null || label === "checking"}
+                        disabled={activeId === null || label === "checking" || deactivated}
+                        title={
+                          deactivated
+                            ? "This target is deactivated; scanning is off. Reactivate it on the target page."
+                            : undefined
+                        }
                       >
                         <RefreshCw className={label === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
                         <span>{label === "checking" ? "Scanning..." : "Import & Check"}</span>

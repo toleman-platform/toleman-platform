@@ -298,7 +298,16 @@ def resolve_live_scan_activity(session: Session, ws_ids, config: dict) -> dict:
     from app.models.models import Scan
 
     limit = max(1, min(int(config.get("limit", 8)), 50))
-    query = select(Scan).where(Scan.status == "running")
+    # (#273) The twin of GET /api/scans/active's own filter, and it has to be
+    # here too rather than inherited: this resolver builds its own query
+    # instead of calling that endpoint (see the docstring above). Without
+    # it, a deleted target's in-flight scan keeps rendering -- and because
+    # _target_names() correctly refuses to resolve a deleted target, the
+    # widget shows the literal fallback string "target #47" rather than a
+    # name, which is the worst of both outcomes.
+    query = target_lifecycle.exclude_deleted_targets(
+        select(Scan).where(Scan.status == "running"), Scan.target_id
+    )
     if ws_ids is not None:
         query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
     running = list(session.exec(query).all())

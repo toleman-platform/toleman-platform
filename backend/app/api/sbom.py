@@ -237,6 +237,15 @@ def malware_check(
     "osv-malware"). Returns a distinct "failed" status when OSV is
     unreachable, so a network outage is never reported as clean."""
     target = _get_target(target_id, session)
+    # (#273) This persists Critical `Finding` rows and fans out to Jira,
+    # SIEM and notifications (see check_and_ingest_malware ->
+    # ingest_malicious_packages). No clone and no subprocess, which is why
+    # it was missed in the first sweep -- but "does it execute a scanner"
+    # was the wrong test. The one that matters is "can this make a
+    # deactivated target acquire new findings", and this can.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     result = check_and_ingest_malware(session, target)
     return {**result, "target_id": target_id}
 
@@ -259,6 +268,12 @@ def import_github_sbom(
     was rejected); distinct from an empty import, which is a legitimate
     "repo has no dependencies" result and is reported as count 0."""
     target = _get_target(target_id, session)
+    # (#273) Writes the dependency inventory AND runs the OSV malware check
+    # over the freshly-merged components, so it is a finding-producing path
+    # for a repo whose scanning is switched off.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     slug = repo_slug_from_url(target.repo_url)
     token = resolve_github_token(session, target.workspace_id, slug)
     try:
@@ -307,6 +322,14 @@ async def upload_sbom(
     doubles that), so a large or concurrent upload could exhaust a worker.
     """
     target = _get_target(target_id, session)
+    # (#273) The exact analogue of POST /api/ingest/{id}: an outside party
+    # handing us scan-derived data for this target, which lands as
+    # persisted components and then as Critical malware findings via the
+    # best-effort check below. Refused before the body is even read, so a
+    # deactivated target can't be used to push 25MB through a worker either.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     content = await file.read(MAX_SBOM_UPLOAD_BYTES + 1)
     if len(content) > MAX_SBOM_UPLOAD_BYTES:
         raise HTTPException(

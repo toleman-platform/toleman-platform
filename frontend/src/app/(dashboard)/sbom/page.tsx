@@ -303,6 +303,16 @@ export default function SbomPage() {
 
   const showBusy = loading || running;
   const currentTarget = targets.find((t) => t.id === targetId);
+  // (#273) Generate, Import from GitHub and Upload all write this target's
+  // dependency inventory and run the OSV malware check over it, so all
+  // three are refused server-side for a deactivated target. Export is
+  // deliberately NOT gated: reading back an inventory captured before
+  // deactivation is a large part of why someone deactivates rather than
+  // deletes.
+  const targetDeactivated = currentTarget?.is_active === false;
+  const deactivatedHint = targetDeactivated
+    ? "This target is deactivated; scanning is off. Reactivate it on the target page."
+    : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -341,10 +351,16 @@ export default function SbomPage() {
         generateLabel={targetId !== ALL_TARGETS ? "Generate SBOM" : undefined}
         onGenerate={targetId !== ALL_TARGETS ? run : undefined}
         generating={running}
-        generateDisabled={targetId === null}
+        generateDisabled={targetId === null || targetDeactivated}
         extra={
           targetId !== ALL_TARGETS ? (
             <div className="flex flex-col gap-2">
+              {targetDeactivated && (
+                <p className="text-xs text-warning">
+                  This target is deactivated; scanning is off, so generating or importing an inventory is
+                  disabled. The SBOM already on file stays readable and exportable.
+                </p>
+              )}
               <Button
                 variant="outline"
                 className="w-full justify-center"
@@ -357,7 +373,8 @@ export default function SbomPage() {
                 variant="outline"
                 className="w-full justify-center"
                 onClick={importFromGithub}
-                disabled={importingGithub || targetId === null}
+                disabled={importingGithub || targetId === null || targetDeactivated}
+                title={deactivatedHint}
               >
                 {importingGithub ? "Importing..." : "Import from GitHub"}
               </Button>
@@ -365,7 +382,8 @@ export default function SbomPage() {
                 variant="outline"
                 className="w-full justify-center"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading || targetId === null}
+                disabled={uploading || targetId === null || targetDeactivated}
+                title={deactivatedHint}
               >
                 {uploading ? "Uploading..." : "Upload SBOM"}
               </Button>

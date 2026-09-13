@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, Index, JSON, UniqueConstraint
 from sqlmodel import SQLModel, Field
 
 from app.core.time import utcnow
@@ -795,6 +795,31 @@ class AiBomComponent(SQLModel, table=True):
     Populated during the existing SBOM generation run, which already has a
     checkout (app/tasks/sbom_tasks.py), so no extra clone.
     """
+
+    # This index is the upsert key app.core.aibom.upsert_aibom_components keys
+    # on: a model is identified by target + branch + name + type. Version is
+    # deliberately NOT part of it -- an unpinned reference that later gains a
+    # revision is the same dependency, now pinned, not a new one.
+    #
+    # It is declared here, and not only in the migration that created it
+    # (alembic/versions/3d006423f58b_add_aibom_components_190.py), because a
+    # unique index that exists in the database but not in the model metadata
+    # is invisible to Alembic's comparison: `--autogenerate` sees an index in
+    # the database that nothing in metadata accounts for and emits
+    # `op.drop_index('ix_aibomcomponent_upsert_key')`. That was one of the
+    # unrelated operations #217 found sitting in generated migrations. Keep
+    # this declaration in step with the migration; the guard for it is
+    # tests/test_schema_drift.py.
+    __table_args__ = (
+        Index(
+            "ix_aibomcomponent_upsert_key",
+            "target_id",
+            "branch",
+            "name",
+            "component_type",
+            unique=True,
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     target_id: int = Field(foreign_key="target.id", index=True)

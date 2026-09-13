@@ -132,9 +132,18 @@ export function ScanSchedules() {
                 )}
               </div>
 
+              {/* The three per-target reasons a scheduled API scan can be
+                  skipped. Stated once here rather than as a per-row error,
+                  because this view cannot know whether any of them apply:
+                  telling an admin "no API base URL is set" on a workspace
+                  where every target has one would be the same dishonesty
+                  pointed the other way. Each target's detail page names the
+                  one that actually applies to it. */}
               <p className="text-xs text-muted-foreground">
-                Scheduled active API scans only reach targets that have an API base URL configured;
-                the rest are skipped silently, and never probed at a host this platform inferred.
+                A scheduled active API scan only reaches a target that is active, has an API base
+                URL configured, and has discovered endpoints to probe. Any other target is skipped
+                silently, and never probed at a host this platform inferred. Each target&apos;s
+                Scheduled scans panel says which of these applies to it.
               </p>
               <p className="text-xs text-muted-foreground">
                 Scheduled scans go through the same queue as manual ones, at the same concurrency.

@@ -933,6 +933,57 @@ def test_seeded_defaults_are_jittered_forward_only(engine):
         assert len({r.next_run_at for r in full_scan_rows}) > 1
 
 
+def test_the_next_due_time_is_always_strictly_after_now(engine):
+    """compute_next_run_at's strictly-after-`now` invariant, on every branch.
+
+    This is the promise claim_due_schedule's lock is built on: the winner
+    writes back a value from this function, and every loser's
+    `next_run_at <= now` predicate is then guaranteed false, so their
+    rowcount is 0 and they skip. Weaken it and the UPDATE stops locking
+    while still looking exactly like one -- the row stays claimable, the
+    next pass re-claims it, and every target is scanned twice, with nothing
+    failing anywhere to say so.
+
+    Worth its own test because none of the claim tests above would catch it:
+    they all use rows whose next due time lands comfortably clear of `now`,
+    so the margin is never actually under pressure. These use the tightest
+    configuration the validator permits (MIN_INTERVAL_HOURS) and sample the
+    two jittered branches, so a change that makes the spread symmetric -- or
+    otherwise lets it approach the interval -- fails here rather than in
+    production as a silent double fan-out.
+    """
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        now = utcnow()
+        interval = core.MIN_INTERVAL_HOURS
+
+        # Branch 1: no stored clock at all -> the jittered fallback.
+        never_set = _schedule(session, ws, interval_hours=interval, next_run_at=None)
+        # Branch 2: the anchored answer lands exactly on `now`. The guard is
+        # a strict `>`, so this must NOT be returned -- "equal to now" is not
+        # still in the future, and returning it would be the one value that
+        # defeats the lock by the narrowest possible margin.
+        exactly_now = _schedule(
+            session, ws, scan_type=ScanScheduleType.API_SCAN,
+            interval_hours=interval, next_run_at=now - timedelta(hours=interval),
+        )
+        # Branch 3: the anchored answer is in the future, returned as-is.
+        anchored = _schedule(
+            session, ws, target=_make_target(session, ws, "t"),
+            interval_hours=interval, next_run_at=now - timedelta(minutes=1),
+        )
+
+        for row in (never_set, exactly_now, anchored):
+            # Sampled: two of the three branches go through random jitter, so
+            # one draw proves very little.
+            for _ in range(50):
+                assert core.compute_next_run_at(session, row, now) > now
+
+        # The boundary itself, stated separately from the loop so a failure
+        # names it.
+        assert core.compute_next_run_at(session, exactly_now, now) != now
+
+
 # ---------------------------------------------------------------------------
 # The API write path must not let a clock reset become a way to defer a scan
 # ---------------------------------------------------------------------------
@@ -1253,7 +1304,13 @@ def test_resuming_before_the_due_time_keeps_it(engine):
 def test_lifecycle_gate_is_collapsed_once_273_has_landed():
     try:
         import app.core.target_lifecycle  # noqa: F401
-    except ImportError:
+    except ModuleNotFoundError:
+        # Deliberately NOT `except ImportError`. ModuleNotFoundError
+        # subclasses it, so the broad catch would also swallow the case
+        # where target_lifecycle exists but raises ImportError from its own
+        # imports -- and this tripwire would then skip after #445 merged,
+        # which is precisely the silence it exists to prevent. Anything
+        # other than "the module is not there" propagates as a real failure.
         pytest.skip(
             "app.core.target_lifecycle does not exist yet (#273/#445 unmerged); "
             "is_dispatchable_target's defensive getattr is still correct here"

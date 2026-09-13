@@ -351,10 +351,22 @@ def effective_for_row(session: Session, row: ScanSchedule) -> tuple[bool, int]:
 # but it is the worst possible arrival pattern for the queue contention
 # #229 is about, and it would be locked in on the first tick after deploy.
 #
-# Forward-only, so a jittered schedule never fires *earlier* than its
-# configured interval; and applied when the clock is set rather than on
-# every advance, so the offset a workspace gets is stable instead of being
-# re-rolled (and re-clustered) every cycle.
+# Applied when the clock is set rather than on every advance, so the offset
+# a workspace gets is stable instead of being re-rolled (and re-clustered)
+# every cycle.
+#
+# Forward-only is NOT just a scheduling preference ("never fire earlier than
+# the configured interval"), and this is the comment someone will read before
+# changing it. It is what makes compute_next_run_at's strictly-after-`now`
+# invariant -- the thing claim_due_schedule's lock depends on -- structural
+# rather than contingent. Centre the spread instead (+/-5% rather than +10%,
+# which reads like a tidier distribution) and the guarantee silently becomes
+# "holds as long as the spread stays smaller than the interval", a second
+# assumption nothing states or checks, and one that a lower
+# MIN_INTERVAL_HOURS or a larger MAX_JITTER would quietly retire. A due time
+# not after `now` leaves the claimed row still matching `next_run_at <= now`,
+# so the next pass re-claims it and the fan-out doubles, with nothing
+# failing anywhere. See compute_next_run_at's docstring.
 JITTER_FRACTION = 0.1
 MAX_JITTER = timedelta(minutes=30)
 
@@ -368,12 +380,38 @@ def _jittered_interval(interval_hours: int) -> timedelta:
 def next_run_after(interval_hours: int, now: datetime, *, jitter: bool = False) -> datetime:
     """The due time for a clock being set for the first time (a freshly
     materialised default, or a schedule whose interval an operator just
-    changed)."""
+    changed).
+
+    Always strictly after `now`: `interval_hours` is validated to be at least
+    MIN_INTERVAL_HOURS, and the jitter is forward-only. See
+    compute_next_run_at for why that is a correctness requirement rather than
+    a preference.
+    """
     return now + (_jittered_interval(interval_hours) if jitter else timedelta(hours=interval_hours))
 
 
 def compute_next_run_at(session: Session, row: ScanSchedule, now: datetime) -> datetime:
     """The due time to advance an already-running schedule to.
+
+    INVARIANT: the returned time is always STRICTLY AFTER `now`, on every
+    branch. This is the promise `claim_due_schedule` is built on, and it is
+    worth stating because nothing about the arithmetic makes it obvious.
+
+    The claim is a conditional `UPDATE ... WHERE next_run_at <= :now` and its
+    rowcount is what tells a dispatcher pass whether it won the row. That
+    only works because the winner writes back a value this function produced:
+    once it commits, every loser's `next_run_at <= now` predicate is
+    guaranteed false, so their rowcount is 0 and they skip. Return a value at
+    or before `now` from any branch and the lock silently stops locking --
+    the row keeps matching, the next pass re-claims it, and the fan-out
+    doubles. Nothing would fail loudly; the only symptom would be every
+    target scanned twice.
+
+    Three branches, all of which must hold it:
+      * anchored, guarded by `anchored > now` (the reason for the strict `>`);
+      * the anchored answer having gone past, falling through to...
+      * ...`next_run_after`, which is `now` plus at least MIN_INTERVAL_HOURS
+        with forward-only jitter.
 
     Anchored to the row's previous `next_run_at` rather than to `now`, so a
     tick that arrives four minutes late does not push the following run four
@@ -424,6 +462,15 @@ def claim_due_schedule(session: Session, row: ScanSchedule, now: datetime) -> bo
     concurrency. The `next_run_at <= now` predicate inside the UPDATE is
     what makes the loser of that race see rowcount 0 and skip, instead of
     both of them scanning every target.
+
+    That predicate only bites because of `compute_next_run_at`'s
+    strictly-after-`now` invariant: the value the winner commits is
+    guaranteed to fall outside `next_run_at <= now`, so every loser's WHERE
+    clause is guaranteed false. Weaken that invariant -- symmetric jitter,
+    a zero-hour interval slipping past validation, a "<=" softened to "<" in
+    the anchored guard -- and this stops being a lock while still looking
+    exactly like one. There is no failure this end would report; the row
+    would simply stay claimable and every target would be scanned twice.
 
     `last_dispatched_count` is cleared in the same statement rather than
     left alone. It is written after the fan-out, so a crash mid-pass would

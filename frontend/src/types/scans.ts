@@ -178,6 +178,23 @@ export type PrGuardrailFinding = {
   ignore_requested_reason: string;
   ignore_reviewed_by: string;
   ignore_reviewed_at: Nullable<string>;
+  // (#383) Same-location grouping, computed server-side (see
+  // _grouped_findings_out) so the grouping rule lives in one place rather
+  // than being reimplemented here and drifting from what the PR comment
+  // renders. Rows sharing a group_key are one line flagged by two or more
+  // tools -- one problem, one fix -- and collapse into a single expandable
+  // row; group_size === 1 is the ordinary ungrouped finding.
+  //
+  // Optional because only GET /{pr_scan_id}/findings carries them: the
+  // Approval Queue's pending/history endpoints list findings across scans,
+  // where same-location grouping would be meaningless.
+  group_key?: string;
+  group_size?: number;
+  group_tools?: string[];
+  // Highest severity in the group, which can outrank this row's own
+  // `severity` when the tools disagree about the same line.
+  group_severity?: string;
+  group_primary_id?: number;
 };
 
 /**

@@ -253,6 +253,130 @@ function PrGuardrailFindingRow({
   );
 }
 
+// (#383) One line flagged by two tools is one problem with one fix, and used
+// to render as two full rows -- the exact "two separate issues" misreading
+// this grouping exists to stop. The grouping itself is decided server-side
+// (group_key/group_size/group_tools/group_severity, see
+// _grouped_findings_out); this only assembles the returned rows into the
+// buckets the API already assigned them to, preserving the order they
+// arrived in so grouped members stay adjacent.
+export type FindingGroup = {
+  key: string;
+  findings: PrGuardrailFinding[];
+  tools: string[];
+  severity: string;
+  // The member whose title and severity head the collapsed row.
+  primary: PrGuardrailFinding;
+};
+
+export function groupFindings(findings: PrGuardrailFinding[]): FindingGroup[] {
+  const byKey = new Map<string, FindingGroup>();
+  const order: FindingGroup[] = [];
+  findings.forEach((f, i) => {
+    // A response without grouping fields (an older backend, or a surface
+    // that doesn't send them) degrades to one group per finding, i.e. the
+    // flat list this component rendered before -- never to a wrong grouping.
+    const key = f.group_key ?? `ungrouped-${i}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.findings.push(f);
+      return;
+    }
+    const group: FindingGroup = {
+      key,
+      findings: [f],
+      tools: f.group_tools ?? [f.tool],
+      severity: f.group_severity ?? f.severity,
+      primary: f,
+    };
+    byKey.set(key, group);
+    order.push(group);
+  });
+  // The primary is whichever member the backend named (group_primary_id: the
+  // most severe one, which is also where group_severity comes from);
+  // falling back to the first arrival keeps a degraded response sensible.
+  for (const group of order) {
+    const primaryId = group.findings[0].group_primary_id;
+    const primary = group.findings.find((f) => f.id === primaryId);
+    if (primary) group.primary = primary;
+  }
+  return order;
+}
+
+function GroupedFindingRow({
+  group,
+  onChanged,
+  linkIgnoreFindingId,
+  linkedFindingId,
+}: {
+  group: FindingGroup;
+  onChanged: () => void;
+  linkIgnoreFindingId?: number | null;
+  linkedFindingId?: number | null;
+}) {
+  // Starts expanded when a deep-linked finding is inside it, for either of
+  // the two links a PR comment carries:
+  //
+  // * "request ignore" (#385/#393) fires its request from
+  //   RequestIgnoreAction's mount effect, so a collapsed group would leave
+  //   that click doing nothing at all;
+  // * "view" (#455) scrolls to and highlights `#finding-{id}`, and a
+  //   collapsed group never mounts that element, so the link would land on
+  //   the page and go no further.
+  //
+  // Either way the reader followed a link naming one specific finding, and
+  // the row they were sent to has to be on screen.
+  const holdsLinkedFinding = group.findings.some(
+    (f) => f.id === linkIgnoreFindingId || f.id === linkedFindingId,
+  );
+  const [open, setOpen] = useState(holdsLinkedFinding);
+
+  return (
+    <div className="rounded-md border border-border bg-secondary/40 px-3 py-2">
+      <button
+        className="flex w-full items-start justify-between gap-3 text-left"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Badge
+              variant="outline"
+              className={`shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${SEVERITY_COLOR[group.severity] || "text-muted-foreground"}`}
+            >
+              {group.severity}
+            </Badge>
+            <span className="truncate text-xs font-medium text-foreground">{group.primary.title}</span>
+          </div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">
+            found by: {group.tools.join(", ")} · {group.primary.file_path}
+            {group.primary.line_start ? `:${group.primary.line_start}` : ""}
+          </div>
+        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {open ? "Hide" : "Show"} {group.findings.length} findings
+        </span>
+      </button>
+      {/* Each tool's own finding, unchanged: its rule, its title, and its own
+          Request Ignore action. Grouping is presentation; approvals stay
+          per-finding all the way down. */}
+      {open && (
+        <div className="mt-2 flex flex-col gap-2 border-l border-border pl-3">
+          {group.findings.map((f) => (
+            <PrGuardrailFindingRow
+              key={f.id}
+              finding={f}
+              onChanged={onChanged}
+              linkIgnoreFindingId={linkIgnoreFindingId}
+              isLinked={f.id === linkedFindingId}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * The persisted findings of one PR Guardrail scan. Exported because the PR
  * list at the top of PR History expands into the very same list -- a PR row
@@ -281,17 +405,39 @@ export function ScanFindings({
   if (findings === null) return <p className="text-xs text-muted-foreground">Loading findings...</p>;
   if (findings.length === 0) return <p className="text-xs text-muted-foreground">No persisted findings for this scan.</p>;
 
+  const groups = groupFindings(findings);
+
   return (
     <div className="flex flex-col gap-2">
-      {findings.map((f) => (
-        <PrGuardrailFindingRow
-          key={f.id}
-          finding={f}
-          onChanged={refresh}
-          linkIgnoreFindingId={linkIgnoreFindingId}
-          isLinked={f.id === linkedFindingId}
-        />
-      ))}
+      {/* Stated whenever the row count is below the detection count, for the
+          same reason the PR comment discloses it: the Approval Queue and the
+          API are per-finding, and a reader must be able to see where the
+          smaller number here comes from. */}
+      {groups.length !== findings.length && (
+        <p className="text-xs text-muted-foreground">
+          {findings.length} detections, grouped into {groups.length} by location. Expand a grouped
+          row to see each tool&apos;s finding and ignore it on its own.
+        </p>
+      )}
+      {groups.map((group) =>
+        group.findings.length > 1 ? (
+          <GroupedFindingRow
+            key={group.key}
+            group={group}
+            onChanged={refresh}
+            linkIgnoreFindingId={linkIgnoreFindingId}
+            linkedFindingId={linkedFindingId}
+          />
+        ) : (
+          <PrGuardrailFindingRow
+            key={group.findings[0].id}
+            finding={group.findings[0]}
+            onChanged={refresh}
+            linkIgnoreFindingId={linkIgnoreFindingId}
+            isLinked={group.findings[0].id === linkedFindingId}
+          />
+        ),
+      )}
     </div>
   );
 }

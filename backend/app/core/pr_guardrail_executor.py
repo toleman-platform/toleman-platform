@@ -9,6 +9,7 @@ logic instead of two copies drifting apart.
 import logging
 import re
 import subprocess
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -488,6 +489,150 @@ LEGACY_COMMENT_MARKERS = ("<!-- rikugan-pr-guardrail -->",)
 OPEN_BY_DEFAULT_SEVERITIES = {"Critical", "High"}
 
 
+# --- Same-location grouping (#383) -------------------------------------------
+#
+# One hardcoded test secret on one line is routinely flagged by two tools at
+# once -- semgrep's generic.secrets.security.detected-aws-access-key-id-value
+# and gitleaks' aws-access-token both fire on the same AWS key. Both
+# detections are correct and both are persisted (see below), but rendering
+# them as two top-level rows and counting them as two net-new findings tells
+# a reviewer there are two problems to fix when there is one line and one fix.
+#
+# This is a *presentation* layer only, and deliberately so:
+#
+# * `compute_dedup_hash` still includes each finding's own `tool`, and must
+#   keep doing so (tests/test_pr_guardrail_multi_tool.py::
+#   test_same_rule_from_two_tools_is_not_deduped_away). Collapsing across
+#   tools by content alone would let an unrelated semgrep hit "match" a real
+#   gitleaks hit on the same file/line and silently vanish as not-net-new.
+#   Nothing here changes what is scanned, hashed, diffed or persisted.
+# * Every member of a group keeps its own PRGuardrailFinding row, its own
+#   rule/title, its own deep link and its own ignore-request lifecycle. A
+#   group is a row, never an entity: there is nothing to approve, ignore or
+#   deep-link at group level, which is why LocationGroup has no id.
+#
+# Grouping is therefore safe in a way cross-tool dedup is not: nothing is
+# dropped, so a group that turns out to hold two genuinely different problems
+# on one line still shows both, one click away.
+
+
+def _severity_rank(severity: str) -> int:
+    """Position in SEVERITY_ORDER, or -1 for a severity string this platform
+    doesn't rank (a parser emitting something unexpected). -1 sorts below
+    everything known, so an unrankable severity can never win a group's
+    reported severity away from a real one."""
+    return SEVERITY_ORDER.index(severity) if severity in SEVERITY_ORDER else -1
+
+
+@dataclass
+class LocationGroup:
+    """The findings rendered as one row: everything flagged at one file and
+    line by two or more different tools (see group_findings_by_location for
+    why single-tool locations are never grouped)."""
+
+    file_path: str
+    line_start: int | None
+    findings: list[PRGuardrailFinding] = field(default_factory=list)
+
+    @property
+    def key(self) -> str:
+        """Stable identifier for this group, used by the API to tell the
+        frontend which rows belong together without it re-deriving the
+        grouping rule. Not an id: it identifies a location, not a row in any
+        table, and only ever means anything within one scan's finding list."""
+        return f"{self.file_path}:{self.line_start}" if self.line_start is not None else self.file_path
+
+    @property
+    def tools(self) -> list[str]:
+        """Distinct contributing tools, in the order they were scanned, so
+        the "found by" line reads the same way twice for the same scan."""
+        seen: list[str] = []
+        for f in self.findings:
+            if f.tool not in seen:
+                seen.append(f.tool)
+        return seen
+
+    @property
+    def is_grouped(self) -> bool:
+        return len(self.findings) > 1
+
+    @property
+    def primary(self) -> PRGuardrailFinding:
+        """The member whose severity and title represent the group: the
+        most severe one, earliest-scanned on a tie (max() is stable). Its
+        title is the group's headline precisely because it is the member a
+        reviewer would act on first."""
+        return max(self.findings, key=lambda f: _severity_rank(f.severity))
+
+    @property
+    def severity(self) -> str:
+        """Highest severity among the members.
+
+        Tools disagree about the same line all the time -- semgrep's generic
+        secret rule is High where gitleaks' provider-specific one is
+        Critical, and vice versa. Reporting the highest is the only choice
+        that can't hide a problem: a group rendered at its *lowest* member's
+        severity would let a Critical finding sit inside a row labelled
+        Medium, collapsed by default (OPEN_BY_DEFAULT_SEVERITIES) and counted
+        in the wrong column of the severity table. Blocking is unaffected
+        either way -- should_block still runs over individual findings, not
+        groups -- so this only governs how the row reads."""
+        return self.primary.severity
+
+
+def group_findings_by_location(findings: list[PRGuardrailFinding]) -> list[LocationGroup]:
+    """Collapse findings that several tools reported at the same file/line
+    into one group each; everything else stays a group of one, so callers can
+    render a uniform list of groups without special-casing.
+
+    Two deliberate non-groupings:
+
+    * **Same tool, same line.** A tool that reports two rules on one line has
+      already deduplicated its own output and is saying these are two
+      findings; we are in no position to overrule it. The confusing case this
+      addresses is specifically one line reported by *different* tools, each
+      unaware of the others.
+    * **No line number.** A file-level finding (a vulnerable dependency in a
+      manifest, say) is not a location in the sense this grouping means: two
+      tools flagging "somewhere in requirements.txt" are very often flagging
+      different packages, and merging them into a row that names one of them
+      would be actively misleading. They stay separate rows.
+
+    Group order follows first appearance, so the rendered order still tracks
+    the order tools ran in.
+    """
+    buckets: dict[tuple[str, int], list[PRGuardrailFinding]] = {}
+    order: list[tuple[str, int] | int] = []
+    ungrouped: dict[int, PRGuardrailFinding] = {}
+
+    for index, f in enumerate(findings):
+        if f.line_start is None:
+            ungrouped[index] = f
+            order.append(index)
+            continue
+        key = (f.file_path, f.line_start)
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(f)
+
+    groups: list[LocationGroup] = []
+    for entry in order:
+        if isinstance(entry, int):
+            f = ungrouped[entry]
+            groups.append(LocationGroup(f.file_path, f.line_start, [f]))
+            continue
+        members = buckets[entry]
+        if len({f.tool for f in members}) < 2:
+            # One tool's own multiple findings at one line: separate rows,
+            # see the docstring. Also the overwhelmingly common case of a
+            # single finding at a location.
+            groups.extend(LocationGroup(f.file_path, f.line_start, [f]) for f in members)
+            continue
+        groups.append(LocationGroup(members[0].file_path, members[0].line_start, members))
+    return groups
+
+
 def _severity_badge(status: PRGuardrailStatus) -> str:
     """shields.io-style top-line pass/fail badge, same visual pattern as
     the SafeDep bot's badge comments already seen on this repo's PRs (e.g.
@@ -498,18 +643,23 @@ def _severity_badge(status: PRGuardrailStatus) -> str:
     return "![Passed](https://img.shields.io/badge/status-passed-brightgreen)"
 
 
-def _severity_counts(findings: list[PRGuardrailFinding]) -> dict[str, int]:
+def _severity_counts(groups: list[LocationGroup]) -> dict[str, int]:
+    # (#383) Counts rows, not raw detections: two tools flagging one line
+    # contribute 1 here, at the higher of the two severities (see
+    # LocationGroup.severity), because that is one thing for a reviewer to
+    # look at. The raw detection count is still disclosed in render_comment's
+    # headline whenever the two numbers differ.
     counts = {sev: 0 for sev in SEVERITY_ORDER}
-    for f in findings:
-        counts[f.severity] = counts.get(f.severity, 0) + 1
+    for g in groups:
+        counts[g.severity] = counts.get(g.severity, 0) + 1
     return counts
 
 
-def _severity_count_table(findings: list[PRGuardrailFinding]) -> str:
+def _severity_count_table(groups: list[LocationGroup]) -> str:
     """One-line (single header + single data row) GFM table summarizing
     net-new finding counts by severity, meant to be the first thing a
     reviewer sees; before any per-finding detail."""
-    counts = _severity_counts(findings)
+    counts = _severity_counts(groups)
     header = "| " + " | ".join(SEVERITY_ORDER) + " |"
     divider = "|" + "|".join(["---"] * len(SEVERITY_ORDER)) + "|"
     row = "| " + " | ".join(str(counts[sev]) for sev in SEVERITY_ORDER) + " |"
@@ -631,32 +781,107 @@ def _pending_action_cell(ref_link: str, ignore_link: str) -> str:
     return f"[view]({ref_link}) &middot; [request ignore]({ignore_link})"
 
 
+def _location_label(file_path: str, line_start: int | None) -> str:
+    return f"{file_path}:{line_start}" if line_start else file_path
+
+
+def _action_cell(f: PRGuardrailFinding, target_id: int, pr_scan_id: int) -> str:
+    ref_link = _finding_ref_link(target_id, pr_scan_id, f.id)
+    if f.ignore_status == IgnoreStatus.APPROVED:
+        # #401: this row's ignore_status can arrive already "approved"
+        # at render time -- carried forward from an earlier scan of the
+        # same PR (_carry_forward_approved_ignore) -- and must not offer
+        # "request ignore" again as if nobody had acted on it yet.
+        return _approved_action_cell(ref_link)
+    return _pending_action_cell(ref_link, _finding_ignore_link(pr_scan_id, f.id))
+
+
 def _findings_table(
-    findings: list[PRGuardrailFinding],
+    groups: list[LocationGroup],
     target_id: int,
     pr_scan_id: int,
     repo_slug: str | None = None,
     head_sha: str | None = None,
 ) -> str:
     """GFM table (Severity | Rule | Title | Location | Links) for one
-    severity group's findings, replaces the old flat prose-bullet list."""
+    severity group's findings, replaces the old flat prose-bullet list.
+
+    (#383) One row per LocationGroup. A group of one renders exactly as it
+    always did. A multi-tool group renders a single collapsed row naming the
+    tools, with each member's own rule, title and links in the expandable
+    block `_group_detail_blocks` emits just below this table.
+    """
     lines = [
         "| Severity | Rule | Title | Location | Links |",
         "|---|---|---|---|---|",
     ]
-    for f in findings:
-        loc = _source_link(repo_slug, head_sha, f.file_path, f.line_start)
-        ref_link = _finding_ref_link(target_id, pr_scan_id, f.id)
-        if f.ignore_status == IgnoreStatus.APPROVED:
-            # #401: this row's ignore_status can arrive already "approved"
-            # at render time -- carried forward from an earlier scan of the
-            # same PR (_carry_forward_approved_ignore) -- and must not offer
-            # "request ignore" again as if nobody had acted on it yet.
-            action = _approved_action_cell(ref_link)
-        else:
-            action = _pending_action_cell(ref_link, _finding_ignore_link(pr_scan_id, f.id))
-        lines.append(f"| {f.severity} | `{f.rule_id}` | {f.title} | {loc} | {action} |")
+    for g in groups:
+        # (#455) The location is a link to that line of that file at the
+        # scanned commit, and its label is _code_span'd against hostile
+        # filenames. A group's members share one location by construction, so
+        # the grouped row links exactly where each of its members would.
+        loc = _source_link(repo_slug, head_sha, g.file_path, g.line_start)
+        if not g.is_grouped:
+            f = g.findings[0]
+            lines.append(
+                f"| {f.severity} | `{f.rule_id}` | {f.title} | {loc} | "
+                f"{_action_cell(f, target_id, pr_scan_id)} |"
+            )
+            continue
+        # The Rule cell carries the tool list rather than a rule id: the
+        # whole point of the row is that there is no single rule here, and
+        # "found by: semgrep, gitleaks" is the fact that turns two scary
+        # rows into one line to go and look at. Per-tool rule ids are one
+        # click away, below.
+        #
+        # The Links cell deliberately offers only "view" -- no group-level
+        # "request ignore". Ignores are per-finding (there is no group row
+        # in the database to approve), and a group-level ignore link would
+        # also collide with the exact-substring patching
+        # update_finding_status_in_pr_comment/revoke_finding_status_in_pr_comment
+        # do on an individual row's cell.
+        lines.append(
+            f"| {g.severity} | found by: {', '.join(g.tools)} | {g.primary.title} | {loc} | "
+            f"[view]({_finding_ref_link(target_id, pr_scan_id, g.primary.id)}) &middot; "
+            f"{len(g.findings)} findings, expand below |"
+        )
     return "\n".join(lines)
+
+
+def _group_detail_blocks(groups: list[LocationGroup], target_id: int, pr_scan_id: int) -> list[str]:
+    """(#383) The expandable per-tool breakdown for every multi-tool group in
+    one severity section, rendered under that section's table.
+
+    A nested <details> rather than markup inside a table cell: block-level
+    HTML in a GFM table cell renders inconsistently on GitHub, and this
+    breakdown has to stay a real table so each tool's own rule, title,
+    severity and -- crucially -- its own live "request ignore" link survive
+    the collapse. Those per-member action cells are byte-identical to the
+    ones an ungrouped row would carry, which is what keeps the approve and
+    revoke comment-patching paths working unchanged for grouped findings.
+    """
+    lines: list[str] = []
+    for g in groups:
+        if not g.is_grouped:
+            continue
+        loc = _location_label(g.file_path, g.line_start)
+        lines.append("<details>")
+        lines.append(
+            f"<summary><code>{loc}</code> &middot; {len(g.findings)} findings from "
+            f"{', '.join(g.tools)}</summary>"
+        )
+        lines.append("")
+        lines.append("| Tool | Severity | Rule | Title | Links |")
+        lines.append("|---|---|---|---|---|")
+        for f in g.findings:
+            lines.append(
+                f"| `{f.tool}` | {f.severity} | `{f.rule_id}` | {f.title} | "
+                f"{_action_cell(f, target_id, pr_scan_id)} |"
+            )
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+    return lines
 
 
 # (#271) A PR comment is a snapshot that gets read days later. Every severity
@@ -847,28 +1072,49 @@ def render_comment(
         return "\n".join(lines)
 
     if findings:
+        # (#383) Everything below counts and renders *groups*: same-line
+        # findings from two or more tools are one row, because they are one
+        # thing to go and fix. When nothing groups (the common case) there is
+        # one group per finding and this renders exactly as it always did.
+        groups = group_findings_by_location(findings)
+
         headline = "introduced by this PR's changes" if diff_attributed else "vs the default branch"
-        lines.append(f"**{len(findings)} net-new vulnerability finding(s)** {headline}:")
+        lines.append(f"**{len(groups)} net-new vulnerability finding(s)** {headline}:")
         lines.append("")
-        lines.append(_severity_count_table(findings))
+        if len(groups) != len(findings):
+            # Never silently report a smaller number than the scanners
+            # produced. A reviewer comparing this against the dashboard, the
+            # API, or the Approval Queue (all of which are per-finding, and
+            # stay that way) has to be able to see where the difference comes
+            # from -- same reason tools_failed and the diff-scope note are
+            # rendered rather than folded away.
+            multi = sum(1 for g in groups if g.is_grouped)
+            lines.append(
+                f"<sub>{len(findings)} detections, grouped into {len(groups)} by location: "
+                f"{multi} line(s) flagged by more than one tool. Every tool's finding is still "
+                "recorded and can be ignored on its own; expand a grouped row to see them.</sub>"
+            )
+            lines.append("")
+        lines.append(_severity_count_table(groups))
         lines.append("")
 
-        by_severity: dict[str, list[PRGuardrailFinding]] = {}
-        for f in findings:
-            by_severity.setdefault(f.severity, []).append(f)
+        by_severity: dict[str, list[LocationGroup]] = {}
+        for g in groups:
+            by_severity.setdefault(g.severity, []).append(g)
 
         # Most-severe-first, matching SEVERITY_ORDER's ranking (reversed
         # since SEVERITY_ORDER is least-to-most severe).
         for sev in reversed(SEVERITY_ORDER):
-            sev_findings = by_severity.get(sev)
-            if not sev_findings:
+            sev_groups = by_severity.get(sev)
+            if not sev_groups:
                 continue
             open_attr = " open" if sev in OPEN_BY_DEFAULT_SEVERITIES else ""
             lines.append(f"<details{open_attr}>")
-            lines.append(f"<summary><strong>{sev}</strong> ({len(sev_findings)})</summary>")
+            lines.append(f"<summary><strong>{sev}</strong> ({len(sev_groups)})</summary>")
             lines.append("")
-            lines.append(_findings_table(sev_findings, target_id, pr_scan_id, repo_slug, head_sha))
+            lines.append(_findings_table(sev_groups, target_id, pr_scan_id, repo_slug, head_sha))
             lines.append("")
+            lines.extend(_group_detail_blocks(sev_groups, target_id, pr_scan_id))
             lines.append("</details>")
             lines.append("")
 

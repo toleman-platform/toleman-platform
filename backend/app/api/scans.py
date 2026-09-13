@@ -85,10 +85,26 @@ def scans_summary(
     # scan for each pair, then which of those ids are suspect. Scan.id is
     # used as the recency key rather than started_at because it is monotonic
     # per insert and needs no correlated subquery to resolve back to a row.
+    # Restricted to completed scans. func.max(Scan.id) otherwise picks a
+    # rescan that is still running, whose health has not been decided yet --
+    # so kicking off a re-run would make the previous run's suspect verdict
+    # disappear from the page for as long as the new one takes. The badge
+    # exists to say "nothing was mitigated, re-run this", and it must not
+    # vanish at the moment someone acts on it.
+    #
+    # The id list this materialises is bounded by (targets x tools), one row
+    # per group -- not by scan history, which is the growth this endpoint was
+    # rewritten to avoid. Worth folding into a subquery if target counts ever
+    # reach the thousands; at that point the IN list, not the scan volume,
+    # becomes the limit.
     latest_scan_ids = [
         row[2]
         for row in session.exec(
-            scoped(select(Scan.target_id, Scan.tool, func.max(Scan.id)).group_by(Scan.target_id, Scan.tool))
+            scoped(
+                select(Scan.target_id, Scan.tool, func.max(Scan.id))
+                .where(Scan.status == "completed")
+                .group_by(Scan.target_id, Scan.tool)
+            )
         ).all()
     ]
     suspect_by_target: dict[int, set[str]] = {}

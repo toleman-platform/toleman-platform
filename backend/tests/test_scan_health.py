@@ -32,6 +32,7 @@ The rule the whole file is checking:
 
 import json
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -532,6 +533,50 @@ class TestWarmingFailurePaths:
 
         assert not any(d.exists() for d in debris)
         assert keep.exists(), "the published warm copy is not debris"
+
+
+class TestCacheLockActuallyExcludes:
+    """The whole isolation story rests on this lock, and nothing exercised
+    it with two contenders -- every other test takes it uncontended."""
+
+    def test_a_shared_waiter_cannot_enter_while_a_warmer_holds_it(self):
+        """flock is per open-file-description, not per process, so this has
+        to hold inside one process too: the fan-out that produced #229 was
+        threads in a Celery worker, not separate processes."""
+        holding = threading.Event()
+        release = threading.Event()
+        seeder_acquired = []
+
+        def warmer():
+            with runner._cache_lock(exclusive=True, timeout_seconds=5) as got:
+                assert got is True
+                holding.set()
+                release.wait(timeout=5)
+
+        t = threading.Thread(target=warmer)
+        t.start()
+        try:
+            assert holding.wait(timeout=5), "warmer never took the lock"
+            # Short timeout: the point is that it does NOT get in, and a
+            # seeder that cannot get the lock runs unseeded rather than
+            # waiting forever.
+            with runner._cache_lock(exclusive=False, timeout_seconds=0.5) as got:
+                seeder_acquired.append(got)
+        finally:
+            release.set()
+            t.join(timeout=5)
+
+        assert seeder_acquired == [False], (
+            "a seeder got in while a warmer held the exclusive lock -- it "
+            "could hardlink a directory mid-replacement, which is the "
+            "original race"
+        )
+
+    def test_the_lock_is_released_so_the_next_caller_gets_in(self):
+        with runner._cache_lock(exclusive=True, timeout_seconds=5) as got:
+            assert got is True
+        with runner._cache_lock(exclusive=True, timeout_seconds=5) as got:
+            assert got is True, "the lock was not released"
 
 
 class TestApplicabilityBeforeHealth:

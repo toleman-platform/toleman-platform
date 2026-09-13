@@ -6,6 +6,33 @@ what's not, and exactly what to do next. Don't re-derive any of this from
 the diff alone; the *why* behind several non-obvious decisions below isn't
 visible in the code.
 
+## Goal
+
+Toleman needs to find real vulnerabilities in whatever language a target
+repo is written in, cheaply and without duplicating detection the public
+Semgrep registry already does well. Concretely, in order:
+
+1. Ship a custom Semgrep rule pack covering vulnerability classes the
+   public registry misses or gets wrong for common frameworks (proven
+   gaps, not assumed ones — e.g. the registry's only Python SSRF rule is
+   hardcoded to Flask and has zero coverage for FastAPI+httpx).
+2. Never write a rule for a class the registry already covers well —
+   check first, retire on overlap.
+3. Combine the two (custom pack + a pruned slice of the registry) in one
+   scan that is faster than either `semgrep --config=auto` alone or a
+   naive "run everything" combination, with fewer false positives than
+   running the registry blind (`--disable-nosem` on rules a human already
+   triaged is pure noise).
+4. Do all of the above for every language Toleman might need to scan — not
+   just the two languages Toleman itself happens to be written in.
+
+Status against that goal: (1) and (2) are done for Python, spot-checked
+for the other 5 languages. (3) is designed, implemented, and benchmarked,
+but not wired into the product's actual scan path yet. (4) has rules for
+6 languages; per-language registry-overlap checking (item 2) has only
+actually been done for Python so far — see "Status: done vs. pending"
+below for the precise line.
+
 ## What this branch is
 
 Toleman already had a `semgrep-llm` custom ruleset (`backend/app/scanners/
@@ -127,6 +154,82 @@ matches the manual benchmark run exactly.
    only spot-checked a few: CSRF-exempt, pickle, yaml.load, subprocess
    shell=True, mass-assignment, SSRF). A full per-language dedup pass like
    the Python one is real, bounded, valuable follow-up work.
+
+## Status: done vs. pending
+
+**Done, verified:**
+- [x] 94-rule custom pack, 6 languages, each rule checked by hand against a real vulnerable-app fixture (or disclosed as synthetic-only where no fixture existed — see the Go section of the README).
+- [x] Python rules cross-checked against the actual registry source; 10 duplicate rule ids retired with the specific registry rule that replaces each one named in the README.
+- [x] `rule_selector.py` written and smoke-tested end to end against this repo (see "Test plan" below for the exact command and expected numbers).
+- [x] The nosemgrep-respecting merge behavior specifically verified (15 raw registry findings → 1 after the marker-based post-filter, on this repo's own source).
+
+**Designed and prototyped, not yet in the product's actual scan path:**
+- [ ] `runner.py`/`tool_registry.py` wiring — `rule_selector.py` is a standalone module today, nothing calls it from the real scan pipeline yet.
+- [ ] Caching for `build_registry_config()` — currently rebuilds from the vendored registry clone on every call.
+- [ ] A scheduled job to fetch/refresh the vendored `semgrep-rules` clone itself — nothing populates `SEMGREP_RULES_REGISTRY_ROOT` today.
+
+**Not started / explicitly out of scope for this branch:**
+- [ ] Registry-overlap check for Java/PHP/Ruby/Go/JS rules (only Python's was done — see item 5 under "Not built yet" above).
+- [ ] `run_layered_scan()` handling more than one language per repo.
+- [ ] CSS injection/exfiltration rule (the one class in the taxonomy with zero coverage in any language).
+- [ ] Anything DAST-side (the "Confirmation Loop" design from earlier in this work — route resolution, live-request confirmation) — a related but separate effort, not touched on this branch.
+
+## Test plan
+
+Everything below is meant to be runnable cold, with nothing but this repo
+and a `pip install semgrep pyyaml` (or the versions already pinned in
+`backend/requirements.txt`). No network calls except the one-time registry
+clone.
+
+**1. The rule pack is syntactically valid and has the expected rule count:**
+```bash
+semgrep scan --config=backend/app/scanners/rules/core --validate
+# expect: "Configuration is valid - found 0 configuration error(s), and 94 rule(s)."
+```
+If the count is off, something was added/removed since this doc was
+written — check `git log` on that directory before assuming this doc is
+wrong.
+
+**2. The pack still finds what it's supposed to.** Clone the fixtures (URLs
+in the "Current state" table above) and run:
+```bash
+semgrep scan --config=backend/app/scanners/rules/core --disable-nosem --json <fixture-path>
+```
+Known-good reference points to check the output against (all re-confirmed
+the same day this branch was pushed):
+- Against **this repo**: the SSRF rule fires on `backend/app/core/slack_integration.py:28`; the exception-info-exposure rules fire on `backend/app/api/pr_guardrail.py` and `backend/app/api/config.py` (3 spots); `hardcoded-secret-assignment` and `hardcoded-encryption-key-or-iv-assignment` both find **zero** hits (confirmed true negative, not a broken rule).
+- Against **PyGoat**: `toleman-code-injection-eval-exec` fires on `introduction/mitre.py:218`; `toleman-xxe-external-entities-explicitly-enabled` fires on `introduction/views.py:259`; `toleman-django-debug-true` fires on `pygoat/settings.py:30`.
+- Against **DVPWA**: `toleman-sql-injection-fstring-var-then-execute` fires on `sqli/dao/student.py:45`.
+
+If any of these go silent, that's a regression — bisect from there, don't
+assume the fixture changed.
+
+**3. `rule_selector.py` end to end** (this is the one that catches "the
+rule pack passes but the file was never actually written" — see the meta-
+lesson below):
+```bash
+cd backend && python3 -c "
+from app.scanners import rule_selector as rs
+result = rs.run_layered_scan(
+    '..',
+    custom_config_path='app/scanners/rules/core',
+    registry_root='<path to a semgrep/semgrep-rules clone>',
+)
+print('custom findings:', len(result.custom_findings))              # expect 50
+print('registry before filter:', result.registry_findings_before_filter)  # expect 15
+print('registry after filter:', len(result.registry_findings))            # expect 1
+"
+```
+These three numbers were the exact output when this branch was pushed. A
+different `custom findings` count most likely means a rule file changed;
+a different `registry after filter` count with the same `before filter`
+count means the nosemgrep post-filter logic broke — check
+`_line_has_nosemgrep_marker()` first.
+
+**4. Manual spot-check, not just automated**: pick at least one finding
+from step 2 or 3 and open the actual file at that line yourself before
+trusting any of the above. That's the standard this whole pack was held
+to — a green test run is necessary, not sufficient.
 
 ## Immediate next steps, roughly in order
 

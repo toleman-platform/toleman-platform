@@ -941,29 +941,50 @@ def _patch_group_header_in_comment(
     miss (the comment predates this, the group is a single row, the header
     was already patched) leaves the body untouched -- best-effort, like every
     other GitHub-facing step in this module.
-    """
-    siblings = session.exec(
-        select(PRGuardrailFinding)
-        .where(PRGuardrailFinding.pr_scan_id == finding.pr_scan_id)
-        .order_by(PRGuardrailFinding.id)
-    ).all()
-    group = next(
-        (
-            g
-            for g in group_findings_by_location(list(siblings))
-            if any(f.id == finding.id for f in g.findings)
-        ),
-        None,
-    )
-    if group is None or not group.is_grouped:
-        return body
 
-    current = _group_action_cell(group, target_id, finding.pr_scan_id)
-    for count in range(len(group.findings) + 1):
-        stale = _group_action_cell(group, target_id, finding.pr_scan_id, approved=count)
-        if stale != current and stale in body:
-            return body.replace(stale, current, 1)
-    return body
+    **Never raises**, and that is a requirement rather than tidiness. Both
+    callers run this between their own per-finding replace and the single
+    httpx.patch that ships it, inside one try/except. This step is also the
+    only part of that sequence that touches the database once the comment
+    body has been fetched -- a detached instance, a closed session, a dead
+    connection -- so letting an exception out would abort the PATCH entirely
+    and silently discard the per-finding cell update, which is the whole
+    guarantee #401 makes ("a reviewer clicking Approve sees it on GitHub
+    now"). A decoration must never be able to take down the thing it
+    decorates: on any failure the caller's own patched body is returned
+    unchanged and still gets posted, with the header left to self-heal on
+    the next rescan.
+    """
+    try:
+        siblings = session.exec(
+            select(PRGuardrailFinding)
+            .where(PRGuardrailFinding.pr_scan_id == finding.pr_scan_id)
+            .order_by(PRGuardrailFinding.id)
+        ).all()
+        group = next(
+            (
+                g
+                for g in group_findings_by_location(list(siblings))
+                if any(f.id == finding.id for f in g.findings)
+            ),
+            None,
+        )
+        if group is None or not group.is_grouped:
+            return body
+
+        current = _group_action_cell(group, target_id, finding.pr_scan_id)
+        for count in range(len(group.findings) + 1):
+            stale = _group_action_cell(group, target_id, finding.pr_scan_id, approved=count)
+            if stale != current and stale in body:
+                return body.replace(stale, current, 1)
+        return body
+    except Exception:
+        logger.warning(
+            "PR guardrail: could not refresh the group header for finding %s; "
+            "posting the per-finding update without it",
+            finding.id, exc_info=True,
+        )
+        return body
 
 
 def _group_detail_blocks(groups: list[LocationGroup], target_id: int, pr_scan_id: int) -> list[str]:

@@ -16,10 +16,12 @@ Everything here is about presentation on top of an unchanged set of rows.
 """
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.deps as deps_module
+import app.core.pr_guardrail_executor as pr_guardrail_executor
 from app.api.deps import get_session
 from app.core.pr_guardrail_executor import (
     COMMENT_MARKER,
@@ -585,6 +587,30 @@ def test_the_header_is_patched_from_any_approved_count(engine):
     assert "(2 approved)" not in patched
 
 
+def test_a_broken_header_patch_never_costs_the_per_finding_update(engine):
+    """The header patch runs between a caller's own per-finding replace and
+    the single httpx.patch that ships it, inside one try/except, and is the
+    only step there that touches the database after the body was fetched. An
+    exception escaping would abort the PATCH and silently discard the
+    per-finding cell update -- the exact guarantee #401 makes. A decoration
+    must not be able to take down what it decorates."""
+    scan_id, (semgrep_id, _) = _make_scan_with_findings(
+        engine, [dict(**_SEMGREP_SECRET), dict(**_GITLEAKS_SECRET)]
+    )
+
+    class BrokenSession:
+        def exec(self, *args, **kwargs):
+            raise RuntimeError("connection is gone")
+
+    with Session(engine) as session:
+        finding = session.get(PRGuardrailFinding, semgrep_id)
+        already_patched = "the body the caller already patched for this finding"
+
+        out = _patch_group_header_in_comment(BrokenSession(), 5, finding, already_patched)
+
+    assert out == already_patched
+
+
 def test_the_header_patch_leaves_an_ungrouped_finding_alone(engine):
     scan_id, (finding_id,) = _make_scan_with_findings(
         engine, [dict(**_SEMGREP_SECRET, ignore_status=IgnoreStatus.APPROVED)]
@@ -596,6 +622,57 @@ def test_the_header_patch_leaves_an_ungrouped_finding_alone(engine):
         patched = _patch_group_header_in_comment(session, 5, revoked, body)
 
     assert patched == body
+
+
+def test_revoke_ships_both_the_member_cell_and_the_header_in_one_body(engine, monkeypatch):
+    """The two replacements composing, end to end, on one real body: the
+    member's cell goes back to a live "request ignore" link *and* the header
+    above it stops claiming everything is approved, in the single PATCH the
+    revoke path sends. Each half is covered on its own above; this is the
+    seam between them, and the one place their search strings could
+    interfere with each other."""
+    scan_id, (semgrep_id, gitleaks_id) = _make_scan_with_findings(
+        engine,
+        [
+            dict(**_SEMGREP_SECRET, ignore_status=IgnoreStatus.APPROVED),
+            dict(**_GITLEAKS_SECRET, ignore_status=IgnoreStatus.APPROVED),
+        ],
+    )
+
+    with Session(engine) as session:
+        pr_scan = session.get(PRGuardrailScan, scan_id)
+        target = session.get(Target, pr_scan.target_id)
+        # Plain int, read before the revoke's commit expires the instance, so
+        # the assertions below don't touch a detached row.
+        target_id = target.id
+        body = _render_scan_comment(session, scan_id, target_id=target_id)
+        assert "✅ all 2 approved to ignore" in body
+
+        # Only the GitHub boundary is faked; the patching logic under test is
+        # the real one.
+        monkeypatch.setattr(pr_guardrail_executor, "_pr_is_merged", lambda *a, **k: False)
+        monkeypatch.setattr(pr_guardrail_executor, "_get_installation_token_or_none", lambda *a, **k: "tok")
+        monkeypatch.setattr(pr_guardrail_executor, "_find_existing_comment", lambda *a, **k: (123, body))
+        posted: list[str] = []
+        monkeypatch.setattr(
+            pr_guardrail_executor.httpx,
+            "patch",
+            lambda url, **kwargs: posted.append(kwargs["json"]["body"]) or type("R", (), {"status_code": 200})(),
+        )
+
+        revoked = _set_ignore_status(session, gitleaks_id, IgnoreStatus.REVOKED)
+        pr_guardrail_executor.revoke_finding_status_in_pr_comment(session, target, pr_scan.pr_number, revoked)
+
+    assert len(posted) == 1
+    patched = posted[0]
+    # The revoked member is actionable again...
+    assert f"/ignore-request/{scan_id}/{gitleaks_id}" in patched
+    # ...the still-approved member is untouched...
+    assert _approved_action_cell(_finding_ref_link(target_id, scan_id, semgrep_id)) in patched
+    assert f"/ignore-request/{scan_id}/{semgrep_id}" not in patched
+    # ...and the header no longer overstates what has been dealt with.
+    assert "✅ all 2 approved to ignore" not in patched
+    assert "2 findings (1 approved), expand below" in patched
 
 
 def test_api_carries_the_grouping_so_the_ui_never_re_derives_it(client, engine):
@@ -634,15 +711,18 @@ def test_api_leaves_unrelated_findings_in_groups_of_one(client, engine):
     assert all(r["group_size"] == 1 for r in rows)
 
 
-def test_api_returns_findings_in_a_stable_order(client, engine):
+def test_api_asks_the_database_for_a_stable_order(client, engine):
     """group_key carries the group's first member's id, so it is a function of
     position, not just of location: an unordered SELECT could key the same
     group off a different member between two fetches and remount (and so
-    collapse) a group the user had just expanded. SQLite happens to return
-    insertion order anyway, so this asserts the contract rather than proving
-    it -- the ORDER BY in the query is what makes it true on Postgres, where
-    an UPDATE (which is exactly what the ignore workflow does to these rows)
-    can relocate one."""
+    collapse) a group the user had just expanded.
+
+    Asserted on the emitted SQL rather than on the returned order, because
+    SQLite returns insertion order with or without the clause -- a test on the
+    rows alone would keep passing if someone deleted the ORDER BY, and the
+    clause is the only thing that makes this true on Postgres, where an UPDATE
+    (exactly what the ignore workflow does to these rows) can relocate one.
+    """
     client = _login(client, engine)
     scan_id, ids = _make_scan_with_findings(
         engine,
@@ -652,7 +732,24 @@ def test_api_returns_findings_in_a_stable_order(client, engine):
         ],
     )
 
-    rows = client.get(f"/api/pr-guardrail/{scan_id}/findings").json()
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    try:
+        rows = client.get(f"/api/pr-guardrail/{scan_id}/findings").json()
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    finding_selects = [
+        s for s in statements
+        if s.lstrip().lower().startswith("select") and "prguardrailfinding" in s.lower()
+    ]
+    assert finding_selects, "the endpoint should have selected the scan's findings"
+    for statement in finding_selects:
+        assert "order by" in statement.lower(), statement
 
     assert [r["id"] for r in rows] == sorted(ids)
 

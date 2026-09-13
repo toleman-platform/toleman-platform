@@ -1,3 +1,5 @@
+import ipaddress
+import socket
 import time
 from urllib.parse import urlparse
 
@@ -7,6 +9,69 @@ from sqlmodel import Session, select
 
 from app.core.crypto import decrypt_secret
 from app.models.models import GitHubAppConfig, GitHubInstallation, Target
+
+
+def _webhook_hostname(backend_url: str) -> str:
+    """The host out of a PUBLIC_API_URL, tolerating a missing scheme.
+
+    ``urlparse("localhost:8000")`` does not mean what it looks like: with no
+    ``//`` present it reads ``localhost`` as the *scheme* and ``8000`` as
+    the path, so ``.hostname`` is None. Nothing in app.core.config requires
+    a scheme, so a schemeless PUBLIC_API_URL used to fall straight through
+    webhook_reachable's loopback check and classify as reachable -- no
+    warning, an enabled Connect button, and GitHub's rejection page.
+
+    Re-parsing with a leading ``//`` forces the netloc reading, which is
+    what the value obviously means. Returns "" when there is no host to be
+    had (an empty setting, or an unbracketed IPv6 literal, which is not
+    parseable as a URL at all); callers treat that as unreachable rather
+    than as a host that happens not to be loopback."""
+    candidate = backend_url.strip()
+    parsed = urlparse(candidate)
+    if not parsed.netloc and "//" not in candidate:
+        parsed = urlparse(f"//{candidate}")
+    # The "//" guard matters: a value that already has one and still parsed
+    # to an empty netloc ("http://", "http://:8000") has no host, and
+    # re-parsing it would read the scheme itself as the hostname.
+    #
+    # The trailing dot of a fully-qualified name ("localhost.") is legal in a
+    # URL and resolves identically, so it is dropped rather than left to turn
+    # a loopback host into an unrecognised one.
+    return (parsed.hostname or "").lower().rstrip(".")
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """Whether this host is certainly the local machine.
+
+    Covers more than the four literals this used to compare against, all of
+    which reach a local backend and none of which GitHub can deliver to:
+
+      - ``127.0.0.2`` and the rest of 127.0.0.0/8, not just ``127.0.0.1``.
+      - ``127.1``, inet_aton shorthand for 127.0.0.1. ``ipaddress`` rejects
+        it (it wants four octets), but resolvers, browsers and curl all
+        accept it, so it is a real way to spell localhost.
+      - ``::ffff:127.0.0.1``, an IPv4-mapped IPv6 address, whose IPv6 form
+        reports ``is_loopback`` False and has to be unwrapped first.
+      - ``*.localhost``, reserved to the loopback interface by RFC 6761.
+      - the unspecified addresses (``0.0.0.0``, ``::``), already covered
+        before and kept.
+    """
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        # Not an address ipaddress recognises. inet_aton still accepts the
+        # shorthand forms (127.1, 2130706433); anything it rejects too is a
+        # hostname, not an address.
+        try:
+            ip = ipaddress.ip_address(socket.inet_aton(hostname))
+        except (OSError, ValueError):
+            return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return ip.is_loopback or ip.is_unspecified
 
 
 def webhook_reachable(backend_url: str) -> bool:
@@ -44,15 +109,26 @@ def webhook_reachable(backend_url: str) -> bool:
     was public, then pointed back at localhost) deliveries stop arriving,
     and that genuinely is a degraded mode.
 
-    Deliberately only the loopback literals. Those are certainly
-    unreachable from GitHub's side; any other hostname might resolve
-    publicly even when it doesn't resolve from here (and a
-    compose-internal name like ``http://backend:8000`` is reported
-    reachable for that reason, even though GitHub will reject it too).
-    Over-blocking would wedge the only path to creating an App for a
-    deployment whose DNS this process cannot see."""
-    parsed = urlparse(backend_url)
-    return (parsed.hostname or "") not in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+    False is reserved for what is *certain*: a loopback host (see
+    ``_is_loopback_host`` for every spelling of one), or a value with no
+    parseable host at all. Certainty is the bar because of what False now
+    does -- it disables the Connect button, which has no override, and it
+    is the same answer ``target_has_pr_guardrail_coverage`` uses to decide
+    which path scans a target's PRs. A wrong False is not a cosmetic
+    warning, it is an operator with no way to proceed.
+
+    A dotless single-label host (``http://backend:8000``, a compose service
+    name) is reported reachable for that reason and that reason only. It is
+    *almost* certainly unreachable from GitHub too, and saying nothing
+    about it would be unhelpful -- so connect-github-card.tsx warns on it
+    without blocking, where clicking Connect anyway is the override. What
+    genuinely cannot be judged from the string is a dotted name on
+    split-horizon or internal-only DNS, which looks exactly like a public
+    one from here."""
+    hostname = _webhook_hostname(backend_url)
+    if not hostname:
+        return False
+    return not _is_loopback_host(hostname)
 
 
 def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token: str) -> dict:

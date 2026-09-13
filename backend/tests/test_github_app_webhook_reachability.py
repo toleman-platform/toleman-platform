@@ -91,11 +91,43 @@ def _login(client, engine):
         # urlparse().hostname lowercases, so a shouty .env value is caught
         # too rather than sailing past a case-sensitive comparison.
         "HTTP://LOCALHOST:8000",
+        # No scheme. urlparse reads this as scheme="localhost", path="8000"
+        # and reports hostname None, which used to make the emptiest
+        # possible answer ("") sail past a tuple of loopback literals and
+        # classify as reachable -- no banner, an enabled Connect button,
+        # and GitHub's rejection page. Nothing in config.py requires a
+        # scheme, so this is a value an operator can really end up with.
+        "localhost:8000",
+        "127.0.0.1:8000",
+        # The rest of 127.0.0.0/8, not just .1.
+        "http://127.0.0.2:8000",
+        # inet_aton shorthand for 127.0.0.1. Rejected by ipaddress (it
+        # wants four octets) but accepted by resolvers, browsers and curl.
+        "http://127.1:8000",
+        # IPv4-mapped IPv6. The v6 address reports is_loopback False; it
+        # has to be unwrapped to the v4 address it carries.
+        "http://[::ffff:127.0.0.1]:8000",
+        # RFC 6761 reserves .localhost to the loopback interface.
+        "http://toleman.localhost:8000",
+        # The trailing dot of a fully-qualified name is legal in a URL and
+        # resolves to the same place.
+        "http://localhost.:8000",
     ],
 )
 def test_loopback_addresses_are_not_reachable(backend_url):
-    """Every form the default local install can produce. GitHub rejects the
-    manifest for all of them, so the UI must refuse to submit it."""
+    """Every spelling of "this machine". GitHub rejects the manifest for
+    all of them, so the UI must refuse to submit it -- and
+    target_has_pr_guardrail_coverage must not read any of them as proof
+    that PRs are already scanned server-side."""
+    assert webhook_reachable(backend_url) is False
+
+
+@pytest.mark.parametrize("backend_url", ["", "   ", "http://", "http://:8000"])
+def test_a_value_with_no_host_is_not_reachable(backend_url):
+    """An unparseable or empty PUBLIC_API_URL is not a host that merely
+    happens not to be loopback; there is nothing for GitHub to deliver to
+    either way. Classified unreachable so it lands on the warning path
+    rather than the silently-broken one."""
     assert webhook_reachable(backend_url) is False
 
 
@@ -103,17 +135,20 @@ def test_a_real_public_url_is_reachable():
     assert webhook_reachable("https://api.toleman.example.com") is True
     # What a tunnel hands back, the answer this warning actually points at.
     assert webhook_reachable("https://spare-cloud-1234.trycloudflare.com") is True
+    # A public IP is a host like any other; only loopback is special.
+    assert webhook_reachable("http://203.0.113.10:8000") is True
 
 
-def test_a_bare_hostname_is_treated_as_reachable():
-    """Deliberate, and a limitation worth stating: a compose-internal name
-    like ``backend`` is not publicly resolvable either, and GitHub will
-    reject it just the same -- but this function cannot know that from the
-    string, whereas a loopback literal is certainly unreachable from
-    GitHub's side. Blocking every hostname this process can't classify
-    would wedge the only path to creating an App for a deployment whose DNS
-    lives somewhere this code cannot see, so the check stays narrow and the
-    uncertain cases are left to GitHub."""
+def test_a_dotless_hostname_is_still_reachable_here_and_warned_about_in_the_ui():
+    """A compose service name like ``backend`` is a single-label host that
+    cannot resolve publicly, so GitHub will reject it too. It is
+    deliberately *not* classified here anyway: False disables the Connect
+    button, which has no override, and feeds
+    target_has_pr_guardrail_coverage's routing decision, so False is
+    reserved for what is certain. connect-github-card.tsx carries the
+    almost-certain case as an advisory that warns without blocking -- see
+    connect-github-card.test.tsx -- where clicking Connect anyway is the
+    override this function cannot offer."""
     assert webhook_reachable("http://backend:8000") is True
     assert webhook_reachable("https://toleman-internal") is True
 
@@ -184,3 +219,36 @@ def test_status_does_not_mint_a_manifest_state_token(client, engine, monkeypatch
     client.get("/api/github-app/status")
 
     assert set(github_app_api._pending_states) == before
+
+
+def test_manifest_data_does_mint_a_state_token(client, engine, monkeypatch):
+    """Positive control for the test above, which would pass just as well if
+    /manifest-data had quietly stopped minting tokens (or if the endpoint
+    were broken outright). It still does, which is exactly why a page-load
+    read must not go through it: every mount of the card used to leave one
+    more never-expiring valid CSRF state behind."""
+    _login(client, engine)
+    monkeypatch.setattr(github_app_api, "BACKEND_URL", "http://localhost:8000")
+    before = set(github_app_api._pending_states)
+
+    res = client.get("/api/github-app/manifest-data")
+
+    assert res.status_code == 200
+    minted = set(github_app_api._pending_states) - before
+    assert len(minted) == 1
+    # And it is the same token the caller is told to round-trip back.
+    assert f"state={minted.pop()}" in res.json()["post_url"]
+
+
+def test_status_rejects_an_unauthenticated_caller(client, engine, monkeypatch):
+    """/status now carries deployment configuration (PUBLIC_API_URL), not
+    just "is anything connected". current_user is the right level -- the
+    value is in the App's own public manifest and webhook auth is HMAC, not
+    URL obscurity -- but "any logged-in user" is a floor, not nothing, and
+    nothing is what an unauthenticated caller gets."""
+    monkeypatch.setattr(github_app_api, "BACKEND_URL", "http://localhost:8000")
+
+    res = client.get("/api/github-app/status")
+
+    assert res.status_code in (401, 403)
+    assert "public_api_url" not in res.text

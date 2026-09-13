@@ -109,6 +109,49 @@ def _migration_create_index(path: Path, index_name: str) -> tuple[str, list[str]
     raise AssertionError(f"{path.name} has no op.create_index call for {index_name}")
 
 
+def _calls_autocommit_block(path: Path) -> bool:
+    """True when `path` actually calls `.autocommit_block()`.
+
+    Parsed, not matched: b1d4f7a09c62's own docstring explains the block at
+    length, so a substring search is satisfied by the prose describing the
+    thing rather than by the thing.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "autocommit_block"
+        for node in ast.walk(tree)
+    )
+
+
+def _configure_kwargs_in(path: Path, function_name: str, keyword: str) -> list:
+    """Values passed as `keyword` to `context.configure(...)` inside
+    `function_name`.
+
+    Scoped to one function because env.py configures twice, once per
+    migration mode, and only the online path is the one `init_db()` drives.
+    A comment mentioning the keyword does not count.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == function_name):
+            continue
+        found = []
+        for inner in ast.walk(node):
+            if not (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "configure"
+            ):
+                continue
+            for kw in inner.keywords:
+                if kw.arg == keyword and isinstance(kw.value, ast.Constant):
+                    found.append(kw.value.value)
+        return found
+    raise AssertionError(f"{path.name} has no function named {function_name}")
+
+
 def _declared_in_table_args(model, index_name) -> Index:
     """The `Index` the model itself declares under `__table_args__`.
 
@@ -280,10 +323,17 @@ def test_autocommit_block_is_paired_with_transaction_per_migration():
     Nothing fails loudly if the pairing is broken; the run just silently
     stops being all-or-nothing. Hence this test. If a future change drops
     the autocommit_block, drop this too.
+
+    Both halves are read from the parsed source. The migration's docstring
+    discusses `autocommit_block()` and `transaction_per_migration=True` at
+    length, and env.py's comment does the same, so substring matching here
+    would pass on the prose alone -- the exact failure this file's own
+    docstring warns about.
     """
-    uses_autocommit_block = "autocommit_block()" in INDEX_BACKFILL.read_text()
-    assert uses_autocommit_block, (
-        "b1d4f7a09c62 no longer uses autocommit_block; re-read "
+    assert _calls_autocommit_block(INDEX_BACKFILL), (
+        "b1d4f7a09c62 no longer calls autocommit_block; re-read "
         "test_autocommit_block_is_paired_with_transaction_per_migration"
     )
-    assert "transaction_per_migration=True" in ENV_PY.read_text()
+    assert _configure_kwargs_in(
+        ENV_PY, "run_migrations_online", "transaction_per_migration"
+    ) == [True]

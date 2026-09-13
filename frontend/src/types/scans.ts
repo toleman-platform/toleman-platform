@@ -197,6 +197,8 @@ export type PrGuardrailLogEntry = {
   tools_skipped?: string[];
   scan_scope?: "full" | "diff";
   files_scanned?: number;
+  blast_radius_files?: number;
+  scope_reason?: string;
   status_delivery_error: string;
   override_reason: string;
   created_at: string;

@@ -52,6 +52,19 @@ export function updateTarget(id: number, patch: Partial<Target>): Promise<Target
 }
 
 /**
+ * Saves mTLS client cert/key or proxy settings for cloning a private target.
+ */
+export function saveCloneCredentials(
+  id: number,
+  payload: { client_cert_pem?: string; client_key_pem?: string; clone_proxy_url?: string }
+): Promise<{ client_cert_set: boolean; client_key_set: boolean }> {
+  return jsonFetch<{ client_cert_set: boolean; client_key_set: boolean }>(
+    `/api/targets/${id}/clone-credentials`,
+    { method: "PUT", body: JSON.stringify(payload) }
+  );
+}
+
+/**
  * Returns open-finding counts by severity across all targets.
  */
 export function targetsSummary(): Promise<TargetSummary> {

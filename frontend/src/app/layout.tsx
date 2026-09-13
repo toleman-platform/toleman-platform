@@ -14,7 +14,11 @@ export const metadata: Metadata = {
   description: "Open-source vulnerability management platform",
 };
 
-export default async function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   // Theme (#115): read the persisted preference straight from the request's
   // cookie (set alongside localStorage by ThemeToggle, see
   // src/components/theme-toggle.tsx) so the server can render the correct

@@ -52,6 +52,9 @@ export type Target = {
   enforcement_mode_source?: EnforcementModeSource;
   api_base_url: Nullable<string>;
   diff_scoped_pr_scans: boolean;
+  client_cert_set?: boolean;
+  client_key_set?: boolean;
+  clone_proxy_url?: string;
   dependency_sync_status: Nullable<DependencySyncStatus>;
   dependency_sync_error: Nullable<string>;
   dependency_sync_at: Nullable<string>;

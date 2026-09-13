@@ -43,6 +43,7 @@ export const api = {
   target: targets.target,
   createTarget: targets.createTarget,
   updateTarget: targets.updateTarget,
+  saveCloneCredentials: targets.saveCloneCredentials,
   targetsSummary: targets.targetsSummary,
   targetGroups: targets.targetGroups,
   assignTargetGroup: targets.assignTargetGroup,

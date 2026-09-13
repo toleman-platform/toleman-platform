@@ -71,7 +71,7 @@ function appEntry(over: Record<string, unknown> = {}) {
 
 const connectButton = () => screen.getByRole("button", { name: "Connect GitHub" }) as HTMLButtonElement;
 
-describe("ConnectGithubCard, creating an App from a localhost address", () => {
+describe("ConnectGithubCard, creating an App from an address GitHub cannot reach", () => {
   it("warns and disables Connect on a fresh install, where there are no Apps to hang the warning off", async () => {
     githubAppStatus.mockResolvedValue(
       statusPayload({ webhook_reachable: false, public_api_url: "http://localhost:8000" }),
@@ -120,6 +120,34 @@ describe("ConnectGithubCard, creating an App from a localhost address", () => {
     expect(screen.getByText("cloudflared tunnel --url http://localhost:8000")).toBeDefined();
     // The fact that costs the most time to discover the hard way.
     expect(screen.getByText(/no API to change an App/)).toBeDefined();
+  });
+
+  it("blocks a LAN address the same way, and does not describe it as localhost", async () => {
+    // An on-prem deployment on the office LAN is an ordinary configuration
+    // and exactly as unreachable from github.com. The copy has to cover it
+    // without claiming the value is a localhost address, which it isn't.
+    githubAppStatus.mockResolvedValue(
+      statusPayload({ webhook_reachable: false, public_api_url: "http://192.168.1.50:8000" }),
+    );
+
+    render(<ConnectGithubCard />);
+
+    expect(await screen.findByText(/resolves only on this machine or inside this network/)).toBeDefined();
+    expect(connectButton().disabled).toBe(true);
+    // It has dots, so the dotless advisory cannot be what caught it.
+    expect(screen.queryByText(/whose host has no dot/)).toBeNull();
+  });
+
+  it("says PUBLIC_API_URL is unset rather than claiming an empty value is a localhost address", async () => {
+    githubAppStatus.mockResolvedValue(statusPayload({ webhook_reachable: false, public_api_url: "" }));
+
+    render(<ConnectGithubCard />);
+
+    expect(await screen.findByText(/has no usable address in it/)).toBeDefined();
+    // The wrong-value branch describes a host that exists somewhere; saying
+    // that about an empty value would be a lie next to an empty <code>.
+    expect(screen.queryByText(/resolves only on this machine or inside this network/)).toBeNull();
+    expect(connectButton().disabled).toBe(true);
   });
 
   it("leaves Connect enabled when the backend reports a reachable host", async () => {

@@ -29,26 +29,54 @@ type GithubAppStatus = {
 };
 
 /**
+ * The host out of PUBLIC_API_URL, or "" when the value has none.
+ *
+ * Mirrors the backend's `_webhook_hostname`: a schemeless value
+ * ("localhost:8000") is a host, not a scheme, so the protocol-relative form
+ * is what gets parsed. The base URL only exists to resolve that form and
+ * never appears in the answer. Never throws.
+ */
+function hostOf(publicApiUrl: string): string {
+  const candidate = publicApiUrl.trim();
+  if (!candidate) return "";
+  try {
+    return new URL(candidate.includes("//") ? candidate : `//${candidate}`, "http://unused.invalid").hostname;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * PUBLIC_API_URL is empty, or not a URL with a host in it at all.
+ *
+ * The backend reports this unreachable (rightly -- there is nothing for
+ * GitHub to deliver to), which means the blocking banner renders; this is
+ * what stops that banner claiming "is a localhost address" next to an empty
+ * value. Unset and wrong are different problems with different fixes.
+ */
+function hasNoUsableHost(publicApiUrl: string): boolean {
+  return hostOf(publicApiUrl) === "";
+}
+
+/**
  * The advisory tier under `webhook_reachable` (#355 review).
  *
- * The backend only says False for what is certain -- a loopback host, or no
- * host at all -- because False disables the Connect button and there is no
- * override. A single-label host with no dot in it (`backend`, a Compose
- * service name) is almost certainly unreachable from GitHub too, but
- * "almost" is the line: this warns and lets the operator click anyway,
- * which is the override the backend predicate cannot offer.
+ * The backend says False only for what is certain -- a host that is not
+ * globally routable, or no host at all -- because False disables the
+ * Connect button and there is no override. A single-label host with no dot
+ * in it (`backend`, a Compose service name) is *almost* certainly
+ * unreachable from GitHub too, and "almost" is the line: this warns and
+ * lets the operator click anyway, which is the override the backend
+ * predicate cannot offer.
  *
- * Never throws. A value the URL parser rejects outright is already handled
- * upstream (the backend reports it unreachable and the blocking banner
- * renders instead), so there is nothing to add here.
+ * Note this is about a dotless *name*. A LAN address (`192.168.1.50`) has
+ * dots and would slip past here, which is exactly why it is classified
+ * unreachable server-side instead: nothing routes to it from github.com,
+ * so it is certain rather than near-certain, and it gets the block.
  */
 function hostIsDotless(publicApiUrl: string): boolean {
-  try {
-    const { hostname } = new URL(publicApiUrl);
-    return hostname.length > 0 && !hostname.includes(".");
-  } catch {
-    return false;
-  }
+  const hostname = hostOf(publicApiUrl);
+  return hostname.length > 0 && !hostname.includes(".");
 }
 
 export function ConnectGithubCard() {
@@ -246,8 +274,16 @@ export function ConnectGithubCard() {
                             <>
                               <XCircle className="h-3.5 w-3.5 text-destructive" />
                               <span className="text-muted-foreground">
-                                Webhook deliveries to this App cannot arrive: <code>PUBLIC_API_URL</code> is{" "}
-                                <code>{status.public_api_url}</code>
+                                Webhook deliveries to this App cannot arrive:{" "}
+                                {hasNoUsableHost(status.public_api_url) ? (
+                                  <>
+                                    <code>PUBLIC_API_URL</code> has no usable address in it
+                                  </>
+                                ) : (
+                                  <>
+                                    <code>PUBLIC_API_URL</code> is <code>{status.public_api_url}</code>
+                                  </>
+                                )}
                               </span>
                             </>
                           ) : appEntry.webhook_secret_set ? (
@@ -325,16 +361,41 @@ export function ConnectGithubCard() {
                   <div className="flex gap-2 rounded-md border border-border bg-secondary p-3">
                     <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                     <div className="flex flex-col gap-2 text-xs text-muted-foreground">
-                      <p className="font-medium text-foreground">
-                        GitHub will reject a new App while <code>PUBLIC_API_URL</code> is a localhost address.
-                      </p>
-                      <p>
-                        <code>PUBLIC_API_URL</code> is <code>{status.public_api_url}</code>. The App manifest
-                        declares that host as its webhook URL, and GitHub validates it at submission, refusing any
-                        address it cannot reach over the public internet (&quot;Hook url is not supported because
-                        it isn&apos;t reachable over the public Internet&quot;). Nothing is created, so this is
-                        not a working App minus automatic scanning; it is no App and no integration at all.
-                      </p>
+                      {/* Unset and wrong are different problems: the second
+                          branch's "resolves only inside this network" is a
+                          lie about an empty value, and the old copy named
+                          localhost specifically, which is wrong for the LAN
+                          addresses the backend also refuses. */}
+                      {hasNoUsableHost(status.public_api_url) ? (
+                        <>
+                          <p className="font-medium text-foreground">
+                            GitHub will reject a new App while <code>PUBLIC_API_URL</code> has no usable address
+                            in it.
+                          </p>
+                          <p>
+                            <code>PUBLIC_API_URL</code> is empty, or not a URL with a host Toleman can read, so
+                            the App manifest has no webhook host to declare. GitHub validates that URL at
+                            submission and refuses the manifest, so nothing is created: not a working App minus
+                            automatic scanning, no App and no integration at all.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="font-medium text-foreground">
+                            GitHub will reject a new App while <code>PUBLIC_API_URL</code> is not an address
+                            GitHub can reach.
+                          </p>
+                          <p>
+                            <code>PUBLIC_API_URL</code> is <code>{status.public_api_url}</code>, which resolves
+                            only on this machine or inside this network: a localhost address, a private or LAN
+                            address, or a name that exists only here. The App manifest declares that host as its
+                            webhook URL, and GitHub validates it at submission, refusing any address it cannot
+                            reach over the public internet (&quot;Hook url is not supported because it
+                            isn&apos;t reachable over the public Internet&quot;). Nothing is created, so this is
+                            not a working App minus automatic scanning; it is no App and no integration at all.
+                          </p>
+                        </>
+                      )}
                       <p>
                         Set <code>PUBLIC_API_URL</code> to a publicly reachable URL, then restart the{" "}
                         <code>backend</code> and <code>celery-worker</code> services to pick it up. For local work

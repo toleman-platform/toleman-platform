@@ -12,8 +12,11 @@ up, so the product promised "PRs will only scan on demand" for an App that
 can never exist.
 
 Covers:
-  - ``webhook_reachable`` classification: the loopback literals, a
-    compose-internal bare hostname, and a real public URL.
+  - ``webhook_reachable`` classification: every spelling of localhost, the
+    LAN/link-local/CGNAT ranges that are equally unreachable from
+    github.com, a value with no parseable host, a compose-internal bare
+    hostname (reachable here, advised against in the UI), and a real public
+    URL.
   - ``/api/github-app/status`` carrying ``webhook_reachable`` /
     ``public_api_url`` with **zero** Apps configured. That is the whole
     point of moving them onto this endpoint: the warning has to render, and
@@ -122,6 +125,38 @@ def test_loopback_addresses_are_not_reachable(backend_url):
     assert webhook_reachable(backend_url) is False
 
 
+@pytest.mark.parametrize(
+    "backend_url",
+    [
+        # RFC 1918. An on-prem deployment reachable on the office LAN is an
+        # ordinary configuration, and just as unreachable from github.com as
+        # localhost is -- but is_loopback says False for all of these, so
+        # they used to sail through with no warning, an enabled Connect
+        # button, and (worse) a True that told
+        # target_has_pr_guardrail_coverage this target's PRs were already
+        # scanned server-side.
+        "http://192.168.1.50:8000",
+        "http://10.0.0.5:8000",
+        "http://172.16.3.4:8000",
+        # Link-local, including the cloud metadata endpoint.
+        "http://169.254.169.254:8000",
+        "http://[fe80::1]:8000",
+        # CGNAT (100.64.0.0/10): is_private alone misses this, which is why
+        # the check is `not is_global`.
+        "http://100.64.0.1:8000",
+        # RFC 5737 documentation range, likewise not globally routable.
+        "http://203.0.113.10:8000",
+    ],
+)
+def test_addresses_that_are_not_globally_routable_are_not_reachable(backend_url):
+    """Certain, not merely likely: Toleman only ever talks to
+    api.github.com (hardcoded, no GitHub-host setting), so a delivery has
+    to come back from the public internet. No deployment shape makes a LAN
+    address reachable from there, which is what earns this a block rather
+    than the advisory a dotless *name* gets."""
+    assert webhook_reachable(backend_url) is False
+
+
 @pytest.mark.parametrize("backend_url", ["", "   ", "http://", "http://:8000"])
 def test_a_value_with_no_host_is_not_reachable(backend_url):
     """An unparseable or empty PUBLIC_API_URL is not a host that merely
@@ -135,8 +170,13 @@ def test_a_real_public_url_is_reachable():
     assert webhook_reachable("https://api.toleman.example.com") is True
     # What a tunnel hands back, the answer this warning actually points at.
     assert webhook_reachable("https://spare-cloud-1234.trycloudflare.com") is True
-    # A public IP is a host like any other; only loopback is special.
-    assert webhook_reachable("http://203.0.113.10:8000") is True
+    # A globally routable IP is a host like any other. Deliberately not one
+    # of the RFC 5737 documentation ranges (192.0.2.0/24, 198.51.100.0/24,
+    # 203.0.113.0/24) that would otherwise be the natural choice here:
+    # Python reports those as not global, so they are classified
+    # unreachable along with the LAN ranges -- correctly, since nothing
+    # routes to them either.
+    assert webhook_reachable("http://8.8.8.8:8000") is True
 
 
 def test_a_dotless_hostname_is_still_reachable_here_and_warned_about_in_the_ui():

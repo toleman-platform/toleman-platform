@@ -40,21 +40,43 @@ def _webhook_hostname(backend_url: str) -> str:
     return (parsed.hostname or "").lower().rstrip(".")
 
 
-def _is_loopback_host(hostname: str) -> bool:
-    """Whether this host is certainly the local machine.
+def _is_unroutable_host(hostname: str) -> bool:
+    """Whether an address at this host is certainly not reachable from
+    GitHub's servers.
 
-    Covers more than the four literals this used to compare against, all of
-    which reach a local backend and none of which GitHub can deliver to:
+    Two families, both certain rather than likely:
 
+    **Loopback names.** ``localhost`` and, per RFC 6761, anything under
+    ``*.localhost``, which is reserved to the loopback interface.
+
+    **Any IP literal that is not globally routable.** ``ip.is_global`` is
+    the test, not ``is_loopback`` (which misses a LAN address entirely) and
+    not ``is_private`` (which misses link-local, CGNAT and the reserved
+    ranges). What that buys, beyond the loopback cases this started as:
+
+      - ``192.168.1.50``, ``10.0.0.5``, ``172.16.3.4`` -- RFC 1918. An
+        on-prem deployment reachable on the LAN is an ordinary
+        configuration, and it is exactly as unreachable from github.com as
+        localhost is.
+      - ``169.254.169.254`` and ``fe80::1`` -- link-local, including the
+        cloud metadata endpoint.
       - ``127.0.0.2`` and the rest of 127.0.0.0/8, not just ``127.0.0.1``.
-      - ``127.1``, inet_aton shorthand for 127.0.0.1. ``ipaddress`` rejects
-        it (it wants four octets), but resolvers, browsers and curl all
-        accept it, so it is a real way to spell localhost.
-      - ``::ffff:127.0.0.1``, an IPv4-mapped IPv6 address, whose IPv6 form
-        reports ``is_loopback`` False and has to be unwrapped first.
-      - ``*.localhost``, reserved to the loopback interface by RFC 6761.
-      - the unspecified addresses (``0.0.0.0``, ``::``), already covered
-        before and kept.
+      - the unspecified addresses (``0.0.0.0``, ``::``).
+
+    Certain because Toleman only ever talks to ``api.github.com`` (hardcoded
+    across this module and its siblings; there is no GitHub-host setting),
+    so the delivery has to come back from the public internet. There is no
+    deployment shape in which an RFC 1918 address is reachable from there,
+    which is what makes this a block rather than the advisory that
+    connect-github-card.tsx gives a dotless *name*.
+
+    Two parsing details behind the literals above:
+
+      - ``127.1`` is inet_aton shorthand for 127.0.0.1. ``ipaddress``
+        rejects it (it wants four octets) but resolvers, browsers and curl
+        all accept it, so it is a real way to spell localhost.
+      - ``::ffff:127.0.0.1`` is an IPv4-mapped IPv6 address, whose IPv6
+        form reports ``is_loopback`` False and has to be unwrapped first.
     """
     if hostname == "localhost" or hostname.endswith(".localhost"):
         return True
@@ -71,12 +93,13 @@ def _is_loopback_host(hostname: str) -> bool:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped
-    return ip.is_loopback or ip.is_unspecified
+    return not ip.is_global
 
 
 def webhook_reachable(backend_url: str) -> bool:
     """Whether GitHub can plausibly reach the given backend URL's webhook
-    endpoint -- i.e. it isn't a localhost address. Takes the URL as a
+    endpoint -- i.e. it is a publicly routable address rather than a
+    localhost or LAN one. Takes the URL as a
     parameter rather than reading settings.public_api_url itself, same
     convention as build_manifest's own app_url/backend_url params just
     below: keeps this testable by callers without needing to monkeypatch a
@@ -109,13 +132,15 @@ def webhook_reachable(backend_url: str) -> bool:
     was public, then pointed back at localhost) deliveries stop arriving,
     and that genuinely is a degraded mode.
 
-    False is reserved for what is *certain*: a loopback host (see
-    ``_is_loopback_host`` for every spelling of one), or a value with no
-    parseable host at all. Certainty is the bar because of what False now
-    does -- it disables the Connect button, which has no override, and it
-    is the same answer ``target_has_pr_guardrail_coverage`` uses to decide
-    which path scans a target's PRs. A wrong False is not a cosmetic
-    warning, it is an operator with no way to proceed.
+    False is reserved for what is *certain*: a host that is not globally
+    routable (see ``_is_unroutable_host`` -- loopback names, and any IP
+    literal from a private, loopback, link-local, CGNAT or reserved range),
+    or a value with no parseable host at all. Certainty is the bar because
+    of what False now does -- it disables the Connect button, which has no
+    override, and it is the same answer
+    ``target_has_pr_guardrail_coverage`` uses to decide which path scans a
+    target's PRs. A wrong False is not a cosmetic warning, it is an
+    operator with no way to proceed.
 
     A dotless single-label host (``http://backend:8000``, a compose service
     name) is reported reachable for that reason and that reason only. It is
@@ -226,8 +251,10 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         #
         # backend_url must be reachable *from GitHub*; see
         # settings.public_api_url. GitHub validates this URL when the
-        # manifest is submitted and refuses a loopback host, so a localhost
-        # value does not produce a degraded App, it produces no App at all:
+        # manifest is submitted and refuses any host it cannot reach over
+        # the public internet -- a loopback address, and equally a LAN one
+        # -- so such a value does not produce a degraded App, it produces
+        # no App at all:
         # the flow dies on github.com with "Hook url is not supported
         # because it isn't reachable over the public Internet (localhost)".
         # webhook_reachable() is what the api/UI layer uses to stop that

@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
-import { IGNORE_STATUS_COLOR, SEVERITY_COLOR } from "@/lib/severity";
+import { IGNORE_STATUS_COLOR, SEVERITY_COLOR, SEVERITY_ORDER } from "@/lib/severity";
 import { ALL_TARGETS } from "@/components/features/targets";
 
 function isSessionError(e: unknown): boolean {
@@ -255,11 +255,25 @@ function PrGuardrailFindingRow({
 
 // (#383) One line flagged by two tools is one problem with one fix, and used
 // to render as two full rows -- the exact "two separate issues" misreading
-// this grouping exists to stop. The grouping itself is decided server-side
-// (group_key/group_size/group_tools/group_severity, see
-// _grouped_findings_out); this only assembles the returned rows into the
-// buckets the API already assigned them to, preserving the order they
-// arrived in so grouped members stay adjacent.
+// this grouping exists to stop.
+//
+// The division of labour with the backend is deliberate, and is the whole
+// reason this function is as suspicious as it is:
+//
+// * **Membership is the backend's decision.** group_findings_by_location
+//   deliberately keeps some same-location findings apart (one tool's own two
+//   rules on a line; file-level findings with no line number), so this must
+//   never re-derive who belongs with whom from the rows' own file/line. It
+//   reads only what the API sends -- group_key, which is unique per group,
+//   and group_size, which says how many members that group has -- and treats
+//   both as a hard ceiling. Getting this wrong renders a *different*
+//   grouping than the PR comment for the same scan, with fewer rows.
+// * **Labels are derived from the members.** Tool list, severity and the
+//   headline finding come from the rows actually in the bucket, so a row can
+//   never be labelled with another group's tools or badged at a severity
+//   none of its members has. Mirrors LocationGroup.severity/.tools in
+//   app/core/pr_guardrail_executor.py: highest severity wins, distinct tools
+//   in arrival order.
 export type FindingGroup = {
   key: string;
   findings: PrGuardrailFinding[];
@@ -269,38 +283,63 @@ export type FindingGroup = {
   primary: PrGuardrailFinding;
 };
 
+// SEVERITY_ORDER is most-severe-first, so a lower index is more severe; an
+// unranked severity string sorts below everything known and can never win a
+// group's badge away from a real severity.
+function severityRank(severity: string): number {
+  const index = SEVERITY_ORDER.indexOf(severity);
+  return index === -1 ? SEVERITY_ORDER.length : index;
+}
+
 export function groupFindings(findings: PrGuardrailFinding[]): FindingGroup[] {
-  const byKey = new Map<string, FindingGroup>();
-  const order: FindingGroup[] = [];
-  findings.forEach((f, i) => {
-    // A response without grouping fields (an older backend, or a surface
-    // that doesn't send them) degrades to one group per finding, i.e. the
-    // flat list this component rendered before -- never to a wrong grouping.
-    const key = f.group_key ?? `ungrouped-${i}`;
-    const existing = byKey.get(key);
-    if (existing) {
-      existing.findings.push(f);
-      return;
+  const buckets: PrGuardrailFinding[][] = [];
+  // Only buckets that are still short of their declared size; a bucket that
+  // has all its members can never absorb another row, even one repeating its
+  // key.
+  const accepting = new Map<string, { members: PrGuardrailFinding[]; size: number }>();
+
+  for (const f of findings) {
+    const size = f.group_size ?? 1;
+    const key = f.group_key;
+    // No key at all (an older backend, or a surface that doesn't send the
+    // grouping), an empty one (parse_sarif reports file_path "" for a result
+    // with no locations, and "" is not nullish), or a group the backend says
+    // has one member: this row stands alone. Degrading to one row per
+    // finding is the old flat list -- never to a merge nobody asked for.
+    if (!key || size <= 1) {
+      buckets.push([f]);
+      continue;
     }
-    const group: FindingGroup = {
-      key,
-      findings: [f],
-      tools: f.group_tools ?? [f.tool],
-      severity: f.group_severity ?? f.severity,
-      primary: f,
-    };
-    byKey.set(key, group);
-    order.push(group);
-  });
-  // The primary is whichever member the backend named (group_primary_id: the
-  // most severe one, which is also where group_severity comes from);
-  // falling back to the first arrival keeps a degraded response sensible.
-  for (const group of order) {
-    const primaryId = group.findings[0].group_primary_id;
-    const primary = group.findings.find((f) => f.id === primaryId);
-    if (primary) group.primary = primary;
+    const open = accepting.get(key);
+    if (open) {
+      open.members.push(f);
+      if (open.members.length >= open.size) accepting.delete(key);
+      continue;
+    }
+    const members = [f];
+    buckets.push(members);
+    accepting.set(key, { members, size });
   }
-  return order;
+
+  return buckets.map((members) => {
+    const tools: string[] = [];
+    for (const f of members) if (!tools.includes(f.tool)) tools.push(f.tool);
+    // Stable: the first member at the highest severity, same tie-break as
+    // the backend's LocationGroup.primary.
+    const primary = members.reduce((best, f) =>
+      severityRank(f.severity) < severityRank(best.severity) ? f : best,
+    );
+    return {
+      // The backend's key is already unique per group; the first member's id
+      // is appended anyway so two groups can never collide into one React
+      // key even if a degraded response repeats a key.
+      key: `${members[0].group_key ?? "ungrouped"}#${members[0].id}`,
+      findings: members,
+      tools,
+      severity: primary.severity,
+      primary,
+    };
+  });
 }
 
 function GroupedFindingRow({

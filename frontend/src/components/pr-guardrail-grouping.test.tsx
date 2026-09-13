@@ -41,11 +41,11 @@ function finding(overrides: Partial<PrGuardrailFinding> = {}): PrGuardrailFindin
     ignore_requested_reason: "",
     ignore_reviewed_by: "",
     ignore_reviewed_at: null,
-    group_key: "README.md:7",
+    // What the API actually sends: membership only. group_key is unique per
+    // group (the backend appends the first member's id to the location), and
+    // group_size is how many rows belong to it.
+    group_key: "1@README.md:7",
     group_size: 2,
-    group_tools: ["semgrep", "gitleaks"],
-    group_severity: "High",
-    group_primary_id: 1,
     ...overrides,
   };
 }
@@ -77,7 +77,11 @@ function scan(overrides: Partial<PrGuardrailLogEntry> = {}): PrGuardrailLogEntry
 
 // The log card starts expanded via initialScanId, which is also how a PR
 // comment's "view" link lands here -- otherwise the findings never render.
-async function renderFindings(findings: PrGuardrailFinding[], initialIgnoreFindingId: number | null = null) {
+async function renderFindings(
+  findings: PrGuardrailFinding[],
+  initialIgnoreFindingId: number | null = null,
+  settled: RegExp = /found by:|Detected AWS access key ID/,
+) {
   getPrGuardrailLog.mockResolvedValue([scan()]);
   getPrGuardrailFindings.mockResolvedValue(findings);
   render(
@@ -85,7 +89,7 @@ async function renderFindings(findings: PrGuardrailFinding[], initialIgnoreFindi
   );
   // findAll: a collapsed group renders both its title and its "found by"
   // line, and this only has to wait for the list to arrive.
-  await screen.findAllByText(/found by:|Detected AWS access key ID/);
+  await screen.findAllByText(settled);
 }
 
 describe("groupFindings", () => {
@@ -100,31 +104,100 @@ describe("groupFindings", () => {
   it("keeps different locations apart", () => {
     const groups = groupFindings([
       finding(),
-      finding({ id: 2, tool: "gitleaks", group_key: "README.md:9", group_size: 1, group_tools: ["gitleaks"] }),
+      finding({ id: 2, tool: "gitleaks", group_key: "2@README.md:9", group_size: 1 }),
     ]);
 
     expect(groups).toHaveLength(2);
   });
 
-  it("takes the group's severity and primary from the backend, not from row order", () => {
+  it("never merges rows the backend kept in groups of one", () => {
+    // The shape that broke this: three trivy CVEs on one manifest, all with
+    // no line number, are three separate groups the backend deliberately did
+    // not merge. Bucketing on a location alone collapsed them into one row
+    // and hid two CVEs behind a toggle -- a grouping the PR comment for the
+    // same scan never rendered. group_size is what makes that impossible.
+    const cves = [1, 2, 3].map((n) =>
+      finding({
+        id: n,
+        tool: "trivy",
+        rule_id: `CVE-2026-${n}`,
+        title: `CVE-2026-${n}`,
+        file_path: "requirements.txt",
+        line_start: null,
+        // A backend that keyed on the location alone would send these three
+        // the same key; group_size still says each stands alone.
+        group_key: "requirements.txt",
+        group_size: 1,
+      }),
+    );
+
+    const groups = groupFindings(cves);
+
+    expect(groups).toHaveLength(3);
+    expect(groups.map((g) => g.findings.length)).toEqual([1, 1, 1]);
+    // React keys stay distinct even though the rows share a key.
+    expect(new Set(groups.map((g) => g.key)).size).toBe(3);
+  });
+
+  it("never takes more members into a bucket than group_size allows", () => {
+    // Two real groups of two that happen to share a key: the second pair
+    // starts a new bucket rather than overflowing the first.
+    const rows = [1, 2, 3, 4].map((n) =>
+      finding({ id: n, tool: n % 2 ? "semgrep" : "gitleaks", group_key: "shared", group_size: 2 }),
+    );
+
+    const groups = groupFindings(rows);
+
+    expect(groups.map((g) => g.findings.map((f) => f.id))).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+  });
+
+  it("derives severity and the headline finding from the members", () => {
     // Tools disagree about the same line all the time; the collapsed row has
     // to read at the highest severity present, whichever row arrived first.
+    // Derived from the members rather than carried on a row, so a row can
+    // never be badged at a severity none of its members has.
     const groups = groupFindings([
-      finding({ severity: "Medium", group_severity: "Critical", group_primary_id: 2 }),
-      finding({ id: 2, tool: "gitleaks", title: "AWS access token", severity: "Critical", group_severity: "Critical", group_primary_id: 2 }),
+      finding({ severity: "Medium" }),
+      finding({ id: 2, tool: "gitleaks", title: "AWS access token", severity: "Critical" }),
     ]);
 
     expect(groups[0].severity).toBe("Critical");
     expect(groups[0].primary.id).toBe(2);
+    expect(groups[0].tools).toEqual(["semgrep", "gitleaks"]);
   });
 
   it("degrades to one group per finding when the response carries no grouping", () => {
     const flat = [
-      { ...finding(), group_key: undefined, group_size: undefined, group_tools: undefined },
-      { ...GITLEAKS, group_key: undefined, group_size: undefined, group_tools: undefined },
+      { ...finding(), group_key: undefined, group_size: undefined },
+      { ...GITLEAKS, group_key: undefined, group_size: undefined },
     ];
 
     expect(groupFindings(flat)).toHaveLength(2);
+  });
+
+  it("does not merge on an empty group_key", () => {
+    // parse_sarif reports file_path "" for a result with no locations, and
+    // "" is not nullish -- it would slip past a `??` guard and bucket every
+    // location-less finding in the scan into one row.
+    const rows = [
+      { ...finding(), file_path: "", group_key: "", group_size: 1 },
+      { ...GITLEAKS, file_path: "", group_key: "", group_size: 1 },
+    ];
+
+    expect(groupFindings(rows)).toHaveLength(2);
+  });
+
+  it("keeps the rows in the order the API sent them", () => {
+    const groups = groupFindings([
+      finding({ id: 5, group_key: "5@auth.py:12", group_size: 1, file_path: "auth.py", line_start: 12 }),
+      finding(),
+      GITLEAKS,
+    ]);
+
+    expect(groups.map((g) => g.findings.map((f) => f.id))).toEqual([[5], [1, 2]]);
   });
 });
 
@@ -150,9 +223,48 @@ describe("PR Guardrail findings list", () => {
     expect(screen.getAllByText("Request Ignore")).toHaveLength(2);
   });
 
+  it("renders findings the backend kept apart as separate rows, with nothing hidden", async () => {
+    // The page must render the same grouping the PR comment does for the
+    // same scan. Three trivy CVEs on one manifest are three findings there,
+    // so three rows here -- not one collapsed row labelled "found by: trivy"
+    // with two CVEs behind a toggle.
+    const cves = [1, 2, 3].map((n) =>
+      finding({
+        id: n,
+        tool: "trivy",
+        rule_id: `CVE-2026-${n}`,
+        title: `CVE-2026-${n}`,
+        file_path: "requirements.txt",
+        line_start: null,
+        group_key: `${n}@requirements.txt`,
+        group_size: 1,
+      }),
+    );
+
+    await renderFindings(cves, null, /CVE-2026-1/);
+
+    for (const n of [1, 2, 3]) {
+      // Title and location line both name it, hence getAll.
+      expect(screen.getAllByText(new RegExp(`CVE-2026-${n}`)).length).toBeGreaterThan(0);
+    }
+    expect(screen.queryByText(/found by:/)).toBeNull();
+    expect(screen.queryByText(/Show \d+ findings/)).toBeNull();
+    expect(screen.queryByText(/grouped into/)).toBeNull();
+  });
+
+  it("badges a group at its most severe member", async () => {
+    await renderFindings([
+      finding({ severity: "Low" }),
+      { ...GITLEAKS, severity: "Critical" },
+    ]);
+
+    const header = screen.getByText(/found by: semgrep, gitleaks/).closest("button");
+    expect(header?.textContent).toContain("Critical");
+  });
+
   it("leaves an ungrouped finding as a plain row", async () => {
     await renderFindings([
-      finding({ group_key: "README.md:7", group_size: 1, group_tools: ["semgrep"] }),
+      finding({ group_key: "1@README.md:7", group_size: 1 }),
     ]);
 
     expect(screen.queryByText(/found by:/)).toBeNull();

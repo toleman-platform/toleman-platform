@@ -23,6 +23,8 @@ import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.pr_guardrail_executor import (
     COMMENT_MARKER,
+    _approved_action_cell,
+    _finding_ref_link,
     group_findings_by_location,
     render_comment,
 )
@@ -170,6 +172,83 @@ def test_file_level_findings_never_group():
     assert len(groups) == 2
 
 
+def test_line_zero_counts_as_no_line_number():
+    """parse_trivy's CauseMetadata.StartLine and parse_iac's file_line_range[0]
+    both report 0 for a file-level check. An `is not None` test would let 0
+    through as a real location and merge two unrelated file-level findings
+    that happen to share a manifest."""
+    findings = [
+        _finding(1, tool="trivy", rule_id="CVE-2026-1", file_path="requirements.txt", line_start=0),
+        _finding(2, tool="checkov", rule_id="CKV_X", file_path="requirements.txt", line_start=0),
+    ]
+
+    groups = group_findings_by_location(findings)
+
+    assert len(groups) == 2
+
+
+def test_each_group_gets_its_own_key_even_at_one_location():
+    """A location is not unique across groups: everything this function
+    deliberately keeps apart shares a file/line. A key that was just the
+    location would let any consumer re-merge exactly what was kept apart --
+    three trivy CVEs on one manifest collapsing into one row, two of them
+    hidden behind a toggle."""
+    findings = [
+        _finding(1, tool="trivy", rule_id="CVE-2026-1", file_path="requirements.txt", line_start=None),
+        _finding(2, tool="trivy", rule_id="CVE-2026-2", file_path="requirements.txt", line_start=None),
+        _finding(3, tool="trivy", rule_id="CVE-2026-3", file_path="requirements.txt", line_start=None),
+    ]
+
+    groups = group_findings_by_location(findings)
+
+    assert len(groups) == 3
+    assert len({g.key for g in groups}) == 3
+
+
+def test_a_group_key_is_never_empty():
+    """parse_sarif emits file_path "" for a result carrying no locations, and
+    "" slips past a consumer's nullish check -- which would bucket every
+    location-less finding in a scan into one row."""
+    findings = [
+        _finding(1, tool="semgrep", file_path="", line_start=None),
+        _finding(2, tool="gitleaks", file_path="", line_start=None),
+    ]
+
+    groups = group_findings_by_location(findings)
+
+    assert len(groups) == 2
+    assert all(g.key for g in groups)
+    assert len({g.key for g in groups}) == 2
+
+
+def test_order_is_the_order_the_findings_arrived_in():
+    """Nothing groups here, so the rendered order must be exactly the input
+    order -- an earlier version bucketed by location first and hoisted the
+    third finding up next to the first because they shared a line."""
+    findings = [
+        _finding(1, tool="semgrep", rule_id="a", file_path="db.py", line_start=88),
+        _finding(2, tool="semgrep", rule_id="b", file_path="auth.py", line_start=12),
+        _finding(3, tool="semgrep", rule_id="c", file_path="db.py", line_start=88),
+    ]
+
+    groups = group_findings_by_location(findings)
+
+    assert [g.findings[0].id for g in groups] == [1, 2, 3]
+
+
+def test_a_merged_group_sits_where_its_first_member_was():
+    findings = [
+        _finding(1, tool="semgrep", rule_id="a", file_path="auth.py", line_start=12),
+        _finding(2, **_SEMGREP_SECRET),
+        _finding(3, tool="trivy", rule_id="c", file_path="go.mod", line_start=4),
+        _finding(4, **_GITLEAKS_SECRET),
+    ]
+
+    groups = group_findings_by_location(findings)
+
+    assert [[f.id for f in g.findings] for g in groups] == [[1], [2, 4], [3]]
+
+
 def test_group_severity_is_the_highest_of_its_members():
     """Tools disagree about the same line routinely. Reporting the lowest
     would let a Critical finding sit inside a row labelled Medium, collapsed
@@ -250,8 +329,47 @@ def test_comment_shows_an_already_approved_member_as_approved():
     body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
 
     assert "✅ approved to ignore" in body
-    # The still-open member keeps its live link.
+    # The still-open member keeps its live link, and the collapsed header
+    # says one of the two is already dealt with.
     assert "/ignore-request/9/1" in body
+    assert "2 findings (1 approved), expand below" in body
+
+
+def test_a_fully_approved_group_does_not_look_untouched():
+    """Both members already approved-to-ignore: the header must say so rather
+    than reading exactly like a group nobody has looked at, with the approvals
+    only visible after expanding -- the same failure #401 fixed for individual
+    rows."""
+    findings = [
+        _finding(1, ignore_status=IgnoreStatus.APPROVED, **_SEMGREP_SECRET),
+        _finding(2, ignore_status=IgnoreStatus.APPROVED, **_GITLEAKS_SECRET),
+    ]
+
+    body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
+
+    assert "✅ all 2 approved to ignore" in body
+    assert "expand below" not in body
+
+
+def test_a_fully_approved_groups_header_cannot_steal_a_revoke_patch():
+    """revoke_finding_status_in_pr_comment finds a row by the exact text
+    _approved_action_cell(ref_link) produces and replaces it once. If the
+    collapsed header emitted that same string for its primary member, the
+    single replacement would land on the header and leave the member's own
+    row still claiming the ignore is approved."""
+    findings = [
+        _finding(1, ignore_status=IgnoreStatus.APPROVED, **_SEMGREP_SECRET),
+        _finding(2, ignore_status=IgnoreStatus.APPROVED, **_GITLEAKS_SECRET),
+    ]
+
+    body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
+
+    for finding_id in (1, 2):
+        cell = _approved_action_cell(_finding_ref_link(5, 9, finding_id))
+        assert body.count(cell) == 1, "each member's approved cell must appear exactly once"
+        # And the one occurrence is the member's own row in the expanded
+        # table, not the collapsed header above it.
+        assert body.index("| Tool | Severity | Rule | Title | Links |") < body.index(cell)
 
 
 def test_comment_groups_under_the_highest_severity_section():
@@ -342,16 +460,12 @@ def test_api_carries_the_grouping_so_the_ui_never_re_derives_it(client, engine):
     rows = res.json()
 
     # Still one row per finding: nothing is merged away server-side, and each
-    # keeps its own id, rule and ignore state.
+    # keeps its own id, rule, severity and ignore state.
     assert {r["id"] for r in rows} == {semgrep_id, gitleaks_id}
+    # Membership is what travels: one shared key, and a size saying how many
+    # rows belong to it.
     assert len({r["group_key"] for r in rows}) == 1
-    for r in rows:
-        assert r["group_size"] == 2
-        assert r["group_tools"] == ["semgrep", "gitleaks"]
-        # The group reports the highest severity even on the row whose own
-        # severity is lower -- both facts are sent, neither overwrites the other.
-        assert r["group_severity"] == "Critical"
-        assert r["group_primary_id"] == gitleaks_id
+    assert all(r["group_size"] == 2 for r in rows)
     assert [r["severity"] for r in rows if r["id"] == semgrep_id] == ["Medium"]
 
 
@@ -369,6 +483,28 @@ def test_api_leaves_unrelated_findings_in_groups_of_one(client, engine):
 
     assert len({r["group_key"] for r in rows}) == 2
     assert all(r["group_size"] == 1 for r in rows)
+
+
+def test_api_gives_same_location_findings_that_must_not_merge_distinct_keys(client, engine):
+    """The shape that broke the UI: three trivy CVEs on one manifest, all with
+    no line number, are three groups the backend deliberately keeps apart. If
+    they shared a key, a consumer bucketing on it would collapse them into one
+    row and hide two CVEs behind a toggle."""
+    client = _login(client, engine)
+    scan_id, ids = _make_scan_with_findings(
+        engine,
+        [
+            dict(tool="trivy", rule_id=f"CVE-2026-{n}", title=f"CVE-2026-{n}", file_path="requirements.txt", line_start=None)
+            for n in (1, 2, 3)
+        ],
+    )
+
+    rows = client.get(f"/api/pr-guardrail/{scan_id}/findings").json()
+
+    assert len(rows) == 3
+    assert len({r["group_key"] for r in rows}) == 3
+    assert all(r["group_size"] == 1 for r in rows)
+    assert all(r["group_key"] for r in rows)
 
 
 def test_ignoring_one_member_of_a_group_leaves_the_other_alone(client, engine):

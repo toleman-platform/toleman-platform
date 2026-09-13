@@ -101,6 +101,22 @@ def _grouped_findings_out(findings: list[PRGuardrailFinding]) -> list[dict]:
     being reimplemented in TypeScript and drifting from it. The frontend
     only has to bucket by `group_key`.
 
+    What travels is *membership only*: `group_key`, which is unique per group
+    (a location is not -- `group_findings_by_location` deliberately emits one
+    group per finding for a single tool's own findings on a line and for
+    file-level findings with no line number, and all of those share a
+    file/line), and `group_size`, so a consumer can tell a group of one from
+    a group still missing members and can never merge more rows into a bucket
+    than the backend put there.
+
+    What does not travel is the group's tool list, severity and headline
+    finding. Those are pure functions of the members (highest severity wins;
+    distinct tools in arrival order -- see LocationGroup) and are derived
+    where they are rendered, so a row physically cannot be labelled with
+    another group's tools or badged at a severity none of its members has.
+    Transporting a label is what makes that failure possible in the first
+    place.
+
     Findings that group with nothing still carry the fields (a group of one),
     so no consumer needs a null branch: `group_size == 1` is the ungrouped
     case.
@@ -117,13 +133,6 @@ def _grouped_findings_out(findings: list[PRGuardrailFinding]) -> list[dict]:
             row = _finding_out(f)
             row["group_key"] = group.key
             row["group_size"] = len(group.findings)
-            row["group_tools"] = group.tools
-            # The group's own severity (highest among its members, see
-            # LocationGroup.severity), which can outrank this row's
-            # `severity` when the tools disagree. Both are sent: the row
-            # keeps its own truth, the collapsed header needs the group's.
-            row["group_severity"] = group.severity
-            row["group_primary_id"] = group.primary.id
             out.append(row)
     return out
 

@@ -536,11 +536,26 @@ class LocationGroup:
 
     @property
     def key(self) -> str:
-        """Stable identifier for this group, used by the API to tell the
-        frontend which rows belong together without it re-deriving the
-        grouping rule. Not an id: it identifies a location, not a row in any
-        table, and only ever means anything within one scan's finding list."""
-        return f"{self.file_path}:{self.line_start}" if self.line_start is not None else self.file_path
+        """Identifier for this group, used by the API to tell the frontend
+        which rows belong together without it re-deriving the grouping rule.
+
+        Deliberately NOT the location alone. A location is not unique across
+        groups: group_findings_by_location emits *one group per finding* in
+        exactly the two cases it must not merge -- one tool's own findings on
+        one line, and file-level findings carrying no line number -- and all
+        of those groups share a file/line. Keying on the location would let a
+        consumer re-merge precisely what the grouping rule just kept apart
+        (three trivy CVEs on requirements.txt collapsing into one row, two of
+        them hidden behind a toggle). The first member's id disambiguates:
+        every finding belongs to exactly one group, so no two groups can
+        share one. The location is kept in the string for legibility only.
+
+        Never empty, whatever the finding carries -- parse_sarif emits
+        file_path "" for a result with no locations, and an empty key would
+        slip past a consumer's nullish check and bucket every such finding
+        together.
+        """
+        return f"{self.findings[0].id}@{_location_label(self.file_path, self.line_start)}"
 
     @property
     def tools(self) -> list[str]:
@@ -596,40 +611,42 @@ def group_findings_by_location(findings: list[PRGuardrailFinding]) -> list[Locat
       manifest, say) is not a location in the sense this grouping means: two
       tools flagging "somewhere in requirements.txt" are very often flagging
       different packages, and merging them into a row that names one of them
-      would be actively misleading. They stay separate rows.
+      would be actively misleading. They stay separate rows. A falsy check,
+      not `is not None`: parse_trivy's CauseMetadata.StartLine and parse_iac's
+      file_line_range[0] both report 0 for a file-level check, which means
+      the same "no line" as None and must not slip past into a location.
 
-    Group order follows first appearance, so the rendered order still tracks
-    the order tools ran in.
+    Findings keep their original order, and a merged group sits where its
+    first member was, so when nothing merges (the common case) the rendered
+    order is exactly the order the findings arrived in -- rather than later
+    members of a bucket being hoisted up next to the first.
     """
-    buckets: dict[tuple[str, int], list[PRGuardrailFinding]] = {}
-    order: list[tuple[str, int] | int] = []
-    ungrouped: dict[int, PRGuardrailFinding] = {}
-
+    buckets: dict[tuple[str, int], list[int]] = {}
     for index, f in enumerate(findings):
-        if f.line_start is None:
-            ungrouped[index] = f
-            order.append(index)
+        if not f.line_start:
             continue
-        key = (f.file_path, f.line_start)
-        if key not in buckets:
-            buckets[key] = []
-            order.append(key)
-        buckets[key].append(f)
+        buckets.setdefault((f.file_path, f.line_start), []).append(index)
 
-    groups: list[LocationGroup] = []
-    for entry in order:
-        if isinstance(entry, int):
-            f = ungrouped[entry]
-            groups.append(LocationGroup(f.file_path, f.line_start, [f]))
-            continue
-        members = buckets[entry]
+    # Which buckets actually merge, recorded by the index of their first
+    # member so the merged row lands in that member's original position.
+    merged: dict[int, list[PRGuardrailFinding]] = {}
+    absorbed: set[int] = set()
+    for indices in buckets.values():
+        members = [findings[i] for i in indices]
         if len({f.tool for f in members}) < 2:
             # One tool's own multiple findings at one line: separate rows,
             # see the docstring. Also the overwhelmingly common case of a
             # single finding at a location.
-            groups.extend(LocationGroup(f.file_path, f.line_start, [f]) for f in members)
             continue
-        groups.append(LocationGroup(members[0].file_path, members[0].line_start, members))
+        merged[indices[0]] = members
+        absorbed.update(indices)
+
+    groups: list[LocationGroup] = []
+    for index, f in enumerate(findings):
+        if index in merged:
+            groups.append(LocationGroup(f.file_path, f.line_start, merged[index]))
+        elif index not in absorbed:
+            groups.append(LocationGroup(f.file_path, f.line_start, [f]))
     return groups
 
 
@@ -842,10 +859,40 @@ def _findings_table(
         # do on an individual row's cell.
         lines.append(
             f"| {g.severity} | found by: {', '.join(g.tools)} | {g.primary.title} | {loc} | "
-            f"[view]({_finding_ref_link(target_id, pr_scan_id, g.primary.id)}) &middot; "
-            f"{len(g.findings)} findings, expand below |"
+            f"{_group_action_cell(g, target_id, pr_scan_id)} |"
         )
     return "\n".join(lines)
+
+
+def _group_action_cell(group: LocationGroup, target_id: int, pr_scan_id: int) -> str:
+    """The collapsed row's Links cell, which has to say whether the findings
+    behind it have already been dealt with.
+
+    A group whose members are *all* approved-to-ignore would otherwise render
+    a header indistinguishable from an untouched one, with the approvals
+    visible only after expanding -- the same "looks like an unaddressed issue
+    a reviewer never saw" failure #401 fixed for individual rows.
+
+    The tick goes *before* the view link, and never as `_approved_action_cell`
+    itself. That cell's exact text is what
+    `revoke_finding_status_in_pr_comment` searches for (built from a
+    finding's own ref link, replaced once); emitting it here for the primary
+    member would put a copy earlier in the body than the member's own row and
+    silently send that single replacement to the header instead of the row it
+    belongs to. Arranged this way the header cannot contain either patch
+    path's search string -- `[view](ref) &middot; ✅ approved to ignore` or
+    `&middot; [request ignore](link)` -- as a substring.
+    """
+    ref_link = _finding_ref_link(target_id, pr_scan_id, group.primary.id)
+    approved = sum(1 for f in group.findings if f.ignore_status == IgnoreStatus.APPROVED)
+    if approved == len(group.findings):
+        return f"✅ all {approved} approved to ignore &middot; [view]({ref_link})"
+    if approved:
+        return (
+            f"[view]({ref_link}) &middot; {len(group.findings)} findings "
+            f"({approved} approved), expand below"
+        )
+    return f"[view]({ref_link}) &middot; {len(group.findings)} findings, expand below"
 
 
 def _group_detail_blocks(groups: list[LocationGroup], target_id: int, pr_scan_id: int) -> list[str]:
@@ -1750,7 +1797,19 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
         )
         post_pr_comment(session, target, pr_number, comment_body)
 
-        summary_desc = f"{len(net_new)} net-new finding(s), {len(new_endpoints)} new endpoint(s)"
+        # (#383) The commit status sits beside that comment on the same PR,
+        # so reporting "2 net-new finding(s)" next to a comment headlining 1
+        # is the same two-numbers-for-one-thing confusion this grouping set
+        # out to remove. Counted over the rows the comment actually rendered
+        # -- except when there were more net-new findings than we persist and
+        # render (MAX_NEW_FINDINGS_IN_RESPONSE), where those rows are only a
+        # page of the result and the full count is the honest one to put on
+        # the merge gate.
+        if len(persisted_findings) == len(net_new):
+            reported_findings = len(group_findings_by_location(persisted_findings))
+        else:
+            reported_findings = len(net_new)
+        summary_desc = f"{reported_findings} net-new finding(s), {len(new_endpoints)} new endpoint(s)"
         if status == PRGuardrailStatus.BLOCKED:
             # A real net-new blocking finding exists among the tools that
             # did run. That is a known problem regardless of what else

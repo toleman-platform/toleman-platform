@@ -44,10 +44,12 @@ def scans_summary(
     timestamp and a handful of tool names. The two queries below return
     at most one row per (target, tool) pair and one row per target,
     respectively, regardless of how many times each has actually run.
-    Response shape is byte-for-byte identical; see
+    Response shape was byte-for-byte identical when this was written; see
     tests/test_scans_summary.py, written against the old implementation
     before this rewrite specifically so behavior could be pinned rather
-    than re-derived.
+    than re-derived. It has since gained one key, `suspect_tools` (#229),
+    which is additive -- those tests assert per key rather than comparing
+    whole dicts, which is what let it be added without rewriting them.
     """
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:

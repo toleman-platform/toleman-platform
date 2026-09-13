@@ -113,11 +113,18 @@ def _run_guardrail_tools(
     findings: list[dict] = []
     failed: list[str] = []
     skipped: dict[str, str] = {}
-    if any(tool in ("trivy", "trivy-license") for tool in tools):
+    if any(tool in ("trivy", "trivy-license") for tool in tools) and runner.manifest_changed(paths):
         # (#229) Guardrail scans hardlink from the same warm vulnerability
         # DB the scheduled scans use. Warming here too means a PR check on a
         # deployment whose beat has not run yet pays the download once,
         # under the shared lock, instead of once per concurrent PR.
+        #
+        # Gated on manifest_changed for the same reason run_tool is: trivy
+        # is a MANIFEST tool and does not run on a PR that touches no
+        # dependency file. Warming on assignment alone would make the
+        # typical PR -- one that changes application code only -- wait on a
+        # multi-hundred-megabyte download for a scanner that is then
+        # skipped.
         runner.ensure_warm_trivy_db()
     for tool in tools:
         try:

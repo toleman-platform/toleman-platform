@@ -32,6 +32,7 @@ The rule the whole file is checking:
 
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -435,6 +436,123 @@ class TestWarmTrivyDatabase:
             if p.name.startswith(runner.TRIVY_STAGING_PREFIX)
         ]
         assert leftovers == []
+
+
+class TestWarmingFailurePaths:
+    """Warming is best-effort, and its callers rely on that literally.
+
+    Neither caller wraps ensure_warm_trivy_db. In run_scan an exception
+    fails the scan; in the PR Guardrail executor the call sits outside the
+    per-tool try, so it aborts every tool on the PR. A speed optimisation
+    must not be able to take down the thing it speeds up.
+    """
+
+    def test_it_never_raises_when_the_lock_itself_blows_up(self, monkeypatch):
+        """The failure is deliberately raised from _cache_lock, because that
+        is the one step whose setup (mkdir, open) runs before any try."""
+
+        def exploding_lock(*args, **kwargs):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr(runner, "_cache_lock", exploding_lock)
+        warm, detail = _REAL_ENSURE_WARM()
+        assert warm is False
+        assert "unexpectedly" in detail
+
+    def test_it_never_raises_when_staging_cannot_be_created(self, monkeypatch):
+        def exploding_mkdtemp(*args, **kwargs):
+            raise OSError("no space left on device")
+
+        monkeypatch.setattr(runner.tempfile, "mkdtemp", exploding_mkdtemp)
+        warm, detail = _REAL_ENSURE_WARM()
+        assert warm is False
+
+    def test_a_download_that_hangs_is_bounded(self, monkeypatch):
+        def hang(cmd, **kwargs):
+            assert kwargs.get("timeout") == runner.WARM_DOWNLOAD_TIMEOUT_SECONDS
+            raise runner.subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+        monkeypatch.setattr(runner.subprocess, "run", hang)
+        warm, detail = _REAL_ENSURE_WARM()
+        assert warm is False and "exceeded" in detail
+
+    def test_a_failed_publish_puts_the_previous_database_back(self, monkeypatch):
+        """The window between the two renames is short but not empty, and
+        losing it used to leave the install with no warm copy at all -- so
+        every later scan ran unseeded and re-downloaded."""
+        warm_dir = runner.trivy_warm_dir()
+        _write_trivy_db(warm_dir)
+        # Make it stale so warming actually runs rather than short-circuiting.
+        original = (warm_dir / runner.TRIVY_DB_FILE_PATH).read_bytes()
+
+        def fake_run(cmd, **kwargs):
+            _write_trivy_db(Path(cmd[cmd.index("--cache-dir") + 1]))
+            return _Proc(0)
+
+        monkeypatch.setattr(runner.subprocess, "run", fake_run)
+        monkeypatch.setattr(runner, "trivy_db_state", lambda path: (path != warm_dir, "stale"))
+
+        real_replace = runner.os.replace
+        calls = {"n": 0}
+
+        def failing_second_replace(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("interrupted mid-publish")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(runner.os, "replace", failing_second_replace)
+        warm, _detail = _REAL_ENSURE_WARM()
+
+        assert warm is False
+        assert (warm_dir / runner.TRIVY_DB_FILE_PATH).read_bytes() == original, (
+            "the working database must survive a failed publish"
+        )
+
+    def test_the_sweeper_removes_warming_debris_not_just_run_caches(self):
+        """A SIGKILL mid-warm strands a staging or replaced directory, each
+        a full copy of the largest file this platform writes."""
+        root = runner.tool_cache_root()
+        root.mkdir(parents=True, exist_ok=True)
+        stale = time.time() - runner.RUN_CACHE_MAX_AGE_SECONDS - 60
+
+        debris = [
+            root / f"{runner.TRIVY_STAGING_PREFIX}abc123",
+            root / f"{runner.TRIVY_WARM_DIRNAME}.replaced-def456",
+        ]
+        for d in debris:
+            d.mkdir()
+            os.utime(d, (stale, stale))
+
+        keep = runner.trivy_warm_dir()
+        keep.mkdir(parents=True, exist_ok=True)
+        os.utime(keep, (stale, stale))
+
+        runner.sweep_stale_run_caches()
+
+        assert not any(d.exists() for d in debris)
+        assert keep.exists(), "the published warm copy is not debris"
+
+
+class TestApplicabilityBeforeHealth:
+    """A health signal so eager that nothing can ever be marked fixed is not
+    safer than one that is too quiet, just differently wrong."""
+
+    def test_checkov_on_a_repo_with_no_iac_is_not_applicable(self, tmp_path):
+        (tmp_path / "app.py").write_text("print('hi')")
+        run = runner.ScanRunContext(health=ScanHealth())
+        with pytest.raises(runner.ToolNotApplicable):
+            runner._run_tool_inner("checkov", tmp_path, None, run)
+        assert run.health.status != "suspect", (
+            "an inapplicable tool must not degrade the run -- a suspect run "
+            "never mitigates, so this would freeze the repo's findings forever"
+        )
+
+    def test_checkov_on_a_repo_with_terraform_does_run(self, tmp_path, monkeypatch):
+        (tmp_path / "main.tf").write_text('resource "null_resource" "x" {}')
+        run = runner.ScanRunContext(health=ScanHealth())
+        monkeypatch.setattr(runner, "_execute", lambda *a, **k: {})
+        runner._run_tool_inner("checkov", tmp_path, None, run)  # must not raise
 
 
 class TestCacheIsolation:
@@ -939,6 +1057,17 @@ class TestSarifHealth:
         health = sarif_health(payload, "sarif")
         assert health is not None and health.healthy is False
         assert "codeql" in health.summary()
+
+    def test_a_malformed_tool_block_does_not_crash_the_ingest(self):
+        """This SARIF arrives over the push-ingest API, so its shape is
+        attacker-shaped as much as tool-shaped. `tool` as a string used to
+        raise AttributeError out of the parser -- a 500 on an ingest
+        endpoint, from a payload anyone with a workspace key can send."""
+        for broken in ("codeql", ["codeql"], None, 7):
+            payload = {"runs": [{"tool": broken, "invocations": [{"executionSuccessful": False}]}]}
+            health = sarif_health(payload, "sarif")
+            assert health is not None and health.healthy is False
+            assert "the producing tool" in health.summary()
 
     def test_absent_invocations_are_unknown_not_healthy(self):
         """`invocations` is optional in the SARIF spec and omitted by several

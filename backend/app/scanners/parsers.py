@@ -469,7 +469,13 @@ def sarif_health(raw: dict, tool: str) -> ScanHealth | None:
                 continue
             seen_status = True
             if successful is False:
-                driver = run.get("tool", {}).get("driver", {})
+                # Both levels are guarded, not just the inner one. This
+                # SARIF arrived over the push-ingest API, so its shape is
+                # attacker-shaped as much as tool-shaped: `tool` being a
+                # string or a list is a 500 on an ingest endpoint, not a
+                # parse failure.
+                tool_block = run.get("tool")
+                driver = tool_block.get("driver") if isinstance(tool_block, dict) else None
                 name = driver.get("name") if isinstance(driver, dict) else None
                 health.degrade(
                     f"the pushed SARIF reports that {name or 'the producing tool'} did not "

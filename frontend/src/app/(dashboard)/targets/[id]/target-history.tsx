@@ -84,7 +84,7 @@ export async function TargetHistory({ targetId }: { targetId: number }) {
                           alone says something is wrong without saying what
                           to do about it. */}
                       <ScanHealthBadge health={entry.health} className="ml-2 text-[10px]" />
-                      {entry.health === "suspect" && entry.health_note && (
+                      {entry.health !== "healthy" && entry.health_note && (
                         <p className="mt-1 text-xs text-muted-foreground">{entry.health_note}</p>
                       )}
                     </td>
@@ -97,7 +97,9 @@ export async function TargetHistory({ targetId }: { targetId: number }) {
                         ? "—"
                         : entry.health === "suspect"
                           ? `${entry.findings_count} (unverified)`
-                          : entry.findings_count}
+                          : entry.health === "unknown"
+                            ? `${entry.findings_count} (unassessed)`
+                            : entry.findings_count}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{duration(entry)}</td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{timeAgo(entry.started_at)}</td>

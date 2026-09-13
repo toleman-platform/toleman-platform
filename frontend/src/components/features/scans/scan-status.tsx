@@ -151,17 +151,36 @@ export function ScanHealthNotice({
   note?: string | null;
   className?: string;
 }) {
-  if (health !== "suspect") return null;
+  // (#229) Renders for `unknown` as well as `suspect`. They are different
+  // statements and get different words -- suspect means something was
+  // assessed and did not hold up, unknown means nothing assessed it -- but
+  // neither is "clean", and gating this on `suspect` alone left an unknown
+  // run with a real note rendering as a bare, confident zero. `healthy`
+  // stays silent, which is the whole point of the third state.
+  if (health !== "suspect" && health !== "unknown") return null;
+  const suspect = health === "suspect";
   return (
     <div
       className={cn(
-        "flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs",
+        "flex flex-col gap-1 rounded-md border px-3 py-2 text-xs",
+        suspect
+          ? "border-amber-500/40 bg-amber-500/10"
+          : "border-border bg-muted/40",
         className
       )}
     >
-      <div className="flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+      <div
+        className={cn(
+          "flex items-center gap-1.5 font-medium",
+          suspect ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"
+        )}
+      >
         <ShieldAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        <span>This run was not treated as authoritative</span>
+        <span>
+          {suspect
+            ? "This run was not treated as authoritative"
+            : "This run's health was never assessed"}
+        </span>
       </div>
       {note ? <p className="text-muted-foreground">{note}</p> : null}
     </div>

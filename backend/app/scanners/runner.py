@@ -1601,6 +1601,26 @@ def _run_tool_inner(
     if tool == "gosec" and next(repo_path.rglob("*.go"), None) is None:
         raise ToolNotApplicable("no Go files in this repository")
 
+    # (#229) Same guard, driven off the extension map the diff-scoped path
+    # already uses, for the IaC and model scanners.
+    #
+    # Without it these reach _execute on a repo with nothing of their file
+    # type, exit 0, and write no report -- which the empty-stdout branch
+    # now (correctly) degrades the run's health for. That would make an
+    # ordinary repo with no Terraform permanently suspect, and a suspect
+    # run never mitigates, so its findings could never be cleared. The same
+    # trap as trusting an empty result, sprung from the opposite side: a
+    # health signal so eager that nothing can ever be marked fixed is not
+    # safer than one that is too quiet, just differently wrong.
+    #
+    # "Not applicable" is the honest answer here and the codebase already
+    # has a word for it.
+    extensions = TOOL_EXTENSIONS.get(tool)
+    if extensions and not any(next(repo_path.rglob(f"*{ext}"), None) for ext in extensions):
+        raise ToolNotApplicable(
+            f"no files in this repository match what {tool} scans ({', '.join(extensions)})"
+        )
+
     cmd = TOOL_COMMANDS[tool](str(repo_path))
     return _execute(tool, cmd, repo_path, run)
 

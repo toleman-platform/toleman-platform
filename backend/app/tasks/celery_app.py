@@ -162,3 +162,19 @@ def _queue_missing_baseline_scans(**kwargs):
         sync_repos_task()
     except Exception:
         logger.exception("repo-sync catch-up pass failed on worker startup")
+
+    # (#229) And the same for warming, for a different reason than the two
+    # above: those close Beat's first-tick gap, this one covers Beat not
+    # running at all. docker-compose.yml embeds it with `-B`, but
+    # charts/toleman/templates/celery-worker.yaml does not -- so on
+    # Kubernetes `warm-scanner-caches` never fires, and every scan runs
+    # unseeded and re-downloads the database. Warming from worker_ready
+    # means the deployment shape cannot decide whether the isolated path is
+    # reachable. Cheap where Beat does run: ensure_warm_trivy_db returns
+    # "already warm" without touching the network.
+    try:
+        from app.tasks.scan_tasks import warm_scanner_caches
+
+        warm_scanner_caches()
+    except Exception:
+        logger.exception("scanner-cache warm pass failed on worker startup")

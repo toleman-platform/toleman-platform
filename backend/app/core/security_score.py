@@ -63,6 +63,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.sla import CLOSED_STATES, compute_sla_status
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.tool_registry import NON_VULNERABILITY_CATEGORIES, tool_category
 from app.models.models import (
@@ -337,7 +338,18 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     a number."""
     targets_by_id: dict[int, Target] = {}
     if target_ids:
-        targets_by_id = {t.id: t for t in session.exec(select(Target).where(Target.id.in_(target_ids))).all()}
+        # (#273) Soft-deleted targets don't resolve, so they fall out of
+        # `target_ids` on the next line and every component below --
+        # findings, SLA, coverage, FP rate and trend all take the pruned
+        # list. This one predicate is what keeps a deleted repo from
+        # continuing to drag an org's score down (or, via the coverage
+        # component, from counting as an unscanned target forever).
+        targets_by_id = {
+            t.id: t
+            for t in session.exec(
+                target_lifecycle.live_targets(select(Target)).where(Target.id.in_(target_ids))
+            ).all()
+        }
         target_ids = list(targets_by_id.keys())  # drop any ids that didn't resolve
 
     open_default_branch = [f for f in _default_branch_findings(session, target_ids, targets_by_id) if f.state in OPEN_STATES]
@@ -390,19 +402,25 @@ def resolve_target_ids_for_scope(
 
     if target_id is not None:
         target = session.get(Target, target_id)
-        if not target or (ws_ids is not None and target.workspace_id not in ws_ids):
+        # (#273) A soft-deleted target 404s here like an inaccessible one:
+        # "score this specific repo" has no answer once the repo is gone.
+        if (
+            not target
+            or target_lifecycle.is_deleted(target)
+            or (ws_ids is not None and target.workspace_id not in ws_ids)
+        ):
             raise HTTPException(404, "Target not found")
         return [target_id]
 
     if group_id is not None:
-        query = select(Target.id).join(TargetGroup, TargetGroup.target_id == Target.id).where(
-            TargetGroup.group_id == group_id
-        )
+        query = target_lifecycle.live_targets(
+            select(Target.id).join(TargetGroup, TargetGroup.target_id == Target.id)
+        ).where(TargetGroup.group_id == group_id)
         if ws_ids is not None:
             query = query.where(Target.workspace_id.in_(ws_ids))
         return list(session.exec(query).all())
 
-    query = select(Target.id)
+    query = target_lifecycle.live_targets(select(Target.id))
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
     return list(session.exec(query).all())

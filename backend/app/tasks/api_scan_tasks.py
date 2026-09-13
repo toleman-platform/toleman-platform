@@ -7,6 +7,8 @@ from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
 from app.core.db import engine
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
+from app.core import target_lifecycle
+from app.core.time import utcnow
 from app.models.models import NotificationEventType, Scan, Target
 from app.scanners import parsers, runner
 from app.tasks.celery_app import celery_app
@@ -70,6 +72,21 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
             session.add(scan)
             session.commit()
             return {"error": "target not found", "scan_id": scan.id}
+
+        # (#273) Re-checked on the worker, not only at POST /api/api-scan/{id}.
+        # This task sends real traffic at a real deployed host, so the window
+        # between dispatch and execution is exactly where a deactivation has
+        # to be honoured -- "I turned this off" must stop the probe that
+        # hasn't started yet, not just the next one someone asks for.
+        refusal = target_lifecycle.scan_refusal_reason(target)
+        if refusal:
+            scan.status = "failed"
+            scan.error = refusal
+            scan.completed_at = utcnow()
+            session.add(scan)
+            session.commit()
+            logger.info("api scan refused for target %s: %s", target_id, refusal)
+            return {"error": refusal, "scan_id": scan.id}
 
         try:
             urls, endpoints = build_scan_urls(session, target, endpoint_ids)

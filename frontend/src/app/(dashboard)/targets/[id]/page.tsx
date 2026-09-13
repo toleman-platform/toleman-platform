@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, PowerOff } from "lucide-react";
 import { api } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 import { CriticalityChip } from "@/components/features/targets";
 import { FindingsList } from "@/components/features/findings";
 import { ScanButtons } from "./scan-buttons";
@@ -11,6 +12,7 @@ import { TargetDiffScope } from "./target-diff-scope";
 import { TargetCloneCredentials } from "./target-clone-credentials";
 import { TargetIdBadge } from "./target-id-badge";
 import { ApiScanConfig } from "./api-scan-config";
+import { TargetLifecycle } from "./target-lifecycle";
 import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
@@ -77,7 +79,21 @@ export default async function TargetDetailPage({
           All targets
         </Link>
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-foreground">{target.name}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-bold text-foreground">{target.name}</h1>
+            {/* (#273) A deactivated target has to *look* deactivated. The
+                scan buttons below still render (the server refuses them
+                anyway, and hiding them would leave someone wondering where
+                they went), so the state has to be stated here or the page
+                looks identical to an active target that simply isn't
+                scanning right now. */}
+            {target.is_active === false && (
+              <Badge variant="warning" className="gap-1">
+                <PowerOff className="h-3 w-3" />
+                Deactivated
+              </Badge>
+            )}
+          </div>
           <p className="mt-1 truncate text-sm text-muted-foreground">{target.repo_url}</p>
           <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <CriticalityChip label={target.label} />
@@ -87,7 +103,17 @@ export default async function TargetDetailPage({
             <TargetIdBadge targetId={targetId} />
           </p>
         </div>
-        <ScanButtons targetId={targetId} workspaceId={target.workspace_id} />
+        {target.is_active === false && (
+          <div className="rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-muted-foreground">
+            Scanning is off for this target. On-demand scans, CI pushes, PR Guardrail, active API scanning and
+            the nightly baseline refresh are all refused. Existing findings and history are kept.{" "}
+            <Link href={`/targets/${targetId}?tab=settings`} className="text-accent-strong underline underline-offset-2">
+              Reactivate in Settings
+            </Link>
+            .
+          </div>
+        )}
+        <ScanButtons targetId={targetId} workspaceId={target.workspace_id} isActive={target.is_active !== false} />
       </div>
 
       <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={findingsResult.total} />
@@ -157,6 +183,18 @@ export default async function TargetDetailPage({
             initialIntegrated={target.pipeline_integrated}
             initialPrUrl={target.pipeline_pr_url}
           />
+
+          {/* (#273) Last, and visually separated: deactivate is reversible
+              config, delete is not something to put next to the group
+              picker. */}
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Lifecycle</h2>
+            <TargetLifecycle
+              targetId={targetId}
+              targetName={target.name}
+              initialIsActive={target.is_active ?? true}
+            />
+          </div>
         </div>
       )}
     </div>

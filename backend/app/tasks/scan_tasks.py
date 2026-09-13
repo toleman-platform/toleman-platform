@@ -9,6 +9,7 @@ from app.core.github import repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.tool_usage import tools_for_surface
 from app.models.models import NotificationEventType, Scan, Target
@@ -92,6 +93,26 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                     session.add(existing)
                     session.commit()
             return {"error": "target not found"}
+
+        # (#273) Re-checked here and not only at the dispatch points, because
+        # a task can sit in the queue for minutes: a repo deactivated (or
+        # deleted) between "click Scan" and "a worker picks it up" would
+        # otherwise still get cloned and scanned. The row is settled as
+        # "failed" with the reason rather than left running, so the UI does
+        # not show a spinner that never resolves -- the same treatment
+        # target-not-found already gets above.
+        refusal = target_lifecycle.scan_refusal_reason(target)
+        if refusal:
+            if scan_id is not None:
+                existing = session.get(Scan, scan_id)
+                if existing:
+                    existing.status = "failed"
+                    existing.error = refusal
+                    existing.completed_at = utcnow()
+                    session.add(existing)
+                    session.commit()
+            logger.info("scan refused for target %s: %s", target_id, refusal)
+            return {"error": refusal}
 
         if scan_id is not None:
             scan = session.get(Scan, scan_id)
@@ -192,6 +213,18 @@ def queue_full_scan(session: Session, target: Target) -> list[int]:
     nothing it wasn't asked to run is not the same failure mode as a PR
     check silently checking nothing.
     """
+    # (#273) The single chokepoint for every fan-out caller -- GitHub App
+    # repo import, the `push`/PR-merged webhooks, the beat-scheduled refresh
+    # and the startup baseline catch-up all come through here, so a
+    # deactivated or deleted target is refused once rather than in four
+    # places that could drift. The scheduled/catch-up callers additionally
+    # filter their own SELECTs so they don't walk the whole table to
+    # no-op on each row.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        logger.info("full scan not queued for target %s: %s", target.id, refusal)
+        return []
+
     scan_ids: list[int] = []
     for tool in tools_for_surface(session, target.workspace_id, "on_demand_scan"):
         scan = Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
@@ -236,7 +269,13 @@ def run_scheduled_full_scans():
     via run_scan, so one target's clone failure can't block another's.
     """
     with Session(engine) as session:
-        targets = session.exec(select(Target)).all()
+        # (#273) Deactivated and soft-deleted targets are excluded in the
+        # query, not skipped in the loop. This is the one task that touches
+        # every target in the deployment on a timer, so it is where "scanning
+        # is off for this repo" has to hold without anyone having clicked
+        # anything -- a deactivate that the nightly job quietly undoes every
+        # 24h would be the worst version of this feature.
+        targets = session.exec(target_lifecycle.scannable_targets(select(Target))).all()
         for target in targets:
             try:
                 queue_full_scan(session, target)
@@ -278,7 +317,9 @@ def queue_full_scan_for_targets_missing_a_baseline(session: Session) -> list[int
     a second schedule.
     """
     queued: list[int] = []
-    for target in session.exec(select(Target)).all():
+    # (#273) Same scannable-only scope as run_scheduled_full_scans above; a
+    # worker restart must not be a way to scan a deactivated target once.
+    for target in session.exec(target_lifecycle.scannable_targets(select(Target))).all():
         if _has_completed_scan(session, target):
             continue
         try:

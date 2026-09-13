@@ -17,6 +17,7 @@ from sqlmodel import Session, func, select
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.core.csv_export import safe_csv_writer
+from app.core import target_lifecycle
 from app.models.models import Finding, FindingState, Scan, SbomComponent, Target, User
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -29,14 +30,19 @@ def _get_targets(session: Session, target_id: Optional[int], ws_ids: Optional[li
     A caller with no memberships (ws_ids == []) gets an empty report rather
     than every workspace's data."""
     if target_id is None:
-        query = select(Target).order_by(Target.name)
+        # (#273) Soft-deleted targets are excluded from every report. A
+        # compliance/audit report is a statement about the estate as it is,
+        # and a repo that was removed is not part of it; its findings remain
+        # answerable through the audit log, which is where "what did we
+        # delete" belongs.
+        query = target_lifecycle.live_targets(select(Target)).order_by(Target.name)
         if ws_ids is not None:
             if not ws_ids:
                 return []
             query = query.where(Target.workspace_id.in_(ws_ids))
         return list(session.exec(query).all())
     target = session.get(Target, target_id)
-    if not target or (ws_ids is not None and target.workspace_id not in ws_ids):
+    if not target or target_lifecycle.is_deleted(target) or (ws_ids is not None and target.workspace_id not in ws_ids):
         # 404 rather than 403 to avoid confirming the target exists in a
         # workspace the caller can't see (matches findings.py's get_finding).
         raise HTTPException(status_code=404, detail="target not found")

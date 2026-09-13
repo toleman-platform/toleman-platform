@@ -1,6 +1,7 @@
 import { jsonFetch } from "./client";
 import type {
   Target,
+  DeleteTargetResult,
   TargetSummary,
   GroupBadge,
   Group,
@@ -49,6 +50,38 @@ export function updateTarget(id: number, patch: Partial<Target>): Promise<Target
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+/**
+ * Stops scanning a target without losing its findings, scans or PR history (#273).
+ *
+ * Deactivate/reactivate are separate endpoints rather than a PATCH field,
+ * because they are actions with their own audit events and their own
+ * permission bar, not another editable attribute of the target. Both return
+ * the updated target, so a caller can render the new state without a
+ * follow-up GET.
+ */
+export function deactivateTarget(id: number): Promise<Target> {
+  return jsonFetch<Target>(`/api/targets/${id}/deactivate`, { method: "POST" });
+}
+
+/**
+ * Resumes scanning a previously deactivated target (#273).
+ */
+export function reactivateTarget(id: number): Promise<Target> {
+  return jsonFetch<Target>(`/api/targets/${id}/reactivate`, { method: "POST" });
+}
+
+/**
+ * Removes a target (#273). Soft delete; see DeleteTargetResult.
+ *
+ * Requires security_engineer (or global admin) on the target's workspace, a
+ * higher bar than the rest of the target writes here, so a 403 from this is
+ * expected for a developer and should be surfaced as such rather than as a
+ * generic failure.
+ */
+export function deleteTarget(id: number): Promise<DeleteTargetResult> {
+  return jsonFetch<DeleteTargetResult>(`/api/targets/${id}`, { method: "DELETE" });
 }
 
 /**

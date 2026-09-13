@@ -42,10 +42,18 @@ export type SecurityScore = {
       compliant: number;
       note: Nullable<string>;
     };
+    // (#273) `total_targets` is the *scannable* count: deactivated targets
+    // are excluded from both sides of the coverage fraction, since nothing
+    // can scan them and leaving them in the denominator would make the
+    // score decay for a repo that was switched off on purpose.
+    // `deactivated_targets` says how many were left out, so "12 of 15"
+    // against a target list of 20 is reconcilable rather than mysterious.
     coverage: SecurityScoreComponent & {
       scanned_targets: number;
       total_targets: number;
+      deactivated_targets: number;
       window_days: number;
+      note: Nullable<string>;
     };
     fp_rate: SecurityScoreComponent & {
       false_positives: number;

@@ -9,6 +9,7 @@ from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
 from app.core.tool_usage import is_nuclei_enabled_for_api_scan
 from app.core.async_jobs import create_running_row
 from app.core.staleness import mark_stale_if_needed
+from app.core import target_lifecycle
 from app.models.models import Scan, Target, User, WorkspaceRole
 from app.tasks.api_scan_tasks import run_api_scan
 
@@ -17,7 +18,11 @@ router = APIRouter(prefix="/api/api-scan", tags=["api-scan"])
 
 def _get_target(target_id: int, session: Session) -> Target:
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) Soft-deleted targets 404 everywhere in the product. Deactivation
+    # is not checked here: this helper also backs the read-only
+    # GET /{target_id}/latest, and a deactivated target's last scan result
+    # stays readable -- that is the difference between deactivate and delete.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     return target
 
@@ -53,6 +58,13 @@ def trigger_api_scan(
     can only ever fail once a worker picks it up.
     """
     target = _get_target(target_id, session)
+    # (#273) Checked first, before every other refusal in this handler:
+    # active API scanning sends real traffic at a real deployed host, so
+    # "this target is switched off" has to win over any question about
+    # whether the scan would otherwise be well-formed.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     # (#232) The one and only surface check for Active API Scanning; see
     # is_nuclei_enabled_for_api_scan's docstring for why this can't go
     # through tools_for_surface like the other three surfaces do. Checked

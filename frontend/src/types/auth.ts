@@ -114,7 +114,18 @@ export type AuthEventType =
   | "password_changed"
   | "role_changed"
   | "workspace_role_changed"
-  | "workspace_role_removed";
+  | "workspace_role_removed"
+  // (#273) Target lifecycle. Not access-control events like the seven
+  // above, but they live in the same trail because it is this codebase's
+  // only audit *write* path, and because "who stopped scanning this repo"
+  // and "who deleted the record of these findings" are the questions a
+  // security tool has to answer about itself. They must appear in the
+  // filter dropdown too: soft delete was chosen precisely so a deletion
+  // stays answerable, and an answer that needs full pagination to find is
+  // not much of one.
+  | "target_deactivated"
+  | "target_reactivated"
+  | "target_deleted";
 
 /**
  * Admin-only security audit log entry.

@@ -31,18 +31,27 @@ Whether the orphan can actually be dropped is a live-data question -- do the
 deployed rows have counterparts in `apiendpoint`? -- and the audit for it is
 tracked in #438.
 
-Pure metadata assertions: no database, no engine, no migrations run.
+Also pinned here: the coupling between b1d4f7a09c62's `autocommit_block()`
+and env.py's `transaction_per_migration=True`, which neither file can enforce
+about the other and which fails silently rather than loudly.
+
+No database, no engine, no migrations run: these assertions read
+`SQLModel.metadata`, the model classes themselves, and the parsed source of
+the revision files.
 """
 import ast
 from pathlib import Path
 
+from sqlalchemy import Index
 from sqlmodel import SQLModel
 
 from app.models import models  # noqa: F401  -- registers tables on the metadata
 
 BACKEND = Path(__file__).resolve().parents[1]
+ENV_PY = BACKEND / "alembic" / "env.py"
 VERSIONS = BACKEND / "alembic" / "versions"
 AIBOM_MIGRATION = VERSIONS / "3d006423f58b_add_aibom_components_190.py"
+INDEX_BACKFILL = VERSIONS / "b1d4f7a09c62_add_finding_scan_query_indexes_217.py"
 
 
 def _table_operations() -> set[tuple[str, str, str]]:
@@ -69,6 +78,55 @@ def _table_operations() -> set[tuple[str, str, str]]:
     return found
 
 
+def _migration_create_index(path: Path, index_name: str) -> tuple[str, list[str], bool]:
+    """(table, columns, unique) for the `op.create_index` call in `path` that
+    creates `index_name`, read out of the parsed call rather than matched as
+    text, so the assertion is about what the migration does and not about
+    which words appear in it."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (func.attr if isinstance(func, ast.Attribute) else None) != "create_index":
+            continue
+        if len(node.args) < 3:
+            continue
+        name, table, columns = node.args[0], node.args[1], node.args[2]
+        if not (isinstance(name, ast.Constant) and name.value == index_name):
+            continue
+
+        unique = False
+        for keyword in node.keywords:
+            if keyword.arg == "unique" and isinstance(keyword.value, ast.Constant):
+                unique = bool(keyword.value.value)
+        return (
+            table.value,
+            [element.value for element in columns.elts],
+            unique,
+        )
+
+    raise AssertionError(f"{path.name} has no op.create_index call for {index_name}")
+
+
+def _declared_in_table_args(model, index_name) -> Index:
+    """The `Index` the model itself declares under `__table_args__`.
+
+    Deliberately not `Table.indexes`: an index reaches the table from several
+    directions (a `Field(index=True)`, this declaration, a stray import) and
+    what is being asserted here is specifically that *the model source
+    declares it*, because that is the thing whose absence caused #217.
+    """
+    declared = getattr(model, "__table_args__", ())
+    for arg in declared:
+        if isinstance(arg, Index) and arg.name == index_name:
+            return arg
+    raise AssertionError(
+        f"{model.__name__}.__table_args__ does not declare an Index named "
+        f"{index_name}; found {[getattr(a, 'name', a) for a in declared]}"
+    )
+
+
 def _index(table_name: str, index_name: str):
     table = SQLModel.metadata.tables[table_name]
     for index in table.indexes:
@@ -93,12 +151,20 @@ def test_aibomcomponent_upsert_index_is_declared_on_the_model():
     """The drop #217 caught. 3d006423f58b creates this index and
     `app.core.aibom.upsert_aibom_components` keys on exactly these columns, so
     it has to be in metadata too; an index that exists only in the database
-    is an index Alembic will offer to delete."""
-    index = _index("aibomcomponent", "ix_aibomcomponent_upsert_key")
+    is an index Alembic will offer to delete.
 
-    assert index.unique is True
+    Asserted from both directions: the model source declares it
+    (`__table_args__`), and it reached `SQLModel.metadata`, which is the
+    thing Alembic actually diffs. The first without the second would be a
+    declaration that never took effect.
+    """
+    declared = _declared_in_table_args(models.AiBomComponent, "ix_aibomcomponent_upsert_key")
+    in_metadata = _index("aibomcomponent", "ix_aibomcomponent_upsert_key")
+    assert declared is in_metadata
+
+    assert declared.unique is True
     # Order matters to Alembic's comparison as much as to the index itself.
-    assert [c.name for c in index.columns] == ["target_id", "branch", "name", "component_type"]
+    assert [c.name for c in declared.columns] == ["target_id", "branch", "name", "component_type"]
 
 
 def test_aibomcomponent_target_id_index_is_declared_on_the_model():
@@ -107,11 +173,25 @@ def test_aibomcomponent_target_id_index_is_declared_on_the_model():
 
 def test_aibomcomponent_model_and_migration_agree_on_the_upsert_index():
     """A model declaration that has quietly drifted from the migration that
-    built the index is the same failure wearing a different hat."""
-    source = AIBOM_MIGRATION.read_text()
-    assert "ix_aibomcomponent_upsert_key" in source
-    for column in ("target_id", "branch", "name", "component_type"):
-        assert f'"{column}"' in source
+    built the index is the same failure wearing a different hat: metadata
+    would describe one index, the database would hold another, and
+    autogenerate would propose reconciling them by dropping what is there.
+
+    So both sides are read from what they actually say -- the model's
+    `__table_args__`, and the migration's parsed `op.create_index` call --
+    and compared. Comparing the model against `Table.indexes`, or the
+    migration against its own text, would let a mismatch through.
+    """
+    declared = _declared_in_table_args(models.AiBomComponent, "ix_aibomcomponent_upsert_key")
+    table, columns, unique = _migration_create_index(
+        AIBOM_MIGRATION, "ix_aibomcomponent_upsert_key"
+    )
+
+    assert table == "aibomcomponent" == models.AiBomComponent.__table__.name
+    assert declared.unique is True and unique is True
+    # Column order is part of the index's identity, to Postgres and to
+    # Alembic's comparison alike.
+    assert [c.name for c in declared.columns] == columns
 
 
 # ---------------------------------------------------------------------------
@@ -185,3 +265,25 @@ def test_finding_and_scan_query_indexes_are_declared():
         _index("finding", name)
 
     _index("scan", "ix_scan_target_id")
+
+
+def test_autocommit_block_is_paired_with_transaction_per_migration():
+    """A coupling that is invisible from either file on its own.
+
+    b1d4f7a09c62 uses `op.get_context().autocommit_block()` to run
+    `CREATE INDEX CONCURRENTLY`, which cannot execute inside a transaction.
+    Leaving the transaction is exactly what the block does -- so unless
+    env.py configures `transaction_per_migration=True`, that block commits
+    the run-level transaction and every revision applied before it in the
+    same `alembic upgrade head` call goes with it.
+
+    Nothing fails loudly if the pairing is broken; the run just silently
+    stops being all-or-nothing. Hence this test. If a future change drops
+    the autocommit_block, drop this too.
+    """
+    uses_autocommit_block = "autocommit_block()" in INDEX_BACKFILL.read_text()
+    assert uses_autocommit_block, (
+        "b1d4f7a09c62 no longer uses autocommit_block; re-read "
+        "test_autocommit_block_is_paired_with_transaction_per_migration"
+    )
+    assert "transaction_per_migration=True" in ENV_PY.read_text()

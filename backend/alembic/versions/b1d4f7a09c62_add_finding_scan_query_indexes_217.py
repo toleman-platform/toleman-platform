@@ -14,13 +14,33 @@ initial revision, 404553cc4bf6, which emits `ix_finding_branch`,
 `ix_finding_target_id` and `ix_scan_target_id`. A database built by running
 the chain from scratch therefore has them.
 
-Databases that predate the chain do not. Before #58, `init_db()` was
-`SQLModel.metadata.create_all(engine)` (see app/core/db.py's docstring);
-those databases were *stamped* at 404553cc4bf6 rather than built by it, so
-whatever `create_all` happened to produce at that moment is what they still
-have. That is why `--autogenerate` run against a deployed database keeps
-proposing these five indexes as additions even though the chain already
-creates them -- the drift reported in #217.
+Databases that predate the chain do not, and the reason is on the record
+rather than inferred. Commit 2152469 ("Harden session cookies with
+server-side revocation, add missing DB indices", 2026-08-12 23:01, about
+fifteen hours before 404553cc4bf6 was created) added `index=True` to exactly
+these five fields and no others -- `Finding.dedup_hash` already had one,
+which is why #217 lists five additions and not six -- and said so in its own
+commit message:
+
+    Note: this project has no migration tool (SQLModel.metadata.create_all
+    on startup). Fresh DBs pick up the new User.token_version column and
+    indices automatically. Existing local DBs need a manual, one-time:
+    [...] plus CREATE INDEX statements for the new Finding/Scan indices if
+    you want them applied without recreating the DB.
+
+So any database that already existed at that point only has these indexes if
+somebody ran those `CREATE INDEX` statements by hand. That is the whole
+mechanism, and it matches what app/core/db.py's `init_db()` docstring
+describes from the other side: `create_all` "silently no-ops on column/enum
+additions to existing tables, which is exactly how this project's schema
+drifted from models.py in the first place (manual ALTER TABLE/ALTER TYPE run
+by hand against the live DB, tracked nowhere)".
+
+(A third mechanism is plausible -- that pre-Alembic databases were `alembic
+stamp`ed at 404553cc4bf6 rather than built by it, since running the initial
+revision against a database that already had the tables would fail. Nothing
+in the tree states that, so treat it as inference. It is not load-bearing
+either way: 2152469 already explains the missing indexes on its own.)
 
 Consequences for how this migration is written:
 
@@ -31,24 +51,79 @@ Consequences for how this migration is written:
   `alembic upgrade head` on application startup and a failure here is a
   failure to boot.
 
-* On PostgreSQL they are built `CONCURRENTLY`, inside an
-  `autocommit_block()` because CONCURRENTLY cannot run inside a transaction.
-  The locking cost is the reason: a plain `CREATE INDEX` takes a SHARE lock
-  on `finding` for the whole build, which blocks every INSERT, UPDATE and
-  DELETE against it until it finishes. `finding` is this platform's largest
-  table and ingestion writes to it continuously, so on a large deployment
-  that is a write outage lasting as long as the build, taken during startup,
-  when nobody is necessarily watching. CONCURRENTLY takes longer and scans
-  the table twice, but it does not block writes.
+* On PostgreSQL they are built `CONCURRENTLY`. The locking cost is the
+  reason: a plain `CREATE INDEX` takes a SHARE lock on `finding` for the
+  whole build, which blocks every INSERT, UPDATE and DELETE against it until
+  it finishes. `finding` is this platform's largest table and ingestion
+  writes to it continuously, so on a large deployment that is a write outage
+  lasting as long as the build, taken during startup, when nobody is
+  necessarily watching. CONCURRENTLY takes longer and scans the table twice,
+  but it does not block writes.
 
   The trade-off CONCURRENTLY brings: if it is interrupted it can leave an
   INVALID index behind, which continues to cost writes without ever being
   used by the planner. If that happens, `\\d finding` marks the index INVALID;
   the fix is `DROP INDEX CONCURRENTLY <name>;` and re-running this revision.
 
-* Non-PostgreSQL targets (the SQLite engines the test suite builds) get a
-  plain `CREATE INDEX IF NOT EXISTS`; SQLite has no CONCURRENTLY and no
-  concurrent writers to protect.
+* CONCURRENTLY cannot run inside a transaction, so the loop below sits in an
+  `op.get_context().autocommit_block()`. This is the chain's first use of
+  one, and it is why alembic/env.py now passes
+  `transaction_per_migration=True`: stepping out of the transaction is
+  precisely what the block does, so under the previous run-level transaction
+  it would have committed every revision applied before this one in the same
+  `upgrade head` call -- leaving a run that was neither atomic nor honestly
+  per-migration. The two settings have to move together; the pairing is
+  pinned by tests/test_schema_drift.py, and the reasoning is in env.py's own
+  comment.
+
+* Non-PostgreSQL targets get a plain `CREATE INDEX IF NOT EXISTS`. This
+  branch is dialect-safety only and nothing currently exercises it: the test
+  suite builds its SQLite engines with `SQLModel.metadata.create_all()` and
+  never runs migrations, and the one test that does call `init_db()`
+  (tests/test_migration_lock.py) runs against whatever `DATABASE_URL` points
+  at, which is a real Postgres in CI. It is here because `init_db()` itself
+  stays dialect-safe rather than assuming Postgres, not because it is
+  covered.
+
+----------------------------------------------------------------------
+RUNNING THIS ON A LARGE DEPLOYMENT -- read before a rolling deploy
+----------------------------------------------------------------------
+
+`init_db()` serialises migrations behind a session-level `pg_advisory_lock`
+(#296) that it holds for the *entire* `alembic upgrade head` call. This
+revision runs inside that lock, so on a multi-replica deployment every other
+replica blocks in `pg_advisory_lock()` at startup for as long as these
+indexes take to build. CONCURRENTLY does not block writes, but it is slow --
+two full passes over `finding` -- and a replica waiting on the lock has not
+bound its port yet, so a readiness or liveness probe will kill and restart it
+before it ever gets in. On a large `finding` table that is a crash loop
+across the fleet.
+
+The lock is deliberately left alone here: narrowing it around one revision
+would reintroduce exactly the concurrent-DDL race #296 added it to prevent.
+The escape hatch is to make this revision a no-op instead, which the
+`IF NOT EXISTS` guards above exist to allow. Before deploying, run the build
+yourself against the live database, at a time you choose, with no advisory
+lock held and no replica waiting on you:
+
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_finding_target_id     ON "finding" ("target_id");
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_finding_branch        ON "finding" ("branch");
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_finding_priority_score ON "finding" ("priority_score");
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_finding_state         ON "finding" ("state");
+    CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_scan_target_id        ON "scan" ("target_id");
+
+Then confirm none of them came out INVALID (an interrupted CONCURRENTLY build
+leaves one behind, and it costs writes without ever being used):
+
+    SELECT c.relname, i.indisvalid
+    FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+    WHERE c.relname IN ('ix_finding_target_id', 'ix_finding_branch',
+                        'ix_finding_priority_score', 'ix_finding_state',
+                        'ix_scan_target_id');
+
+With all five present and valid, this revision finds them, does nothing, and
+releases the lock in milliseconds. On a small or fresh database none of this
+matters -- deploy normally and let the migration build them.
 
 Scope note: this revision does nothing but add these indexes. The rest of the
 drift #217 catalogues -- the `platformconfig` NOT NULL flips, the

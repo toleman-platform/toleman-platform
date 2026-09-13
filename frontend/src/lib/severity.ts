@@ -60,6 +60,18 @@ export const IGNORE_STATUS_COLOR: Record<string, string> = {
   revoked: "border-border bg-muted text-muted-foreground",
 };
 
+// Triage states, split the way the backend splits them
+// (app/models/models.py's OPEN_FINDING_STATES / RESOLVED_FINDING_STATES):
+// "still needs attention" vs "already triaged". Kept here, next to
+// STATE_COLOR, as the one frontend definition every state picker imports --
+// the Findings page's filter bar narrows to one half depending on which tab
+// is active, the Reports page's report builder (#302) offers all of them,
+// and a third hand-written copy is how those two come to disagree about
+// whether "Reopened" is open.
+export const OPEN_FINDING_STATES = ["Open", "Reopened"];
+export const RESOLVED_FINDING_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Mitigated"];
+export const FINDING_STATE_ORDER = [...OPEN_FINDING_STATES, ...RESOLVED_FINDING_STATES];
+
 export const STATE_COLOR: Record<string, string> = {
   Open: "text-destructive",
   "Accepted Risk": "text-chart-3",

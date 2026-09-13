@@ -96,6 +96,24 @@ export function findingTools(): Promise<string[]> {
 }
 
 /**
+ * Distinct environments among targets the caller can see (#251). A backend
+ * facet that had no client until the report builder (#302) needed it; nulls
+ * are already dropped server-side, so an org that has labelled nothing yet
+ * gets [] and the filter is simply not offered.
+ */
+export function findingEnvironments(): Promise<string[]> {
+  return jsonFetch<string[]>("/api/findings/facets/environments");
+}
+
+/**
+ * Distinct owners among targets the caller can see (#251). Same contract as
+ * findingEnvironments above.
+ */
+export function findingOwners(): Promise<string[]> {
+  return jsonFetch<string[]>("/api/findings/facets/owners");
+}
+
+/**
  * Retrieves per-category finding counts for category tabs.
  */
 export function findingCategories(query: CategoryFacetsQuery = {}): Promise<CategoryFacet[]> {

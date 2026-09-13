@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Group, Target } from "@/lib/api";
-import { SEVERITY_ORDER } from "@/lib/severity";
+import { OPEN_FINDING_STATES, RESOLVED_FINDING_STATES, SEVERITY_ORDER } from "@/lib/severity";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { GroupFilter } from "@/components/features/targets";
@@ -12,9 +12,11 @@ import { MultiSelectFilter } from "@/components/multi-select-filter";
 // Open-view and Resolved-view offer different states to filter within
 // (see findings/page.tsx's Open/Resolved tabs): picking "Mitigated" while
 // looking at Open findings would be a dead end, so the option isn't shown
-// there at all rather than silently doing nothing.
-const OPEN_STATES = ["Open", "Reopened"];
-const RESOLVED_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Mitigated"];
+// there at all rather than silently doing nothing. The two halves come from
+// lib/severity.ts, which mirrors the backend's own split, rather than being
+// spelled out again here.
+const OPEN_STATES = OPEN_FINDING_STATES;
+const RESOLVED_STATES = RESOLVED_FINDING_STATES;
 
 // Ordering the list offers. `blast_radius` ("how many findings does this one
 // decision close") is grouped-only: on a row that is a single detection the

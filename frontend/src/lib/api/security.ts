@@ -1,4 +1,4 @@
-import { jsonFetch, apiBaseUrl } from "./client";
+import { jsonFetch, apiBaseUrl, appendMulti, filenameFromContentDisposition } from "./client";
 import type {
   AiBomView,
   Endpoint,
@@ -17,6 +17,9 @@ import type {
   PolicyRuleType,
   FalsePositiveRule,
   FpRuleStats,
+  ReportSection,
+  PostureReportOptions,
+  PostureReportDownload,
 } from "@/types";
 import type { Nullable } from "@/std-lib";
 
@@ -161,18 +164,56 @@ export async function exportOrgSbom(): Promise<Blob> {
 }
 
 /**
- * Exports security posture report as CSV or PDF.
+ * The selectable sections of the posture report (#302), served by the backend
+ * rather than hardcoded here so the report builder can only ever offer
+ * sections the renderers actually know how to produce.
  */
-export async function exportPostureReport(targetId: Nullable<number>, format: "csv" | "pdf"): Promise<Blob> {
+export function reportSections(): Promise<ReportSection[]> {
+  return jsonFetch<ReportSection[]>("/api/reports/sections");
+}
+
+/**
+ * Exports security posture report as CSV or PDF.
+ *
+ * `options` (#302) is everything beyond scope+format: the Findings-page
+ * filters the report can be narrowed by, and which sections to include.
+ * Omitted/empty means "no filter" and "every section", so the two-argument
+ * call this had before #302 still produces the same full report.
+ */
+export async function exportPostureReport(
+  targetId: Nullable<number>,
+  format: "csv" | "pdf",
+  options: PostureReportOptions = {},
+): Promise<PostureReportDownload> {
   const params = new URLSearchParams({ format });
   if (targetId !== null && targetId !== 0) {
     params.set("target_id", String(targetId));
   }
+  if (options.group_id) params.set("group_id", String(options.group_id));
+  appendMulti(params, "severity", options.severity);
+  appendMulti(params, "state", options.state);
+  appendMulti(params, "tool", options.tool);
+  if (options.category) params.set("category", options.category);
+  if (options.environment) params.set("environment", options.environment);
+  if (options.owner) params.set("owner", options.owner);
+  if (options.date_from) params.set("date_from", options.date_from);
+  if (options.date_to) params.set("date_to", options.date_to);
+  appendMulti(params, "sections", options.sections);
+
   const res = await fetch(`${apiBaseUrl()}/api/reports/posture?${params.toString()}`, {
     credentials: "include",
   });
   if (!res.ok) throw new Error(`report export failed: ${res.status}`);
-  return res.blob();
+  return {
+    blob: await res.blob(),
+    // The server already names the file (scope, whether it was filtered, how
+    // many sections it carries, date), so the filename is read back off the
+    // response instead of rebuilt here. A client-side copy of that naming
+    // rule would drift the moment either side changed, and a narrowed report
+    // saved under a full report's name is the same honesty problem the
+    // in-document filter header exists to prevent.
+    filename: filenameFromContentDisposition(res.headers.get("Content-Disposition")),
+  };
 }
 
 /**

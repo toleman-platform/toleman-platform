@@ -17,14 +17,24 @@ from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
 from app.core.time import utcnow
 from app.main import app
+from app.api.reports import (
+    APPLIED_FILTERS_HEADING,
+    EXCLUDED_MARKER,
+    NO_FILTER_VALUE,
+    REPORT_SECTIONS,
+    SECTION_MANIFEST_HEADING,
+    UNFILTERED_SUMMARY,
+)
 from app.models.models import (
     Finding,
     FindingState,
+    Group,
     Organization,
     SbomComponent,
     Scan,
     Severity,
     Target,
+    TargetGroup,
     User,
     UserRole,
     Workspace,
@@ -103,9 +113,10 @@ def _make_target(engine, name="Target A", default_branch="main") -> int:
         return target.id
 
 
-def _make_target_ws(engine, name="Target A", default_branch="main") -> tuple[int, int]:
+def _make_target_ws(engine, name="Target A", default_branch="main", **overrides) -> tuple[int, int]:
     """Same as _make_target but also returns the workspace_id it created,
-    so tests can assign a WorkspaceMembership to it."""
+    so tests can assign a WorkspaceMembership to it. `overrides` sets any
+    other Target column (#302's environment/owner filters need them)."""
     with Session(engine) as session:
         org = Organization(name="Org")
         session.add(org)
@@ -122,11 +133,27 @@ def _make_target_ws(engine, name="Target A", default_branch="main") -> tuple[int
             name=name,
             repo_url=f"https://example.com/{name}.git",
             default_branch=default_branch,
+            **overrides,
         )
         session.add(target)
         session.commit()
         session.refresh(target)
         return target.id, workspace.id
+
+
+def _make_group(engine, workspace_id: int, name="production") -> int:
+    with Session(engine) as session:
+        group = Group(workspace_id=workspace_id, name=name)
+        session.add(group)
+        session.commit()
+        session.refresh(group)
+        return group.id
+
+
+def _assign_group(engine, target_id: int, group_id: int) -> None:
+    with Session(engine) as session:
+        session.add(TargetGroup(target_id=target_id, group_id=group_id))
+        session.commit()
 
 
 def _make_finding(engine, target_id, **overrides) -> int:
@@ -381,3 +408,507 @@ def test_posture_specific_target_id_outside_caller_workspace_404s(client, engine
     # ...but not another workspace's target, even by guessing its id.
     res_forbidden = client.get(f"/api/reports/posture?target_id={target_b}&format=csv")
     assert res_forbidden.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Issue #302: filters + selectable sections.
+#
+# Two properties are load-bearing throughout these tests:
+#
+#  * a filter must actually narrow the *contents* of the document, not just
+#    be accepted by the endpoint, and
+#  * whatever was narrowed or left out must be stated on the document, in
+#    both formats. A filtered report that reads like a full one is an
+#    audit-evidence problem, so "the header says so" is as much part of the
+#    feature as the filtering itself.
+# ---------------------------------------------------------------------------
+
+def _rows(res) -> list[list[str]]:
+    return list(csv.reader(io.StringIO(res.text)))
+
+
+def _kv(rows: list[list[str]], label: str) -> str:
+    """Value of the first two-column row whose first cell is `label` --
+    covers both the report header (Generated At/Scope/...) and the Applied
+    Filters block, which share that shape."""
+    return next(r[1] for r in rows if len(r) >= 2 and r[0] == label)
+
+
+def _applied_filters(rows: list[list[str]]) -> dict[str, str]:
+    """The Applied Filters block as a dict, read from the block's own
+    heading down to the next blank row, so a row elsewhere in the document
+    can't be mistaken for a filter."""
+    start = next(i for i, r in enumerate(rows) if r[:1] == [APPLIED_FILTERS_HEADING])
+    out: dict[str, str] = {}
+    for r in rows[start + 2 :]:  # +2 skips the heading and the column header
+        if not r or not r[0]:
+            break
+        out[r[0]] = r[1] if len(r) > 1 else ""
+    return out
+
+
+def _section_statuses(rows: list[list[str]]) -> dict[str, str]:
+    start = next(i for i, r in enumerate(rows) if r[:1] == [SECTION_MANIFEST_HEADING])
+    out: dict[str, str] = {}
+    for r in rows[start + 2 :]:
+        if not r or not r[0]:
+            break
+        out[r[0]] = r[1] if len(r) > 1 else ""
+    return out
+
+
+def _csv_headings(rows: list[list[str]]) -> list[str]:
+    """Every single-cell row, i.e. the section headings and markers."""
+    return [r[0] for r in rows if len(r) == 1 and r[0]]
+
+
+def _breakdown(rows: list[list[str]], target: str) -> set[tuple[str, str]]:
+    """(severity, state) pairs from the per-target finding-counts section.
+
+    Keyed on the row being exactly four cells wide: every other section
+    that leads with a target name has a different width (targets 5, scan
+    coverage 7, open-age 9, SBOM 3), so this cannot accidentally scoop up a
+    'never scanned' coverage row and read its branch as a severity.
+    """
+    return {(r[1], r[2]) for r in rows if len(r) == 4 and r[0] == target}
+
+
+def _severities(rows: list[list[str]], target: str) -> set[str]:
+    return {severity for severity, _ in _breakdown(rows, target)}
+
+
+def _pdf_text(body: bytes) -> str:
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(body))
+    return "\n".join(page.extract_text() for page in reader.pages)
+
+
+# --- filters narrow the contents -------------------------------------------
+
+def test_posture_csv_severity_filter_narrows_finding_rows(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="sevfilter")
+    _make_finding(engine, target_id, title="Crit", rule_id="r1", severity=Severity.CRITICAL)
+    _make_finding(engine, target_id, title="Low one", rule_id="r2", severity=Severity.LOW)
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&severity=Critical")
+    assert res.status_code == 200
+    rows = _rows(res)
+
+    assert any(r[:3] == ["sevfilter", "Critical", "Open"] and r[3] == "1" for r in rows if len(r) == 4)
+    # The Low finding is genuinely gone from the counts, not merely unlabelled.
+    assert _breakdown(rows, "sevfilter") == {("Critical", "Open")}
+    assert _applied_filters(rows)["Severity"] == "Critical"
+
+
+def test_posture_csv_multi_value_severity_filter_keeps_both(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="multisev")
+    _make_finding(engine, target_id, title="Crit", rule_id="r1", severity=Severity.CRITICAL)
+    _make_finding(engine, target_id, title="High one", rule_id="r2", severity=Severity.HIGH)
+    _make_finding(engine, target_id, title="Low one", rule_id="r3", severity=Severity.LOW)
+
+    res = client.get(
+        f"/api/reports/posture?target_id={target_id}&format=csv&severity=Critical&severity=High"
+    )
+    rows = _rows(res)
+    assert _severities(rows, "multisev") == {"Critical", "High"}
+    assert _applied_filters(rows)["Severity"] == "Critical, High"
+
+
+def test_posture_csv_state_filter_narrows_finding_rows(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="statefilter")
+    _make_finding(engine, target_id, title="Open one", rule_id="r1", state=FindingState.OPEN)
+    _make_finding(engine, target_id, title="Done", rule_id="r2", state=FindingState.MITIGATED)
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&state=Mitigated")
+    rows = _rows(res)
+    assert _breakdown(rows, "statefilter") == {("High", "Mitigated")}
+    # The open-age section is empty under a resolved-only filter, and that
+    # is the honest answer rather than the unfiltered open-finding count.
+    assert not any(len(r) == 9 and r[0] == "statefilter" for r in rows)
+    assert _applied_filters(rows)["Finding state"] == "Mitigated"
+
+
+def test_posture_csv_tool_filter_narrows_finding_rows(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="toolfilter")
+    _make_finding(engine, target_id, title="Sast", rule_id="r1", tool="semgrep", severity=Severity.HIGH)
+    _make_finding(engine, target_id, title="Sca", rule_id="r2", tool="trivy", severity=Severity.LOW)
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&tool=trivy")
+    rows = _rows(res)
+    assert _severities(rows, "toolfilter") == {"Low"}  # only the trivy finding survived
+    assert _applied_filters(rows)["Tool"] == "trivy"
+
+
+def test_posture_csv_category_filter_uses_the_same_mapping_as_findings(client, engine):
+    """`category` is derived from `tool` via app.core.tool_registry, and the
+    report shares findings.apply_category_filter rather than re-deriving it,
+    so SCA here means exactly what SCA means on the Findings page."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="catfilter")
+    _make_finding(engine, target_id, title="Sast", rule_id="r1", tool="semgrep", severity=Severity.HIGH)
+    _make_finding(engine, target_id, title="Sca", rule_id="r2", tool="trivy", severity=Severity.LOW)
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&category=SCA")
+    rows = _rows(res)
+    assert _severities(rows, "catfilter") == {"Low"}
+    assert _applied_filters(rows)["Category"] == "SCA"
+
+
+def test_posture_csv_unknown_category_is_rejected_not_silently_empty(client, engine):
+    """A typo'd category would otherwise narrow the report to nothing and
+    read as a clean bill of health."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="badcat")
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&category=Nonsense")
+    assert res.status_code == 400
+
+
+def test_posture_csv_environment_filter_narrows_targets(client, engine):
+    _login(client, engine)
+    prod, _ = _make_target_ws(engine, name="prod-repo", environment="production")
+    staging, _ = _make_target_ws(engine, name="staging-repo", environment="staging")
+    _make_finding(engine, prod, title="Prod finding", rule_id="r1")
+    _make_finding(engine, staging, title="Staging finding", rule_id="r2")
+
+    res = client.get("/api/reports/posture?format=csv&environment=production")
+    rows = _rows(res)
+    names = {r[1] for r in rows if len(r) >= 5 and r[0].isdigit()}
+    assert names == {"prod-repo"}
+    # A target-level filter narrows every section, scan coverage and SBOM
+    # summary included, so the excluded repo is nowhere in the document.
+    assert "staging-repo" not in res.text
+    assert _applied_filters(rows)["Environment"] == "production"
+
+
+def test_posture_csv_owner_filter_narrows_targets(client, engine):
+    _login(client, engine)
+    mine, _ = _make_target_ws(engine, name="team-a-repo", owner="team-a")
+    theirs, _ = _make_target_ws(engine, name="team-b-repo", owner="team-b")
+    _make_finding(engine, mine, title="A", rule_id="r1")
+    _make_finding(engine, theirs, title="B", rule_id="r2")
+
+    res = client.get("/api/reports/posture?format=csv&owner=team-a")
+    rows = _rows(res)
+    names = {r[1] for r in rows if len(r) >= 5 and r[0].isdigit()}
+    assert names == {"team-a-repo"}
+    assert _applied_filters(rows)["Owner"] == "team-a"
+
+
+def test_posture_csv_group_filter_narrows_targets_and_names_the_group(client, engine):
+    _login(client, engine)
+    in_group, ws = _make_target_ws(engine, name="pci-repo")
+    out_of_group, _ = _make_target_ws(engine, name="other-repo")
+    group_id = _make_group(engine, ws, name="PCI-scope")
+    _assign_group(engine, in_group, group_id)
+    _make_finding(engine, in_group, title="In scope", rule_id="r1")
+    _make_finding(engine, out_of_group, title="Out of scope", rule_id="r2")
+
+    res = client.get(f"/api/reports/posture?format=csv&group_id={group_id}")
+    rows = _rows(res)
+    names = {r[1] for r in rows if len(r) >= 5 and r[0].isdigit()}
+    assert names == {"pci-repo"}
+    assert "other-repo" not in res.text
+    # The group is named, not printed as a raw id nobody reading the
+    # document could check.
+    assert _applied_filters(rows)["Repo group"] == "PCI-scope"
+
+
+def test_posture_csv_date_window_covers_findings_open_across_the_range(client, engine):
+    """The window tests the finding's own [first_seen, last_seen] span, not a
+    single timestamp: a critical finding first seen before the range and
+    still present inside it is exactly what a period report must show."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="windowed")
+    now = utcnow()
+    _make_finding(
+        engine,
+        target_id,
+        title="Long running",
+        rule_id="r1",
+        severity=Severity.CRITICAL,
+        first_seen=now - timedelta(days=200),
+        last_seen=now - timedelta(days=10),
+    )
+    _make_finding(
+        engine,
+        target_id,
+        title="Closed long ago",
+        rule_id="r2",
+        severity=Severity.LOW,
+        first_seen=now - timedelta(days=400),
+        last_seen=now - timedelta(days=300),
+    )
+
+    start = (now - timedelta(days=60)).date().isoformat()
+    end = now.date().isoformat()
+    res = client.get(
+        f"/api/reports/posture?target_id={target_id}&format=csv&date_from={start}&date_to={end}"
+    )
+    rows = _rows(res)
+    # Still-present-in-window finding kept; the one that stopped being seen
+    # a year ago is dropped.
+    assert _severities(rows, "windowed") == {"Critical"}
+    assert start in _applied_filters(rows)["Finding window"]
+    assert end in _applied_filters(rows)["Finding window"]
+
+
+def test_posture_csv_rejects_a_backwards_date_window(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="badwindow")
+    res = client.get(
+        f"/api/reports/posture?target_id={target_id}&format=csv"
+        "&date_from=2026-09-01&date_to=2026-08-01"
+    )
+    assert res.status_code == 400
+
+
+# --- filters never widen what the caller can see ---------------------------
+
+def test_posture_filters_cannot_reach_another_workspaces_findings(client, engine):
+    """#57/#86 still holds under #302's filters: the report's rows come from
+    the same _filtered_findings_query the Findings page uses, so a filter is
+    a narrowing operation on what the caller could already see, never a way
+    to select rows from outside it."""
+    target_a, ws_a = _make_target_ws(engine, name="ws-a-repo", environment="production", owner="team-x")
+    target_b, ws_b = _make_target_ws(engine, name="ws-b-repo", environment="production", owner="team-x")
+    _make_finding(engine, target_a, title="A crit", rule_id="r1", severity=Severity.CRITICAL)
+    _make_finding(engine, target_b, title="B crit", rule_id="r2", severity=Severity.CRITICAL)
+
+    _, uid = _login(client, engine, email="scoped@example.com", role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws_a, WorkspaceRole.DEVELOPER)
+
+    res = client.get(
+        "/api/reports/posture?format=csv&severity=Critical&environment=production&owner=team-x"
+    )
+    assert res.status_code == 200
+    rows = _rows(res)
+    names = {r[1] for r in rows if len(r) >= 5 and r[0].isdigit()}
+    assert names == {"ws-a-repo"}
+    assert "ws-b-repo" not in res.text
+    assert "B crit" not in res.text
+
+    totals_row = next(r for r in rows if r[:2] == ["Critical", "Open"])
+    assert totals_row[2] == "1"  # not 2
+
+
+def test_posture_named_target_outside_the_other_filters_returns_an_empty_report(client, engine):
+    """A named target that doesn't match the other target-level filters
+    yields an empty report rather than quietly ignoring the filters -- the
+    document says which filters were applied, so empty is readable."""
+    _login(client, engine)
+    target_id, _ = _make_target_ws(engine, name="dev-only", environment="dev")
+    _make_finding(engine, target_id, title="Something", rule_id="r1")
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&environment=production")
+    assert res.status_code == 200
+    rows = _rows(res)
+    assert _kv(rows, "Target Count") == "0"
+    # Still filed under the repo that was asked for, so the download is
+    # traceable to the request that produced it.
+    assert "dev-only" in res.headers["content-disposition"]
+
+
+# --- the applied-filters header ------------------------------------------
+
+def test_posture_csv_states_its_filters_even_when_unfiltered(client, engine):
+    """The block is unconditional. On an unfiltered report "Severity: (all)"
+    is a positive statement that nothing was hidden; a block that appeared
+    only when filters were active would be indistinguishable, on a full
+    report, from one that had simply failed to render."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="plain")
+    _make_finding(engine, target_id, title="X", rule_id="r1")
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv")
+    rows = _rows(res)
+    assert _kv(rows, "Filters Applied") == UNFILTERED_SUMMARY
+
+    applied = _applied_filters(rows)
+    for label in ("Repo group", "Environment", "Owner", "Severity", "Finding state", "Tool", "Category"):
+        assert applied[label] == NO_FILTER_VALUE, label
+    assert applied["Finding window"] == NO_FILTER_VALUE
+    # And it says which sections a filter actually bites on.
+    assert "scan coverage" in applied["Note"].lower()
+
+
+def test_posture_csv_counts_the_active_filters_in_the_header(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="counted")
+    _make_finding(engine, target_id, title="X", rule_id="r1", severity=Severity.CRITICAL)
+
+    res = client.get(
+        f"/api/reports/posture?target_id={target_id}&format=csv&severity=Critical&tool=semgrep"
+    )
+    rows = _rows(res)
+    summary = _kv(rows, "Filters Applied")
+    assert summary.startswith("2 filters applied")
+    assert APPLIED_FILTERS_HEADING in summary
+
+
+def test_posture_pdf_states_its_filters_on_the_document(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="pdffiltered")
+    _make_finding(engine, target_id, title="Crit", rule_id="r1", severity=Severity.CRITICAL)
+    _make_finding(engine, target_id, title="Lowish", rule_id="r2", severity=Severity.LOW)
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=pdf&severity=Critical")
+    assert res.status_code == 200
+    assert res.content[:4] == b"%PDF"
+
+    text = _pdf_text(res.content)
+    assert APPLIED_FILTERS_HEADING in text
+    assert "Critical" in text
+    # The filtered-out severity appears nowhere on the page; the report does
+    # not quietly include what its own header says it excluded.
+    assert "Low" not in text
+
+
+# --- section selection ----------------------------------------------------
+
+def test_posture_sections_catalog_lists_every_renderable_section(client, engine):
+    _login(client, engine)
+    res = client.get("/api/reports/sections")
+    assert res.status_code == 200
+    catalog = res.json()
+    assert [s["key"] for s in catalog] == [s.key for s in REPORT_SECTIONS]
+    assert all(s["label"] and s["description"] for s in catalog)
+
+
+def test_posture_csv_section_selection_is_honoured_and_exclusions_are_recorded(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="sectioned")
+    _make_finding(engine, target_id, title="X", rule_id="r1", severity=Severity.CRITICAL)
+    _make_scan(engine, target_id, tool="semgrep", findings_count=1)
+    _make_sbom_component(engine, target_id)
+
+    res = client.get(
+        f"/api/reports/posture?target_id={target_id}&format=csv&sections=targets&sections=totals"
+    )
+    assert res.status_code == 200
+    rows = _rows(res)
+
+    statuses = _section_statuses(rows)
+    included_labels = {s.label for s in REPORT_SECTIONS if s.key in ("targets", "totals")}
+    for label, status in statuses.items():
+        assert status == ("Included" if label in included_labels else "Excluded"), label
+
+    # Every heading is still present -- an excluded section is *marked*
+    # excluded, never simply missing, because an absent heading and an empty
+    # one look identical to whoever reads the document.
+    headings = _csv_headings(rows)
+    for spec in REPORT_SECTIONS:
+        assert spec.csv_heading in headings
+    assert headings.count(EXCLUDED_MARKER) == len(REPORT_SECTIONS) - 2
+
+    # And the excluded sections' data really is gone.
+    assert "Component Count" not in res.text  # the SBOM section's column header
+    assert "semgrep" not in res.text  # the scan coverage row
+    # ...while the included ones are intact.
+    assert any(r[:2] == ["Critical", "Open"] for r in rows)
+    assert any(len(r) >= 5 and r[1] == "sectioned" for r in rows)
+
+
+def test_posture_pdf_section_selection_is_honoured_and_exclusions_are_recorded(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="pdfsectioned")
+    _make_finding(engine, target_id, title="X", rule_id="r1", severity=Severity.CRITICAL)
+    _make_sbom_component(engine, target_id)
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=pdf&sections=totals")
+    assert res.status_code == 200
+    text = _pdf_text(res.content)
+
+    assert SECTION_MANIFEST_HEADING in text
+    assert "Excluded" in text
+    assert "excluded from this report" in text.lower()
+    # The kept section's real data is there...
+    assert "Critical" in text
+    # ...and the dropped section keeps its heading as a marker while its
+    # contents do not appear.
+    assert "SBOM Component Summary" in text
+    assert "Component Count" not in text
+
+
+def test_posture_rejects_an_unknown_section(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="badsection")
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&sections=not_a_section")
+    assert res.status_code == 400
+
+
+def test_posture_rejects_an_empty_section_selection(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="nosections")
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&sections=")
+    assert res.status_code == 400
+
+
+# --- the default is still the report this endpoint always produced ---------
+
+def test_posture_csv_default_still_renders_every_section_with_the_same_rows(client, engine):
+    """No filters and no section selection: the same sections, in the same
+    order, with the same rows as before #302. Only the two honesty blocks
+    are new, and they say the report is unfiltered and complete."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="unchanged")
+    _make_finding(engine, target_id, title="SQL Injection", rule_id="r1", severity=Severity.CRITICAL)
+    _make_finding(
+        engine, target_id, title="XSS", rule_id="r2", severity=Severity.HIGH, state=FindingState.MITIGATED
+    )
+    _make_scan(engine, target_id, tool="semgrep", status="completed", findings_count=2)
+    _make_sbom_component(engine, target_id)
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv")
+    assert res.status_code == 200
+    rows = _rows(res)
+
+    headings = _csv_headings(rows)
+    section_headings = {s.csv_heading for s in REPORT_SECTIONS}
+    assert [h for h in headings if h in section_headings] == [s.csv_heading for s in REPORT_SECTIONS]
+    assert EXCLUDED_MARKER not in headings
+    assert set(_section_statuses(rows).values()) == {"Included"}
+    assert _kv(rows, "Filters Applied") == UNFILTERED_SUMMARY
+    assert _kv(rows, "Sections Included").startswith(f"{len(REPORT_SECTIONS)} of {len(REPORT_SECTIONS)}")
+
+    # The pre-#302 row assertions, unchanged.
+    assert any(r[:3] == ["unchanged", "Critical", "Open"] and r[3] == "1" for r in rows if len(r) > 3)
+    assert any(r[:3] == ["unchanged", "High", "Mitigated"] and r[3] == "1" for r in rows if len(r) > 3)
+    assert any(r[:2] == ["unchanged", "semgrep"] and r[6] == "2" for r in rows if len(r) > 6)
+    assert any(r[:2] == ["unchanged", "1"] for r in rows)
+
+
+def test_posture_default_filename_is_unchanged_and_narrowing_marks_it(client, engine):
+    """The filename carries the narrowing too: these files get attached to
+    tickets and mailed to auditors, where the name is often all anyone reads
+    before opening it."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="namecheck")
+
+    plain = client.get(f"/api/reports/posture?target_id={target_id}&format=csv")
+    disposition = plain.headers["content-disposition"]
+    assert "namecheck" in disposition
+    assert "filtered" not in disposition
+    assert "sections" not in disposition
+
+    narrowed = client.get(
+        f"/api/reports/posture?target_id={target_id}&format=csv&severity=Critical&sections=totals"
+    )
+    narrowed_disposition = narrowed.headers["content-disposition"]
+    assert "filtered" in narrowed_disposition
+    assert f"1of{len(REPORT_SECTIONS)}-sections" in narrowed_disposition
+
+
+def test_posture_filename_does_not_let_a_target_name_steer_the_header(client, engine):
+    """Target names are user-supplied and end up in Content-Disposition."""
+    _login(client, engine)
+    target_id = _make_target(engine, name='ev"il; filename=other')
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv")
+    assert res.status_code == 200
+    disposition = res.headers["content-disposition"]
+    assert disposition.count('"') == 2
+    assert "filename=other" not in disposition

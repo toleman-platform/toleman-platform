@@ -2,6 +2,44 @@ import type { RunStatus } from "./common";
 import type { Nullable } from "@/std-lib";
 
 /**
+ * One selectable block of the compliance posture report, as served by
+ * GET /api/reports/sections (#302). `key` is what goes back on the export as
+ * a repeated `sections=` param; `description` is what the report builder
+ * shows under "What's included" for the sections actually chosen.
+ */
+export type ReportSection = { key: string; label: string; description: string };
+
+/**
+ * Everything the posture export accepts beyond scope and format (#302): the
+ * same filter vocabulary as the Findings page (so a report can never show a
+ * finding the caller could not see there), plus section selection.
+ *
+ * `date_from`/`date_to` are plain YYYY-MM-DD strings and bound the finding
+ * *window* -- a finding first seen before the range but still present inside
+ * it is included, since that is exactly the finding an auditor asking about
+ * the period needs to see.
+ */
+export type PostureReportOptions = {
+  group_id?: number;
+  severity?: string[];
+  state?: string[];
+  tool?: string[];
+  category?: string;
+  environment?: string;
+  owner?: string;
+  date_from?: string;
+  date_to?: string;
+  /** Omitted or empty means every section. */
+  sections?: string[];
+};
+
+/**
+ * The exported report blob plus the filename the server chose for it (see
+ * exportPostureReport).
+ */
+export type PostureReportDownload = { blob: Blob; filename: string };
+
+/**
  * Supported Large Language Model / AI provider backends.
  */
 export type AiProvider = "anthropic" | "openai_compatible";

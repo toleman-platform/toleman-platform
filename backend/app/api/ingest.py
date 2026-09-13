@@ -48,8 +48,11 @@ def push_ingest(
     # (#229) A pushed document that declares its own run unsuccessful must
     # not clear findings: an empty `results` array from a CI job that broke
     # is not a clean repository. SARIF states this directly via
-    # runs[].invocations[].executionSuccessful, so unlike the native scanner
-    # path there is nothing to infer here -- see parsers.sarif_health.
+    # runs[].invocations[].executionSuccessful. A document that says nothing
+    # about its invocation yields None here, which ingest_findings reads as
+    # "no evidence" -- such a push can still clear findings it did report,
+    # but an empty one proves nothing and clears nothing. See
+    # parsers.sarif_health.
     count = ingest_findings(
         session, target, scan,
         tool=tool, branch=branch, parsed=parsed, health=sarif_health(payload, tool),

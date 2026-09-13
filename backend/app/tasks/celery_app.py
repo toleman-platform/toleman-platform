@@ -111,6 +111,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.github_sync_tasks.sync_repos_task",
         "schedule": timedelta(hours=24),
     },
+    # (#229) Keep Toleman's own warm copy of the trivy vulnerability DB
+    # current, and sweep per-run caches a killed worker left behind. Every
+    # 6h because that is roughly trivy's own publication cadence; warming on
+    # a schedule is what keeps the download off the critical path of a
+    # user-triggered scan, and off PR Guardrail entirely.
+    "warm-scanner-caches": {
+        "task": "app.tasks.scan_tasks.warm_scanner_caches",
+        "schedule": timedelta(hours=6),
+    },
 }
 
 

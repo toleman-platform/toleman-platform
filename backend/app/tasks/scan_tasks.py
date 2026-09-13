@@ -23,6 +23,11 @@ PARSER_MAP = parsers.PARSER_MAP
 # find no LLM calls, so running them everywhere is wasted scan budget.
 AI_ONLY_TOOLS = ("modelscan", "semgrep-llm")
 
+# Tools that scan against Toleman's warmed vulnerability database (#229).
+# Naming them here rather than reaching into runner keeps the "when do we
+# warm" decision next to the task that fans scans out.
+DB_BACKED_TOOLS = ("trivy", "trivy-license")
+
 logger = logging.getLogger(__name__)
 
 # Only subprocess.CalledProcessError is auto-retried: today it can only come from
@@ -139,6 +144,24 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             # with valid JSON and no findings -- which then cleared five live
             # CVEs off the record. ingest_findings refuses to mitigate on a
             # run that is not positively healthy.
+            if tool in DB_BACKED_TOOLS:
+                # (#229) Warm Toleman's own copy of the vulnerability DB
+                # before scanning. This is the fan-out interlock: when six
+                # scans are dispatched together the first one downloads
+                # while the rest wait on the lock inside here, then all six
+                # hardlink the same finished database and run with
+                # --skip-db-update. Without it every run would either
+                # re-download the DB or race the shared user cache, which is
+                # the race that produced this issue.
+                warm, detail = runner.ensure_warm_trivy_db()
+                if not warm:
+                    # Not fatal: the scan still runs, just unseeded and
+                    # without --skip-db-update. It is recorded because a
+                    # scan that had to fetch its own database is exactly the
+                    # kind this issue says not to trust silently.
+                    logger.warning(
+                        "trivy DB warm-up did not complete before scan %s: %s", scan.id, detail
+                    )
             raw, health = runner.run_tool_checked(tool, repo_path)
             parsed = PARSER_MAP[tool](raw)
             for item in parsed:
@@ -236,6 +259,24 @@ def queue_full_scan_for_target_task(target_id: int) -> list[int]:
         if not target:
             return []
         return queue_full_scan(session, target)
+
+
+@celery_app.task(name="app.tasks.scan_tasks.warm_scanner_caches")
+def warm_scanner_caches() -> dict:
+    """Beat-scheduled (#229): keep Toleman's warm trivy DB current.
+
+    Per-run caches are deleted when their run ends and nothing writes back
+    to them, so the warm copy is the only thing standing between this
+    platform and a full database download per scan -- including on every PR
+    Guardrail scan, which does not get to warm it itself. run_scan warms
+    lazily as well; this exists so the cost lands on a schedule instead of
+    on whichever user happens to click Scan after the DB goes stale.
+    """
+    warm, detail = runner.ensure_warm_trivy_db()
+    removed = runner.sweep_stale_run_caches()
+    if not warm:
+        logger.warning("scheduled trivy DB warm-up failed: %s", detail)
+    return {"warm": warm, "detail": detail, "stale_run_caches_removed": removed}
 
 
 @celery_app.task(name="app.tasks.scan_tasks.run_scheduled_full_scans")

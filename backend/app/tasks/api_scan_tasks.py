@@ -85,14 +85,18 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
 
             raw_results = runner.run_nuclei(urls)
             parsed = parsers.parse_nuclei(raw_results)
-            # (#229) Every way this path can fail to actually scan -- no
-            # scannable endpoints, a missing nuclei binary, a run that timed
-            # out -- lands in one of the handlers below and marks the Scan
-            # failed before ingestion is ever reached. So arriving here is
-            # itself the evidence that the run completed, and it is asserted
-            # explicitly rather than left as None (which ingest_findings
-            # treats as "no evidence" and which would stop a legitimately
-            # clean DAST run from ever clearing a fixed finding).
+            # (#229) What makes this assertion earned rather than assumed:
+            # runner.run_nuclei now checks nuclei's exit code and raises
+            # ToolExecutionError on anything nonzero, so a broken nuclei run
+            # reaches the generic handler below and marks the Scan failed
+            # instead of returning [] and being ingested as a clean sweep
+            # that mitigates every open api-scan finding. Together with the
+            # config/binary/timeout handlers, reaching this line means
+            # nuclei ran to completion against a real endpoint list.
+            #
+            # Asserted rather than left as None because None means "no
+            # evidence", which would stop a legitimately clean DAST run from
+            # ever clearing a finding that really was fixed.
             count = ingest_findings(
                 session, target, scan,
                 tool="api-scan", branch=target.default_branch, parsed=parsed,

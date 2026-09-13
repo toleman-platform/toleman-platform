@@ -62,9 +62,16 @@ class TestExitCodeIsChecked:
         out = runner.run_tool("semgrep", tmp_path)
         assert out == {"results": [{"x": 1}]}
 
-    def test_zero_exit_with_no_output_is_still_clean(self, monkeypatch, tmp_path):
+    def test_zero_exit_with_no_output_does_not_raise(self, monkeypatch, tmp_path):
         """The legitimate empty case must keep working; this fix must not
-        turn quiet successes into failures."""
+        turn quiet successes into failures.
+
+        (#229) The *return value* is still the empty default -- parsers
+        downstream expect a shape, not an exception. What changed is that
+        the run's ScanHealth now records that there was no report to read,
+        so an empty stdout can no longer clear existing findings. See
+        tests/test_scan_health.py::TestRunToolChecked.
+        """
         self._fake_proc(monkeypatch, 0, stdout="")
         assert runner.run_tool("trivy", tmp_path) == {}
 

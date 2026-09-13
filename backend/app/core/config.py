@@ -31,6 +31,25 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     workspace_api_key: str = "dev-local-key"
     scan_workdir: str = "/tmp/toleman-scans"
+    # (#229) Where Toleman keeps the scanner data it manages itself: today
+    # a warmed copy of trivy's vulnerability DB, plus the per-run private
+    # caches hardlinked from it.
+    #
+    # Deliberately NOT the tools' own per-user cache ($HOME/.cache/trivy).
+    # That directory is written by any trivy process on the box, including
+    # the six concurrent scans that produced #229's false all-clear, so it
+    # cannot be treated as stable while a scan reads it. This one is only
+    # ever written by ensure_warm_trivy_db, under a lock, by replacing a
+    # whole directory at once -- which is what makes a hardlink from it a
+    # real snapshot rather than a shared inode.
+    #
+    # Sibling of scan_workdir's default on purpose: hardlinking only works
+    # within one filesystem, and keeping the warm copy and the per-run
+    # copies under one root means that holds by construction rather than by
+    # luck. An operator pointing scan_workdir at a real volume should point
+    # this at the same one; a trivy DB is hundreds of megabytes and tmpfs is
+    # the wrong place for it.
+    tool_cache_dir: str = "/tmp/toleman-tool-cache"
     session_secret: str = DEFAULT_SESSION_SECRET
     # Set True in any production/HTTPS deployment so the session cookie is
     # only ever sent over TLS. Defaults to False so local http:// dev works.

@@ -430,7 +430,7 @@ def parse_sarif(raw: dict) -> list[dict]:
     return out
 
 
-def sarif_health(raw: dict, tool: str) -> ScanHealth:
+def sarif_health(raw: dict, tool: str) -> ScanHealth | None:
     """What a pushed SARIF document says about its own run (#229).
 
     SARIF carries the distinction this issue is about natively:
@@ -439,26 +439,43 @@ def sarif_health(raw: dict, tool: str) -> ScanHealth:
     ``executionSuccessful: false`` is a CI job that broke, not a clean
     repository, and it must not be allowed to mitigate anything.
 
-    Absent invocation data is treated as healthy, matching both the SARIF
-    spec's own default and the existing contract of this endpoint: a CI job
-    that posts results is asserting it ran, and this platform has no other
-    evidence to weigh. That is a weaker guarantee than the native scanner
-    path gets (where we run the tool and can inspect its cache and stderr),
-    which is exactly why it is written down here rather than assumed.
+    Returns ``None`` -- "no evidence", not "healthy" -- when the document
+    declares no invocation status at all. ``invocations`` is optional in the
+    SARIF spec and is omitted outright by several producers this platform
+    expects to receive (trivy and gitleaks among them), so treating its
+    absence as a successful run would be unknown rendering as clean: the
+    exact thing this issue is about, and it would leave the
+    not-authoritative branch in ``ingest_findings`` unreachable for most
+    real push traffic.
+
+    ``None`` is not a refusal to ingest. ``_may_mitigate`` still lets a push
+    that actually reported findings clear the ones it did not report; only
+    the stronger claim that an *empty* push proves a clean repository is
+    withheld, because nothing in such a document supports it.
     """
+    seen_status = False
     health = ScanHealth(tool=tool)
     for run in raw.get("runs", []) or []:
         if not isinstance(run, dict):
             continue
         for invocation in run.get("invocations", []) or []:
-            if isinstance(invocation, dict) and invocation.get("executionSuccessful") is False:
+            if not isinstance(invocation, dict):
+                continue
+            successful = invocation.get("executionSuccessful")
+            if successful is None:
+                # An invocation object that omits the field asserts nothing
+                # either. The spec makes it required, so a producer leaving
+                # it out is not claiming success.
+                continue
+            seen_status = True
+            if successful is False:
                 driver = run.get("tool", {}).get("driver", {})
                 name = driver.get("name") if isinstance(driver, dict) else None
                 health.degrade(
                     f"the pushed SARIF reports that {name or 'the producing tool'} did not "
                     "complete successfully, so its result set may be incomplete"
                 )
-    return health
+    return health if seen_status else None
 
 
 # Shared by app/api/scans.py (synchronous "Pull" scan endpoint) and

@@ -615,6 +615,11 @@ def group_findings_by_location(findings: list[PRGuardrailFinding]) -> list[Locat
       not `is not None`: parse_trivy's CauseMetadata.StartLine and parse_iac's
       file_line_range[0] both report 0 for a file-level check, which means
       the same "no line" as None and must not slip past into a location.
+    * **No file path.** parse_sarif reports file_path "" for a result that
+      carries no locations at all. "Line 12 of nowhere in particular" is not
+      somewhere two tools can agree on, and bucketing on it would merge
+      findings whose only established connection is that neither could say
+      where it was.
 
     Findings keep their original order, and a merged group sits where its
     first member was, so when nothing merges (the common case) the rendered
@@ -623,7 +628,7 @@ def group_findings_by_location(findings: list[PRGuardrailFinding]) -> list[Locat
     """
     buckets: dict[tuple[str, int], list[int]] = {}
     for index, f in enumerate(findings):
-        if not f.line_start:
+        if not f.line_start or not f.file_path:
             continue
         buckets.setdefault((f.file_path, f.line_start), []).append(index)
 
@@ -864,7 +869,9 @@ def _findings_table(
     return "\n".join(lines)
 
 
-def _group_action_cell(group: LocationGroup, target_id: int, pr_scan_id: int) -> str:
+def _group_action_cell(
+    group: LocationGroup, target_id: int, pr_scan_id: int, approved: int | None = None
+) -> str:
     """The collapsed row's Links cell, which has to say whether the findings
     behind it have already been dealt with.
 
@@ -882,9 +889,16 @@ def _group_action_cell(group: LocationGroup, target_id: int, pr_scan_id: int) ->
     belongs to. Arranged this way the header cannot contain either patch
     path's search string -- `[view](ref) &middot; ✅ approved to ignore` or
     `&middot; [request ignore](link)` -- as a substring.
+
+    `approved` overrides the count taken from the members' current state, and
+    exists so `_patch_group_header_in_comment` can reconstruct the exact cell
+    a past render produced for a past approval count. The cells for different
+    counts are mutually exclusive strings, which is what makes finding the
+    stale one in a posted comment an exact match rather than a guess.
     """
     ref_link = _finding_ref_link(target_id, pr_scan_id, group.primary.id)
-    approved = sum(1 for f in group.findings if f.ignore_status == IgnoreStatus.APPROVED)
+    if approved is None:
+        approved = sum(1 for f in group.findings if f.ignore_status == IgnoreStatus.APPROVED)
     if approved == len(group.findings):
         return f"✅ all {approved} approved to ignore &middot; [view]({ref_link})"
     if approved:
@@ -893,6 +907,63 @@ def _group_action_cell(group: LocationGroup, target_id: int, pr_scan_id: int) ->
             f"({approved} approved), expand below"
         )
     return f"[view]({ref_link}) &middot; {len(group.findings)} findings, expand below"
+
+
+def _patch_group_header_in_comment(
+    session: Session, target_id: int, finding: PRGuardrailFinding, body: str
+) -> str:
+    """Bring the collapsed group header above `finding`'s row back in line
+    with what its members now say, returning the patched body (unchanged if
+    there is nothing to do).
+
+    The individual cells `update_finding_status_in_pr_comment` and
+    `revoke_finding_status_in_pr_comment` patch are per-finding, so before
+    #383 every claim in a comment was owned by exactly one row and those two
+    patches kept the whole comment current. A collapsed group header is the
+    first thing in this comment that makes an *aggregate* claim ("all 2
+    approved to ignore"), and an aggregate goes stale when any one member
+    changes: after a revoke the header would keep saying all 2 are approved
+    while the row below it offers a live "request ignore" link again.
+
+    That direction is the one this module never tolerates. A stale header
+    that *understates* (the approve direction: "2 findings" when one is now
+    approved) is merely out of date; one that overstates is a false
+    all-clear, the same thing the tools_failed and baseline-missing branches
+    of render_comment exist to prevent. It would self-heal on the next
+    rescan, but "wrong until someone pushes a commit" is exactly the gap #401
+    closed for individual rows, so the header is patched from both paths and
+    stays exactly current in both directions.
+
+    Finding the stale text is an exact match, not a guess: a group renders
+    exactly one of len(members)+1 possible header cells, all mutually
+    exclusive and all reconstructible here, and each carries its group's own
+    primary ref link so it cannot collide with another group's header. Any
+    miss (the comment predates this, the group is a single row, the header
+    was already patched) leaves the body untouched -- best-effort, like every
+    other GitHub-facing step in this module.
+    """
+    siblings = session.exec(
+        select(PRGuardrailFinding)
+        .where(PRGuardrailFinding.pr_scan_id == finding.pr_scan_id)
+        .order_by(PRGuardrailFinding.id)
+    ).all()
+    group = next(
+        (
+            g
+            for g in group_findings_by_location(list(siblings))
+            if any(f.id == finding.id for f in g.findings)
+        ),
+        None,
+    )
+    if group is None or not group.is_grouped:
+        return body
+
+    current = _group_action_cell(group, target_id, finding.pr_scan_id)
+    for count in range(len(group.findings) + 1):
+        stale = _group_action_cell(group, target_id, finding.pr_scan_id, approved=count)
+        if stale != current and stale in body:
+            return body.replace(stale, current, 1)
+    return body
 
 
 def _group_detail_blocks(groups: list[LocationGroup], target_id: int, pr_scan_id: int) -> list[str]:
@@ -975,6 +1046,7 @@ def render_comment(
     diff_attributed: bool | None = None,
     repo_slug: str | None = None,
     head_sha: str | None = None,
+    total_findings: int | None = None,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
     predating the multi-tool guardrail (GH-01); None means "don't render a
@@ -1020,7 +1092,13 @@ def render_comment(
     into a link to that exact line on GitHub (see _source_link). Both None
     (the default) renders the plain code span this comment used to carry, so
     a caller that does not know which commit was scanned still produces a
-    valid comment rather than a link pointing at the wrong revision."""
+    valid comment rather than a link pointing at the wrong revision.
+
+    `total_findings` is how many net-new findings the scan actually produced,
+    where `findings` is only the first MAX_NEW_FINDINGS_IN_RESPONSE of them.
+    None (the default, and every pre-existing caller) means "what you were
+    given is all there was", which is how this always behaved -- silently,
+    since nothing ever disclosed the truncation."""
     lines = [COMMENT_MARKER, "**Toleman PR Guardrail**", "", _severity_badge(status), ""]
 
     if baseline_missing:
@@ -1125,17 +1203,43 @@ def render_comment(
         # one group per finding and this renders exactly as it always did.
         groups = group_findings_by_location(findings)
 
+        # `findings` is only ever the first MAX_NEW_FINDINGS_IN_RESPONSE of a
+        # scan's net-new set (_persist_findings truncates), and until now
+        # nothing said so: the headline simply counted the page and called it
+        # the result. Pre-existing, but this change makes it matter -- the
+        # commit status beside this comment reports the full count when the
+        # set was truncated (see execute_pr_guardrail_scan), so without this
+        # note the two numbers disagree for no visible reason.
+        total = total_findings if total_findings is not None else len(findings)
+        truncated = total > len(findings)
+
         headline = "introduced by this PR's changes" if diff_attributed else "vs the default branch"
-        lines.append(f"**{len(groups)} net-new vulnerability finding(s)** {headline}:")
+        # When truncated the headline is the real total, which is also what
+        # the commit status says; the note below explains that only some of
+        # them are rendered. Untruncated, it is the number of rows below.
+        lines.append(f"**{total if truncated else len(groups)} net-new vulnerability finding(s)** {headline}:")
         lines.append("")
-        if len(groups) != len(findings):
-            # Never silently report a smaller number than the scanners
-            # produced. A reviewer comparing this against the dashboard, the
-            # API, or the Approval Queue (all of which are per-finding, and
-            # stay that way) has to be able to see where the difference comes
-            # from -- same reason tools_failed and the diff-scope note are
-            # rendered rather than folded away.
-            multi = sum(1 for g in groups if g.is_grouped)
+        # Never silently report a smaller number than the scanners produced.
+        # A reviewer comparing this against the dashboard, the API, or the
+        # Approval Queue (all of which are per-finding, and stay that way)
+        # has to be able to see where any difference comes from -- same
+        # reason tools_failed and the diff-scope note are rendered rather
+        # than folded away.
+        multi = sum(1 for g in groups if g.is_grouped)
+        grouped_note = (
+            f"grouped into {len(groups)} row(s) by location ({multi} line(s) flagged by more "
+            "than one tool)"
+            if len(groups) != len(findings)
+            else ""
+        )
+        if truncated:
+            lines.append(
+                f"<sub>Showing the first {len(findings)} of {total} net-new findings"
+                + (f", {grouped_note}" if grouped_note else "")
+                + ". Open the scan in Toleman for the full list.</sub>"
+            )
+            lines.append("")
+        elif grouped_note:
             lines.append(
                 f"<sub>{len(findings)} detections, grouped into {len(groups)} by location: "
                 f"{multi} line(s) flagged by more than one tool. Every tool's finding is still "
@@ -1318,6 +1422,12 @@ def update_finding_status_in_pr_comment(session: Session, target: Target, pr_num
         if old not in body:
             return
         patched = body.replace(old, new, 1)
+        # (#383) And the collapsed header above it, if this row is inside a
+        # group: its "N findings" count of what is still outstanding is an
+        # aggregate claim no single row's cell owns. Searches for strings
+        # only a group header can produce, so it cannot disturb the
+        # per-finding cell just patched above.
+        patched = _patch_group_header_in_comment(session, target.id, finding, patched)
 
         res = httpx.patch(
             f"https://api.github.com/repos/{slug}/issues/comments/{comment_id}",
@@ -1389,6 +1499,12 @@ def revoke_finding_status_in_pr_comment(session: Session, target: Target, pr_num
             return
         new = _pending_action_cell(ref_link, _finding_ignore_link(finding.pr_scan_id, finding.id))
         patched = body.replace(old, new, 1)
+        # (#383) This is the direction that matters: without it a collapsed
+        # header goes on claiming "✅ all N approved to ignore" above a row
+        # that now offers a live "request ignore" link again -- a false
+        # all-clear, and the only stale state in this comment that reassures
+        # rather than merely lags. See _patch_group_header_in_comment.
+        patched = _patch_group_header_in_comment(session, target.id, finding, patched)
 
         res = httpx.patch(
             f"https://api.github.com/repos/{slug}/issues/comments/{comment_id}",
@@ -1790,6 +1906,10 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             # the PR API reported (see _scanned_commit and _source_link).
             repo_slug=slug,
             head_sha=_scanned_commit(repo_path, head_sha),
+            # persisted_findings is capped at MAX_NEW_FINDINGS_IN_RESPONSE;
+            # this is what the cap is hiding, so the comment can say so
+            # instead of presenting a page as the whole result.
+            total_findings=len(net_new),
             # (#271) completed_at is set just above this call; falling back
             # to now() keeps the footer honest rather than omitting it if
             # that ordering ever changes.
@@ -1804,7 +1924,8 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
         # -- except when there were more net-new findings than we persist and
         # render (MAX_NEW_FINDINGS_IN_RESPONSE), where those rows are only a
         # page of the result and the full count is the honest one to put on
-        # the merge gate.
+        # the merge gate. That is the same branch render_comment takes for
+        # its headline, so the two numbers agree in both cases.
         if len(persisted_findings) == len(net_new):
             reported_findings = len(group_findings_by_location(persisted_findings))
         else:

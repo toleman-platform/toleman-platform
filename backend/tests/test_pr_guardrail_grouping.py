@@ -17,7 +17,7 @@ Everything here is about presentation on top of an unchanged set of rows.
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
@@ -25,6 +25,7 @@ from app.core.pr_guardrail_executor import (
     COMMENT_MARKER,
     _approved_action_cell,
     _finding_ref_link,
+    _patch_group_header_in_comment,
     group_findings_by_location,
     render_comment,
 )
@@ -205,6 +206,21 @@ def test_each_group_gets_its_own_key_even_at_one_location():
     assert len({g.key for g in groups}) == 3
 
 
+def test_findings_with_no_file_path_never_group():
+    """parse_sarif reports file_path "" for a result carrying no locations at
+    all. "Line 12 of nowhere in particular" is not somewhere two tools can
+    agree on; bucketing on it would merge findings whose only established
+    connection is that neither could say where it was."""
+    findings = [
+        _finding(1, tool="semgrep", file_path="", line_start=12),
+        _finding(2, tool="gitleaks", file_path="", line_start=12),
+    ]
+
+    groups = group_findings_by_location(findings)
+
+    assert len(groups) == 2
+
+
 def test_a_group_key_is_never_empty():
     """parse_sarif emits file_path "" for a result carrying no locations, and
     "" slips past a consumer's nullish check -- which would bucket every
@@ -372,6 +388,35 @@ def test_a_fully_approved_groups_header_cannot_steal_a_revoke_patch():
         assert body.index("| Tool | Severity | Rule | Title | Links |") < body.index(cell)
 
 
+def test_comment_discloses_that_it_truncated():
+    """`findings` is only the first MAX_NEW_FINDINGS_IN_RESPONSE of a scan's
+    net-new set, and the comment used to present that page as the whole
+    result. The headline then matches the commit status (which reports the
+    full count on a truncated scan) instead of disagreeing with it for no
+    visible reason."""
+    findings = [_finding(1, **_SEMGREP_SECRET), _finding(2, **_GITLEAKS_SECRET)]
+
+    body = render_comment(
+        findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9, total_findings=53
+    )
+
+    assert "**53 net-new vulnerability finding(s)**" in body
+    assert "Showing the first 2 of 53 net-new findings" in body
+    # The grouping of what *is* shown is still disclosed, in the same note.
+    assert "grouped into 1 row(s) by location" in body
+
+
+def test_comment_without_a_total_is_unchanged():
+    """Default None means "what you were given is all there was", which is how
+    every pre-existing caller behaves."""
+    findings = [_finding(1, **_SEMGREP_SECRET), _finding(2, **_GITLEAKS_SECRET)]
+
+    body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
+
+    assert "Showing the first" not in body
+    assert "**1 net-new vulnerability finding(s)**" in body
+
+
 def test_comment_groups_under_the_highest_severity_section():
     findings = [
         _finding(1, severity="Medium", **_SEMGREP_SECRET),
@@ -449,6 +494,110 @@ def _make_scan_with_findings(engine, rows: list[dict]) -> tuple[int, list[int]]:
         return scan.id, ids
 
 
+# --- the collapsed header's aggregate claim staying current ------------------
+#
+# Every other claim in a PR comment is owned by exactly one finding's cell,
+# which update_/revoke_finding_status_in_pr_comment keep current. A group
+# header is the first aggregate claim in the comment, and an aggregate goes
+# stale when any one member changes.
+
+
+def _render_scan_comment(session, scan_id: int, target_id: int = 5) -> str:
+    findings = session.exec(
+        select(PRGuardrailFinding)
+        .where(PRGuardrailFinding.pr_scan_id == scan_id)
+        .order_by(PRGuardrailFinding.id)
+    ).all()
+    return render_comment(
+        list(findings), [], PRGuardrailStatus.BLOCKED, target_id=target_id, pr_scan_id=scan_id
+    )
+
+
+def _set_ignore_status(session, finding_id: int, status) -> PRGuardrailFinding:
+    finding = session.get(PRGuardrailFinding, finding_id)
+    finding.ignore_status = status
+    session.add(finding)
+    session.commit()
+    session.refresh(finding)
+    return finding
+
+
+def test_a_revoke_stops_the_header_claiming_everything_is_approved(engine):
+    """The one direction that produces a false claim rather than a merely
+    lagging one: without the header patch the comment goes on saying all 2 are
+    approved while the row below it offers a live "request ignore" link
+    again."""
+    scan_id, (semgrep_id, gitleaks_id) = _make_scan_with_findings(
+        engine,
+        [
+            dict(**_SEMGREP_SECRET, ignore_status=IgnoreStatus.APPROVED),
+            dict(**_GITLEAKS_SECRET, ignore_status=IgnoreStatus.APPROVED),
+        ],
+    )
+
+    with Session(engine) as session:
+        body = _render_scan_comment(session, scan_id)
+        assert "✅ all 2 approved to ignore" in body
+
+        revoked = _set_ignore_status(session, gitleaks_id, IgnoreStatus.REVOKED)
+        patched = _patch_group_header_in_comment(session, 5, revoked, body)
+
+    assert "✅ all 2 approved to ignore" not in patched
+    assert "2 findings (1 approved), expand below" in patched
+
+
+def test_the_header_tracks_the_approve_direction_too(engine):
+    scan_id, (semgrep_id, _) = _make_scan_with_findings(
+        engine, [dict(**_SEMGREP_SECRET), dict(**_GITLEAKS_SECRET)]
+    )
+
+    with Session(engine) as session:
+        body = _render_scan_comment(session, scan_id)
+        assert "2 findings, expand below" in body
+
+        approved = _set_ignore_status(session, semgrep_id, IgnoreStatus.APPROVED)
+        patched = _patch_group_header_in_comment(session, 5, approved, body)
+
+    assert "2 findings (1 approved), expand below" in patched
+
+
+def test_the_header_is_patched_from_any_approved_count(engine):
+    """A group with three members passes through several header texts; each is
+    a distinct exact string, so a later change finds whichever one the comment
+    currently carries rather than only the all-approved one."""
+    scan_id, ids = _make_scan_with_findings(
+        engine,
+        [
+            dict(**_SEMGREP_SECRET, ignore_status=IgnoreStatus.APPROVED),
+            dict(**_GITLEAKS_SECRET, ignore_status=IgnoreStatus.APPROVED),
+            dict(tool="trufflehog", rule_id="aws-key", title="AWS key", file_path="README.md", line_start=7),
+        ],
+    )
+
+    with Session(engine) as session:
+        body = _render_scan_comment(session, scan_id)
+        assert "3 findings (2 approved), expand below" in body
+
+        revoked = _set_ignore_status(session, ids[0], IgnoreStatus.REVOKED)
+        patched = _patch_group_header_in_comment(session, 5, revoked, body)
+
+    assert "3 findings (1 approved), expand below" in patched
+    assert "(2 approved)" not in patched
+
+
+def test_the_header_patch_leaves_an_ungrouped_finding_alone(engine):
+    scan_id, (finding_id,) = _make_scan_with_findings(
+        engine, [dict(**_SEMGREP_SECRET, ignore_status=IgnoreStatus.APPROVED)]
+    )
+
+    with Session(engine) as session:
+        body = _render_scan_comment(session, scan_id)
+        revoked = _set_ignore_status(session, finding_id, IgnoreStatus.REVOKED)
+        patched = _patch_group_header_in_comment(session, 5, revoked, body)
+
+    assert patched == body
+
+
 def test_api_carries_the_grouping_so_the_ui_never_re_derives_it(client, engine):
     client = _login(client, engine)
     scan_id, (semgrep_id, gitleaks_id) = _make_scan_with_findings(
@@ -483,6 +632,29 @@ def test_api_leaves_unrelated_findings_in_groups_of_one(client, engine):
 
     assert len({r["group_key"] for r in rows}) == 2
     assert all(r["group_size"] == 1 for r in rows)
+
+
+def test_api_returns_findings_in_a_stable_order(client, engine):
+    """group_key carries the group's first member's id, so it is a function of
+    position, not just of location: an unordered SELECT could key the same
+    group off a different member between two fetches and remount (and so
+    collapse) a group the user had just expanded. SQLite happens to return
+    insertion order anyway, so this asserts the contract rather than proving
+    it -- the ORDER BY in the query is what makes it true on Postgres, where
+    an UPDATE (which is exactly what the ignore workflow does to these rows)
+    can relocate one."""
+    client = _login(client, engine)
+    scan_id, ids = _make_scan_with_findings(
+        engine,
+        [
+            dict(tool="semgrep", rule_id=f"rule-{n}", title=f"r{n}", file_path=f"f{n}.py", line_start=n)
+            for n in (1, 2, 3)
+        ],
+    )
+
+    rows = client.get(f"/api/pr-guardrail/{scan_id}/findings").json()
+
+    assert [r["id"] for r in rows] == sorted(ids)
 
 
 def test_api_gives_same_location_findings_that_must_not_merge_distinct_keys(client, engine):

@@ -294,6 +294,28 @@ def create_target(
     # so require_workspace_role's name-binding trick can't see it; check
     # explicitly instead (see enforce_workspace_role's docstring).
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
+    # (#356) Target.workspace_id is a real FK, and nothing above proves the
+    # row exists: enforce_workspace_role returns immediately for a global
+    # admin, and for everyone else it only asks whether a WorkspaceMembership
+    # exists (which, for a nonexistent workspace, simply doesn't, so that
+    # path 403s before ever reaching here). An admin POSTing a workspace_id
+    # with no matching row therefore fell straight through to commit(), where
+    # Postgres raised ForeignKeyViolation -> an unhandled IntegrityError.
+    # That escapes past CORSMiddleware before it has built a response, so
+    # Starlette's outer ServerErrorMiddleware emits the bare 500 itself and
+    # the CORS headers are never attached; the browser then reports a
+    # "No 'Access-Control-Allow-Origin' header" failure and the frontend's
+    # error banner points the operator at CORS config, which is not the
+    # problem. On a fresh deployment with zero workspaces this was the
+    # *default* outcome of the add-a-repo form, which used to default
+    # workspace_id to a hardcoded 1. Check first and 404 cleanly.
+    #
+    # Deliberately after the role check, not before: for a non-member the
+    # role check already 403s regardless of whether the id exists, so
+    # ordering it first keeps this route from becoming a way to probe which
+    # workspace ids are real from outside the workspace.
+    if not session.get(Workspace, payload.workspace_id):
+        raise HTTPException(status_code=404, detail="workspace not found")
     target = Target(**payload.model_dump())
     session.add(target)
     session.commit()

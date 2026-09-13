@@ -182,11 +182,23 @@ Optional, async/scheduled scans via Celery:
 celery -A app.tasks.celery_app worker -Q scans --loglevel=info
 ```
 
-Bootstrap a workspace (creates an Org + Workspace + API key for CI push auth):
+Create a workspace (an Org + Workspace + API key for CI push auth). The
+supported way is the **Workspaces** page in the UI: "New workspace", give it
+a name. Every page that needs a workspace (adding a target, groups, policies,
+SLA rules) picks from that list, so nothing ever asks you to type a database
+id.
+
+The same thing from a shell, for a headless dev box:
 
 ```bash
-curl -X POST "http://localhost:8000/api/workspaces/bootstrap?org_name=myorg&workspace_name=default"
+curl -X POST http://localhost:8000/api/workspaces \
+  -H "Content-Type: application/json" -d '{"name": "default"}'
 ```
+
+`POST /api/workspaces/bootstrap` still exists and still works, but it is a
+dev-only query-parameter helper kept for old scripts; prefer the route above.
+
+Both are admin-only (issue #56).
 
 Register a target and trigger a native scan:
 

@@ -38,6 +38,7 @@ from app.core.scan_schedules import (
     workspace_default_row,
 )
 from app.core.time import utcnow
+from app.core.tool_usage import is_nuclei_enabled_for_api_scan
 from app.models.models import ScanSchedule, ScanScheduleType, Target, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/scan-schedules", tags=["scan-schedules"])
@@ -136,6 +137,19 @@ def get_workspace_schedules(
         raise HTTPException(status_code=404, detail="workspace not found")
     return {
         "workspace_id": workspace_id,
+        # The one refusal this scope can answer with certainty.
+        # describe_api_scan_readiness needs a target, because three of its
+        # four reasons are per-target facts a workspace view cannot know
+        # (which targets are deactivated, which have an api_base_url, which
+        # have discovered endpoints) -- those stay as the standing caveat
+        # under the panel. But `is_nuclei_enabled_for_api_scan` is entirely
+        # workspace-scoped, so when it is off, *no* target in this workspace
+        # will be probed, and an admin switching workspace-wide API scanning
+        # on would otherwise see "Runs every 24 hours · Next run: in 22h" for
+        # something that can never run. Same skipped-check-must-not-read-as-
+        # passed rule the target page now enforces, on the surface where the
+        # answer happens to be knowable.
+        "api_scan_tool_enabled": is_nuclei_enabled_for_api_scan(session, workspace_id),
         "schedules": [_resolve_for_workspace(session, workspace_id, t) for t in ScanScheduleType],
     }
 
@@ -221,17 +235,30 @@ def _apply(
     #   * a brand-new row has no clock at all;
     #   * the effective interval changed, so the stored due time was
     #     computed against a cadence that no longer applies;
-    #   * the schedule went from paused to running, where the stored due
-    #     time is however stale it got while paused.
+    #   * the schedule resumed from paused AND its stored due time has
+    #     already gone by while it sat paused, so honouring it would fire
+    #     immediately across every target the schedule covers.
     #
     # Anything else leaves it alone. A PUT that changes nothing (the UI
     # re-saving the same values), or a pause-then-unpause a minute later,
     # used to push the next run a full interval into the future every time,
     # which is a real way to keep a daily scan permanently deferred by
     # fiddling with the panel.
+    #
+    # The due-time condition on `resumed` is what makes the second case
+    # narrow enough to be honest. "Do not fire the instant you unpause" only
+    # ever applied to a schedule whose moment had already passed; a pause
+    # lifted a minute before a run was due has nothing stale about it, and
+    # resetting there costs a full cycle for no reason -- the same defect as
+    # resetting on a no-op, arrived at from the other side.
     interval_changed = before is not None and before[1] != after[1]
-    resumed = before is not None and after[0] and not before[0]
-    if is_new or interval_changed or resumed:
+    resumed_while_overdue = (
+        before is not None
+        and after[0]
+        and not before[0]
+        and (row.next_run_at is None or row.next_run_at <= now)
+    )
+    if is_new or interval_changed or resumed_while_overdue:
         # From `now` plus the interval, not from the stored due time:
         # shortening an interval must not leave a schedule sitting overdue
         # and fire the instant the dispatcher next ticks, and switching one

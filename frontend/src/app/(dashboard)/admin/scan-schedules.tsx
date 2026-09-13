@@ -111,11 +111,21 @@ export function ScanSchedules() {
                       view={view}
                       scope="workspace"
                       busy={saving === view.scan_type}
-                      // No disabledReason at this scope: whether a schedule
-                      // can actually fire depends on per-target config (an
-                      // API base URL) that a workspace-level view cannot
-                      // know. The caveat is stated once below instead of
-                      // rendered as a per-row error that may not apply.
+                      disabledReason={
+                        // Only the workspace-scoped refusal is asserted
+                        // here. nuclei's api_scan surface is a property of
+                        // this workspace, so when it is off no target will
+                        // be probed and an armed schedule is simply inert --
+                        // saying so is the same rule the target page now
+                        // enforces. The other three reasons in
+                        // ApiScanReadiness are per-target facts this view
+                        // cannot know; they stay as the standing caveat
+                        // below rather than a per-row error that might not
+                        // apply to anything.
+                        view.scan_type === "api_scan" && view.enabled && !data.api_scan_tool_enabled
+                          ? "Active API scanning (nuclei) is switched off for this workspace in Tool Marketplace, so this schedule will not probe anything."
+                          : null
+                      }
                       onChange={(patch) => save(view.scan_type, patch)}
                     />
                   ))

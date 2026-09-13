@@ -13,11 +13,13 @@ for them:
      Celery Beat's in-memory schedule state.
   3. A disabled schedule never dispatches anything, at either scope, and is
      never stamped as having run.
-  4. Active API scanning is never dispatched at a target that is
-     deactivated (nuclei turned off for the `api_scan` surface) or
-     unconfigured (no `api_base_url`, or no discovered endpoints). This is
-     the safety boundary from #72 holding when a schedule is the caller
-     rather than a person.
+  4. Active API scanning is never dispatched at a target it must not probe:
+     one the operator deactivated, one whose workspace has nuclei turned off
+     for the `api_scan` surface, one with no `api_base_url`, or one with no
+     discovered endpoints. That is the safety boundary from #72 holding when
+     a schedule is the caller rather than a person, and every refusal has to
+     be *reportable* as well as enforced -- an armed schedule that silently
+     does nothing forever is the failure this feature would otherwise add.
   5. The shipped default reproduces today's behaviour exactly: full scans
      every 24 hours, active API scanning off.
 
@@ -26,14 +28,14 @@ what is under test is which schedules fire and against which targets, not
 the scan pipeline those two already have their own coverage for
 (test_auto_full_scan.py, test_api_scan.py).
 """
+import inspect
 from datetime import timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
-
-from sqlalchemy.exc import IntegrityError
 
 from app.core import scan_schedules as core
 from app.core.time import utcnow
@@ -868,14 +870,45 @@ def test_advancing_anchors_to_the_previous_due_time(engine):
         assert core.compute_next_run_at(session, row, utcnow()) == due + timedelta(hours=24)
 
 
-def test_advancing_falls_back_to_now_after_a_long_outage(engine):
+def test_advancing_falls_back_to_a_fresh_interval_after_a_long_outage(engine):
+    """Bounded rather than exact: the fallback re-jitters (see the next
+    test), so pinning the un-jittered value here would be pinning the bug."""
     with Session(engine) as session:
         ws = _make_workspace(session)
         row = _schedule(session, ws, interval_hours=1, next_run_at=utcnow() - timedelta(days=2))
 
         now = utcnow()
+        nxt = core.compute_next_run_at(session, row, now)
 
-        assert core.compute_next_run_at(session, row, now) == now + timedelta(hours=1)
+        floor = now + timedelta(hours=1)
+        assert floor <= nxt <= floor + core.MAX_JITTER
+
+
+def test_the_outage_fallback_re_jitters(engine):
+    """A long outage is the one moment when *every* row in the install falls
+    back at once, in a single recovery pass sharing a single `now`. An
+    un-jittered fallback would collapse the whole platform onto the same
+    second -- and the anchor would then faithfully preserve that forever,
+    undoing the seeded spread by exactly the route #229 cares most about."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        now = utcnow()
+        rows = [
+            _schedule(
+                session, ws,
+                scan_type=ScanScheduleType.FULL_SCAN if i == 0 else ScanScheduleType.API_SCAN,
+                target=_make_target(session, ws, f"t{i}") if i > 1 else None,
+                interval_hours=1,
+                next_run_at=now - timedelta(days=2),
+            )
+            for i in range(6)
+        ]
+
+        nexts = {core.compute_next_run_at(session, row, now) for row in rows}
+
+        # Not a strict guarantee of distinctness (random can repeat), but six
+        # identical values would mean the fallback is not jittering.
+        assert len(nexts) > 1
 
 
 def test_seeded_defaults_are_jittered_forward_only(engine):
@@ -984,7 +1017,12 @@ def test_changing_the_interval_does_reset_the_clock(engine):
 
 class _LifecycleStub:
     """Stands in for a Target carrying #273's columns, which do not exist on
-    this branch yet."""
+    this branch yet.
+
+    This restates the column names by hand, so on its own it would keep
+    passing even if #273 landed with different ones. What actually protects
+    the names is the merge tripwire at the bottom of this file; these are
+    only here to pin the predicate's logic."""
 
     def __init__(self, deactivated_at=None, deleted_at=None):
         self.deactivated_at = deactivated_at
@@ -1141,3 +1179,101 @@ def test_queue_api_scan_refuses_on_the_same_readiness_answer(engine, monkeypatch
 
         assert api_scan_tasks.queue_api_scan(session, target) is None
         run.assert_not_called()
+
+
+def test_resuming_a_schedule_whose_due_time_has_passed_resets_the_clock(engine):
+    """The case the reset exists for: a schedule that sat paused past its
+    due time would otherwise fire the instant it is unpaused, across every
+    target it covers."""
+    from app.api.scan_schedules import UpsertScanScheduleRequest, _apply
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        stale = utcnow() - timedelta(days=3)
+        row = _schedule(session, ws, enabled=False, interval_hours=24, next_run_at=stale)
+
+        _apply(
+            session, row, workspace_id=ws.id, target_id=None,
+            scan_type=ScanScheduleType.FULL_SCAN,
+            payload=UpsertScanScheduleRequest(enabled=True),
+            fields_set={"enabled"},
+        )
+        session.refresh(row)
+
+        assert row.next_run_at > utcnow()
+
+
+def test_resuming_before_the_due_time_keeps_it(engine):
+    """The other half. "Do not fire the instant you unpause" only ever
+    applied to a schedule whose moment had already gone by; a pause lifted an
+    hour before a run was due has nothing stale about it, and resetting there
+    costs a full cycle for no reason -- the same defect as resetting on a
+    no-op, reached from the other side."""
+    from app.api.scan_schedules import UpsertScanScheduleRequest, _apply
+
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        due = utcnow() + timedelta(hours=1)
+        row = _schedule(session, ws, enabled=False, interval_hours=24, next_run_at=due)
+
+        _apply(
+            session, row, workspace_id=ws.id, target_id=None,
+            scan_type=ScanScheduleType.FULL_SCAN,
+            payload=UpsertScanScheduleRequest(enabled=True),
+            fields_set={"enabled"},
+        )
+        session.refresh(row)
+
+        assert row.next_run_at == due
+
+
+# ---------------------------------------------------------------------------
+# Merge tripwire for the lifecycle gate
+#
+# is_dispatchable_target reads #273's columns through getattr so this branch
+# imports standalone (see its docstring). The risk that buys is silence: the
+# stub above and the monkeypatched wiring tests both restate the column names
+# by hand, so if #273 landed with different names, every test here would stay
+# green while the gate failed open.
+#
+# That matters asymmetrically. #273 puts its own refusal in queue_full_scan,
+# so the full-scan path is belt-and-braces either way -- but queue_api_scan
+# does not exist on that branch, which makes this getattr the only thing
+# stopping a schedule from firing nuclei at a deactivated target. Probing a
+# live host somebody switched off is the failure mode that must not be able
+# to regress quietly.
+#
+# So: skipped while app.core.target_lifecycle does not exist, red the moment
+# it does and this is still a getattr. That is exactly when the docstring's
+# "collapses to a direct call" is supposed to happen, and the same commit
+# that satisfies this test is the one that proves the names still match.
+# ---------------------------------------------------------------------------
+
+
+def test_lifecycle_gate_is_collapsed_once_273_has_landed():
+    try:
+        import app.core.target_lifecycle  # noqa: F401
+    except ImportError:
+        pytest.skip(
+            "app.core.target_lifecycle does not exist yet (#273/#445 unmerged); "
+            "is_dispatchable_target's defensive getattr is still correct here"
+        )
+
+    from app.models.models import Target as TargetModel
+
+    missing = [
+        name for name in ("deactivated_at", "deleted_at") if not hasattr(TargetModel, name)
+    ]
+    assert not missing, (
+        f"is_dispatchable_target reads {missing} off Target, but #273 landed without "
+        f"them -- the gate is failing open and scheduled scans are reaching targets "
+        f"somebody switched off. Update it to whatever the real predicate is."
+    )
+
+    source = inspect.getsource(core.is_dispatchable_target)
+    assert "getattr" not in source, (
+        "app.core.target_lifecycle now exists, so is_dispatchable_target should call it "
+        "directly instead of reading Target's lifecycle columns through getattr. The "
+        "getattr was only there so this branch could import before #273 merged; leaving "
+        "it in means a later rename silently stops gating instead of failing here."
+    )

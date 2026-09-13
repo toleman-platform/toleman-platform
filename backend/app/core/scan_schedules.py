@@ -139,6 +139,15 @@ def is_dispatchable_target(target: Target) -> bool:
     and becomes a real gate the moment those columns land, with no merge
     conflict in either direction. Once #273 is in, this collapses to a
     direct call into app.core.target_lifecycle and the getattr goes away.
+
+    That last sentence is enforced, not aspirational: the getattr's cost is
+    that a rename on the other branch would leave this silently failing open
+    rather than failing a test, and this is the only gate standing between a
+    schedule and nuclei probing a deactivated target (#273 puts its own
+    refusal in queue_full_scan, but queue_api_scan does not exist there). So
+    tests/test_scan_schedules.py carries a merge tripwire that skips while
+    app.core.target_lifecycle is unimportable and goes red the moment it is
+    importable while this still reads through getattr.
     """
     return getattr(target, "deactivated_at", None) is None and getattr(target, "deleted_at", None) is None
 
@@ -373,20 +382,28 @@ def compute_next_run_at(session: Session, row: ScanSchedule, now: datetime) -> d
     few weeks. Anchoring also preserves the jitter offset the row was seeded
     with, which is the point of seeding it.
 
-    Falls back to `now + interval` whenever the anchored answer would still
-    be in the past -- i.e. exactly the long-outage case. A worker down for
-    two days must come back and fire *once*, not replay forty-eight missed
-    hourly runs into the scan queue on reconnect; that catch-up storm is the
-    bulk-dispatch shape #229 describes, arriving at the worst possible
+    Falls back to a fresh interval from `now` whenever the anchored answer
+    would still be in the past -- i.e. exactly the long-outage case. A worker
+    down for two days must come back and fire *once*, not replay forty-eight
+    missed hourly runs into the scan queue on reconnect; that catch-up storm
+    is the bulk-dispatch shape #229 describes, arriving at the worst possible
     moment.
+
+    The fallback re-jitters, and that is not a detail. Anchoring preserves
+    the seeded offset on the normal path, so nothing re-clusters in ordinary
+    operation -- but a long outage is precisely when *every* row in the
+    install falls back at once, in a single recovery pass sharing a single
+    `now`. An un-jittered fallback would collapse the whole platform onto the
+    same second and, because the anchor then faithfully preserves that, keep
+    it there forever. That is the jitter being undone by the one route this
+    code calls the worst possible moment for it.
     """
     _, interval_hours = effective_for_row(session, row)
-    interval = timedelta(hours=interval_hours)
     if row.next_run_at is not None:
-        anchored = row.next_run_at + interval
+        anchored = row.next_run_at + timedelta(hours=interval_hours)
         if anchored > now:
             return anchored
-    return now + interval
+    return next_run_after(interval_hours, now, jitter=True)
 
 
 def claim_due_schedule(session: Session, row: ScanSchedule, now: datetime) -> bool:

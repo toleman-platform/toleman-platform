@@ -7,8 +7,6 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // Disable the floating development indicator badge in dev mode
   devIndicators: false,
-  // Allow tunneling tools (ngrok) in development
-  allowedDevOrigins: ["*.ngrok-free.app", "*.ngrok.app", "*.ngrok.io", "localhost:3000"],
 };
 
 export default nextConfig;

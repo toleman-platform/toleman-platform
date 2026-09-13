@@ -20,6 +20,7 @@ from app.core.cvss import CvssDecomposition, parse_cvss_vector
 from app.core.fixability import UNKNOWN, fixability_for_enrichment
 from app.core.scoring import (
     BASELINE_WEIGHTS,
+    SIGNAL_CONTRIBUTION,
     SIGNAL_DESCRIPTIONS,
     SIGNAL_LABELS,
     SIGNAL_MAX_POINTS,
@@ -86,6 +87,7 @@ def signal_catalog() -> list[dict]:
             "description": SIGNAL_DESCRIPTIONS[signal],
             "baseline_weight": BASELINE_WEIGHTS[signal],
             "max_points": SIGNAL_MAX_POINTS[signal],
+            "contribution": SIGNAL_CONTRIBUTION[signal],
         }
         for signal in SIGNAL_ORDER
     ]
@@ -134,6 +136,7 @@ def breakdown_for_signals(
         epss_score=finding.epss_score,
         kev_listed=finding.kev_listed,
         cvss=cvss_for_enrichment(enrichment),
+        cve_id=finding.cve_id,
         target_label=target.label if target else None,
         target_environment=target.environment if target else None,
         target_owner=target.owner if target else None,

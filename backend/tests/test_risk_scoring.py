@@ -36,8 +36,11 @@ from app.core.fixability import FIXABLE, NO_KNOWN_FIX, UNKNOWN
 from app.core.scoring import (
     BASELINE_WEIGHTS,
     EPSS_BUMP,
+    INTERNET_EXPOSURE_MAX_POINTS,
     KEV_FLOOR,
     MAX_SCORE,
+    MAX_WEIGHT,
+    PRODUCTION_EXPOSURE_FACTOR,
     compute_priority_score,
     compute_score_breakdown,
     resolve_exposure,
@@ -271,6 +274,28 @@ def test_unparseable_weight_falls_back_to_the_baseline():
     assert resolve_weights({ScoringSignal.EPSS: "banana"})[ScoringSignal.EPSS] == 1.0
 
 
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_non_finite_weights_fall_back_to_the_baseline_rather_than_raising(bad):
+    """Postgres float8 stores 'Infinity' and 'NaN' happily, and this table is
+    writable by anything holding a connection. An infinite weight is not an
+    absurdly high priority -- `round(inf)` raises OverflowError, which would
+    500 every scoring call, findings list and scan in the workspace. The
+    baseline stands in rather than MAX_WEIGHT: silently promoting a corrupt
+    row to the strongest setting is worse than ignoring it."""
+    assert resolve_weights({ScoringSignal.EPSS: bad})[ScoringSignal.EPSS] == 1.0
+    # The real regression: this must not raise.
+    score = compute_priority_score(
+        Severity.MEDIUM, 3, target_label="Public", weights={ScoringSignal.INTERNET_EXPOSURE: bad}
+    )
+    assert score == compute_priority_score(Severity.MEDIUM, 3, target_label="Public")
+
+
+def test_absurdly_high_weights_are_clamped_by_the_engine_too():
+    """The API rejects out-of-range weights, but it is not the only writer;
+    a script or a psql session bypasses it entirely."""
+    assert resolve_weights({ScoringSignal.EPSS: 10_000.0})[ScoringSignal.EPSS] == MAX_WEIGHT
+
+
 # --------------------------------------------------------------------------
 # Property 1: unknown never lowers a score.
 # --------------------------------------------------------------------------
@@ -322,9 +347,15 @@ def test_missing_epss_never_lowers_a_score():
 
 
 def test_adding_any_single_signal_can_only_raise_a_score():
-    """Exhaustive over the signal set: for every combination of present and
-    absent signals, adding one more piece of information must never produce
-    a lower number."""
+    """One signal at a time, against a finding with none of them: adding a
+    piece of information must never produce a lower number.
+
+    Note what this does and does not claim. It pins the property the
+    failsafe rule needs -- knowing something is never worse than knowing
+    nothing -- across every signal. It is NOT exhaustive over combinations,
+    and the CVSS sub-score is deliberately not monotonic in how *much* of a
+    vector was decoded (see test_partial_vector_is_never_worse_than_no_vector
+    in this file and the note in app/core/cvss.py)."""
     base = compute_score_breakdown(Severity.MEDIUM, 2, weights=ALL_ON).score
     for extra in (
         dict(cvss=parse_cvss_vector(V31_WORST)),
@@ -383,6 +414,31 @@ def test_internal_is_established_but_earns_nothing():
     exposure = resolve_exposure("Internal", "staging")
     assert exposure.factor == 0.0
     assert exposure.established  # we know; it just adds nothing
+
+
+def test_explicit_private_label_beats_a_production_environment():
+    """Regression: the production branch used to run before the private-label
+    branch, so ("Internal", "production") picked up the production uplift and
+    the explanation never mentioned the label contradicting it. A production
+    service behind a VPN is an ordinary thing; the label is the statement
+    about network posture, the environment is a deployment stage."""
+    exposure = resolve_exposure("Internal", "production")
+    assert exposure.factor == 0.0
+    assert exposure.established
+    # And it has to *say* the label is why, or someone looking at a
+    # production service scoring no exposure cannot tell what to fix.
+    assert "Internal" in exposure.detail
+    assert "production" in exposure.detail
+
+
+def test_public_label_still_beats_a_non_production_environment():
+    """The same precedence, in the other direction."""
+    assert resolve_exposure("Public", "dev").factor == 1.0
+
+
+def test_production_uplift_still_applies_with_no_label_conflict():
+    for label in (None, "", "tier-1"):
+        assert resolve_exposure(label, "production").factor == PRODUCTION_EXPOSURE_FACTOR
 
 
 def test_nothing_recorded_is_unknown_not_internal():
@@ -448,6 +504,39 @@ def test_breakdown_distinguishes_established_zero_from_unknown_zero():
     no_epss = compute_score_breakdown(Severity.HIGH, 3, epss_score=None)
     contribution = no_epss.contribution(ScoringSignal.EPSS)
     assert contribution.points == 0 and not contribution.established
+
+
+def test_unknown_cve_signals_say_which_kind_of_unknown_they_are():
+    """"This finding has no CVE" and "this CVE has not been enriched yet" are
+    different facts: the first signal can never fire for that finding, the
+    second just has not fired yet. Someone deciding whether to weight the
+    signal at all cannot tell those apart from one shared sentence."""
+    no_cve = compute_score_breakdown(Severity.HIGH, 3, cve_id=None, weights=ALL_ON)
+    assert "no CVE" in no_cve.contribution(ScoringSignal.CVSS_EXPLOITABILITY).detail
+    assert "no CVE" in no_cve.contribution(ScoringSignal.FIXABILITY).detail
+
+    unenriched = compute_score_breakdown(Severity.HIGH, 3, cve_id="CVE-2024-1234", weights=ALL_ON)
+    cvss_detail = unenriched.contribution(ScoringSignal.CVSS_EXPLOITABILITY).detail
+    assert "CVE-2024-1234" in cvss_detail and "not run" in cvss_detail
+    assert "CVE-2024-1234" in unenriched.contribution(ScoringSignal.FIXABILITY).detail
+
+    # Both still unestablished, and both still worth zero points.
+    for breakdown in (no_cve, unenriched):
+        for signal in (ScoringSignal.CVSS_EXPLOITABILITY, ScoringSignal.FIXABILITY):
+            assert not breakdown.contribution(signal).established
+            assert breakdown.contribution(signal).points == 0
+
+
+def test_a_v2_vector_explains_why_it_scores_nothing():
+    """A decoded-but-unscoreable vector must not read the same as an absent
+    one, or the v2 carve-out looks like a parsing failure."""
+    contribution = compute_score_breakdown(
+        Severity.HIGH, 3, cvss=parse_cvss_vector("AV:N/AC:L/Au:N/C:P/I:P/A:P"), weights=ALL_ON
+    ).contribution(ScoringSignal.CVSS_EXPLOITABILITY)
+    assert contribution.points == 0
+    assert not contribution.established
+    assert "v2" in contribution.detail
+    assert "Attack Vector: network" in contribution.detail  # what we did decode
 
 
 def test_kev_absence_is_not_claimed_as_a_verified_negative():
@@ -846,3 +935,187 @@ def test_backfill_on_a_row_with_no_vector_at_all_is_a_no_op():
     row = CveEnrichment(cve_id="CVE-2024-0005", nvd_found=False)
     assert apply_cvss_decomposition(row) is False
     assert cvss_for_enrichment(row) == UNKNOWN_CVSS
+
+
+# --------------------------------------------------------------------------
+# Re-scoring on rescan. priority_score used to be write-once at creation,
+# which was survivable with a fixed formula and is not with a configurable
+# one: after a weight change the backlog would hold two scoring regimes at
+# once, `ORDER BY priority_score` would compare numbers computed under
+# different rules, and the detail view's `stale` flag would never clear.
+# --------------------------------------------------------------------------
+
+
+def _parsed(rule_id="R1", severity=Severity.HIGH, cve_id=None):
+    return [
+        {
+            "rule_id": rule_id,
+            "title": "t",
+            "description": "",
+            "file_path": "app.py",
+            "line_start": 3,
+            "severity": severity,
+            "cve_id": cve_id,
+        }
+    ]
+
+
+def _scan_for(engine, target_id, tool="semgrep") -> int:
+    from app.models.models import Scan
+
+    with Session(engine) as session:
+        scan = Scan(target_id=target_id, tool=tool, branch="main", status="completed")
+        session.add(scan)
+        session.commit()
+        session.refresh(scan)
+        return scan.id
+
+
+def _ingest(engine, target_id, parsed, tool="semgrep"):
+    """Run one ingestion pass the way a real scan would.
+
+    Sessions are opened sequentially, never nested: the in-memory SQLite
+    engine is StaticPool-backed (one shared connection), so a nested session
+    would be operating on the same connection as its parent.
+    """
+    from app.core import ingestion
+    from app.models.models import Scan
+
+    scan_id = _scan_for(engine, target_id, tool=tool)
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        scan = session.get(Scan, scan_id)
+        ingestion.ingest_findings(session, target, scan, tool, "main", parsed)
+
+
+def _stored_scores(engine) -> list[int]:
+    with Session(engine) as session:
+        return [f.priority_score for f in session.exec(select(Finding)).all()]
+
+
+def test_a_weight_change_reaches_findings_on_the_next_scan_that_sees_them(engine, monkeypatch):
+    """The fix for write-once scoring. Ingest, change a weight, re-ingest the
+    same finding, and the stored score must move -- otherwise the workspace
+    permanently holds two incompatible scoring regimes."""
+    from app.core import ingestion
+
+    # Neither is reached (no cve_id in the batch), but stub them so the test
+    # can never touch the network.
+    monkeypatch.setattr(ingestion, "fetch_epss_scores", lambda ids: {})
+    monkeypatch.setattr(ingestion, "fetch_kev_cve_set", lambda: set())
+
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id, label="Public", criticality_weight=2)
+
+    _ingest(engine, target_id, _parsed())
+    # High severity (4) x criticality 2 x 40, exposure not yet weighted.
+    assert _stored_scores(engine) == [320]
+
+    with Session(engine) as session:
+        session.add(
+            ScoringWeight(workspace_id=ws_id, signal=ScoringSignal.INTERNET_EXPOSURE, weight=1.0)
+        )
+        session.commit()
+
+    _ingest(engine, target_id, _parsed())
+
+    # Same dedup hash -> still one finding, re-scored rather than duplicated.
+    assert _stored_scores(engine) == [320 + INTERNET_EXPOSURE_MAX_POINTS]
+
+
+def test_rescan_without_a_config_change_leaves_the_score_alone(engine, monkeypatch):
+    """Re-scoring must be idempotent, or every scan would churn the number
+    and the audit trail with it."""
+    from app.core import ingestion
+
+    monkeypatch.setattr(ingestion, "fetch_epss_scores", lambda ids: {})
+    monkeypatch.setattr(ingestion, "fetch_kev_cve_set", lambda: set())
+
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id, criticality_weight=3)
+
+    scores = []
+    for _ in range(3):
+        _ingest(engine, target_id, _parsed())
+        scores.append(_stored_scores(engine))
+
+    assert scores == [[480], [480], [480]]
+
+
+def test_ingestion_does_not_enrich_when_the_cve_signals_are_switched_off(engine, monkeypatch):
+    """On the shipped baseline both CVE-backed weights are 0, so a scan must
+    make exactly the network calls it made before #201 -- the cost of the
+    feature arrives when someone enables it, not when they upgrade."""
+    from app.core import ingestion
+
+    monkeypatch.setattr(ingestion, "fetch_epss_scores", lambda ids: {})
+    monkeypatch.setattr(ingestion, "fetch_kev_cve_set", lambda: set())
+    calls = []
+    monkeypatch.setattr(ingestion, "warm_cve_enrichment", lambda s, ids: calls.append(list(ids)))
+
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _ingest(engine, target_id, _parsed(cve_id="CVE-2024-9999"), tool="trivy")
+
+    assert calls == []
+
+
+def test_ingestion_warms_enrichment_once_a_cve_signal_is_weighted(engine, monkeypatch):
+    """The other half: a weighted signal whose cache nothing populates is a
+    signal that silently cannot fire."""
+    from app.core import ingestion
+
+    monkeypatch.setattr(ingestion, "fetch_epss_scores", lambda ids: {})
+    monkeypatch.setattr(ingestion, "fetch_kev_cve_set", lambda: set())
+    calls = []
+    monkeypatch.setattr(ingestion, "warm_cve_enrichment", lambda s, ids: calls.append(list(ids)))
+
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    with Session(engine) as session:
+        session.add(
+            ScoringWeight(workspace_id=ws_id, signal=ScoringSignal.CVSS_EXPLOITABILITY, weight=1.0)
+        )
+        session.commit()
+
+    _ingest(engine, target_id, _parsed(cve_id="CVE-2024-9999"), tool="trivy")
+
+    assert calls == [["CVE-2024-9999"]]
+
+
+def test_warm_up_skips_already_cached_cves_and_respects_its_budget(engine, monkeypatch):
+    """NVD's unauthenticated limit is 5 requests / 30s, so an uncapped
+    warm-up on a large monorepo's first scan would serialise into hours."""
+    from app.core import cve_enrichment as ce
+
+    fetched = []
+
+    def fake_get(session, cve_id):
+        fetched.append(cve_id)
+        return CveEnrichment(cve_id=cve_id)
+
+    monkeypatch.setattr(ce, "get_cve_enrichment", fake_get)
+
+    with Session(engine) as session:
+        session.add(CveEnrichment(cve_id="CVE-0000-0001", nvd_found=True))
+        session.commit()
+
+        ids = ["CVE-0000-0001"] + [f"CVE-9999-{i:04d}" for i in range(ce.MAX_ENRICHMENT_LOOKUPS_PER_RUN + 10)]
+        count = ce.warm_cve_enrichment(session, ids)
+
+    assert "CVE-0000-0001" not in fetched  # already cached
+    assert count == ce.MAX_ENRICHMENT_LOOKUPS_PER_RUN
+    assert len(fetched) == ce.MAX_ENRICHMENT_LOOKUPS_PER_RUN
+
+
+def test_warm_up_survives_an_upstream_failure(engine, monkeypatch):
+    """A scan must never fail because NVD is down; the signal just stays
+    unestablished, which contributes nothing rather than lowering anything."""
+    from app.core import cve_enrichment as ce
+
+    def exploding_get(session, cve_id):
+        raise RuntimeError("NVD is down")
+
+    monkeypatch.setattr(ce, "get_cve_enrichment", exploding_get)
+    with Session(engine) as session:
+        assert ce.warm_cve_enrichment(session, ["CVE-2024-0001"]) == 0

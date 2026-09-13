@@ -40,6 +40,7 @@ number in the product and was the least explained.
 """
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Mapping
 
 from app.core.cvss import CvssDecomposition
@@ -134,6 +135,25 @@ SIGNAL_DESCRIPTIONS: dict[ScoringSignal, str] = {
     ),
 }
 
+# How each slot enters the score. The three behave differently enough that a
+# UI describing one as another is simply wrong: a "floor" does not add
+# `max_points`, it raises the score *to* a level, so what KEV is worth
+# depends entirely on where the finding already was (260 points to a finding
+# at 640; nothing at all to one already above 900).
+CONTRIBUTION_MULTIPLIER = "multiplier"  # scales a factor of the base product
+CONTRIBUTION_POINTS = "points"          # adds up to max_points x weight
+CONTRIBUTION_FLOOR = "floor"            # raises the score to max_points x weight
+
+SIGNAL_CONTRIBUTION: dict[ScoringSignal, str] = {
+    ScoringSignal.SEVERITY: CONTRIBUTION_MULTIPLIER,
+    ScoringSignal.BUSINESS_CRITICALITY: CONTRIBUTION_MULTIPLIER,
+    ScoringSignal.CVSS_EXPLOITABILITY: CONTRIBUTION_POINTS,
+    ScoringSignal.EPSS: CONTRIBUTION_POINTS,
+    ScoringSignal.KEV: CONTRIBUTION_FLOOR,
+    ScoringSignal.INTERNET_EXPOSURE: CONTRIBUTION_POINTS,
+    ScoringSignal.FIXABILITY: CONTRIBUTION_POINTS,
+}
+
 # Points each slot can contribute at weight 1.0, for the Admin UI to show
 # what a weight is a multiplier *of*. None for the two multiplicative slots,
 # whose contribution is not a fixed ceiling.
@@ -189,9 +209,17 @@ class ExposureSignal:
 def resolve_exposure(label: str | None, environment: str | None) -> ExposureSignal:
     """Read internet exposure off a target's #251 metadata.
 
-    Label wins over environment: `label="Public"` is someone explicitly
-    saying "this faces the internet", while environment is a deployment
-    stage that only correlates with it.
+    Label wins over environment, and the label is resolved *completely*
+    before environment is consulted at all: `label="Public"` and
+    `label="Internal"` are both someone explicitly stating the network
+    posture, while environment is a deployment stage that merely correlates
+    with it. A production service behind a VPN is an ordinary thing, so
+    `label="Internal", environment="production"` has to read as internal.
+
+    An earlier revision checked production before the private labels, which
+    inverted exactly that case: an explicitly Internal target picked up the
+    production uplift and the explanation never mentioned the label
+    contradicting it.
     """
     raw_label = (label or "").strip()
     raw_env = (environment or "").strip()
@@ -201,6 +229,19 @@ def resolve_exposure(label: str | None, environment: str | None) -> ExposureSign
     if lowered_label in PUBLIC_LABELS:
         return ExposureSignal(1.0, True, f'target is labelled "{raw_label}" (internet-facing)')
 
+    if lowered_label in PRIVATE_LABELS:
+        detail = f'target is labelled "{raw_label}" (not internet-facing); no exposure uplift'
+        if lowered_env in PRODUCTION_VALUES:
+            # Name the tension rather than resolving it silently. Someone
+            # looking at a production service that scored no exposure needs
+            # to see that the label is why, so they can fix the label if it
+            # is the thing that is wrong.
+            detail = (
+                f'target is labelled "{raw_label}" (not internet-facing), which wins over its '
+                f'"{raw_env}" environment; no exposure uplift'
+            )
+        return ExposureSignal(0.0, True, detail)
+
     if lowered_env in PRODUCTION_VALUES or lowered_label in PRODUCTION_VALUES:
         where = raw_env or raw_label
         return ExposureSignal(
@@ -209,7 +250,7 @@ def resolve_exposure(label: str | None, environment: str | None) -> ExposureSign
             f'target runs in "{where}"; production, but not positively recorded as internet-facing',
         )
 
-    if lowered_label in PRIVATE_LABELS or lowered_env in NON_PRODUCTION_VALUES:
+    if lowered_env in NON_PRODUCTION_VALUES:
         recorded = " / ".join(part for part in (raw_label, raw_env) if part)
         return ExposureSignal(0.0, True, f"target is recorded as {recorded}; no exposure uplift")
 
@@ -271,22 +312,47 @@ class ScoreBreakdown:
         return None
 
 
-def resolve_weights(overrides: Mapping[ScoringSignal, float] | None = None) -> dict[ScoringSignal, float]:
-    """Merge overrides onto the shipped baseline.
+# The bound a weight is clamped into. Lives here, next to the clamp that
+# enforces it, rather than in the API module that also validates against it:
+# the API is not the only way a row reaches this table (a migration, a
+# support script, or a direct psql session all bypass it), and a bound that
+# only one writer honours is not a bound.
+MIN_WEIGHT = 0.0
+MAX_WEIGHT = 5.0
 
-    Unknown keys are dropped and negative weights are clamped to 0. The
-    clamp is not defensive tidiness: a negative weight would turn a signal
-    into a penalty, and the moment any signal can subtract, an unknown
-    signal can lower a score by being absent from a comparison somewhere.
-    The guarantee is worth more than the flexibility.
+
+def resolve_weights(overrides: Mapping[ScoringSignal, float] | None = None) -> dict[ScoringSignal, float]:
+    """Merge overrides onto the shipped baseline, clamped into
+    [MIN_WEIGHT, MAX_WEIGHT] with non-finite values discarded.
+
+    The low clamp is not defensive tidiness: a negative weight would turn a
+    signal into a penalty, and the moment any signal can subtract, an
+    unknown signal can lower a score by being absent. The guarantee is worth
+    more than the flexibility.
+
+    The high clamp and the NaN/infinity check exist because Postgres
+    `float8` happily stores `'Infinity'` and `'NaN'`, and this table is
+    writable by anything holding a DB connection. An infinite weight is not
+    an absurdly-high priority, it is `round(inf)` raising OverflowError
+    inside `compute_score_breakdown` -- which would 500 every scoring call,
+    every findings list and every scan in that workspace. Scoring must
+    degrade to "the operator configured something silly" rather than to a
+    stack trace, so garbage is dropped here and the baseline stands in.
     """
     weights = dict(BASELINE_WEIGHTS)
     for signal, value in (overrides or {}).items():
-        if signal in weights:
-            try:
-                weights[signal] = max(0.0, float(value))
-            except (TypeError, ValueError):
-                continue  # keep the baseline rather than scoring on garbage
+        if signal not in weights:
+            continue
+        try:
+            candidate = float(value)
+        except (TypeError, ValueError):
+            continue  # keep the baseline rather than scoring on garbage
+        if not isfinite(candidate):
+            # NaN or +/-inf. Deliberately the baseline, not MAX_WEIGHT:
+            # silently promoting a corrupt row to the strongest possible
+            # setting would be a worse outcome than ignoring it.
+            continue
+        weights[signal] = min(MAX_WEIGHT, max(MIN_WEIGHT, candidate))
     return weights
 
 
@@ -297,6 +363,7 @@ def compute_score_breakdown(
     kev_listed: bool = False,
     *,
     cvss: CvssDecomposition | None = None,
+    cve_id: str | None = None,
     target_label: str | None = None,
     target_environment: str | None = None,
     target_owner: str | None = None,
@@ -310,6 +377,13 @@ def compute_score_breakdown(
     sentinel that means "we checked and it was fine"; where that distinction
     matters (exposure, fixability) it is carried in the contribution's
     `established` flag, not in the points.
+
+    `cve_id` is the one argument that affects no arithmetic at all. It is
+    here purely so the two CVE-backed signals can say *why* they are
+    unknown -- "this finding has no CVE" and "this CVE has not been enriched
+    yet" are the difference between a signal that can never fire for a
+    finding and one that simply has not fired yet, and a reader deciding
+    whether to weight the signal needs to tell them apart.
     """
     w = resolve_weights(weights)
     contributions: list[SignalContribution] = []
@@ -462,10 +536,39 @@ def compute_score_breakdown(
     if exploitability is None:
         cvss_points = 0
         cvss_established = False
-        cvss_detail = (
-            "no CVSS vector could be decomposed for this finding; unknown, so nothing was added "
-            "(and nothing was taken away)"
-        )
+        # "Unknown" has several distinct causes here and a reader deciding
+        # whether to trust (or weight) this signal needs to know which one
+        # they hit. A finding with no CVE will never establish this no
+        # matter what; one whose CVE simply has not been enriched yet will,
+        # once it is. Collapsing those into one sentence is how a signal
+        # that structurally cannot fire looks identical to one that merely
+        # has not fired yet.
+        if cvss is not None and not cvss.is_unknown:
+            # Decoded, but no comparable sub-score. Only v2 reaches this
+            # today (a v3/v4 vector with any decoded metric always yields a
+            # number), but the wording degrades to something still true if
+            # another version is ever carved out the same way, rather than
+            # asserting "v2" about a vector that is not one.
+            cvss_detail = (
+                f"CVSS {cvss.version} vector decoded ({cvss.describe()}), but v2 carries no "
+                "Privileges Required or User Interaction metric, so it yields no exploitability "
+                "score comparable with v3/v4 findings"
+                if cvss.version == "2.0"
+                else (
+                    f"CVSS {cvss.version or 'vector'} decoded ({cvss.describe()}), but it yields no "
+                    "exploitability score comparable with other findings"
+                )
+            )
+        elif cve_id:
+            cvss_detail = (
+                f"{cve_id} has no CVSS vector cached yet; NVD enrichment has not run for it, so "
+                "exploitability is unknown rather than low"
+            )
+        else:
+            cvss_detail = (
+                "this finding carries no CVE, so there is no CVSS vector to decompose; unknown, "
+                "not benign"
+            )
     else:
         cvss_established = True
         cvss_points = _add(round(CVSS_EXPLOITABILITY_MAX_POINTS * w[ScoringSignal.CVSS_EXPLOITABILITY] * exploitability))
@@ -511,9 +614,15 @@ def compute_score_breakdown(
     else:
         # "unknown", None, or anything unrecognised. Most SAST and secrets
         # findings carry no CVE to look up, so this is the common case and
-        # must read as an absence of data, not a verdict.
+        # must read as an absence of data, not a verdict. Same split as the
+        # CVSS detail above: never-will-establish reads differently from
+        # has-not-established-yet.
         fix_established = False
-        fix_detail = "fixability has not been established for this finding"
+        fix_detail = (
+            f"{cve_id} has not been enriched from OSV yet, so whether a fix exists is unknown"
+            if cve_id
+            else "this finding carries no CVE advisory to resolve a fixed version from"
+        )
     contributions.append(
         SignalContribution(
             signal=ScoringSignal.FIXABILITY,

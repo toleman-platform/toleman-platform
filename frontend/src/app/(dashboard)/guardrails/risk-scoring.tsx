@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, ScoringWeight, ScoringWeights, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -24,14 +24,25 @@ import { Building2, RotateCcw, SlidersHorizontal } from "lucide-react";
 
 const MAX_WEIGHT = 5;
 
+// What a weight actually buys, in the slot's own terms. `contribution` comes
+// from the server rather than being inferred from the signal id here,
+// because the three kinds behave genuinely differently and describing one as
+// another is how a tooltip becomes wrong:
+//
+//   multiplier  scales a factor of the base product; no points ceiling
+//   points      adds up to max_points x weight
+//   floor       raises the score *to* a level, so what it adds depends
+//               entirely on where the finding already was -- KEV at weight
+//               1.0 is worth 260 points to a finding sitting at 640 and 0
+//               to one already above 900. "Up to 900 pts" was simply false.
 function weightSummary(signal: ScoringWeight): string {
   if (signal.weight === 0) return "Off";
-  if (signal.max_points === null) {
-    // The two multiplicative slots. "x1.0" is the honest description; there
-    // is no points ceiling to quote.
+  if (signal.contribution === "multiplier" || signal.max_points === null) {
     return `${signal.weight}x`;
   }
-  return `up to ${Math.round(signal.max_points * signal.weight)} pts`;
+  const scaled = Math.round(signal.max_points * signal.weight);
+  if (signal.contribution === "floor") return `raises to a floor of ${scaled}`;
+  return `up to ${scaled} pts`;
 }
 
 function SignalRow({
@@ -86,8 +97,25 @@ function SignalRow({
           defaultValue={signal.weight}
           disabled={busy}
           onBlur={(e) => {
-            const next = Number(e.target.value);
-            if (Number.isFinite(next) && next !== signal.weight) onSave(next);
+            const raw = e.target.value.trim();
+            if (raw === "") {
+              // `Number("")` is 0, so selecting the field, deleting it and
+              // tabbing away used to silently save "off" -- on the severity
+              // slot that flattens every score in the workspace to the base
+              // 40. An empty field is not a value; restore what is actually
+              // configured and save nothing.
+              e.target.value = String(signal.weight);
+              return;
+            }
+            const next = Number(raw);
+            if (!Number.isFinite(next) || next < 0 || next > MAX_WEIGHT) {
+              // Out of range or not a number at all. The server rejects
+              // these too (422); bouncing the input here means the user is
+              // not told about a save they did not knowingly attempt.
+              e.target.value = String(signal.weight);
+              return;
+            }
+            if (next !== signal.weight) onSave(next);
           }}
         />
         <Button
@@ -189,16 +217,20 @@ export function RiskScoring() {
 
           {workspaceId != null && (
             <>
-              {/* The honest version of "changes take effect later". Priority
-                  scores are written at ingestion, so nothing already in the
-                  database moves until the next scan re-scores it. Saying so
-                  here is cheaper than fielding "I changed the weight and
-                  nothing happened". */}
+              {/* Priority scores are written during ingestion, so a weight
+                  change reaches a finding only when a scan next observes it
+                  (app/core/ingestion.py re-scores on every sighting). The
+                  precise scope matters: a finding whose target is never
+                  scanned again, or that has since been fixed, keeps the
+                  score it was last given. Promising a blanket "next scan"
+                  re-score would be false for exactly the findings someone
+                  is most likely to check. */}
               <p className="text-xs text-muted-foreground">
-                Weights apply when findings are scored, so existing findings keep their current
-                priority until the next scan re-scores them. A finding&apos;s detail view always shows
-                the breakdown against today&apos;s weights, and flags when that differs from the stored
-                score.
+                Weights apply when a scan scores a finding. Each finding is re-scored the next time a
+                scan sees it still present, so a target that is not scanned again — or a finding
+                already fixed or triaged away — keeps the score it last had. A finding&apos;s detail
+                view always shows the breakdown against today&apos;s weights and flags when that
+                differs from the stored score.
               </p>
 
               {loading || !config ? (

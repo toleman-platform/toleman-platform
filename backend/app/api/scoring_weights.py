@@ -14,27 +14,27 @@ reimplement `BASELINE_WEIGHTS`, and two copies of a default is how the
 being true.
 """
 
+from math import isfinite
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
 from app.api.deps import get_session
-from app.core.scoring import MAX_SCORE
+from app.core.scoring import MAX_SCORE, MAX_WEIGHT, MIN_WEIGHT
 from app.core.scoring_config import signal_catalog
 from app.core.time import utcnow
 from app.models.models import ScoringSignal, ScoringWeight, User, WorkspaceRole
 
 router = APIRouter(prefix="/api/scoring-weights", tags=["scoring-weights"])
 
-# An upper bound on a weight, so a typo ("10" for "1.0") cannot produce a
-# configuration where one signal drowns out every other. There is no lower
-# bound below 0: 0 means "off", and negatives are rejected outright rather
-# than clamped, because a caller asking for a negative weight is asking for a
-# signal that *subtracts*, and saying no to that explicitly is better than
-# silently doing something else. See ScoringWeight's docstring for why the
-# engine can never subtract.
-MAX_WEIGHT = 5.0
+# MIN_WEIGHT/MAX_WEIGHT come from app.core.scoring, which clamps to the same
+# bounds. Two enforcement points on purpose, doing different jobs: the engine
+# clamps so a row written by anything other than this API (a script, a psql
+# session) still scores sanely, and this module *rejects* instead of clamping
+# so a caller who asks for something out of range is told, rather than
+# silently getting a different number than the one they typed.
 
 
 class ScoringWeightOut(BaseModel):
@@ -53,6 +53,10 @@ class ScoringWeightOut(BaseModel):
     weight: float
     baseline_weight: float
     max_points: int | None
+    # How this slot enters the score: "multiplier", "points" or "floor".
+    # The UI needs it to describe a weight truthfully -- a floor does not
+    # add max_points, it raises the score *to* a level.
+    contribution: str
     is_default: bool
     rule_id: int | None
     workspace_id: int
@@ -71,9 +75,9 @@ class SetScoringWeightRequest(BaseModel):
 
 
 def _validate_weight(weight: float) -> float:
-    if weight != weight or weight in (float("inf"), float("-inf")):  # NaN / inf
+    if not isfinite(weight):  # NaN, +inf, -inf
         raise HTTPException(status_code=422, detail="weight must be a finite number")
-    if weight < 0:
+    if weight < MIN_WEIGHT:
         raise HTTPException(
             status_code=422,
             detail="weight must be >= 0; a negative weight would make a signal subtract from a priority",
@@ -102,6 +106,7 @@ def _effective(session: Session, workspace_id: int) -> ScoringWeightsResponse:
                 weight=row.weight if row else entry["baseline_weight"],
                 baseline_weight=entry["baseline_weight"],
                 max_points=entry["max_points"],
+                contribution=entry["contribution"],
                 is_default=row is None,
                 rule_id=row.id if row else None,
                 workspace_id=workspace_id,

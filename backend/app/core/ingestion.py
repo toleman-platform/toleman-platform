@@ -1,8 +1,9 @@
 import logging
 from sqlmodel import Session, select
 
-from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, Severity, Target
+from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, ScoringSignal, Severity, Target
 from app.core.dedup import compute_dedup_hash
+from app.core.cve_enrichment import warm_cve_enrichment
 from app.core.scoring import compute_priority_score
 from app.core.scoring_config import cvss_for_enrichment, enrichment_map, workspace_scoring_weights
 from app.core.fixability import UNKNOWN, fixability_for_enrichment
@@ -145,15 +146,55 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
     # (#201) This workspace's scoring weights, resolved once for the whole
     # run rather than per finding; an unconfigured workspace gets the
     # shipped baseline, which scores identically to before #201 existed.
-    #
-    # Enrichment rows are read from the local cache in one batched query and
-    # are never fetched here: ingestion must not block on NVD, and a CVE
-    # nobody has enriched yet simply leaves the CVSS/fixability signals
-    # unestablished, which contributes nothing rather than subtracting
-    # anything. Those findings score higher, not lower, once someone opens
-    # them and enrichment runs -- the failsafe direction.
     weights = workspace_scoring_weights(session, target.workspace_id)
+
+    # The CVSS-exploitability and fixability signals read the CveEnrichment
+    # cache, whose only other writer is a human opening a finding's detail
+    # view. Left at that, those signals would fire only for CVEs somebody
+    # had already browsed -- so this warms the cache for the CVEs in this
+    # batch, but ONLY when the workspace actually weights one of them above
+    # zero. On the shipped baseline (both 0.0) nothing is fetched and this
+    # run makes exactly the network calls it made before #201; the cost
+    # arrives with the feature rather than with the upgrade.
+    #
+    # Deliberately before the loop: get_cve_enrichment commits its own row,
+    # and running that partway through would commit half-built Finding rows
+    # with it. Nothing of this run's is in the session yet at this point.
+    if cve_ids and any(
+        weights.get(signal, 0.0) > 0
+        for signal in (ScoringSignal.CVSS_EXPLOITABILITY, ScoringSignal.FIXABILITY)
+    ):
+        warm_cve_enrichment(session, cve_ids)
+
+    # Read after the warm-up so this run's findings are scored against what
+    # it just fetched. Still only a cache read: a CVE the warm-up could not
+    # resolve (upstream down, or beyond this run's lookup budget) leaves
+    # both signals unestablished, which contributes nothing rather than
+    # subtracting anything, and a later scan re-scores it upward once the
+    # data lands. The failsafe direction.
     enrichments = enrichment_map(session, cve_ids)
+
+    def score_for(severity, finding_cve_id, epss_score, kev_listed) -> int:
+        """One finding's priority, from this run's weights and signals.
+
+        Shared by the create and the re-score paths below so a finding
+        cannot be scored one way on first sight and another way on the next,
+        which is the whole failure this closes.
+        """
+        enrichment = enrichments.get(finding_cve_id) if finding_cve_id else None
+        return compute_priority_score(
+            severity,
+            target.criticality_weight,
+            epss_score=epss_score,
+            kev_listed=kev_listed,
+            cvss=cvss_for_enrichment(enrichment),
+            cve_id=finding_cve_id,
+            target_label=target.label,
+            target_environment=target.environment,
+            target_owner=target.owner,
+            fixability=fixability_for_enrichment(enrichment) if finding_cve_id else UNKNOWN,
+            weights=weights,
+        )
 
     for item in parsed:
         dedup_hash = compute_dedup_hash(
@@ -175,6 +216,24 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             # isn't worth the network cost; MVP tradeoff, staleness is acceptable.
             existing.last_seen = utcnow()
             existing.scan_id = scan.id
+            # (#201) Re-score every time a scan observes the finding again.
+            #
+            # priority_score used to be write-once at creation, which was
+            # survivable while the formula was three hardcoded constants and
+            # actively broken once it became configurable: after a weight
+            # change the backlog would hold two scoring regimes at once,
+            # `ORDER BY priority_score` would be comparing numbers computed
+            # under different rules, and the detail view's `stale` flag
+            # would never clear. Worse than the upgrade-time re-rank this
+            # issue works hardest to avoid, because it never converges.
+            #
+            # Cheap: the weights, the target metadata and the enrichment
+            # rows are all already in hand, and the stored epss/kev are
+            # reused rather than re-fetched, so this adds no queries and no
+            # network calls to the rescan path.
+            existing.priority_score = score_for(
+                existing.severity, existing.cve_id, existing.epss_score, existing.kev_listed
+            )
             if existing.state == FindingState.MITIGATED:
                 _transition(session, existing, FindingState.REOPENED, "reappeared in scan")
             session.add(existing)
@@ -196,20 +255,7 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             line_start=item.get("line_start"),
             line_end=item.get("line_end"),
             severity=severity,
-            priority_score=compute_priority_score(
-                severity,
-                target.criticality_weight,
-                epss_score=epss_score,
-                kev_listed=kev_listed,
-                cvss=cvss_for_enrichment(enrichments.get(finding_cve_id) if finding_cve_id else None),
-                target_label=target.label,
-                target_environment=target.environment,
-                target_owner=target.owner,
-                fixability=(
-                    fixability_for_enrichment(enrichments.get(finding_cve_id)) if finding_cve_id else UNKNOWN
-                ),
-                weights=weights,
-            ),
+            priority_score=score_for(severity, finding_cve_id, epss_score, kev_listed),
             branch=branch,
             cve_id=finding_cve_id,
             epss_score=epss_score,

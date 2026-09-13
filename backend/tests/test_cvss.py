@@ -94,6 +94,27 @@ def test_parses_v2_partially_and_admits_what_it_cannot_know():
     assert d.user_interaction is None
 
 
+def test_v2_yields_no_exploitability_score_at_all():
+    """v2 decodes for display but must not produce a sub-score.
+
+    A mean over {AV, AC} is not the same quantity as a mean over
+    {AV, AC, PR, UI}, and the engine ranks these against each other. Scoring
+    v2 on its own two metrics gave `AV:N/AC:L/Au:*` a perfect 1.00 where the
+    v3 equivalent `AV:N/AC:L/PR:H/UI:R` scores 0.68 -- and since nvd.py falls
+    back to v2 precisely for older CVEs, enabling the signal would have
+    floated that entire cohort above comparable modern ones.
+    """
+    v2 = parse_cvss_vector("AV:N/AC:L/Au:M/C:P/I:P/A:P")
+    assert v2.attack_vector == "network"  # still decoded, for display
+    assert not v2.is_unknown
+    assert v2.exploitability() is None  # but not scoreable
+
+    v3_counterpart = parse_cvss_vector("CVSS:3.1/AV:N/AC:L/PR:H/UI:R")
+    assert v3_counterpart.exploitability() is not None
+    # The bug was v2 outscoring its stricter v3 counterpart.
+    assert not (v2.exploitability() or 0) > v3_counterpart.exploitability()
+
+
 # --- malformed input: the part that matters ---
 
 
@@ -171,10 +192,44 @@ def test_harder_to_exploit_vector_scores_lower():
 
 def test_exploitability_averages_only_the_metrics_we_established():
     """Partial knowledge is scored on what is known, not on a product with
-    unknowns silently filled in. AV:N alone is 1.0 -- erring upward -- so a
-    missing metric can never drag a network-reachable CVE down the list."""
+    unknowns silently filled in. AV:N alone is 1.0, so a missing metric can
+    never drag a network-reachable CVE down the list."""
     d = parse_cvss_vector("CVSS:3.1/AV:N")
     assert d.exploitability() == pytest.approx(1.0)
+
+
+def test_the_mean_is_not_monotonic_in_how_much_was_decoded():
+    """Pinned as known and accepted behaviour, not asserted as a virtue.
+
+    Averaging over a different metric set each time means decoding *more* of
+    a hard-to-exploit vector can raise its sub-score: AV:P alone is 0.15,
+    the full AV:P/AC:H/PR:H/UI:R is 0.7875. An earlier comment claimed
+    partial decoding always "errs upward", which is only true for the
+    network-reachable case. NVD makes all four base metrics mandatory, so
+    within real v3/v4 advisories this never arises -- it is a property of
+    truncated input. The property that actually matters is the next test.
+    """
+    partial = parse_cvss_vector("CVSS:3.1/AV:P").exploitability()
+    full = parse_cvss_vector("CVSS:3.1/AV:P/AC:H/PR:H/UI:R").exploitability()
+    assert partial == pytest.approx(0.15)
+    assert full > partial
+
+
+def test_partial_vector_is_never_worse_than_no_vector():
+    """The guarantee the failsafe rule actually needs: any decoded vector
+    produces a sub-score in [0, 1], and an undecodable one produces None,
+    which the engine turns into a zero-point contribution. So partial
+    knowledge can only ever add."""
+    for raw in (
+        "CVSS:3.1/AV:P",
+        "CVSS:3.1/AV:P/AC:H",
+        "CVSS:3.1/AV:P/AC:H/PR:H",
+        "CVSS:3.1/AV:P/AC:H/PR:H/UI:R",
+        "CVSS:3.1/AV:N/AC:L/PR:N/UI:N",
+    ):
+        score = parse_cvss_vector(raw).exploitability()
+        assert score is not None and 0.0 <= score <= 1.0
+    assert parse_cvss_vector("nonsense").exploitability() is None
 
 
 def test_exploitability_is_none_when_nothing_is_known():

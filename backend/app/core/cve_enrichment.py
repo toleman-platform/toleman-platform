@@ -1,4 +1,5 @@
 import json
+import logging
 
 from sqlmodel import Session, select
 
@@ -7,6 +8,8 @@ from app.core.nvd import fetch_nvd_cve
 from app.core.osv import fetch_osv_vuln
 from app.core.time import utcnow
 from app.models.models import CveEnrichment
+
+logger = logging.getLogger(__name__)
 
 
 def apply_cvss_decomposition(row: CveEnrichment) -> bool:
@@ -35,6 +38,69 @@ def apply_cvss_decomposition(row: CveEnrichment) -> bool:
     for name, value in updated.items():
         setattr(row, name, value)
     return True
+
+
+# How many *uncached* CVEs one ingestion run will look up. NVD's
+# unauthenticated limit is 5 requests / 30s, so this is a real wall-clock
+# cost (order of minutes at the cap), paid on a Celery scan task rather than
+# a request. Capped so the first scan of a large monorepo after someone
+# enables a CVE-backed signal does not turn into an hour of serialised NVD
+# calls; the remainder is picked up by subsequent scans, which find the
+# earlier batch already cached.
+MAX_ENRICHMENT_LOOKUPS_PER_RUN = 25
+
+
+def warm_cve_enrichment(session: Session, cve_ids: list[str]) -> int:
+    """Populate the enrichment cache for CVEs that scoring is about to need
+    (#201). Returns how many were actually fetched.
+
+    The CVSS-exploitability and fixability signals both read `CveEnrichment`
+    and never write it. Its only writer used to be `GET /api/findings/{id}/
+    enrichment`, i.e. a human clicking a specific finding -- so those two
+    signals could only ever fire for the subset of CVEs somebody had already
+    browsed, no matter how high their weight. A configurable signal that
+    silently cannot fire is worse than no signal, so ingestion warms the
+    cache for the CVEs in its own batch.
+
+    Called only when the workspace actually weights one of those signals
+    above zero (see `app.core.ingestion`). On the shipped baseline both are
+    0.0, so this does nothing and an ordinary scan makes exactly the network
+    calls it made before #201 -- the cost arrives with the feature, not with
+    the upgrade.
+
+    Best-effort throughout: `get_cve_enrichment` already swallows upstream
+    failures (caching a not-found row), and anything unexpected is logged
+    and skipped. A scan must not fail because NVD is down.
+    """
+    if not cve_ids:
+        return 0
+
+    cached = set(
+        session.exec(select(CveEnrichment.cve_id).where(CveEnrichment.cve_id.in_(cve_ids))).all()
+    )
+    missing = [cve_id for cve_id in cve_ids if cve_id not in cached]
+    if not missing:
+        return 0
+
+    budget = missing[:MAX_ENRICHMENT_LOOKUPS_PER_RUN]
+    if len(missing) > len(budget):
+        logger.info(
+            "CVE enrichment warm-up capped at %d of %d uncached CVEs this run; "
+            "the rest are picked up by subsequent scans",
+            len(budget),
+            len(missing),
+        )
+
+    fetched = 0
+    for cve_id in budget:
+        try:
+            get_cve_enrichment(session, cve_id)
+            fetched += 1
+        except Exception:
+            # Never fatal to a scan. The signal stays unestablished for this
+            # CVE, which contributes nothing rather than lowering anything.
+            logger.exception("CVE enrichment warm-up failed for %s", cve_id)
+    return fetched
 
 
 def get_cve_enrichment(session: Session, cve_id: str) -> CveEnrichment:

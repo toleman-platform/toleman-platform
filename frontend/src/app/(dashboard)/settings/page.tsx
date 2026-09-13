@@ -566,10 +566,19 @@ function WorkspaceSection() {
                 <label className="text-xs text-muted-foreground">Criticality weight (1-5)</label>
                 {/* Shown as a bare number with no stated meaning, which an
                     external review flagged: nothing said how it enters the
-                    risk score. Kept in sync with backend/app/core/scoring.py. */}
+                    risk score.
+
+                    (#201) No longer restates the arithmetic. The formula is
+                    weighted and workspace-configurable now, so "severity x
+                    weight x 40" is only true on the shipped defaults and is
+                    flatly wrong in a workspace that has retuned the
+                    business-criticality slot. Describing the direction is
+                    something that stays true; quoting the equation is a
+                    promise this copy cannot keep. */}
                 <p className="text-[11px] text-muted-foreground">
-                  Multiplies this repo&apos;s risk scores: severity x weight x 40, capped at 1000. Raise it for
-                  production or internet-facing repos so their findings outrank identical ones elsewhere.
+                  Multiplies this repo&apos;s risk scores, so its findings outrank identical ones on
+                  less important repos. Raise it for production or internet-facing repos. How much it
+                  counts for is configurable per workspace in Guardrails &rsaquo; Risk Scoring.
                 </p>
                 <Input
                   type="number"

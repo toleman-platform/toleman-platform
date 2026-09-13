@@ -25,16 +25,40 @@ is the same one #246 draws between `no_known_fix` and `unknown`.
 of the metrics we actually decoded, not a product across all four with
 unknowns filled in. A product would let a single missing metric silently
 drag a network-reachable, no-privileges CVE toward the bottom of the list --
-treating "we didn't parse it" as evidence of safety. Averaging the known
-metrics errs upward instead, and over-prioritising is the survivable error.
+treating "we didn't parse it" as evidence of safety.
 
-Handles CVSS v3.0/v3.1 and v4.0. CVSS v2 vectors are also decoded to the
-extent they carry the same information (AV/AC only; v2 has no PR or UI
-metric, and mapping its `Au` authentication metric onto Privileges Required
-would be asserting an equivalence the specs do not make). v2 is not
-hypothetical here: `app.core.nvd.fetch_nvd_cve` falls back to
-`cvssMetricV2` when NVD has no v3 metrics for a CVE, so those vectors are
-already in the database.
+Be precise about what that mean does and does not guarantee, because an
+earlier version of this comment overclaimed it:
+
+  * It DOES guarantee that a partially-decoded vector never scores worse
+    than no vector at all, because the scoring engine treats an absent
+    sub-score as a zero-point contribution and every contribution is
+    non-negative. That is the property the failsafe rule actually needs.
+  * It does NOT make the sub-score monotonic in information. `AV:P` on its
+    own means 0.15, while the same vector fully decoded
+    (`AV:P/AC:H/PR:H/UI:R`) means 0.7875 -- decoding *more* of a
+    hard-to-exploit vector raises its sub-score, because the mean is over a
+    different set of metrics each time. Within a population of
+    consistently-formed v3/v4 vectors (which is what NVD emits -- all four
+    base metrics are mandatory) this never arises; it is a property of
+    truncated input, not of real advisories.
+
+**CVSS v2 does not produce a sub-score at all.** v2 vectors are still
+decoded for display (AV and AC; v2 has no PR or UI metric, and mapping its
+`Au` authentication metric onto Privileges Required would assert an
+equivalence the specs do not make), but `exploitability()` returns None for
+them. A mean over {AV, AC} is simply not the same quantity as a mean over
+{AV, AC, PR, UI}, and an engine that ranks findings against each other
+cannot mix the two: `AV:N/AC:L/Au:M` would score 1.00 where its v3
+counterpart `AV:N/AC:L/PR:H/UI:R` scores 0.68, so every v2 CVE would float
+above comparable v3 ones. That is not a rounding artifact but a systematic
+bias, because `app.core.nvd.fetch_nvd_cve` falls back to `cvssMetricV2`
+precisely for older CVEs -- turning the signal on would have quietly
+promoted a whole cohort. Unknown (contributing nothing) is the honest
+answer for a vector whose vocabulary cannot express what we weight.
+
+Handles CVSS v3.0/v3.1 and v4.0 for scoring, plus v2 for display. v2 is not
+hypothetical here: those vectors are already in the database.
 """
 
 from dataclasses import dataclass
@@ -142,14 +166,21 @@ class CvssDecomposition:
         return not self.known_metrics
 
     def exploitability(self) -> float | None:
-        """0..1 exploitability sub-score, or None when nothing is known.
+        """0..1 exploitability sub-score, or None when it cannot be derived.
 
         Mean over the decoded metrics only. Returning `None` rather than 0.0
-        for an undecodable vector is the whole point: the caller has to
+        for an underivable vector is the whole point: the caller has to
         decide what "we don't know" means, and `app.core.scoring` decides it
         means "this signal contributes nothing", not "this is hard to
         exploit".
+
+        None for a v2 vector even though AV/AC decoded fine -- see the
+        module docstring. v2 has no PR or UI metric at all, so its mean is
+        over a smaller and systematically more favourable metric set, and
+        these numbers are compared against each other.
         """
+        if self.version == "2.0":
+            return None
         scores = [
             table[value]
             for name, _key, _values, table in _METRICS

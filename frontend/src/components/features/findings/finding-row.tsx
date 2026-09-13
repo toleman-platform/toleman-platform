@@ -52,7 +52,7 @@ const RISK_SCORE_EXPLANATION =
   // between "this feature is broken" and "this needs more than one repo".
   "On the shipped defaults, findings of the same severity on repos of the same criticality score " +
   "the same by design \u2014 set differing criticality weights per target, or weight more signals in " +
-  "Control Plane \u203a Risk, for the score to separate them.";
+  "Guardrails \u203a Risk Scoring, for the score to separate them.";
 
 function RiskScore({ score }: { score: number }) {
   return (
@@ -236,8 +236,10 @@ function ScoreBreakdownPanel({ finding }: { finding: Finding }) {
         // breakdown explains the live number, and the list is showing the
         // other one until the next scan re-scores this finding.
         <p className="mb-2 text-xs text-muted-foreground">
-          The stored score is <span className="font-mono">{data.stored_score}</span>. Weights or
-          signals have changed since this finding was scored; it will be re-scored on the next scan.
+          Lists and SLA checks use the stored score of{" "}
+          <span className="font-mono">{data.stored_score}</span>. Weights or signals have changed
+          since this finding was last scored; it picks up the number above the next time a scan sees
+          it still present.
         </p>
       )}
 

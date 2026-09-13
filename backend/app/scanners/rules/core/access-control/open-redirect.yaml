@@ -1,0 +1,31 @@
+## Open redirect (CWE-601).
+##
+## Written 2026-09-12, not yet matched on toleman-platform/pygoat/dvpwa --
+## no hit in any of the 3, so unproven-by-sample the same way
+## path-traversal.yaml is. Keep confidence LOW until it's found a real
+## instance somewhere.
+rules:
+  - id: toleman-open-redirect-from-request-param
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A redirect target taken straight from request input with no
+      allowlist/relative-path check lets an attacker send users to an
+      external phishing host (CWE-601).
+    metadata:
+      category: security
+      cwe: "CWE-601: Open Redirect"
+      validated-against: []
+    patterns:
+      - pattern-either:
+          - pattern: redirect($URL)
+          - pattern: HttpResponseRedirect($URL)
+          - pattern: RedirectResponse($URL)
+      - metavariable-pattern:
+          metavariable: $URL
+          patterns:
+            - pattern-either:
+                - pattern: request.$ATTR[...]
+                - pattern: request.$ATTR.get(...)
+                - pattern: request.$ATTR["..."]

@@ -1,0 +1,22 @@
+## JWT signature bypass (CWE-347).
+##
+## Written 2026-09-12, not yet matched on any of toleman-platform/pygoat/
+## dvpwa -- none of them decode JWTs with verification disabled. Keep
+## confidence LOW/unproven-by-sample until it's found a real instance.
+rules:
+  - id: toleman-jwt-decode-without-verification
+    languages: [python]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      jwt.decode() with signature verification disabled (or algorithm list
+      omitted) accepts a token an attacker forged themselves -- full auth
+      bypass (CWE-347). Always pass algorithms=[...] and never
+      options={"verify_signature": False} outside a debugging script.
+    metadata:
+      category: security
+      cwe: "CWE-347: Improper Verification of Cryptographic Signature"
+      validated-against: []
+    pattern-either:
+      - pattern: jwt.decode(..., verify=False, ...)
+      - pattern: 'jwt.decode(..., options={"verify_signature": False}, ...)'

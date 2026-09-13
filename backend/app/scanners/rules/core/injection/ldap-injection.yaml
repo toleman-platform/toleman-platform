@@ -1,0 +1,117 @@
+## LDAP injection (CWE-90).
+##
+## Validated 2026-09-12: grepped all 3 validation repos for "ldap" (case
+## insensitive) in application code before writing this rule. ZERO
+## application-code hits in toleman-platform, pygoat, and dvpwa -- the one
+## toleman-platform hit was a Dockerfile comment, not python-ldap/ldap3
+## usage, and none of the repos list python-ldap or ldap3 in any
+## requirements/pyproject file. None of the 3 repos have an LDAP
+## integration at all, so this is an honest 0/0/0: unproven, not
+## validated. Not "matched but benign" -- there is nothing to match.
+##
+## Same taint-mode shape as
+## `toleman-sql-injection-fstring-var-then-execute` (reused its exact
+## pattern-sources block: f-string / %-format / string-concatenation into
+## a variable, filtered to reject the "$LIT + 'a-pure-literal'" case),
+## because it is the same underlying bug: build a query/filter string in
+## Python via string formatting, then hand the un-parameterized result to
+## a driver call that treats it as trusted syntax. Both python-ldap
+## (search_s/search_ext_s, filter is positional arg 3) and ldap3
+## (Connection.search, filter is positional arg 2) are covered as
+## separate sink shapes since the filter argument sits in a different
+## position for each library.
+##
+## Sanity-checked against a synthetic snippet (NOT one of the 3 validation
+## repos, does not count as validated-against evidence, just a check that
+## the pattern isn't dead like the metavariable-regex anchoring bug made
+## the SSRF rule dead at first):
+##   filter = f"(uid={username})"; conn.search_s(base, ldap.SCOPE_SUBTREE, filter)  -> MATCHED
+##   conn.search_s(base, ldap.SCOPE_SUBTREE, "(uid=admin)")                          -> did NOT match (literal filter, correct)
+##   conn.search(base, f"(uid={username})")                                          -> MATCHED (ldap3 2-arg shape)
+rules:
+  - id: toleman-ldap-injection-inline
+    languages: [python]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      An LDAP filter built inline with an f-string/%-format/concatenation
+      is passed directly to search_s()/search_ext_s()/search(). Any value
+      interpolated here can inject LDAP filter metacharacters
+      (*()\x00, boolean operators) to alter the search logic -- LDAP
+      injection (CWE-90). Escape untrusted values with
+      ldap.filter.escape_filter_chars() (python-ldap) or
+      ldap3.utils.conv.escape_filter_chars() (ldap3) before interpolating.
+    metadata:
+      category: security
+      cwe: "CWE-90: Improper Neutralization of Special Elements used in an LDAP Query"
+      references:
+        - "https://owasp.org/www-community/attacks/LDAP_Injection"
+    patterns:
+      - pattern-either:
+          - pattern: $CONN.search_s($BASE, $SCOPE, f"...", ...)
+          - pattern: $CONN.search_s($BASE, $SCOPE, "..." % ..., ...)
+          - pattern: $CONN.search_s($BASE, $SCOPE, "..." + ..., ...)
+          - pattern: $CONN.search_ext_s($BASE, $SCOPE, f"...", ...)
+          - pattern: $CONN.search_ext_s($BASE, $SCOPE, "..." % ..., ...)
+          - pattern: $CONN.search_ext_s($BASE, $SCOPE, "..." + ..., ...)
+          - pattern: $CONN.search($BASE, f"...", ...)
+          - pattern: $CONN.search($BASE, "..." % ..., ...)
+          - pattern: $CONN.search($BASE, "..." + ..., ...)
+
+  - id: toleman-ldap-injection-var-then-search
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    confidence: MEDIUM
+    message: >-
+      An LDAP filter is built with an f-string/%-format/concatenation into
+      a variable, then that variable is passed as the filter argument to
+      search_s()/search_ext_s()/search() (tracked across nested
+      blocks/scopes, not just the next line). Same risk as building the
+      filter inline -- LDAP injection (CWE-90). Escape untrusted values
+      with escape_filter_chars() before interpolating, or build the filter
+      with a library that parameterizes it.
+    metadata:
+      category: security
+      cwe: "CWE-90: Improper Neutralization of Special Elements used in an LDAP Query"
+      references:
+        - "https://owasp.org/www-community/attacks/LDAP_Injection"
+      validated-against:
+        - "toleman-platform: 0 hits (no LDAP integration in the repo)"
+        - "pygoat: 0 hits (no LDAP integration in the repo)"
+        - "dvpwa: 0 hits (no LDAP integration in the repo)"
+        - "unproven-by-sample on all 3 repos -- see header comment"
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              # NOTE: the f-string branch is a SIBLING of the %/+ branch,
+              # not folded into one pattern-either with a shared
+              # metavariable-pattern on $ARGS. Discovered by testing this
+              # rule against a synthetic snippet: a single pattern-either
+              # with all 3 alternatives, followed by one
+              # metavariable-pattern on $ARGS, silently dropped the
+              # f"...{...}..." match entirely (0 findings) even though
+              # that branch doesn't reference $ARGS at all -- semgrep
+              # appears to treat "metavariable-pattern on a metavariable
+              # not bound by this branch" as "reject the match", not
+              # "n/a, skip the filter". Repro'd with a 2-line file:
+              # f"abc{x}" was dropped, "abc" + x was kept, using the flat
+              # structure; nesting the %/+ branches (and their
+              # metavariable-pattern) inside their own patterns: block,
+              # as a sibling of the plain f-string pattern, fixed it. Same
+              # failure shape as the documented metavariable-regex/
+              # exclusion-filter gotchas -- an filter meant to narrow one
+              # branch instead silently kills unrelated branches.
+              - pattern: f"...{...}..."
+              - patterns:
+                  - pattern-either:
+                      - pattern: "$LIT % $ARGS"
+                      - pattern: "$LIT + $ARGS"
+                  - metavariable-pattern:
+                      metavariable: $ARGS
+                      patterns:
+                        - pattern-not: '"..."'
+    pattern-sinks:
+      - pattern: $CONN.search_s($BASE, $SCOPE, $SINK, ...)
+      - pattern: $CONN.search_ext_s($BASE, $SCOPE, $SINK, ...)
+      - pattern: $CONN.search($BASE, $SINK, ...)

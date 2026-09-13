@@ -1,0 +1,81 @@
+## Unrestricted file upload (CWE-434): a caller-supplied filename (Django
+## request.FILES[...], or a FastAPI UploadFile's .filename) is used
+## directly to build a path that gets written to disk, with no visible
+## extension/type allowlist check. Lets an attacker upload a .php/.py/.sh
+## payload with whatever extension they like if the upload directory is
+## ever web-served or executed.
+##
+## Written mode: taint (per this pack's own README gotcha #2 -- the
+## realistic shape is "path built from f.name/f.filename in one statement,
+## then opened for writing one indent level deeper inside a `with`
+## block", which a plain statement-sequence pattern would NOT follow into).
+##
+## Validated 2026-09-12, honest result: 0 hits on all 3 repos --
+## toleman-platform's only upload endpoint (backend/app/api/sbom.py:279
+## upload_sbom) reads an UploadFile's *bytes* (`await file.read(...)`) and
+## json.loads()'s them; it never touches `file.filename` and never writes
+## to disk, so it's correctly a true negative, not a miss. pygoat's two
+## request.FILES-based labs (introduction/views.py:558 yaml-load lab,
+## :582 ImageMath lab) both pass the uploaded file object straight into
+## yaml.load()/Image.open() in memory -- never write it to disk under its
+## own name either. dvpwa has no upload surface at all. So: 0/0/0,
+## unproven-by-sample, NOT because the shape is wrong but because none of
+## the 3 repos happen to save-to-disk-by-caller-name.
+##
+## Self-test only (not a repo finding -- see above): confirmed the taint
+## wiring itself fires by hand-running this rule against a throwaway
+## snippet shaped like
+##   f = request.FILES['upload']
+##   dest = os.path.join(UPLOAD_DIR, f.name)
+##   with open(dest, 'wb+') as out:
+##       for chunk in f.chunks():
+##           out.write(chunk)
+## First version of this rule had NO pattern-sanitizers and (checked, not
+## assumed) fired even when the filename was first passed through
+## werkzeug's secure_filename() plus an explicit extension allowlist --
+## a real false positive, not a hypothetical one. Added
+## secure_filename()/os.path.basename() as pattern-sanitizers and
+## re-ran: confirmed that specific false positive is now gone. That
+## sanitizer list is shallow by construction -- it recognizes two
+## specific function names, not "any code that actually validates the
+## extension" -- so a differently-named or custom sanitizer will still
+## produce a false positive. Confidence LOW: this is a "make a human
+## confirm there's really no allowlist nearby" heuristic, not a proof of
+## exploit.
+rules:
+  - id: toleman-unrestricted-file-upload-filename
+    languages: [python]
+    severity: WARNING
+    mode: taint
+    confidence: LOW
+    message: >-
+      A caller-supplied filename (request.FILES[...]'s .name, or an
+      UploadFile's .filename) is used to build a path that's opened for
+      writing, with no extension/type allowlist visible in this rule's
+      view of the code. If nothing upstream restricts the extension, an
+      attacker can upload a file with any extension they choose (CWE-434).
+      Validate against an explicit allowlist (not a denylist) and never
+      trust the caller's extension or content-type header.
+    metadata:
+      category: security
+      cwe: "CWE-434: Unrestricted Upload of File with Dangerous Type"
+      references:
+        - "https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload"
+      validated-against:
+        - "toleman-platform: 0/0 -- true negative, its one upload endpoint (sbom.py) never touches .filename or writes to disk"
+        - "pygoat: 0/0 -- both request.FILES labs process the file in memory, never save-by-name"
+        - "dvpwa: 0/0 -- no upload surface"
+        - "self-test only: confirmed fires on a hand-written vulnerable snippet; unproven on real code in any of the 3 repos"
+    pattern-sources:
+      - pattern: $F.filename
+      - pattern: $F.name
+      - pattern: request.FILES[...]
+      - pattern: request.FILES.get(...)
+    pattern-sinks:
+      - pattern: open($SINK, "wb")
+      - pattern: open($SINK, "wb+")
+      - pattern: open($SINK, "w")
+      - pattern: open($SINK, "w+")
+    pattern-sanitizers:
+      - pattern: secure_filename(...)
+      - pattern: os.path.basename(...)

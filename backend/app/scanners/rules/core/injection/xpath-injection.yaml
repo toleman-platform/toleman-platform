@@ -1,0 +1,141 @@
+## XPath injection (CWE-643).
+##
+## Validated 2026-09-12: grepped all 3 validation repos for "xpath",
+## "lxml", "ElementTree", and "etree" before writing this rule. ZERO
+## application-code hits in toleman-platform, pygoat, and dvpwa -- none of
+## the 3 repos parse or query XML at all, and none list lxml in a
+## requirements/pyproject file (pygoat's .venv vendors lxml transitively
+## via defusedxml/allauth but the app code itself never imports it).
+## Honest 0/0/0: unproven, not validated. Not "matched but benign" --
+## there is no XML/XPath code in any of the 3 repos to match.
+##
+## Two sinks, split into 3 rules because their false-positive risk is very
+## different and the "confidence" field needs to be honest about that:
+##
+## 1. lxml's `.xpath(...)` method name is distinctive -- essentially
+##    nothing else in a Python codebase is named .xpath(), so a match is a
+##    strong signal. Given the same inline vs. taint-mode split as the SQL
+##    injection rules (a plain "$X = ...; ...; $SINK($X)" pattern only
+##    walks sibling statements in the same block and misses a var built in
+##    one block and used one level deeper in a nested if/with/for -- same
+##    gotcha as `toleman-sql-injection-fstring-var-then-execute` needed
+##    `mode: taint` for; applied the same fix here up front instead of
+##    re-discovering it).
+##
+## 2. ElementTree's `.find(...)`/`.findall(...)` is the opposite case: an
+##    extremely generic method name shared by many unrelated APIs
+##    (mock objects, custom containers, ORM helpers, even test doubles
+##    that happen to define find()). There is no dict-literal-style
+##    disambiguator available here the way NoSQL injection's rule could
+##    require a `{...}` argument -- ElementTree.find() takes a plain
+##    string, same shape as a hundred other .find() calls. Kept as its own
+##    LOW-confidence, inline-only rule (deliberately not taint mode, to
+##    avoid multiplying false positives by connecting arbitrary
+##    string-built variables to every .find()/.findall() call in the
+##    codebase) -- every hit needs a human to confirm the receiver is
+##    actually an Element/ElementTree before treating it as real.
+##
+## Sanity-checked against a synthetic snippet (NOT one of the 3 validation
+## repos, does not count as validated-against evidence):
+##   tree.xpath(f"//user[@name='{username}']")        -> MATCHED (rule 1)
+##   tree.xpath("//user[@name='admin']")                -> did NOT match (literal, correct)
+##   root.find(f"user[@id='{user_id}']")                -> MATCHED (rule 3)
+rules:
+  - id: toleman-xpath-injection-lxml-inline
+    languages: [python]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      An XPath expression built inline with an f-string/%-format/
+      concatenation is passed directly to lxml's .xpath(). Any value
+      interpolated here can inject XPath metacharacters (', ", //, |,
+      boolean operators) to change which nodes are selected, bypassing
+      intended filters or reading unintended parts of the document --
+      XPath injection (CWE-643). Use a parameterized XPath variable
+      (xpath(expr, name=value)) instead of formatting the value into the
+      expression string.
+    metadata:
+      category: security
+      cwe: "CWE-643: Improper Neutralization of Data within XPath Expressions"
+      references:
+        - "https://owasp.org/www-community/attacks/XPATH_Injection"
+    patterns:
+      - pattern-either:
+          - pattern: $TREE.xpath(f"...", ...)
+          - pattern: $TREE.xpath("..." % ..., ...)
+          - pattern: $TREE.xpath("..." + ..., ...)
+
+  - id: toleman-xpath-injection-lxml-var-then-xpath
+    languages: [python]
+    severity: ERROR
+    mode: taint
+    confidence: MEDIUM
+    message: >-
+      An XPath expression is built with an f-string/%-format/
+      concatenation into a variable, then that variable is passed to
+      lxml's .xpath() (tracked across nested blocks/scopes, not just the
+      next line). Same risk as building the expression inline -- XPath
+      injection (CWE-643). Use a parameterized XPath variable instead of
+      formatting untrusted values into the expression string.
+    metadata:
+      category: security
+      cwe: "CWE-643: Improper Neutralization of Data within XPath Expressions"
+      references:
+        - "https://owasp.org/www-community/attacks/XPATH_Injection"
+      validated-against:
+        - "toleman-platform: 0 hits (no XML/XPath code in the repo)"
+        - "pygoat: 0 hits (no XML/XPath code in the repo's own app code)"
+        - "dvpwa: 0 hits (no XML/XPath code in the repo)"
+        - "unproven-by-sample on all 3 repos -- see header comment"
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              # See the header comment in ldap-injection.yaml for why the
+              # f-string branch must be a sibling of the %/+ branch
+              # rather than sharing one metavariable-pattern on $ARGS --
+              # folding them together silently drops the f-string branch
+              # entirely (confirmed against a synthetic repro).
+              - pattern: f"...{...}..."
+              - patterns:
+                  - pattern-either:
+                      - pattern: "$LIT % $ARGS"
+                      - pattern: "$LIT + $ARGS"
+                  - metavariable-pattern:
+                      metavariable: $ARGS
+                      patterns:
+                        - pattern-not: '"..."'
+    pattern-sinks:
+      - pattern: $TREE.xpath($SINK, ...)
+
+  - id: toleman-xpath-injection-elementtree-find
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      An XPath-style path expression built inline with an f-string/
+      %-format/concatenation is passed to .find()/.findall(). If this
+      receiver is an xml.etree.ElementTree Element/ElementTree and the
+      interpolated value is attacker-controlled, this is XPath injection
+      (CWE-643) -- ElementTree's limited XPath subset still supports
+      predicates like [@attr='value'] that break out with a crafted
+      value. .find()/.findall() are extremely generic method names shared
+      by many unrelated Python APIs, so confirm the receiver is actually
+      an XML element before treating this as a real finding.
+    metadata:
+      category: security
+      cwe: "CWE-643: Improper Neutralization of Data within XPath Expressions"
+      references:
+        - "https://owasp.org/www-community/attacks/XPATH_Injection"
+      validated-against:
+        - "toleman-platform: 0 hits (no XML code in the repo)"
+        - "pygoat: 0 hits (no XML code in the repo's own app code)"
+        - "dvpwa: 0 hits (no XML code in the repo)"
+        - "unproven-by-sample on all 3 repos -- see header comment"
+    patterns:
+      - pattern-either:
+          - pattern: $ELEM.find(f"...", ...)
+          - pattern: $ELEM.find("..." % ..., ...)
+          - pattern: $ELEM.find("..." + ..., ...)
+          - pattern: $ELEM.findall(f"...", ...)
+          - pattern: $ELEM.findall("..." % ..., ...)
+          - pattern: $ELEM.findall("..." + ..., ...)

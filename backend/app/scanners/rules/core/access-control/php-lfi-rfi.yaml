@@ -1,0 +1,71 @@
+## Local/Remote File Inclusion (CWE-98) -- PHP.
+##
+## Checked 2026-09-12 against DVWA's vulnerabilities/fi ("File Inclusion")
+## lab, "low" and "medium" difficulty:
+##   vulnerabilities/fi/source/low.php:4 -- $file = $_GET[ 'page' ];
+##   vulnerabilities/fi/source/medium.php:4-8 -- same assignment, followed
+##     by a denylist str_replace() (stripping "http://"/"../" substrings --
+##     a denylist, not an allowlist, and well-known to be bypassable, e.g.
+##     "....//" survives one pass of "../" removal).
+##   The tainted $file is then actually used at
+##   vulnerabilities/fi/index.php:36 -- `if( isset( $file ) ) include( $file );`
+##
+## Honest result: 0 hits on DVWA with this rule as written, and that's a
+## real limitation, not a bug to paper over. $_GET['page'] is assigned in
+## low.php/medium.php, but the include($file) call is in a DIFFERENT file
+## (index.php), reached only because index.php does
+## `require_once ".../source/{$vulnerabilityFile}"` immediately before the
+## include -- i.e. DVWA's PHP-level file inclusion literally straddles the
+## same file boundary this rule needs to cross to connect source and sink.
+## Semgrep's OSS taint engine (no Pro/interfile analysis available in this
+## environment) tracks dataflow within a single file, not across a
+## require_once boundary, so it cannot see that $file in index.php was
+## populated by a require'd file. This is the same class of gap as this
+## pack's own toleman-unrestricted-file-upload-filename rule (Python):
+## the vulnerable shape is real, but split across a file boundary the
+## engine doesn't cross, so a true "0 hits" is the correct, honest result
+## -- not a sign the pattern shape is wrong.
+##
+## Self-test only (not a DVWA finding): confirmed this rule's mechanics do
+## fire when source and sink are in the same file, against a hand-written
+## single-file snippet shaped like
+##   $page = $_GET['page'];
+##   include($page . '.php');
+## and confirmed silent once wrapped in an in_array($page, $ALLOWLIST)
+## check feeding a literal include path instead.
+rules:
+  - id: toleman-php-lfi-rfi-tainted-include-path
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    confidence: LOW
+    message: >-
+      A path built from $_GET/$_POST reaches include()/include_once()/
+      require()/require_once() with no allowlist check visible in this
+      rule's view of the code (CWE-98). If allow_url_include is on, this
+      is Remote File Inclusion (fetch and execute attacker-hosted PHP); if
+      off, it's still Local File Inclusion (read/execute any file on disk
+      the web server user can reach, including a "../"-traversed path or
+      an uploaded file). Validate the target against an explicit allowlist
+      of known-safe filenames before including it -- never a denylist of
+      "bad" substrings, which is bypassable.
+    metadata:
+      category: security
+      cwe: "CWE-98: Improper Control of Filename for Include/Require Statement in PHP Program"
+      references:
+        - "https://owasp.org/www-community/attacks/Path_Traversal"
+        - "https://cwe.mitre.org/data/definitions/98.html"
+      validated-against:
+        - "DVWA (digininja/DVWA): 0 hits -- the real vulnerable flow (vulnerabilities/fi/source/low.php:4 assigning $file, used at vulnerabilities/fi/index.php:36's include($file)) straddles a require_once file boundary that semgrep's single-file taint engine does not cross. True absence of a same-file hit, not a proof the pattern is wrong -- see file header. Self-test only: confirmed fires on a same-file hand-written repro, silent once an in_array() allowlist gates the include."
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+    pattern-sinks:
+      - pattern: include($SINK)
+      - pattern: include_once($SINK)
+      - pattern: require($SINK)
+      - pattern: require_once($SINK)
+    pattern-sanitizers:
+      - pattern: in_array($SINK, ...)
+      - pattern: basename(...)

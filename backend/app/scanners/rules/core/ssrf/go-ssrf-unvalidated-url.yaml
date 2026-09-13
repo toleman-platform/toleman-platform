@@ -1,0 +1,75 @@
+## Go SSRF (CWE-918), net/http stdlib client.
+##
+## Validated 2026-09-12 against Contrast-Security-OSS/go-test-bench (real,
+## maintained, purpose-built Go vulnerability-teaching app -- covers OWASP
+## Top 10 with an actual runnable server, not just a checklist repo).
+##
+## - go-test-bench: internal/ssrf/ssrf.go:51, `resp, err := http.Get(payload)`
+##   -- `payload` is the request-derived value for this route (wired up via
+##   the framework's generic sink-registration abstraction in
+##   internal/common/, which extracts it from r.URL.Query()/r.FormValue() in
+##   a *different* file/function than the one that calls http.Get). That
+##   cross-file wiring is exactly why this rule, unlike this pack's Python
+##   SSRF rule (toleman-unvalidated-url-param-to-http-client), does NOT
+##   filter on the argument's variable name (url/host/endpoint/...): the
+##   real vulnerable variable here is named `payload`, which no reasonable
+##   naming heuristic would catch, and a same-function taint rule can't see
+##   across the file boundary either. Deliberately widened to "any
+##   non-literal URL argument" instead -- broader, more false positives on
+##   legitimate configured-URL variables, hence LOW not MEDIUM confidence.
+##
+## Not validated against govwa or go-dvwa: neither repo makes any outbound
+## HTTP client call anywhere in its app code (both true negatives, not
+## misses -- confirmed by grepping both repos for http.Get/Post/NewRequest
+## and finding zero hits before writing this rule).
+rules:
+  - id: toleman-go-ssrf-unvalidated-url
+    languages: [go]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      An outbound HTTP call is made with a non-literal URL and no visible
+      allowlist/validation nearby. If the caller controls this value, this
+      is SSRF (CWE-918). This rule can't tell a request-derived URL from an
+      admin-configured one by variable name alone (see file header) -- a
+      human still needs to confirm the value is attacker-reachable before
+      treating a match as a real finding.
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      references:
+        - "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"
+      validated-against:
+        - "go-test-bench: 1/1 true positive (internal/ssrf/ssrf.go:51, http.Get(payload))"
+        - "govwa: true negative (no outbound HTTP client calls in the repo)"
+        - "go-dvwa: true negative (no outbound HTTP client calls in the repo)"
+    patterns:
+      - pattern-either:
+          # Each alternative gets its own patterns:/metavariable-pattern
+          # block -- a shared filter across pattern-either branches that
+          # bind different metavariable shapes has silently killed
+          # branches elsewhere in this pack (see sql-injection.yaml).
+          - patterns:
+              - pattern: http.Get($URL)
+              - metavariable-pattern:
+                  metavariable: $URL
+                  patterns:
+                    - pattern-not: '"..."'
+          - patterns:
+              - pattern: http.Post($URL, $CT, $BODY)
+              - metavariable-pattern:
+                  metavariable: $URL
+                  patterns:
+                    - pattern-not: '"..."'
+          - patterns:
+              - pattern: http.NewRequest($METHOD, $URL, $BODY)
+              - metavariable-pattern:
+                  metavariable: $URL
+                  patterns:
+                    - pattern-not: '"..."'
+          - patterns:
+              - pattern: http.NewRequestWithContext($CTX, $METHOD, $URL, $BODY)
+              - metavariable-pattern:
+                  metavariable: $URL
+                  patterns:
+                    - pattern-not: '"..."'

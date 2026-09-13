@@ -1,0 +1,64 @@
+## Zip Slip (CWE-22): zipfile.ZipFile(...).extractall(...) or
+## tarfile.open(...).extractall(...) with no per-member path-containment
+## check. A crafted archive member named e.g. "../../etc/cron.d/evil" or
+## an absolute path escapes the intended extraction directory the moment
+## extractall() resolves it -- extractall() does not sanitize member names
+## on Python < 3.12 (zipfile never has, even on 3.12+; tarfile only gained
+## an opt-in `filter=` in 3.12 via PEP 706).
+##
+## This is a plain sink match, not taint: it flags every extractall() call
+## regardless of what (if anything) runs before it in the same function.
+## That's a deliberate tradeoff, not an oversight -- semgrep patterns
+## cannot express "and no loop earlier in this function already validated
+## each member's resolved path stays under the target dir", so a
+## hand-rolled containment loop before the call will still be flagged
+## (false positive from this rule's point of view, correct code in
+## reality). The one thing this rule DOES exempt: tarfile's own built-in
+## fix, `extractall(..., filter="data")` / `filter="tar"` (Python 3.12+),
+## since that's the stdlib doing the containment check for you.
+##
+## Validated 2026-09-12, honest result: 0 hits on all 3 repos -- grepped
+## all non-vendored .py files in toleman-platform, pygoat, and dvpwa for
+## zipfile/tarfile/extractall; none of the three has any archive-handling
+## code in its own application code (only inside .venv/site-packages,
+## which this rule never scans). 0/0/0, unproven-by-sample.
+##
+## Self-test only (not a repo finding): hand-confirmed this fires on
+##   zipfile.ZipFile(upload_path).extractall(dest_dir)
+## and tarfile.open(upload_path).extractall(dest_dir), and confirmed it
+## does NOT fire on tarfile.open(p).extractall(dest_dir, filter="data").
+## It still (incorrectly, by design tradeoff above) fires on a
+## hand-rolled safe loop that resolves+checks each member first -- so a
+## human must still confirm a real containment check isn't already there
+## before treating a hit as a true positive.
+rules:
+  - id: toleman-zip-slip-extractall
+    languages: [python]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      extractall() on a zipfile/tarfile archive with no per-member path
+      containment check. A member path like "../../../etc/passwd" or an
+      absolute path is not sanitized by extractall() itself (except
+      tarfile's opt-in filter="data"/"tar" on Python 3.12+) and can write
+      outside the intended extraction directory -- Zip Slip (CWE-22).
+      Either pass filter="data" (tarfile, 3.12+) or validate that
+      os.path.realpath(os.path.join(dest, member.name)) stays under
+      os.path.realpath(dest) for every member before extracting.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      references:
+        - "https://snyk.io/research/zip-slip-vulnerability"
+        - "https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.extractall"
+      validated-against:
+        - "toleman-platform: 0/0 -- no archive-handling code in app code"
+        - "pygoat: 0/0 -- no archive-handling code in app code"
+        - "dvpwa: 0/0 -- no archive-handling code in app code"
+        - "self-test only: confirmed fires on ZipFile/tarfile extractall(); confirmed silent on tarfile filter=\"data\"; confirmed it does NOT suppress on a hand-rolled safe containment loop (known false-positive tradeoff, documented above)"
+    patterns:
+      - pattern-either:
+          - pattern: $Z.extractall(...)
+      - pattern-not: $Z.extractall(..., filter="data", ...)
+      - pattern-not: $Z.extractall(..., filter="tar", ...)
+      - pattern-not: $Z.extractall(..., filter=$F, ...)

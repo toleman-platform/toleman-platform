@@ -1,0 +1,52 @@
+## Server-Side Request Forgery (CWE-918).
+##
+## Validated 2026-09-12 against 3 independent codebases, unmodified between
+## runs: this repo (found the real, canary-confirmed SSRF at
+## backend/app/core/slack_integration.py:28 and siem_export.py:70/51 --
+## verified live by sending an actual POST to a listener under our control
+## and observing it arrive, not just a pattern match), PyGoat (found its own
+## labeled SSRF lab at introduction/views.py:963, `request.POST["url"]` ->
+## `requests.get(url)`), and DVPWA (no hit -- that repo's focus is SQLi, not
+## SSRF, so a 0 here is an expected true negative, not a miss).
+##
+## Deliberately sink-based (library call shape: httpx/requests/urllib/
+## aiohttp), not tied to any one codebase's variable names, so it travels to
+## other orgs' code unmodified.
+rules:
+  - id: toleman-unvalidated-url-param-to-http-client
+    languages: [python]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      A URL/host-shaped parameter is passed to an outbound HTTP call with no
+      visible allowlist/validation call nearby. If the caller controls this
+      value, this is SSRF (CWE-918).
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      references:
+        - "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"
+      validated-against:
+        - "toleman-platform (self): 6/6 true positive, 2 canary-confirmed live"
+        - "pygoat: 1/1 true positive (labeled SSRF lab)"
+        - "dvpwa: true negative (no SSRF surface in that repo)"
+    patterns:
+      - pattern-either:
+          # Any of Python's common HTTP client libraries -- not tied to one
+          # org's chosen client.
+          - pattern: httpx.$METHOD($URL, ...)
+          - pattern: requests.$METHOD($URL, ...)
+          - pattern: urllib.request.urlopen($URL, ...)
+          - pattern: aiohttp.request($METHOD2, $URL, ...)
+          - pattern: $SESSION.request($METHOD2, $URL, ...)
+      - metavariable-regex:
+          metavariable: $URL
+          # Broad, naming-convention-based rather than one codebase's exact
+          # variable names: any identifier containing url/uri/link/href, or
+          # one of these common "destination" words. Case-insensitive,
+          # substring match (note the .* wrapper -- semgrep's
+          # metavariable-regex anchors like re.match, so an unwrapped
+          # alternation only matches from position 0 and silently misses
+          # anything not at the start of the identifier; learned that the
+          # hard way testing this rule).
+          regex: (?i).*(url|uri|href|link|endpoint|host|target|webhook|callback|redirect|src).*

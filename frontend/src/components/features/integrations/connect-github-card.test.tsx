@@ -173,6 +173,33 @@ describe("ConnectGithubCard, the advisory tier", () => {
     expect(connectButton().disabled).toBe(false);
   });
 
+  it("does not call a globally routable IPv6 address internal", async () => {
+    // Parser drift: new URL() reports "[2606:4700::1111]" where Python
+    // reports "2606:4700::1111", and neither form has a dot -- so a public
+    // v6 address used to trip the dotless advisory and get told it resolves
+    // only inside the operator's own network. The backend already ruled on
+    // this literal by allowing it; the UI must not contradict that.
+    githubAppStatus.mockResolvedValue(statusPayload({ public_api_url: "http://[2606:4700::1111]:8000" }));
+
+    render(<ConnectGithubCard />);
+
+    await screen.findByRole("button", { name: "Connect GitHub" });
+    expect(screen.queryByText(/whose host has no dot/)).toBeNull();
+    expect(connectButton().disabled).toBe(false);
+  });
+
+  it("still warns about a dotless host written with a trailing dot", async () => {
+    // The other half of the same drift: the backend strips the trailing dot
+    // of an FQDN, so "backend." and "backend" are one host there and must be
+    // one host here too.
+    githubAppStatus.mockResolvedValue(statusPayload({ public_api_url: "http://backend.:8000" }));
+
+    render(<ConnectGithubCard />);
+
+    expect(await screen.findByText(/whose host has no dot/)).toBeDefined();
+    expect(connectButton().disabled).toBe(false);
+  });
+
   it("says nothing about an ordinary public host", async () => {
     githubAppStatus.mockResolvedValue(statusPayload({ public_api_url: "https://api.toleman.example.com" }));
 

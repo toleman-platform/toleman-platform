@@ -31,16 +31,29 @@ type GithubAppStatus = {
 /**
  * The host out of PUBLIC_API_URL, or "" when the value has none.
  *
- * Mirrors the backend's `_webhook_hostname`: a schemeless value
- * ("localhost:8000") is a host, not a scheme, so the protocol-relative form
- * is what gets parsed. The base URL only exists to resolve that form and
- * never appears in the answer. Never throws.
+ * Mirrors the backend's `_webhook_hostname`, and the mirroring is the whole
+ * point: the two parsers disagreeing is how the UI ends up making confident
+ * statements about a configuration the backend judged differently. Three
+ * places they drift, all normalised here:
+ *
+ *   - `new URL().hostname` brackets an IPv6 literal (`"[::1]"`) where
+ *     Python's `urlparse().hostname` does not.
+ *   - it keeps the trailing dot of an FQDN (`backend.`) that
+ *     `_webhook_hostname` strips.
+ *   - a base URL would let a schemeless value containing a mid-string `//`
+ *     ("foo//bar") resolve as a *path* against that base, handing back the
+ *     base's own hostname as if it were the operator's. So: no base. A
+ *     value with no `//` gets a scheme prepended instead, which is the same
+ *     allowance the backend makes.
+ *
+ * Never throws; an unparseable value is "".
  */
 function hostOf(publicApiUrl: string): string {
   const candidate = publicApiUrl.trim();
   if (!candidate) return "";
   try {
-    return new URL(candidate.includes("//") ? candidate : `//${candidate}`, "http://unused.invalid").hostname;
+    const { hostname } = new URL(candidate.includes("//") ? candidate : `http://${candidate}`);
+    return hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "").toLowerCase();
   } catch {
     return "";
   }
@@ -69,14 +82,22 @@ function hasNoUsableHost(publicApiUrl: string): boolean {
  * lets the operator click anyway, which is the override the backend
  * predicate cannot offer.
  *
- * Note this is about a dotless *name*. A LAN address (`192.168.1.50`) has
- * dots and would slip past here, which is exactly why it is classified
- * unreachable server-side instead: nothing routes to it from github.com,
- * so it is certain rather than near-certain, and it gets the block.
+ * Note this is about a dotless *name*. IP literals are excluded entirely,
+ * in both directions: a LAN address (`192.168.1.50`) has dots and would
+ * slip past a dot test anyway, and an IPv6 literal (`2606:4700::1111`) has
+ * none and would wrongly trip it. The backend has already had the final
+ * word on every IP literal -- it blocks the ones that are not globally
+ * routable and allows the rest -- so telling an operator that a public v6
+ * address "resolves only inside your own network" would be a confidently
+ * false statement about a valid configuration.
  */
 function hostIsDotless(publicApiUrl: string): boolean {
   const hostname = hostOf(publicApiUrl);
-  return hostname.length > 0 && !hostname.includes(".");
+  if (!hostname) return false;
+  // A colon survives bracket-stripping only for an IPv6 literal; no
+  // hostname can contain one.
+  if (hostname.includes(":")) return false;
+  return !hostname.includes(".");
 }
 
 export function ConnectGithubCard() {

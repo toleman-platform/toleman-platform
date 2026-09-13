@@ -153,7 +153,7 @@ def webhook_reachable(backend_url: str) -> bool:
     hostname = _webhook_hostname(backend_url)
     if not hostname:
         return False
-    return not _is_loopback_host(hostname)
+    return not _is_unroutable_host(hostname)
 
 
 def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token: str) -> dict:

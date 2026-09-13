@@ -460,6 +460,21 @@ def test_production_detail_names_the_field_that_actually_matched():
     both = resolve_exposure("prod", "live")
     assert '"prod"' in both.detail and '"live"' in both.detail
 
+    # The production branch's fourth sub-case: the label decided, and there
+    # is no environment worth mentioning -- either absent, or recorded in a
+    # vocabulary we do not recognise. Naming it either way would imply it
+    # was weighed, and an unrecognised value was explicitly *not* weighed
+    # (it is unknown, not non-production).
+    for env in (None, "", "   ", "eu-west-live-a"):
+        label_only = resolve_exposure("prod", env)
+        assert label_only.factor == PRODUCTION_EXPOSURE_FACTOR
+        assert label_only.established
+        assert label_only.detail.startswith('target is labelled "prod";')
+        assert "wins over" not in label_only.detail
+        assert "runs in" not in label_only.detail
+        if env and env.strip():
+            assert env not in label_only.detail
+
 
 def test_nothing_recorded_is_unknown_not_internal():
     exposure = resolve_exposure(None, None)

@@ -11,6 +11,7 @@ import { TargetDiffScope } from "./target-diff-scope";
 import { TargetCloneCredentials } from "./target-clone-credentials";
 import { TargetIdBadge } from "./target-id-badge";
 import { ApiScanConfig } from "./api-scan-config";
+import { TargetScanSchedule } from "./target-scan-schedule";
 import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
@@ -145,6 +146,16 @@ export default async function TargetDetailPage({
               initialKeySet={target.client_key_set ?? false}
               initialProxyUrl={target.clone_proxy_url ?? ""}
             />
+          </div>
+
+          {/* (#306) Directly above Active API Scanning on purpose: the
+              api_scan schedule's "no API base URL is set, so nothing will be
+              probed" warning points at the field in the very next section,
+              so the fix is right there rather than something to go hunting
+              for. */}
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Scheduled scans</h2>
+            <TargetScanSchedule targetId={targetId} />
           </div>
 
           <div>

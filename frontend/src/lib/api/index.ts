@@ -105,6 +105,13 @@ export const api = {
   rejectIgnore: scans.rejectIgnore,
   revokeIgnore: scans.revokeIgnore,
 
+  // Scheduled scans (issue #306)
+  workspaceScanSchedules: scans.workspaceScanSchedules,
+  targetScanSchedules: scans.targetScanSchedules,
+  saveWorkspaceScanSchedule: scans.saveWorkspaceScanSchedule,
+  saveTargetScanSchedule: scans.saveTargetScanSchedule,
+  resetTargetScanSchedule: scans.resetTargetScanSchedule,
+
   // Dashboard
   summary: dashboard.summary,
   stats: dashboard.stats,

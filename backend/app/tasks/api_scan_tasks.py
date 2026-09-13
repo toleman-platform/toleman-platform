@@ -4,9 +4,11 @@ import subprocess
 from sqlmodel import Session
 
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
+from app.core.async_jobs import create_running_row
 from app.core.db import engine
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
+from app.core.tool_usage import is_nuclei_enabled_for_api_scan
 from app.models.models import NotificationEventType, Scan, Target
 from app.scanners import parsers, runner
 from app.tasks.celery_app import celery_app
@@ -33,6 +35,69 @@ def _notify_api_scan_failure(session: Session, target: Target, error: str) -> No
         )
     except Exception:
         logger.exception("scan_failure notification dispatch failed for target %s", target.id)
+
+
+def queue_api_scan(session: Session, target: Target) -> int | None:
+    """Dispatch one active API scan for `target`, or return None if this
+    target must not be probed. The unattended counterpart to
+    POST /api/api-scan/{target_id}, and the mirror of
+    scan_tasks.queue_full_scan on the DAST side (issue #306).
+
+    Every refusal below is a silent no-op rather than an exception, matching
+    queue_full_scan's "workspace has nothing enabled is a legitimate state"
+    behaviour: this runs from a beat tick with nobody watching, and a target
+    that simply is not set up for active scanning must not fill the log with
+    failures or, worse, leave a permanently-red "failed" Scan row in a
+    history that will never contain anything else.
+
+    The three refusals are the same safety boundary the interactive route
+    enforces, in the same order and for the same reasons:
+
+      1. The workspace has turned nuclei off for the `api_scan` surface
+         (#232/#75). A deactivated tool stays deactivated when a schedule is
+         what is asking, not just when a person is.
+      2. The target has no `api_base_url`. This is the ONLY source of a scan
+         host (see Target.api_base_url's docstring and
+         app.core.api_scan_targets): a schedule must never infer a host from
+         repo_url or from anything else, so an unconfigured target is simply
+         not scanned.
+      3. Nothing resolves to a scannable URL (no endpoints discovered yet,
+         or every discovered route resolved off-host). Probing zero URLs is
+         not a scan; recording one would be a fabricated clean result.
+
+    Returns the dispatched Scan id, so the caller can report honestly how
+    many scans a schedule actually produced.
+    """
+    if not is_nuclei_enabled_for_api_scan(session, target.workspace_id):
+        logger.info(
+            "scheduled API scan skipped for target %s: nuclei is disabled for api_scan in workspace %s",
+            target.id,
+            target.workspace_id,
+        )
+        return None
+    if not target.api_base_url:
+        logger.info("scheduled API scan skipped for target %s: no api_base_url configured", target.id)
+        return None
+    try:
+        urls, _endpoints = build_scan_urls(session, target)
+    except ApiScanConfigError as exc:
+        logger.info("scheduled API scan skipped for target %s: %s", target.id, exc)
+        return None
+    if not urls:
+        logger.info(
+            "scheduled API scan skipped for target %s: no scannable endpoints discovered yet", target.id
+        )
+        return None
+
+    scan = create_running_row(
+        session, Scan(target_id=target.id, tool="api-scan", branch=target.default_branch, status="running")
+    )
+    # Same .delay() onto the same "scans" queue the interactive route uses;
+    # no separate scheduled-scan queue and no new concurrency. See #229: a
+    # scheduled fan-out is exactly the bulk-dispatch shape that turns into
+    # false all-clears when it outruns whatever the worker can actually run.
+    run_api_scan.delay(target_id=target.id, scan_id=scan.id, endpoint_ids=None)
+    return scan.id
 
 
 @celery_app.task(

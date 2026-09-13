@@ -8,10 +8,12 @@ Two pieces:
     so a GitHub App sync leaves each new target with a real scan in flight
     instead of "no baseline yet" being a permanent state.
 
-The 24h beat schedule itself (app.tasks.scan_tasks.run_scheduled_full_scans)
-is covered by test_celery_task_routing.py's registration check plus the
-beat_schedule assertion below; its per-target dispatch loop is exactly
-queue_full_scan, already covered.
+Scheduling itself is no longer a hardcoded 24h beat entry (#306): cadence
+lives in ScanSchedule rows and a frequent beat tick dispatches whatever is
+due, which is covered by test_scan_schedules.py. What stays here is the
+half that did not change: queue_full_scan, the GitHub App sync that calls
+it, and the worker_ready catch-up pass that exists because Beat does not
+treat a fresh interval schedule's first tick as due.
 """
 from unittest.mock import MagicMock
 
@@ -164,9 +166,20 @@ def test_github_sync_queues_a_full_scan_for_every_new_target(engine, monkeypatch
 # ---------------------------------------------------------------------------
 
 
-def test_scheduled_full_scan_task_is_registered_in_beat_schedule():
-    entry = celery_app.conf.beat_schedule["run-scheduled-full-scans"]
-    assert entry["task"] == "app.tasks.scan_tasks.run_scheduled_full_scans"
+def test_scheduled_full_scans_are_driven_by_the_schedule_dispatcher():
+    """(#306) The hardcoded "run-scheduled-full-scans" entry is gone; what
+    puts a full scan on a timer now is the dispatcher reading ScanSchedule
+    rows. Asserted here as well as in test_scan_schedules.py because this is
+    the file someone reads when they ask "what makes baselines refresh?",
+    and finding only a deleted assertion would read as "nothing does".
+
+    run_scheduled_full_scans itself stays a registered task (an operator
+    escape hatch for re-baselining everything at once); it is simply not
+    wired to a schedule any more."""
+    entry = celery_app.conf.beat_schedule["dispatch-due-scan-schedules"]
+    assert entry["task"] == "app.tasks.schedule_tasks.dispatch_due_scan_schedules_task"
+    assert "run-scheduled-full-scans" not in celery_app.conf.beat_schedule
+    assert "app.tasks.scan_tasks.run_scheduled_full_scans" in celery_app.tasks
 
 
 def test_repo_sync_task_is_registered_in_beat_schedule():

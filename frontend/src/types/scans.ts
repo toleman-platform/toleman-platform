@@ -227,3 +227,96 @@ export type PrGuardrailOrgLog = {
   scans: PrGuardrailLogEntry[];
   stats: PrGuardrailOrgStats;
 };
+
+// Configurable scheduled scans (issue #306). Cadence used to be two
+// hardcoded 24h entries in Celery's beat_schedule; it is per-workspace and
+// per-target data now.
+export type ScanScheduleType = "full_scan" | "api_scan";
+
+// Where an effective value came from, so the UI can say "every 24h
+// (workspace default)" instead of presenting an inherited cadence as this
+// target's own decision. Same vocabulary as EnforcementModeSource, minus
+// "group" (there is no group-level schedule).
+export type ScanScheduleSource = "target" | "workspace" | "default";
+
+/**
+ * A single schedule row as the API renders it: the effective answer after
+ * inheritance, plus the raw override stored at the scope being viewed.
+ */
+export type ScanScheduleView = {
+  scan_type: ScanScheduleType;
+  // The effective answer after inheritance...
+  enabled: boolean;
+  interval_hours: number;
+  enabled_source: ScanScheduleSource;
+  interval_source: ScanScheduleSource;
+  // ...and the raw override stored at the scope being viewed. null means
+  // "inheriting", which is NOT the same as false/0 and must stay
+  // distinguishable: a select showing "Off" when the real answer is
+  // "inherit, and the workspace says on" would be a lie in both directions.
+  override_enabled: Nullable<boolean>;
+  override_interval_hours: Nullable<number>;
+  schedule_id: Nullable<number>;
+  // null means this schedule has never fired. A fresh install genuinely
+  // spends its first interval in that state, so it renders as "Never run"
+  // rather than as a blank cell -- otherwise a scheduler that is quietly
+  // not running looks exactly like one that simply has not come round yet.
+  last_run_at: Nullable<string>;
+  last_dispatched_count: Nullable<number>;
+  // null when the schedule is disabled or has no stored row yet.
+  next_run_at: Nullable<string>;
+};
+
+// Why a scheduled active API scan against this target would dispatch
+// nothing. Computed by the same function the dispatcher itself refuses on,
+// so the panel can never render a schedule as armed and healthy while the
+// worker is quietly skipping it every cycle.
+export type ApiScanBlockReason =
+  | "target_inactive"
+  | "tool_disabled"
+  | "no_api_base_url"
+  | "no_endpoints";
+
+/**
+ * Whether a scheduled active API scan against this target would actually
+ * dispatch, and why not when it would not.
+ */
+export type ApiScanReadiness = {
+  ready: boolean;
+  reason: Nullable<ApiScanBlockReason>;
+  detail: Nullable<string>;
+};
+
+/**
+ * Target-scoped schedule view: every scan type, plus this target's API-scan
+ * readiness.
+ */
+export type TargetScanSchedules = {
+  target_id: number;
+  workspace_id: number;
+  api_scan_readiness: ApiScanReadiness;
+  schedules: ScanScheduleView[];
+};
+
+/**
+ * Workspace-scoped schedule view: the defaults every target inherits.
+ */
+export type WorkspaceScanSchedules = {
+  workspace_id: number;
+  // The one API-scan refusal a workspace-level view can answer with
+  // certainty: nuclei's `api_scan` surface is workspace-scoped, so when it
+  // is off, no target here will be probed no matter what the schedule says.
+  // The other three reasons are per-target facts (see ApiScanReadiness) and
+  // stay as a standing caveat under the panel rather than a false per-row
+  // claim.
+  api_scan_tool_enabled: boolean;
+  schedules: ScanScheduleView[];
+};
+
+// Tri-state on the wire, matching the backend: omit a field to leave it
+// alone, send null to go back to inheriting, send a value to decide at this
+// level.
+export type ScanSchedulePatch = {
+  enabled?: Nullable<boolean>;
+  interval_hours?: Nullable<number>;
+};

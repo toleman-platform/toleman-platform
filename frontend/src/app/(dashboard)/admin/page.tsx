@@ -3,13 +3,23 @@
 import { useMemo } from "react";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
-import { Users, Plug, Wrench, Store, Lock, ShieldAlert, type LucideIcon } from "lucide-react";
+import {
+  Users,
+  Plug,
+  Wrench,
+  Store,
+  Lock,
+  ShieldAlert,
+  CalendarClock,
+  type LucideIcon,
+} from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { UserManagement } from "./user-management";
 import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
 import { ToolMarketplace } from "./tool-marketplace";
 import { SecurityLog } from "./security-log";
+import { ScanSchedules } from "./scan-schedules";
 
 const TABS = [
   { id: "users", label: "User Management", icon: Users },
@@ -17,6 +27,7 @@ const TABS = [
   { id: "integrations", label: "Global Integrations", icon: Plug },
   { id: "tools", label: "Tools Health", icon: Wrench },
   { id: "tool-marketplace", label: "Tool Marketplace", icon: Store },
+  { id: "scan-schedules", label: "Scheduled Scans", icon: CalendarClock },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -32,6 +43,14 @@ type TabId = (typeof TABS)[number]["id"];
 const GROUPS: { id: string; label: string; icon: LucideIcon; tabs: TabId[] }[] = [
   { id: "access", label: "Access", icon: Lock, tabs: ["users", "security-log"] },
   { id: "tooling", label: "Tooling", icon: Plug, tabs: ["integrations", "tools", "tool-marketplace"] },
+  // (#306) Scheduling is its own group rather than a sixth tab under
+  // Tooling. Per #224 above, Control Plane keeps what this app needs to
+  // *run*, and which background jobs fire and how often is exactly that;
+  // it is not scan policy (which lives in /guardrails), it is the
+  // operational clock behind the Celery beat process. Its own group also
+  // leaves room for the other platform-wide schedules (repo sync) to join
+  // it rather than being wedged into a list about tools.
+  { id: "scheduling", label: "Scheduling", icon: CalendarClock, tabs: ["scan-schedules"] },
 ];
 
 const TAB_IDS = TABS.map((t) => t.id);
@@ -54,7 +73,7 @@ export default function AdminPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Control Plane"
-        description="Users, integrations, and scanner health"
+        description="Users, integrations, scanner health, and scan scheduling"
       />
 
       <div className="flex flex-col gap-3">
@@ -110,6 +129,7 @@ export default function AdminPage() {
       {tab === "integrations" && <GlobalIntegrations />}
       {tab === "tools" && <ToolsHealth />}
       {tab === "tool-marketplace" && <ToolMarketplace />}
+      {tab === "scan-schedules" && <ScanSchedules />}
     </div>
   );
 }

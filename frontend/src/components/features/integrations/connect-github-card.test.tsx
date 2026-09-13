@@ -150,6 +150,23 @@ describe("ConnectGithubCard, creating an App from an address GitHub cannot reach
     expect(connectButton().disabled).toBe(true);
   });
 
+  it("reads a protocol-relative value the same way the backend does", async () => {
+    // "//localhost:8000" has a host, and _webhook_hostname reads it fine.
+    // Before the protocol-relative branch, hostOf returned "" for it and the
+    // card rendered the *unset* copy about a value whose host the backend had
+    // just read -- the two parsers disagreeing, which is the one thing hostOf
+    // exists to prevent.
+    githubAppStatus.mockResolvedValue(
+      statusPayload({ webhook_reachable: false, public_api_url: "//localhost:8000" }),
+    );
+
+    render(<ConnectGithubCard />);
+
+    expect(await screen.findByText(/resolves only on this machine or inside this network/)).toBeDefined();
+    expect(screen.queryByText(/has no usable address in it/)).toBeNull();
+    expect(connectButton().disabled).toBe(true);
+  });
+
   it("leaves Connect enabled when the backend reports a reachable host", async () => {
     githubAppStatus.mockResolvedValue(statusPayload());
 

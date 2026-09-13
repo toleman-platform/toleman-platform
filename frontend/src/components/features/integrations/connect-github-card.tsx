@@ -42,17 +42,22 @@ type GithubAppStatus = {
  *     `_webhook_hostname` strips.
  *   - a base URL would let a schemeless value containing a mid-string `//`
  *     ("foo//bar") resolve as a *path* against that base, handing back the
- *     base's own hostname as if it were the operator's. So: no base. A
- *     value with no `//` gets a scheme prepended instead, which is the same
- *     allowance the backend makes.
+ *     base's own hostname as if it were the operator's. So: no base, and
+ *     the three shapes are separated explicitly instead. A protocol-relative
+ *     value ("//localhost:8000") wears its host openly and only needs a
+ *     scheme; one with no `//` at all gets the same scheme-prepending
+ *     allowance the backend makes; anything else is parsed as written.
  *
  * Never throws; an unparseable value is "".
  */
 function hostOf(publicApiUrl: string): string {
   const candidate = publicApiUrl.trim();
   if (!candidate) return "";
+  let absolute = candidate;
+  if (candidate.startsWith("//")) absolute = `http:${candidate}`;
+  else if (!candidate.includes("//")) absolute = `http://${candidate}`;
   try {
-    const { hostname } = new URL(candidate.includes("//") ? candidate : `http://${candidate}`);
+    const { hostname } = new URL(absolute);
     return hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "").toLowerCase();
   } catch {
     return "";

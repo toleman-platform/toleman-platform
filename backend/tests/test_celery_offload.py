@@ -28,6 +28,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
+from app.core.scan_health import ScanHealth
 from app.core.security import create_session_token, hash_password
 from app.main import app
 from app.models.models import (
@@ -235,7 +236,13 @@ def test_scan_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, mon
 
     monkeypatch.setattr(scan_tasks, "engine", engine)
     monkeypatch.setattr(scan_tasks.runner, "clone_repo", _fake_clone_repo)
-    monkeypatch.setattr(scan_tasks.runner, "run_tool", lambda tool, repo_path: {})
+    # (#229) run_scan calls run_tool_checked, which returns the report and a
+    # ScanHealth beside it. A healthy one here keeps this exercising the
+    # ordinary completed path.
+    monkeypatch.setattr(
+        scan_tasks.runner, "run_tool_checked",
+        lambda tool, repo_path: ({}, ScanHealth(tool=tool)),
+    )
     monkeypatch.setattr(scan_tasks.runner, "normalize_file_path", lambda file_path, repo_path: file_path)
 
     res = client.post("/api/scans/run", params={"target_id": target_id, "tool": "semgrep"})
@@ -269,7 +276,7 @@ def test_scan_dispatch_completes_not_failed_when_tool_not_applicable(client, eng
         from app.scanners.runner import ToolNotApplicable
         raise ToolNotApplicable("no Go files in this repository")
 
-    monkeypatch.setattr(scan_tasks.runner, "run_tool", _not_applicable)
+    monkeypatch.setattr(scan_tasks.runner, "run_tool_checked", _not_applicable)
 
     res = client.post("/api/scans/run", params={"target_id": target_id, "tool": "gosec"})
     assert res.status_code == 202

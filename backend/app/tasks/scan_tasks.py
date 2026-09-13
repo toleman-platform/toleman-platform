@@ -131,12 +131,28 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                 session.commit()
                 return {"scan_id": scan.id, "ingested": 0, "skipped": "not an AI/ML repo"}
 
-            raw = runner.run_tool(tool, repo_path)
+            # (#229) run_tool_checked, not run_tool: this is the path that
+            # can *mitigate* existing findings, so it needs the runner's
+            # verdict on whether the run actually checked anything, not just
+            # its output. Concurrent scans of the same tool were racing one
+            # shared trivy vulnerability-DB cache, and the loser exited 0
+            # with valid JSON and no findings -- which then cleared five live
+            # CVEs off the record. ingest_findings refuses to mitigate on a
+            # run that is not positively healthy.
+            raw, health = runner.run_tool_checked(tool, repo_path)
             parsed = PARSER_MAP[tool](raw)
             for item in parsed:
                 item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
-            count = ingest_findings(session, target, scan, tool=tool, branch=target.default_branch, parsed=parsed)
-            return {"scan_id": scan.id, "ingested": count}
+            if not health.healthy:
+                logger.warning(
+                    "scan %s (%s on target %s) is not authoritative: %s",
+                    scan.id, tool, target.id, health.summary(),
+                )
+            count = ingest_findings(
+                session, target, scan,
+                tool=tool, branch=target.default_branch, parsed=parsed, health=health,
+            )
+            return {"scan_id": scan.id, "ingested": count, "health": health.status}
         except runner.ToolNotApplicable as exc:
             # Same distinction AI_ONLY_TOOLS draws above: nothing here for
             # this tool to look at (e.g. gosec on a repo with no Go source)

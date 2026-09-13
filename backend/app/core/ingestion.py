@@ -11,6 +11,7 @@ from app.core.jira_integration import create_jira_ticket_for_finding, jira_confi
 from app.core.notifications import dispatch_notification
 from app.core.siem_export import send_finding_to_siem
 from app.core.fp_learning import apply_auto_suppression, find_matching_rule
+from app.core.scan_health import SUSPECT, UNKNOWN, ScanHealth
 from app.core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -120,7 +121,52 @@ def _maybe_notify_new_finding(session: Session, target: Target, finding: Finding
         logger.exception("Notification dispatch failed for finding %s", finding.id)
 
 
-def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, branch: str, parsed: list[dict]) -> int:
+def _may_mitigate(parsed: list[dict], health: ScanHealth | None) -> tuple[bool, str]:
+    """May this run clear findings it did not report? (#229)
+
+    Returns ``(allowed, reason_if_not)``.
+
+    The rule this enforces is the one ``app/core/osv_malware.py`` already
+    enforces for malicious packages, where a failed check returns ``None``
+    and a completed-but-clean one returns ``{}`` so an outage can never read
+    as an all-clear. A scanner's empty report carries no such distinction on
+    its own, so:
+
+      * A run with a health signal may mitigate only when that signal is
+        healthy. A degraded run is refused even when it *did* report
+        findings: a trivy process that saw two of five CVEs would otherwise
+        mitigate the other three, which is #229's failure with a smaller
+        blast radius, not a different one.
+      * A run with no health signal (the CI/CD push path, which has no
+        scanner of ours behind it) may mitigate only when it actually
+        reported something. A run that produced findings demonstrably ran;
+        an empty result backed by no evidence at all is exactly the
+        ambiguity this issue is about, and it clears nothing.
+
+    Findings left Open by a refused run are not lost: the next healthy run
+    of the same tool mitigates them normally if they really are gone.
+    """
+    if health is not None:
+        if health.healthy:
+            return True, ""
+        return False, health.summary()
+    if parsed:
+        return True, ""
+    return False, (
+        "this run reported no findings and supplied no evidence that it completed, "
+        "so existing findings were left as they are"
+    )
+
+
+def ingest_findings(
+    session: Session,
+    target: Target,
+    scan: Scan,
+    tool: str,
+    branch: str,
+    parsed: list[dict],
+    health: ScanHealth | None = None,
+) -> int:
     """
     Shared ingestion path for Push (CI/CD) and Pull (native) scans.
 
@@ -128,6 +174,12 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
       hash exists -> update last_seen
       hash new -> create Finding
       hash present in earlier scan of same target/branch but absent this run -> Mitigated
+
+    ``health`` (#229) is the runner's verdict on whether this run can be
+    trusted to have checked what it claims; see ``_may_mitigate`` for how it
+    gates that last rule, and ``app/core/scan_health.py`` for why a scanner
+    needs one at all. ``None`` means the caller has no evidence to offer,
+    which is deliberately not the same as "healthy".
     """
     seen_hashes = set()
     # New Finding rows created this run, so the Jira auto-create hook below
@@ -221,24 +273,55 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
         _maybe_export_to_siem(session, target, finding)
         _maybe_notify_new_finding(session, target, finding)
 
-    # mark findings absent from this run (same target+branch+tool, still Open) as Mitigated
-    stale = session.exec(
-        select(Finding).where(
-            Finding.target_id == target.id,
-            Finding.branch == branch,
-            Finding.tool == tool,
-            Finding.state == FindingState.OPEN,
+    # mark findings absent from this run (same target+branch+tool, still Open)
+    # as Mitigated -- but only when this run is allowed to make that claim
+    # (#229). Clearing a live vulnerability off the record is the most
+    # consequential thing this function does and the hardest for a user to
+    # notice, so it is the one step that demands positive evidence rather
+    # than the absence of an error.
+    may_mitigate, blocked_reason = _may_mitigate(parsed, health)
+    if may_mitigate:
+        stale = session.exec(
+            select(Finding).where(
+                Finding.target_id == target.id,
+                Finding.branch == branch,
+                Finding.tool == tool,
+                Finding.state == FindingState.OPEN,
+            )
+        ).all()
+        for f in stale:
+            if f.dedup_hash not in seen_hashes:
+                _transition(session, f, FindingState.MITIGATED, "not present in latest scan")
+    else:
+        logger.warning(
+            "scan %s (%s on target %s) was not treated as authoritative; "
+            "existing findings left untouched: %s",
+            scan.id, tool, target.id, blocked_reason,
         )
-    ).all()
-    for f in stale:
-        if f.dedup_hash not in seen_hashes:
-            _transition(session, f, FindingState.MITIGATED, "not present in latest scan")
 
     session.commit()
 
     scan.findings_count = len(parsed)
     scan.status = "completed"
     scan.completed_at = utcnow()
+    # Persist the verdict alongside the result it qualifies, so every surface
+    # that renders this scan can say the run was not treated as authoritative
+    # instead of showing a bare, clean-looking zero. UNKNOWN is kept distinct
+    # from both of the others on purpose: it means nobody assessed this run,
+    # which is a weaker statement than "healthy" and a different one from
+    # "suspect" (see app/core/scan_health.py).
+    if health is None:
+        scan.health = UNKNOWN
+        scan.health_note = "" if may_mitigate else blocked_reason
+    else:
+        scan.health = health.status
+        scan.health_note = health.summary()
+    if not may_mitigate and scan.health == SUSPECT:
+        # Say what was *done* about it, not just what was wrong with it. A
+        # user reading "the database was missing" still has to guess whether
+        # their findings were cleared; that guess is the whole problem.
+        consequence = "Existing findings were left open rather than mitigated."
+        scan.health_note = f"{scan.health_note}. {consequence}" if scan.health_note else consequence
     session.add(scan)
     session.commit()
 

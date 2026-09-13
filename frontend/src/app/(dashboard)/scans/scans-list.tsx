@@ -11,7 +11,7 @@ import { CriticalityChip } from "@/components/features/targets";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
-import { ScanProgress } from "@/components/features/scans";
+import { ScanProgress, ScanHealthBadge } from "@/components/features/scans";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { SelectAllVisible } from "@/components/ui/list-row";
@@ -257,6 +257,9 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
             const state = dispatchState[t.id] ?? "idle";
             const running = activeScans[String(t.id)] ?? [];
             const scanning = isTargetScanning(t.id);
+            // Tolerant of an older backend that predates suspect_tools (#229):
+            // absent means "nothing to report", not a crash on this row.
+            const suspectTools = entry?.suspect_tools ?? [];
             // Disabled while dispatching or while work is genuinely in
             // flight, so a second click cannot queue a duplicate scan.
             const busy = state === "dispatching" || scanning;
@@ -287,6 +290,23 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                       {entry?.last_scan_at ? `last scan ${timeAgo(entry.last_scan_at)}` : "never scanned"}
                       {entry && entry.tools.length > 0 ? ` · ${entry.tools.join(", ")}` : ""}
                     </div>
+                    {/* (#229) The line above is reassuring by construction:
+                        "last scan 4m ago · trivy" says the repo was checked.
+                        When that most recent run was the one the platform
+                        refused to trust (a scanner that raced another scan
+                        over its shared vulnerability DB and came back empty),
+                        saying so here is the difference between a user
+                        re-running it and a user believing a clean result
+                        nothing actually produced. */}
+                    {suspectTools.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        <ScanHealthBadge health="suspect" className="text-[10px]" />
+                        <span className="text-[11px] text-muted-foreground">
+                          {suspectTools.join(", ")} last came back unverified · nothing was mitigated. Re-run
+                          to confirm.
+                        </span>
+                      </div>
+                    )}
                     {scanning && (
                       <div className="mt-1.5 flex flex-col gap-1">
                         {running.map((scan) => (

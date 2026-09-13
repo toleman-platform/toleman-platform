@@ -4,6 +4,7 @@ Each parser returns a list of dicts with keys:
   rule_id, title, description, file_path, line_start, line_end, severity, snippet, cve_id
 """
 from app.core.github_dependency_graph import parse_spdx_packages
+from app.core.scan_health import ScanHealth
 from app.models.models import Severity
 
 
@@ -427,6 +428,37 @@ def parse_sarif(raw: dict) -> list[dict]:
                 "tool_name": tool_name,
             })
     return out
+
+
+def sarif_health(raw: dict, tool: str) -> ScanHealth:
+    """What a pushed SARIF document says about its own run (#229).
+
+    SARIF carries the distinction this issue is about natively:
+    ``runs[].invocations[].executionSuccessful`` is the producing tool's own
+    statement that it completed. An empty ``results`` array with
+    ``executionSuccessful: false`` is a CI job that broke, not a clean
+    repository, and it must not be allowed to mitigate anything.
+
+    Absent invocation data is treated as healthy, matching both the SARIF
+    spec's own default and the existing contract of this endpoint: a CI job
+    that posts results is asserting it ran, and this platform has no other
+    evidence to weigh. That is a weaker guarantee than the native scanner
+    path gets (where we run the tool and can inspect its cache and stderr),
+    which is exactly why it is written down here rather than assumed.
+    """
+    health = ScanHealth(tool=tool)
+    for run in raw.get("runs", []) or []:
+        if not isinstance(run, dict):
+            continue
+        for invocation in run.get("invocations", []) or []:
+            if isinstance(invocation, dict) and invocation.get("executionSuccessful") is False:
+                driver = run.get("tool", {}).get("driver", {})
+                name = driver.get("name") if isinstance(driver, dict) else None
+                health.degrade(
+                    f"the pushed SARIF reports that {name or 'the producing tool'} did not "
+                    "complete successfully, so its result set may be incomplete"
+                )
+    return health
 
 
 # Shared by app/api/scans.py (synchronous "Pull" scan endpoint) and

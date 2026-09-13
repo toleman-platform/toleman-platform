@@ -1,7 +1,8 @@
 "use client";
 
-import { Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Loader2, CheckCircle2, XCircle, Clock, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import type { ScanHealth } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /**
@@ -99,6 +100,71 @@ export function ScanStatusBadge({
         {tool ? ` · ${tool}` : ""}
       </span>
     </Badge>
+  );
+}
+
+/**
+ * The "we did not trust this run" marker (issue #229).
+ *
+ * A scan can complete, exit cleanly and report zero findings while having
+ * read a half-written vulnerability database. `Completed · 0 findings` is
+ * then the most misleading thing the UI can say: it reads as a clean repo
+ * for a repo with live CVEs. This badge is what stops it reading that way.
+ *
+ * Renders nothing for "healthy" and nothing for "unknown". Unknown is every
+ * scan recorded before this existed plus every push-ingested run with no
+ * evidence either way; badging those would put a warning on a year of
+ * legitimate history, and a warning on everything is a warning on nothing.
+ * The UI simply makes no claim there, which is the honest position.
+ */
+export function ScanHealthBadge({ health, className }: { health: ScanHealth; className?: string }) {
+  if (health !== "suspect") return null;
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "inline-flex items-center gap-1.5 border-amber-500/40 bg-amber-500/10 font-medium text-amber-700 dark:text-amber-400",
+        className
+      )}
+    >
+      <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span>Not authoritative</span>
+    </Badge>
+  );
+}
+
+/**
+ * The badge plus the reason, for surfaces with room for a sentence.
+ *
+ * The reason is always shown in full rather than truncated behind a hover:
+ * "not authoritative" on its own tells a user something is wrong without
+ * telling them what to do, and the note is the half that does (a stale
+ * vulnerability DB and a tool that resolved no dependency manifests call
+ * for different responses).
+ */
+export function ScanHealthNotice({
+  health,
+  note,
+  className,
+}: {
+  health: ScanHealth;
+  note?: string | null;
+  className?: string;
+}) {
+  if (health !== "suspect") return null;
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs",
+        className
+      )}
+    >
+      <div className="flex items-center gap-1.5 font-medium text-amber-700 dark:text-amber-400">
+        <ShieldAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span>This run was not treated as authoritative</span>
+      </div>
+      {note ? <p className="text-muted-foreground">{note}</p> : null}
+    </div>
   );
 }
 

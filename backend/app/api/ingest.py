@@ -5,7 +5,7 @@ from app.api.deps import get_session, require_workspace
 from app.core.ingestion import ingest_findings
 from app.core.rate_limit import enforce_rate_limit
 from app.models.models import Scan, Target, Workspace
-from app.scanners.parsers import parse_sarif
+from app.scanners.parsers import parse_sarif, sarif_health
 
 router = APIRouter(prefix="/api/ingest", tags=["ingest"])
 
@@ -45,5 +45,13 @@ def push_ingest(
     session.commit()
     session.refresh(scan)
 
-    count = ingest_findings(session, target, scan, tool=tool, branch=branch, parsed=parsed)
+    # (#229) A pushed document that declares its own run unsuccessful must
+    # not clear findings: an empty `results` array from a CI job that broke
+    # is not a clean repository. SARIF states this directly via
+    # runs[].invocations[].executionSuccessful, so unlike the native scanner
+    # path there is nothing to infer here -- see parsers.sarif_health.
+    count = ingest_findings(
+        session, target, scan,
+        tool=tool, branch=branch, parsed=parsed, health=sarif_health(payload, tool),
+    )
     return {"scan_id": scan.id, "ingested": count}

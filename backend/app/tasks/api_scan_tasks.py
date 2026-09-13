@@ -5,6 +5,7 @@ from sqlmodel import Session
 
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
 from app.core.db import engine
+from app.core import scan_health
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
 from app.models.models import NotificationEventType, Scan, Target
@@ -84,8 +85,18 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
 
             raw_results = runner.run_nuclei(urls)
             parsed = parsers.parse_nuclei(raw_results)
+            # (#229) Every way this path can fail to actually scan -- no
+            # scannable endpoints, a missing nuclei binary, a run that timed
+            # out -- lands in one of the handlers below and marks the Scan
+            # failed before ingestion is ever reached. So arriving here is
+            # itself the evidence that the run completed, and it is asserted
+            # explicitly rather than left as None (which ingest_findings
+            # treats as "no evidence" and which would stop a legitimately
+            # clean DAST run from ever clearing a fixed finding).
             count = ingest_findings(
-                session, target, scan, tool="api-scan", branch=target.default_branch, parsed=parsed
+                session, target, scan,
+                tool="api-scan", branch=target.default_branch, parsed=parsed,
+                health=scan_health.trusted("api-scan"),
             )
             return {"scan_id": scan.id, "ingested": count, "endpoints_scanned": len(endpoints)}
         except RETRYABLE_EXCEPTIONS:

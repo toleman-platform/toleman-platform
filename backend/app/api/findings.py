@@ -820,10 +820,15 @@ def list_finding_groups(
     )
 
 
-@router.get("/facets/tools")
-def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
-    """Distinct tool names across findings visible to the caller (issue #57),
-    for populating the tool filter."""
+def distinct_finding_tools(session: Session, user: User) -> list[str]:
+    """Distinct tool names across findings visible to the caller (issue #57).
+
+    The plain function behind GET /facets/tools, so other modules
+    (app/api/reports.py validates its `tool` filter against this) can reuse
+    it without calling a route handler as if it were one -- that works, but
+    only by accident of its `Depends(...)` defaults, and it breaks silently
+    the moment the endpoint grows a parameter.
+    """
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
@@ -832,6 +837,27 @@ def list_tool_facets(session: Session = Depends(get_session), user: User = Depen
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     rows = session.exec(query).all()
     return sorted(rows)
+
+
+def distinct_target_environments(session: Session, user: User) -> list[str]:
+    """(#251) Distinct environments among targets the caller can see.
+
+    Reads Target rows, not findings, so a target nobody has scanned yet is
+    still a valid thing to filter by.
+    """
+    return _target_facet(session, user, Target.environment)
+
+
+def distinct_target_owners(session: Session, user: User) -> list[str]:
+    """(#251) Distinct owners among targets the caller can see."""
+    return _target_facet(session, user, Target.owner)
+
+
+@router.get("/facets/tools")
+def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
+    """Distinct tool names across findings visible to the caller (issue #57),
+    for populating the tool filter."""
+    return distinct_finding_tools(session, user)
 
 
 class CategoryFacet(BaseModel):
@@ -915,7 +941,7 @@ def list_environment_facets(
     nobody has labelled yet would be the largest and least useful entry in
     it on day one.
     """
-    return _target_facet(session, user, Target.environment)
+    return distinct_target_environments(session, user)
 
 
 @router.get("/facets/owners")
@@ -923,7 +949,7 @@ def list_owner_facets(
     session: Session = Depends(get_session), user: User = Depends(current_user)
 ) -> list[str]:
     """(#251) Distinct owners among targets the caller can see."""
-    return _target_facet(session, user, Target.owner)
+    return distinct_target_owners(session, user)
 
 
 def _target_facet(session: Session, user: User, column) -> list[str]:

@@ -43,7 +43,7 @@ import io
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time
-from typing import NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
@@ -54,8 +54,9 @@ from app.api.deps import get_session
 from app.api.findings import (
     _apply_category,
     _filtered_findings_query,
-    _target_facet,
-    list_tool_facets,
+    distinct_finding_tools,
+    distinct_target_environments,
+    distinct_target_owners,
 )
 from app.core.csv_export import safe_csv_writer
 from app.core.downloads import attachment_disposition
@@ -570,12 +571,25 @@ def build_posture_report(
             # not become less true because the reader asked to see only
             # critical findings. FILTER_SCOPE_NOTE says so on the document.
             #
-            # It IS bounded by the window's end, though: a Q1 report that
-            # lists a September scan is not describing Q1. Only the upper
-            # bound is applied -- a lower bound would drop repos last
-            # scanned before the window and read as a coverage gap that
-            # doesn't exist, which is the more dangerous error for an audit
-            # artifact. With no window, `as_of` is now and this is a no-op.
+            # It IS bounded by the window's end, and only at that end. The
+            # reason this section can be bounded at all, when triage state
+            # and SBOM composition cannot, is reconstructability: Scan rows
+            # are immutable history, so "the latest run per tool on or
+            # before `as_of`" is exactly recoverable rather than inferred.
+            #
+            # Why only the upper bound, judged by the same test as every
+            # other filter here -- does the alternative print something
+            # false? Dropping scans after `as_of` deletes statements that
+            # were false at `as_of` (that September run had not happened in
+            # Q1). Dropping scans before the window would delete statements
+            # that were *true* at `as_of`: a repo last scanned 2025-12-15
+            # genuinely had that as its latest scan on 2026-03-31, and
+            # removing the row would substitute a fabricated "not scanned"
+            # and destroy the staleness signal, which is the most useful
+            # thing a coverage table carries. The failure directions are
+            # asymmetric, so the bounds are too.
+            #
+            # With no window, `as_of` is now and this is a no-op.
             scan_query = select(Scan).where(Scan.target_id == target.id)
             if filters.window_to is not None:
                 scan_query = scan_query.where(Scan.started_at <= as_of)
@@ -597,12 +611,23 @@ def build_posture_report(
                     }
                 )
             if not all_scans:
+                # "never scanned" is only true when the report has no window
+                # to be relative to. Under one it would be an overstatement:
+                # the repo may well have been scanned since, just not by the
+                # date this report speaks as of. Coverage rows get read on
+                # their own, lifted into a ticket away from the header that
+                # would have qualified them, so the row says it itself.
+                never_scanned = (
+                    "never scanned"
+                    if filters.window_to is None
+                    else f"not scanned as of {as_of.date().isoformat()}"
+                )
                 scan_rows.append(
                     {
                         "target": target.name,
                         "tool": "",
                         "branch": target.default_branch,
-                        "status": "never scanned",
+                        "status": never_scanned,
                         "started_at": "",
                         "completed_at": "",
                         "findings_count": 0,
@@ -968,20 +993,27 @@ def _report_filename(data: dict, extension: str) -> str:
     return f"{'-'.join(parts)}.{extension}"
 
 
-def _reject_unknown(label: str, values: Optional[list[Optional[str]]], allowed) -> None:
+def _reject_unknown(label: str, values: Optional[list[Optional[str]]], allowed: Callable[[], list[str]]) -> None:
     """400 on a filter value that matches nothing this caller could filter by.
 
     The alternative is a 200 carrying an empty report, which for a
     compliance artifact is the worst possible outcome: it looks like a clean
     result, and the Applied Filters block faithfully prints the typo as
-    though it were meaningful. `allowed` is always derived from the caller's
-    own visible data, so the error message cannot enumerate another
+    though it were meaningful. The candidate set is always derived from the
+    caller's own visible data, so the error message cannot enumerate another
     tenant's values.
+
+    `allowed` is a callable, not a list, because building those candidate
+    sets costs real queries (a SELECT DISTINCT over findings, plus one per
+    target facet) and the overwhelmingly common export applies none of these
+    filters at all. Passing lists made every unfiltered report pay for three
+    queries whose results were never read.
     """
-    allowed_set = set(allowed)
-    for value in values or []:
-        if value is None:
-            continue
+    provided = [v for v in (values or []) if v is not None]
+    if not provided:
+        return
+    allowed_set = set(allowed())
+    for value in provided:
         if value not in allowed_set:
             options = sorted(allowed_set)
             raise HTTPException(
@@ -1062,17 +1094,21 @@ def posture_report(
     # through a different door. The candidate sets are the caller's own
     # facets, so a rejection message can never enumerate another tenant's
     # tools, environments or owners.
-    _reject_unknown("category", [category], all_categories())
+    #
+    # Each is passed as a lambda: building these costs queries, and the
+    # common export applies none of these filters, so nothing here should
+    # touch the database unless there is a value to check.
+    _reject_unknown("category", [category], all_categories)
     _reject_unknown(
         "tool",
         tool,
         # Registry tools are accepted even with no findings yet: filtering
         # by a configured-but-not-yet-run scanner is a legitimate (empty)
         # question, unlike a misspelling of one.
-        sorted(set(all_known_tools()) | set(list_tool_facets(session, user))),
+        lambda: sorted(set(all_known_tools()) | set(distinct_finding_tools(session, user))),
     )
-    _reject_unknown("environment", [environment], _target_facet(session, user, Target.environment))
-    _reject_unknown("owner", [owner], _target_facet(session, user, Target.owner))
+    _reject_unknown("environment", [environment], lambda: distinct_target_environments(session, user))
+    _reject_unknown("owner", [owner], lambda: distinct_target_owners(session, user))
 
     if sections is not None:
         # `?sections=` with nothing after it parses as [""], not [], so the

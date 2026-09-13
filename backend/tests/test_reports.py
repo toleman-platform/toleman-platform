@@ -918,6 +918,22 @@ def test_posture_filename_does_not_let_a_target_name_steer_the_header(client, en
     assert "filename=other" not in disposition
 
 
+def test_posture_filename_keeps_its_extension_when_the_name_is_long(client, engine):
+    """Target.name has no length cap in the schema, and a plain slice at the
+    length limit pushed the ".csv"/".pdf" off the end, so the file saved
+    extension-less. The stem absorbs the truncation instead."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="r" * 200)
+
+    for fmt in ("csv", "pdf"):
+        res = client.get(f"/api/reports/posture?target_id={target_id}&format={fmt}")
+        assert res.status_code == 200, fmt
+        disposition = res.headers["content-disposition"]
+        ascii_name = disposition.split('filename="')[1].split('"')[0]
+        assert ascii_name.endswith(f".{fmt}"), (fmt, ascii_name)
+        assert disposition.endswith(f".{fmt}"), (fmt, disposition)
+
+
 def test_posture_filename_keeps_a_non_ascii_target_name(client, engine):
     """Sanitising to ASCII alone is safe but lossy: every non-Latin repo
     would file under one identical placeholder name. RFC 6266 sends both --
@@ -1063,6 +1079,22 @@ def test_posture_discloses_what_is_not_reconstructed_as_of_the_window(client, en
     text = _pdf_text(pdf.content)
     assert "Figures as of" in text
     assert "current-state" in text
+
+
+def test_posture_never_scanned_is_qualified_under_a_window(client, engine):
+    """A coverage row gets read on its own, lifted into a ticket away from
+    the header that would have qualified it, so "never scanned" must not
+    stand unqualified on a report that only speaks as of a past date."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="unscanned-repo")
+
+    windowed = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&date_to=2026-01-31")
+    row = next(r for r in _rows(windowed) if len(r) == 7 and r[0] == "unscanned-repo")
+    assert row[3] == "not scanned as of 2026-01-31"
+
+    plain = client.get(f"/api/reports/posture?target_id={target_id}&format=csv")
+    plain_row = next(r for r in _rows(plain) if len(r) == 7 and r[0] == "unscanned-repo")
+    assert plain_row[3] == "never scanned"
 
 
 def test_posture_undated_report_is_still_as_of_now(client, engine):

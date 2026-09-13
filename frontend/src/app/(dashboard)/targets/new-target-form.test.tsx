@@ -13,14 +13,13 @@ import { NewTargetForm } from "./new-target-form";
 //
 // Only the api boundary and the router are mocked, so the picker and the
 // AsyncContent state ladder under test are the real ones.
-const { workspaces, createTarget, me } = vi.hoisted(() => ({
+const { workspaces, createTarget } = vi.hoisted(() => ({
   workspaces: vi.fn(),
   createTarget: vi.fn(),
-  me: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
-  api: { workspaces, createTarget, me },
+  api: { workspaces, createTarget },
   workspaceDisplayName: (w: { name: string }) => w.name,
 }));
 
@@ -28,13 +27,9 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
-const ADMIN = { id: 1, email: "a@example.com", name: "A", role: "admin" };
-const DEVELOPER = { id: 2, email: "d@example.com", name: "D", role: "developer" };
-
 afterEach(() => {
   workspaces.mockReset();
   createTarget.mockReset();
-  me.mockReset();
 });
 
 describe("NewTargetForm workspace picker", () => {
@@ -43,9 +38,8 @@ describe("NewTargetForm workspace picker", () => {
       { id: 7, name: "prod" },
       { id: 9, name: "staging" },
     ]);
-    me.mockResolvedValue(ADMIN);
     createTarget.mockResolvedValue({ id: 1 });
-    render(<NewTargetForm />);
+    render(<NewTargetForm isAdmin={true} />);
 
     const picker = await screen.findByLabelText("Workspace");
     // The regression itself: a free-text/number workspace id.
@@ -68,9 +62,8 @@ describe("NewTargetForm workspace picker", () => {
 
   it("defaults to the only workspace when there is exactly one", async () => {
     workspaces.mockResolvedValue([{ id: 4, name: "default" }]);
-    me.mockResolvedValue(ADMIN);
     createTarget.mockResolvedValue({ id: 1 });
-    render(<NewTargetForm />);
+    render(<NewTargetForm isAdmin={true} />);
 
     await screen.findByLabelText("Workspace");
     fireEvent.change(screen.getByPlaceholderText(/Target name/), { target: { value: "repo" } });
@@ -87,10 +80,13 @@ describe("NewTargetForm workspace picker", () => {
 });
 
 describe("NewTargetForm empty workspace list", () => {
+  // The role arrives as a prop, resolved in the server render that already
+  // round-trips to the API (see targets/page.tsx). The form never fetches it,
+  // so there is no window where the list has resolved and the role has not,
+  // and none of these three states can flash into another.
   it("offers an admin the create flow, because for them empty means none exist", async () => {
     workspaces.mockResolvedValue([]);
-    me.mockResolvedValue(ADMIN);
-    render(<NewTargetForm />);
+    render(<NewTargetForm isAdmin={true} />);
 
     const link = await screen.findByRole("link", { name: "Create a workspace" });
     // Plain attribute check: this project does not load jest-dom matchers.
@@ -106,21 +102,22 @@ describe("NewTargetForm empty workspace list", () => {
     // end. Same confident-but-wrong empty state the picker itself avoids,
     // one level up.
     workspaces.mockResolvedValue([]);
-    me.mockResolvedValue(DEVELOPER);
-    render(<NewTargetForm />);
+    render(<NewTargetForm isAdmin={false} />);
 
-    await screen.findByText("No workspaces available to you");
+    await screen.findByText(/not a member of any/);
     expect(screen.queryByRole("link", { name: "Create a workspace" })).toBeNull();
   });
 
-  it("withholds the create CTA while the caller's role is still unknown", async () => {
-    // An unknown role takes the non-admin branch on purpose: "ask an admin"
-    // is merely unhelpful to an admin, a CTA that 403s is a dead end.
+  it("claims no membership fact when the role could not be determined", async () => {
+    // isAdmin === null is /api/auth/me having failed, which is neither
+    // "admin" nor "not a member". Withholding the action is cheap; asserting
+    // a membership the page never established is what would be wrong, and it
+    // would be wrong in front of the one person who could fix the situation.
     workspaces.mockResolvedValue([]);
-    me.mockRejectedValue(new Error("500"));
-    render(<NewTargetForm />);
+    render(<NewTargetForm isAdmin={null} />);
 
-    await screen.findByText("No workspaces available to you");
+    await screen.findByText("No workspaces available");
+    expect(screen.queryByText(/not a member of any/)).toBeNull();
     expect(screen.queryByRole("link", { name: "Create a workspace" })).toBeNull();
   });
 });
@@ -128,8 +125,7 @@ describe("NewTargetForm empty workspace list", () => {
 describe("NewTargetForm failed workspace list", () => {
   it("says the list failed rather than claiming there are none", async () => {
     workspaces.mockRejectedValue(new Error("503"));
-    me.mockResolvedValue(ADMIN);
-    render(<NewTargetForm />);
+    render(<NewTargetForm isAdmin={true} />);
 
     await screen.findByText("Couldn't load workspaces");
     expect(screen.getByText("503")).toBeTruthy();
@@ -143,8 +139,7 @@ describe("NewTargetForm failed workspace list", () => {
     // way back short of reloading the page. AsyncContent's retry is the point
     // of routing this through it rather than hand-rolling the ladder.
     workspaces.mockRejectedValueOnce(new Error("503")).mockResolvedValue([{ id: 3, name: "prod" }]);
-    me.mockResolvedValue(ADMIN);
-    render(<NewTargetForm />);
+    render(<NewTargetForm isAdmin={true} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
 

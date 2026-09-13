@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Building2 } from "lucide-react";
 import { api, workspaceDisplayName } from "@/lib/api";
-import type { AuthUser, WorkspaceSummary } from "@/lib/api";
-import { useAsyncData } from "@/hooks/use-async-data";
+import type { WorkspaceSummary } from "@/lib/api";
 import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,7 +15,15 @@ import { AsyncContent } from "@/components/ui/async-content";
 const LABELS = ["Prod", "Dev", "Internal", "Public"];
 const WEIGHT_BY_LABEL: Record<string, number> = { Prod: 5, Public: 4, Internal: 3, Dev: 2 };
 
-export function NewTargetForm() {
+export function NewTargetForm({
+  /** Whether the caller can create a workspace, resolved server-side by the
+   * page (#356). `null` means the role could not be determined at all
+   * (/api/auth/me failed), which is neither "admin" nor "not a member" and
+   * must not be rendered as either. */
+  isAdmin,
+}: {
+  isAdmin: boolean | null;
+}) {
   const router = useRouter();
   // Issue #356: this used to be a bare number input defaulting to a
   // hardcoded `1`, and the only place to look that number up was the
@@ -29,19 +36,6 @@ export function NewTargetForm() {
   // typed, and every other state of that list is handled below by
   // AsyncContent rather than hand-rolled here.
   const { workspaceId, setWorkspaceId, state } = useWorkspacePicker();
-
-  // GET /api/workspaces is filtered by accessible_workspace_ids, so an empty
-  // list means two different things: for an admin (unfiltered) nothing
-  // exists, for anyone else they are a member of nothing. Only the first is
-  // fixable by the person looking at it; create_workspace is admin-gated, so
-  // pointing a non-admin at /workspaces just hands them a 403. This fetch is
-  // the same one the settings page already makes client-side.
-  //
-  // An unknown role (still loading, or /api/auth/me failed) deliberately
-  // takes the non-admin copy: "ask an admin" is merely unhelpful to an
-  // admin, while a create CTA that 403s is a dead end for everyone else.
-  const { data: me } = useAsyncData<AuthUser>(() => api.me());
-  const isAdmin = me?.role === "admin";
 
   const [name, setName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
@@ -86,11 +80,21 @@ export function NewTargetForm() {
           skeletonCount={1}
           errorTitle="Couldn't load workspaces"
           emptyIcon={Building2}
-          emptyTitle={isAdmin ? "No workspaces yet" : "No workspaces available to you"}
+          // Three states, because an empty list means something different to
+          // each of them and only one of the three can act on it. An admin
+          // sees the unfiltered list, so empty really does mean none exist;
+          // anyone else sees only their memberships, so empty means they
+          // hold none, and /workspaces would 403 them. When the role is
+          // unknown the copy asserts neither: withholding the action is
+          // cheap, claiming a membership fact the page never established is
+          // not.
+          emptyTitle={isAdmin ? "No workspaces yet" : "No workspaces available"}
           emptyDescription={
             isAdmin
               ? "Every target belongs to a workspace. Create one, then come back and add this repository to it."
-              : "Every target belongs to a workspace, and you're not a member of any. Ask an admin to add you to one, or to create one."
+              : isAdmin === false
+                ? "Every target belongs to a workspace, and you're not a member of any. Ask an admin to add you to one, or to create one."
+                : "Every target belongs to a workspace. Create one on the Workspaces page, or ask an admin to add you to an existing one."
           }
           emptyAction={
             isAdmin ? (

@@ -12,6 +12,8 @@ import type {
   RaiseFixPrResult,
   SlaRule,
   SlaComplianceData,
+  ScoringWeights,
+  FindingScoreBreakdown,
 } from "@/types";
 import type { Nullable } from "@/std-lib";
 
@@ -188,4 +190,42 @@ export function deleteSlaRule(id: number): Promise<{ ok: boolean }> {
  */
 export function slaCompliance(): Promise<SlaComplianceData> {
   return jsonFetch<SlaComplianceData>("/api/dashboard/sla-compliance");
+}
+
+// (#201) Workspace-scoped risk-scoring weights. All three return the full
+// effective configuration, so the caller never has to merge a mutation's
+// result back into a list it is holding.
+
+/**
+ * Retrieves a workspace's effective risk-scoring weights.
+ */
+export function scoringWeights(workspaceId: number): Promise<ScoringWeights> {
+  return jsonFetch<ScoringWeights>(`/api/scoring-weights?workspace_id=${workspaceId}`);
+}
+
+/**
+ * Sets one signal's weight for a workspace.
+ */
+export function setScoringWeight(w: {
+  workspace_id: number;
+  signal: string;
+  weight: number;
+}): Promise<ScoringWeights> {
+  return jsonFetch<ScoringWeights>("/api/scoring-weights", { method: "PUT", body: JSON.stringify(w) });
+}
+
+/**
+ * Reverts one signal to the shipped baseline by dropping the override row.
+ */
+export function resetScoringWeight(ruleId: number): Promise<ScoringWeights> {
+  return jsonFetch<ScoringWeights>(`/api/scoring-weights/${ruleId}`, { method: "DELETE" });
+}
+
+/**
+ * Why this finding's priority score is the number it is (#201). Computed
+ * server-side from the workspace's weights and whatever enrichment is
+ * cached; never fetches from NVD, so this cannot hang on an upstream.
+ */
+export function findingScoreBreakdown(findingId: number): Promise<FindingScoreBreakdown> {
+  return jsonFetch<FindingScoreBreakdown>(`/api/findings/${findingId}/score-breakdown`);
 }

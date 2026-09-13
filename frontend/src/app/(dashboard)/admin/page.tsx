@@ -3,13 +3,14 @@
 import { useMemo } from "react";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
-import { Users, Plug, Wrench, Store, Lock, ShieldAlert, type LucideIcon } from "lucide-react";
+import { Users, Plug, Wrench, Store, Lock, ShieldAlert, SlidersHorizontal, Gauge, type LucideIcon } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { UserManagement } from "./user-management";
 import { GlobalIntegrations } from "./global-integrations";
 import { ToolsHealth } from "./tools-health";
 import { ToolMarketplace } from "./tool-marketplace";
 import { SecurityLog } from "./security-log";
+import { RiskScoring } from "./risk-scoring";
 
 const TABS = [
   { id: "users", label: "User Management", icon: Users },
@@ -17,6 +18,7 @@ const TABS = [
   { id: "integrations", label: "Global Integrations", icon: Plug },
   { id: "tools", label: "Tools Health", icon: Wrench },
   { id: "tool-marketplace", label: "Tool Marketplace", icon: Store },
+  { id: "risk-scoring", label: "Risk Scoring", icon: SlidersHorizontal },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -29,9 +31,15 @@ type TabId = (typeof TABS)[number]["id"];
 // used to live in Settings behind a target picker). Security Log (login/
 // logout/permission-change activity) lives alongside User Management under
 // Access -- both are admin-only account-control surfaces.
+//
+// (#201) "Risk" is its own group rather than a sixth Tooling tab: scoring
+// weights are not about what this app talks to, they are the calibration of
+// the one number every findings list sorts by. Grouping it under Tooling
+// would file "how we rank risk" next to "is gitleaks installed".
 const GROUPS: { id: string; label: string; icon: LucideIcon; tabs: TabId[] }[] = [
   { id: "access", label: "Access", icon: Lock, tabs: ["users", "security-log"] },
   { id: "tooling", label: "Tooling", icon: Plug, tabs: ["integrations", "tools", "tool-marketplace"] },
+  { id: "risk", label: "Risk", icon: Gauge, tabs: ["risk-scoring"] },
 ];
 
 const TAB_IDS = TABS.map((t) => t.id);
@@ -110,6 +118,7 @@ export default function AdminPage() {
       {tab === "integrations" && <GlobalIntegrations />}
       {tab === "tools" && <ToolsHealth />}
       {tab === "tool-marketplace" && <ToolMarketplace />}
+      {tab === "risk-scoring" && <RiskScoring />}
     </div>
   );
 }

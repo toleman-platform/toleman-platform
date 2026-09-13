@@ -4,6 +4,8 @@ from sqlmodel import Session, select
 from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, Severity, Target
 from app.core.dedup import compute_dedup_hash
 from app.core.scoring import compute_priority_score
+from app.core.scoring_config import cvss_for_enrichment, enrichment_map, workspace_scoring_weights
+from app.core.fixability import UNKNOWN, fixability_for_enrichment
 from app.core.epss import fetch_epss_scores
 from app.core.kev import fetch_kev_cve_set
 from app.core.crypto import decrypt_secret
@@ -140,6 +142,19 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
     epss_scores = fetch_epss_scores(cve_ids) if cve_ids else {}
     kev_set = fetch_kev_cve_set() if cve_ids else set()
 
+    # (#201) This workspace's scoring weights, resolved once for the whole
+    # run rather than per finding; an unconfigured workspace gets the
+    # shipped baseline, which scores identically to before #201 existed.
+    #
+    # Enrichment rows are read from the local cache in one batched query and
+    # are never fetched here: ingestion must not block on NVD, and a CVE
+    # nobody has enriched yet simply leaves the CVSS/fixability signals
+    # unestablished, which contributes nothing rather than subtracting
+    # anything. Those findings score higher, not lower, once someone opens
+    # them and enrichment runs -- the failsafe direction.
+    weights = workspace_scoring_weights(session, target.workspace_id)
+    enrichments = enrichment_map(session, cve_ids)
+
     for item in parsed:
         dedup_hash = compute_dedup_hash(
             rule_id=item["rule_id"],
@@ -182,7 +197,18 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             line_end=item.get("line_end"),
             severity=severity,
             priority_score=compute_priority_score(
-                severity, target.criticality_weight, epss_score=epss_score, kev_listed=kev_listed
+                severity,
+                target.criticality_weight,
+                epss_score=epss_score,
+                kev_listed=kev_listed,
+                cvss=cvss_for_enrichment(enrichments.get(finding_cve_id) if finding_cve_id else None),
+                target_label=target.label,
+                target_environment=target.environment,
+                target_owner=target.owner,
+                fixability=(
+                    fixability_for_enrichment(enrichments.get(finding_cve_id)) if finding_cve_id else UNKNOWN
+                ),
+                weights=weights,
             ),
             branch=branch,
             cve_id=finding_cve_id,

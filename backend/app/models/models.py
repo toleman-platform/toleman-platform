@@ -504,6 +504,28 @@ class CveEnrichment(SQLModel, table=True):
     nvd_references: Optional[str] = None  # JSON-encoded list[str] of URLs
     nvd_found: bool = Field(default=False)
 
+    # (#201) The CVSS vector above, decomposed into the four exploitability
+    # metrics the risk-scoring engine consumes; see app/core/cvss.py for the
+    # parser and app/core/scoring.py for the signal slot they feed.
+    #
+    # A denormalisation of `cvss_vector`, not an independent source of
+    # truth: parse_cvss_vector() is authoritative, these columns are what it
+    # produced, written when the row is fetched and backfilled on read for
+    # rows that predate this (see app/core/cve_enrichment.py). Persisted
+    # rather than parsed per request so the decomposition is visible in the
+    # API and queryable -- "show me everything network-reachable with no
+    # privileges required" is a filter, not a computation.
+    #
+    # NULL everywhere means "not established", which is NOT the same as a
+    # benign value and must never be scored as one. That is why there is no
+    # "unknown" sentinel string: a column that is either a real CVSS value or
+    # NULL cannot accidentally be compared as if unknown were a metric value.
+    cvss_version: Optional[str] = None              # "3.1", "4.0", "2.0", ...
+    cvss_attack_vector: Optional[str] = None        # network / adjacent / local / physical
+    cvss_attack_complexity: Optional[str] = None    # low / medium / high
+    cvss_privileges_required: Optional[str] = None  # none / low / high
+    cvss_user_interaction: Optional[str] = None     # none / passive / required / active
+
     # OSV.dev (https://osv.dev/docs); queried directly by CVE ID via
     # GET /v1/vulns/{cve_id}, which resolves CVE as an alias without needing
     # package/ecosystem context.
@@ -1107,6 +1129,69 @@ class SlaRule(SQLModel, table=True):
     severity: Severity
     days_to_fix: int
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class ScoringSignal(str, Enum):
+    """The fixed signal slots the risk-prioritisation engine scores on
+    (#201).
+
+    Deliberately a closed enum rather than a rules DSL. The issue asks for
+    "configurable weights with shipped baselines", and #69's widget catalog
+    settled the same argument the same way: a concrete set of things the
+    platform actually knows how to compute, each of which can be turned up
+    or down, beats an expression language that can express anything and
+    explain nothing. Every slot here is a signal this codebase already has
+    real data for; adding one means writing the code that derives it, which
+    is exactly the gate that keeps the breakdown honest.
+
+    What is deliberately NOT here: first-party reachability. That is phase 3
+    of #201 and depends on #183, an unresolved design spike. Shipping an
+    inert `reachability` slot would advertise a signal nothing computes, and
+    a weight that does nothing is worse than an absent one -- someone would
+    set it and believe their scores accounted for reachability.
+    """
+
+    SEVERITY = "severity"                            # base tool severity (1-5)
+    CVSS_EXPLOITABILITY = "cvss_exploitability"      # decomposed AV/AC/PR/UI (CVE-backed findings)
+    EPSS = "epss"                                    # predicted 30-day exploit probability
+    KEV = "kev"                                      # CISA Known Exploited Vulnerabilities
+    INTERNET_EXPOSURE = "internet_exposure"          # Target.label / Target.environment
+    BUSINESS_CRITICALITY = "business_criticality"    # Target.criticality_weight + #251 metadata
+    FIXABILITY = "fixability"                        # #246: can this be closed today
+
+
+class ScoringWeight(SQLModel, table=True):
+    """A workspace-scoped weight for one scoring signal slot (#201).
+
+    Same shape as SlaRule/PolicyRule: workspace-scoped rows, one per
+    (workspace, signal), created only when someone actually overrides
+    something. Absence of a row means "use the shipped baseline" -- the same
+    "None = inherit" philosophy as WorkspaceToolConfig (#75) and
+    Workspace/Group/Target.enforcement_mode (#62), rather than requiring
+    every workspace to enumerate every signal before any of them apply. The
+    practical consequence is the one the issue asks for: an install that
+    configures nothing scores exactly as it did before this table existed.
+    See app.core.scoring.BASELINE_WEIGHTS for those defaults and why the
+    three new signals baseline at 0.0.
+
+    `weight` is a multiplier on that signal's contribution, not a point
+    value; 1.0 is the shipped baseline behaviour for a signal that ships on,
+    0.0 switches the signal off entirely. Clamped to >= 0 at both the API
+    boundary and in the scoring engine, which is what structurally
+    guarantees the issue's hard rule: no signal can ever *subtract* from a
+    priority, so an unknown or absent signal can never lower one either.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "signal", name="uq_scoring_weight_workspace_signal"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    signal: ScoringSignal = Field(index=True)
+    weight: float
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class WorkspaceToolConfig(SQLModel, table=True):

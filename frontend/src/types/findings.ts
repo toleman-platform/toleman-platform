@@ -204,3 +204,74 @@ export type SlaRule = {
   days_to_fix: number;
   created_at: string;
 };
+
+// (#201) One signal slot of the risk-prioritisation engine, with this
+// workspace's effective weight merged in. The backend always returns the
+// full catalogue rather than just the stored overrides, so the baseline
+// lives in exactly one place (app/core/scoring.py::BASELINE_WEIGHTS) and
+// this client never has to keep a second copy of it in sync.
+//
+// `is_default`/`rule_id` are what separate "0.0 because that is the shipped
+// baseline" from "0.0 because someone switched this signal off" -- identical
+// numbers, and only the second one has anything to reset.
+export type ScoringWeight = {
+  signal: string;
+  label: string;
+  description: string;
+  weight: number;
+  baseline_weight: number;
+  // Points this signal can contribute at weight 1.0; null for the two
+  // multiplicative slots (severity, business criticality) whose
+  // contribution has no fixed ceiling.
+  max_points: Nullable<number>;
+  // How the slot enters the score. "multiplier" scales a factor of the base
+  // product, "points" adds up to max_points x weight, and "floor" raises the
+  // score *to* max_points x weight -- so what a floor is worth depends on
+  // where the finding already sat, and describing KEV as "up to 900 pts"
+  // would be false for every finding not already near the bottom.
+  contribution: "multiplier" | "points" | "floor";
+  is_default: boolean;
+  rule_id: Nullable<number>;
+  workspace_id: number;
+};
+
+/**
+ * The full effective risk-scoring configuration for one workspace.
+ */
+export type ScoringWeights = {
+  workspace_id: number;
+  max_score: number;
+  signals: ScoringWeight[];
+};
+
+// (#201) One line of a finding's score explanation.
+//
+// `established` is load-bearing and must not be collapsed into `points`.
+// Zero points means either "this signal applied and contributed nothing"
+// (EPSS below the threshold) or "this signal was never established" (no CVE
+// to look up). Only the first is a statement about the finding; rendering
+// them identically is the same mistake #246 exists to prevent.
+export type FindingScoreSignal = {
+  signal: string;
+  label: string;
+  weight: number;
+  points: number;
+  established: boolean;
+  detail: string;
+};
+
+// (#201) `stored_score` is the number on the Finding row -- what every list,
+// filter and SLA check sorts by. `score` is what the current signals and
+// weights produce right now. They diverge legitimately (a weight changed, or
+// CVE enrichment ran after ingestion), and `stale` says so rather than the
+// UI quietly showing whichever one it prefers.
+export type FindingScoreBreakdown = {
+  finding_id: number;
+  stored_score: number;
+  score: number;
+  stale: boolean;
+  base_points: number;
+  max_score: number;
+  capped: boolean;
+  signals: FindingScoreSignal[];
+};

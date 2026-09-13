@@ -77,9 +77,11 @@ def test_permissions_still_cover_what_pr_guardrail_needs():
 
 
 def test_manifest_data_flags_an_unreachable_webhook_host(monkeypatch):
-    """A localhost PUBLIC_API_URL produces an App whose deliveries can never
-    arrive, indistinguishable, from the operator's side, from a scanner
-    that finds nothing."""
+    """A localhost PUBLIC_API_URL is rejected by GitHub at manifest
+    submission, so no App is created at all (#355 -- this docstring used to
+    say "an App whose deliveries can never arrive", which was true only
+    before the manifest declared hook_attributes). The frontend reads this
+    same answer from /status; see test_github_app_webhook_reachability.py."""
     import app.api.github_app as github_app
 
     monkeypatch.setattr(github_app, "BACKEND_URL", "http://localhost:8000")
@@ -100,8 +102,12 @@ def test_manifest_data_accepts_a_real_public_host(monkeypatch):
 
 
 def test_manifest_data_still_returns_a_usable_manifest_when_unreachable(monkeypatch):
-    """Advisory, not blocking: creating the App is still worth doing while a
-    tunnel is being set up, because on-demand scanning works regardless."""
+    """The endpoint stays honest rather than gatekeeping (#355): it reports
+    webhook_reachable=False and still hands back a complete, submittable
+    manifest, because the rejection is GitHub's to give and other API
+    clients may have a route to this backend that this process can't see.
+    The UI is what refuses to submit it, on the same boolean, so the
+    operator never reaches github.com's error page."""
     import app.api.github_app as github_app
 
     monkeypatch.setattr(github_app, "BACKEND_URL", "http://localhost:8000")

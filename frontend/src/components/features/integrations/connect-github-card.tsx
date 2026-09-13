@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { Github, CheckCircle2, XCircle, Trash2 } from "lucide-react";
+import { Github, CheckCircle2, XCircle, Trash2, AlertTriangle } from "lucide-react";
 
 type GithubAppStatus = {
   apps: GitHubAppInstallation[];
@@ -18,6 +18,12 @@ type GithubAppStatus = {
   installed: boolean;
   account_login: string | null;
   webhook_secret_set: boolean;
+  // (#355) Not about any App in `apps` -- about the one being created.
+  // False means GitHub will reject the manifest outright, so "Connect
+  // GitHub" cannot succeed until PUBLIC_API_URL (echoed as
+  // public_api_url) is publicly reachable.
+  webhook_reachable: boolean;
+  public_api_url: string;
 };
 
 export function ConnectGithubCard() {
@@ -37,7 +43,15 @@ export function ConnectGithubCard() {
   const [deleting, setDeleting] = useState(false);
 
   function refresh() {
-    api.githubAppStatus().then(setStatus);
+    api
+      .githubAppStatus()
+      .then(setStatus)
+      .catch((e) => {
+        // A failed status read used to just leave the skeleton up. Now that
+        // the connect action is gated on this response (#355), a silent
+        // failure reads as "the button is broken" with nothing to act on.
+        setError(e instanceof Error ? e.message : "failed to load GitHub App status");
+      });
   }
 
   async function confirmDelete() {
@@ -56,26 +70,15 @@ export function ConnectGithubCard() {
 
   useEffect(refresh, []);
 
-  // (GH-03) Whether GitHub could actually reach this backend's webhook
-  // endpoint. The App now subscribes to pull_request, so automatic scanning
-  // works; unless PUBLIC_API_URL is a localhost address, in which case
-  // deliveries never arrive and it looks exactly like a scanner finding
-  // nothing. Better said before the App is created than discovered after.
-  const [webhookReachable, setWebhookReachable] = useState<boolean | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .githubAppManifestData()
-      .then((d) => {
-        if (!cancelled) setWebhookReachable(d.webhook_reachable);
-      })
-      .catch(() => {
-        // Advisory only; never block the connect flow on it.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // (#355) Whether GitHub will accept a manifest built from this
+  // deployment's PUBLIC_API_URL at all. Read from /status, which loads
+  // whether or not an App exists yet; it used to come from a second
+  // /manifest-data call on mount, which both minted a throwaway CSRF state
+  // token per page load and only ever fed a warning rendered next to
+  // already-created Apps. Null while status is still loading, and the
+  // connect action stays disabled until we know, since the whole point is
+  // not to start a flow that cannot finish.
+  const webhookReachable = status === null ? null : status.webhook_reachable;
 
   async function connect() {
     setConnecting(true);
@@ -223,13 +226,6 @@ export function ConnectGithubCard() {
                       </>
                     )}
                   </div>
-                  {webhookReachable === false && (
-                    <p className="text-xs text-muted-foreground">
-                      PUBLIC_API_URL is a localhost address, so GitHub cannot deliver webhooks here and PRs will
-                      only scan on demand. Set it to a publicly reachable URL (a domain or tunnel) for automatic
-                      PR scanning. Note that a required status check nothing triggers will block every PR.
-                    </p>
-                  )}
                   <div className="flex gap-2">
                     <Input
                       type="password"
@@ -260,6 +256,47 @@ export function ConnectGithubCard() {
         )}
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
+          {/* (#355) Rendered before the create action, not next to existing
+              Apps, because the only install this can happen on is one with
+              no Apps at all: a default local install, where the operator
+              previously got no warning here and GitHub's rejection page
+              instead. The button below is disabled on the same condition,
+              so the failure is caught here rather than on github.com. */}
+          {status && !status.webhook_reachable && (
+            <div className="flex gap-2 rounded-md border border-border bg-secondary p-3">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+              <div className="flex flex-col gap-2 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">
+                  GitHub will reject a new App while <code>PUBLIC_API_URL</code> is a localhost address.
+                </p>
+                <p>
+                  <code>PUBLIC_API_URL</code> is <code>{status.public_api_url}</code>. The App manifest declares
+                  that host as its webhook URL, and GitHub validates it at submission, refusing any address it
+                  cannot reach over the public internet (&quot;Hook url is not supported because it isn&apos;t
+                  reachable over the public Internet&quot;). Nothing is created, so this is not a working App
+                  minus automatic scanning; it is no App and no integration at all.
+                </p>
+                <p>
+                  Set <code>PUBLIC_API_URL</code> to a publicly reachable URL, then restart the{" "}
+                  <code>backend</code> and <code>celery-worker</code> services to pick it up. For local work a
+                  tunnel is the usual answer, and <code>cloudflared tunnel --url http://localhost:8000</code>{" "}
+                  needs no account.
+                </p>
+                <p>
+                  There is no API to change an App&apos;s webhook URL after it is created, only its GitHub
+                  settings page by hand, so a throwaway tunnel URL has to be re-entered there every time the
+                  tunnel restarts. A named tunnel or a real domain is the better default for anything past one
+                  test.
+                </p>
+                <p>
+                  <code>PUBLIC_BASE_URL</code> can stay on localhost for a solo local setup: GitHub only
+                  validates the webhook URL, and the App&apos;s redirect URL is followed by your own browser.
+                  The cost is that every link Toleman posts into a pull request points at a host only this
+                  machine can reach.
+                </p>
+              </div>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
             {status && status.apps.length > 0
               ? "Register another GitHub App (e.g. a separate dev/prod App, or one scoped to a different org):"
@@ -272,7 +309,7 @@ export function ConnectGithubCard() {
               value={org}
               onChange={(e) => setOrg(e.target.value)}
             />
-            <Button onClick={connect} disabled={connecting} className="shrink-0">
+            <Button onClick={connect} disabled={connecting || webhookReachable !== true} className="shrink-0">
               {connecting ? "Redirecting..." : "Connect GitHub"}
             </Button>
           </div>

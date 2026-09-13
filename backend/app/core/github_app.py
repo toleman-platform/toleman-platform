@@ -25,9 +25,32 @@ def webhook_reachable(backend_url: str) -> bool:
     check, without pulling a FastAPI router module into the Celery
     worker's import graph) can use the same answer.
 
-    Surfaced rather than blocked at App-creation time: creating the App is
-    still worth doing while a tunnel or domain is being set up, since
-    on-demand scanning works regardless."""
+    False is not a degraded mode at App-creation time, it is a hard stop
+    (#355). The manifest declares ``hook_attributes.url`` and GitHub
+    validates that URL when the manifest is submitted, rejecting a
+    loopback host outright ("Hook url is not supported because it isn't
+    reachable over the public Internet (localhost)"); nothing is created,
+    so the outcome is no App rather than a working App minus automatic
+    scanning. That was survivable once -- before #234 the manifest carried
+    no hook URL at all, so a localhost install got an App that simply
+    never received events, which is what the "warn, don't block" comment
+    that used to sit here described -- and it stopped being true the
+    moment hook_attributes landed. The api/UI layer therefore blocks the
+    create action on this answer instead of letting the operator discover
+    it from github.com.
+
+    ``target_has_pr_guardrail_coverage`` below uses the same answer for a
+    different question: for an App that already exists (created while this
+    was public, then pointed back at localhost) deliveries stop arriving,
+    and that genuinely is a degraded mode.
+
+    Deliberately only the loopback literals. Those are certainly
+    unreachable from GitHub's side; any other hostname might resolve
+    publicly even when it doesn't resolve from here (and a
+    compose-internal name like ``http://backend:8000`` is reported
+    reachable for that reason, even though GitHub will reject it too).
+    Over-blocking would wedge the only path to creating an App for a
+    deployment whose DNS this process cannot see."""
     parsed = urlparse(backend_url)
     return (parsed.hostname or "") not in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
 
@@ -126,10 +149,20 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         #     auto-approved from a comment.
         #
         # backend_url must be reachable *from GitHub*; see
-        # settings.public_api_url. A localhost value produces an App whose
-        # deliveries can never arrive; build_manifest's caller warns about
-        # that rather than failing, since creating the App is still useful
-        # for on-demand scanning while a tunnel/domain is set up.
+        # settings.public_api_url. GitHub validates this URL when the
+        # manifest is submitted and refuses a loopback host, so a localhost
+        # value does not produce a degraded App, it produces no App at all:
+        # the flow dies on github.com with "Hook url is not supported
+        # because it isn't reachable over the public Internet (localhost)".
+        # webhook_reachable() is what the api/UI layer uses to stop that
+        # attempt before it leaves the browser (#355); this comment used to
+        # claim the opposite, which is why the old behaviour read as
+        # deliberate.
+        #
+        # Permanent for the life of the App, too: there is no API to change
+        # a GitHub App's hook URL after creation, only its settings page by
+        # hand (the same limitation update_webhook_secret in
+        # app/api/github_app.py already documents for the webhook secret).
         "default_events": ["pull_request", "push", "installation_repositories", "issue_comment"],
         "hook_attributes": {
             "url": f"{backend_url}/api/webhooks/github",

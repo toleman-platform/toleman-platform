@@ -19,6 +19,7 @@ See the [architecture](ARCHITECTURE.md) for the full design. Full docs, includin
 - [Getting Started](#getting-started)
   - [Quickstart (Docker Compose)](#quickstart-docker-compose)
   - [Manual setup (macOS/Linux/Windows)](#manual-setup-macoslinuxwindows)
+  - [Connecting the GitHub App](#connecting-the-github-app)
 - [Upgrading](#upgrading)
 - [Development](#development)
   - [Database migrations (Alembic)](#database-migrations-alembic)
@@ -92,6 +93,8 @@ Once it's up:
   ```
 
 Bootstrap a workspace and register a target the same way as the manual setup below, just against `http://localhost:8000`.
+
+Connecting the GitHub App (for repo auto-discovery and automatic PR scanning) is the one step this default cannot do: GitHub has to be able to reach the backend, and `PUBLIC_API_URL` points at localhost out of the box. See [Connecting the GitHub App](#connecting-the-github-app).
 
 See `.env.example` for every variable Compose reads (Postgres credentials, backend secrets, `NEXT_PUBLIC_API_URL`) and what happens if you leave it at its default. `.env` is git-ignored, so it's safe to put real secrets there once you have any (`GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, etc.).
 
@@ -211,6 +214,42 @@ npm run dev
 Open http://localhost:3000, redirects to `/login`. Sign in with the seeded admin account (`ADMIN_EMAIL`/`ADMIN_PASSWORD` in backend `.env`, defaults to `admin@toleman.local` / `changeme123`, seeded on first backend startup). Change `ADMIN_PASSWORD` before any non-local use. All pages read live data from the backend API, no mock data.
 
 Auth: pbkdf2-hashed password + hmac-signed session cookie (`app/core/security.py`), no external auth service. Route protection is `src/proxy.ts` (Next.js 16 renamed `middleware.ts` → `proxy.ts`).
+
+### Connecting the GitHub App
+
+Repo auto-discovery, automatic PR scanning and the PR Guardrail comments all come from a GitHub App, created from **Admin → Integrations → Connect GitHub**. Applies to every install path above.
+
+**This step needs a backend GitHub's servers can reach, and the default `PUBLIC_API_URL=http://localhost:8000` is not one.** The App is created from a manifest that declares its webhook URL, and GitHub validates that URL at submission, refusing anything it cannot reach over the public internet:
+
+```
+Error Hook url is not supported because it isn't reachable over the public Internet (localhost)
+```
+
+Nothing is created when that happens. It is not a working App minus automatic scanning; it is no App and no integration at all. Toleman disables the Connect button and says so on the Integrations page rather than letting the attempt fail on github.com.
+
+Set `PUBLIC_API_URL` to a publicly reachable URL, then restart `backend` and `celery-worker` to pick it up:
+
+```bash
+# .env
+PUBLIC_API_URL=https://toleman.example.com
+```
+
+```bash
+docker compose up -d backend celery-worker   # or restart both processes, for a manual setup
+```
+
+For local work, a tunnel is the usual answer. [`cloudflared`](https://developers.cloudflare.com/cloudflare-tunnel/) needs no account for a quick one:
+
+```bash
+cloudflared tunnel --url http://localhost:8000   # prints https://<random>.trycloudflare.com
+```
+
+Two things worth knowing before you pick a URL:
+
+- **There is no API to change an App's webhook URL after it is created**, only its GitHub settings page by hand (the same limitation the webhook *secret* has). A quick tunnel hands out a new random hostname every restart, so using one means re-editing the App on GitHub every time. For anything past a single test, use a [named tunnel](https://developers.cloudflare.com/cloudflare-tunnel/) or a real domain, whose URL is stable.
+- **`PUBLIC_BASE_URL` can stay on localhost** for a solo local setup. GitHub only validates the webhook URL; the App's redirect URL is followed by your own browser, which can reach localhost fine. The cost is that every link Toleman posts into a pull request (the "review in Toleman" comment, the commit status `target_url`) points at a host only your machine can reach, so set it too as soon as anyone else needs to follow those links.
+
+After the App is created, install it on the account or org whose repos you want scanned; Toleman imports them as targets and starts a baseline scan of each default branch.
 
 ## Upgrading
 

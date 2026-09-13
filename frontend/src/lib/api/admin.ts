@@ -270,6 +270,16 @@ export function githubAppStatus(): Promise<{
   installed: boolean;
   account_login: Nullable<string>;
   webhook_secret_set: boolean;
+  // (#355) Whether creating a GitHub App can work at all from this
+  // deployment's address. False means PUBLIC_API_URL is a localhost
+  // address, GitHub validates the manifest's webhook URL on submission
+  // and refuses one it cannot reach, so the create flow fails on
+  // github.com and no App exists afterwards. Carried on /status (not
+  // /manifest-data, where this used to be read from) because the card
+  // has to say so before any App exists. public_api_url is the value
+  // being judged, echoed so the warning can name it.
+  webhook_reachable: boolean;
+  public_api_url: string;
 }> {
   return jsonFetch<{
     apps: GitHubAppInstallation[];
@@ -278,6 +288,8 @@ export function githubAppStatus(): Promise<{
     installed: boolean;
     account_login: Nullable<string>;
     webhook_secret_set: boolean;
+    webhook_reachable: boolean;
+    public_api_url: string;
   }>("/api/github-app/status");
 }
 
@@ -287,6 +299,11 @@ export function githubAppStatus(): Promise<{
 export function githubAppManifestData(
   org?: string,
 ): Promise<{ manifest: object; post_url: string; webhook_url: string; webhook_reachable: boolean }> {
+  // (GH-03) webhook_reachable is false when PUBLIC_API_URL is a localhost
+  // address, in which case GitHub rejects this manifest on submission and
+  // creates nothing (#355). The connect flow is blocked in the UI before
+  // it gets here; this endpoint still returns a submittable manifest for
+  // any other client.
   return jsonFetch<{ manifest: object; post_url: string; webhook_url: string; webhook_reachable: boolean }>(
     `/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`,
   );

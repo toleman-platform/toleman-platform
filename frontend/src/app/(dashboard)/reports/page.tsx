@@ -131,6 +131,19 @@ export default function ReportsPage() {
     setDateTo("");
   }
 
+  // Mirrors backend _report_filename: scope, "filtered" when anything was
+  // narrowed, "NofM-sections" when the section list is partial, then the
+  // date. Only reached when Content-Disposition could not be read.
+  function fallbackFilename() {
+    const parts = ["toleman-posture-report", scopeLabel.replace(/\s+/g, "-")];
+    if (activeFilters.length > 0) parts.push("filtered");
+    if (sectionCatalog.length > 0 && !allSectionsChosen) {
+      parts.push(`${sections.length}of${sectionCatalog.length}-sections`);
+    }
+    parts.push(new Date().toISOString().slice(0, 10).replace(/-/g, ""));
+    return `${parts.join("-")}.${format}`;
+  }
+
   async function generate() {
     if (targetId === null) return;
     setExporting(true);
@@ -157,12 +170,13 @@ export default function ReportsPage() {
       };
       const { blob, filename: serverFilename } = await api.exportPostureReport(targetId, format, options);
       const url = URL.createObjectURL(blob);
-      // The backend names the file (scope, filtered, section count, date).
-      // The local fallback is only for a response that arrived without a
-      // Content-Disposition at all.
-      const dateSlug = new Date().toISOString().slice(0, 10);
-      const filename =
-        serverFilename || `toleman-posture-report-${scopeLabel.replace(/\s+/g, "-")}-${dateSlug}.${format}`;
+      // The backend names the file and that name wins. The fallback is only
+      // for a response that arrived without a readable Content-Disposition,
+      // and it carries the same narrowing markers the server's name does:
+      // dropping them here would let a filtered or partial export land on
+      // disk under a full report's name, which is exactly the confusion the
+      // in-document header exists to prevent.
+      const filename = serverFilename || fallbackFilename();
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;

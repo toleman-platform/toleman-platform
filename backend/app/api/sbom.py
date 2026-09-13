@@ -14,6 +14,7 @@ from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
 from app.core.async_jobs import create_running_row
 from app.core.aibom import AiComponent, aibom_summary, build_aibom
 from app.core.csv_export import safe_csv_writer
+from app.core.downloads import attachment_disposition
 from app.core.github import repo_slug_from_url
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.github_token import resolve_github_token
@@ -599,10 +600,16 @@ def export_aibom(target_id: int, session: Session = Depends(get_session)):
         branch=target.default_branch,
         timestamp=utcnow().isoformat() + "Z",
     )
+    # Target name and branch are both user-controlled and go into an HTTP
+    # header, which is latin-1: interpolating them raw let a name with a
+    # quote or semicolon steer the header, and made a non-ASCII repo name a
+    # hard 500 on encode. attachment_disposition sends a sanitised ASCII
+    # fallback plus the real UTF-8 name (RFC 6266). Same fix as #302 applied
+    # to the posture export; this file had five more instances of it.
     base = f"aibom-{target.name}-{target.default_branch}"
     return JSONResponse(
         content=document,
-        headers={"Content-Disposition": f'attachment; filename="{base}.cdx.json"'},
+        headers={"Content-Disposition": attachment_disposition(f"{base}.cdx.json")},
     )
 
 
@@ -624,31 +631,32 @@ def export_sbom(
         .order_by(SbomComponent.name)
     ).all()
 
+    # Header-safe in all four formats; see the note on the AIBOM export above.
     base = f"sbom-{target.name}-{target.default_branch}"
 
     if format == "spdx-json":
         document = _build_spdx_document(target, components)
         return JSONResponse(
             content=document,
-            headers={"Content-Disposition": f'attachment; filename="{base}.spdx.json"'},
+            headers={"Content-Disposition": attachment_disposition(f"{base}.spdx.json")},
         )
     if format == "csv":
         csv_text = _render_sbom_csv(target, components)
         return StreamingResponse(
             iter([csv_text]),
             media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{base}.csv"'},
+            headers={"Content-Disposition": attachment_disposition(f"{base}.csv")},
         )
     if format == "pdf":
         pdf_bytes = _render_sbom_pdf(target, components)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'},
+            headers={"Content-Disposition": attachment_disposition(f"{base}.pdf")},
         )
 
     document = _build_cyclonedx_document(target, components)
     return JSONResponse(
         content=document,
-        headers={"Content-Disposition": f'attachment; filename="{base}.json"'},
+        headers={"Content-Disposition": attachment_disposition(f"{base}.json")},
     )

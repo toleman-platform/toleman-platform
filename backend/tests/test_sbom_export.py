@@ -78,6 +78,54 @@ def _target_with_components(engine) -> int:
         return target.id
 
 
+def test_export_survives_a_non_ascii_repo_name(client, engine):
+    """HTTP headers are latin-1, and the filename is built from the repo's
+    own name, so a non-ASCII name used to fail the whole download on encode
+    rather than degrading to a plain filename. RFC 6266: a sanitised ASCII
+    `filename` alongside the real percent-encoded UTF-8 `filename*`."""
+    with Session(engine) as session:
+        target = Target(
+            workspace_id=1, name="日本語-repo", repo_url="https://github.com/acme/x", default_branch="main"
+        )
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+        target_id = target.id
+    _login(client, engine)
+
+    for fmt in ("cyclonedx-json", "spdx-json", "csv", "pdf"):
+        res = client.get(f"/api/sbom/{target_id}/export", params={"format": fmt})
+        assert res.status_code == 200, fmt
+        disposition = res.headers["content-disposition"]
+        # The real name survives, percent-encoded...
+        assert "%E6%97%A5%E6%9C%AC%E8%AA%9E" in disposition, fmt
+        # ...and the ASCII fallback is still a usable, distinct name rather
+        # than every non-Latin repo collapsing onto one placeholder.
+        assert 'filename="sbom-repo-main' in disposition, fmt
+
+
+def test_export_filename_cannot_be_steered_by_a_repo_name(client, engine):
+    with Session(engine) as session:
+        target = Target(
+            workspace_id=1,
+            name='eq"; filename=owned.json',
+            repo_url="https://github.com/acme/x",
+            default_branch="main",
+        )
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+        target_id = target.id
+    _login(client, engine)
+
+    res = client.get(f"/api/sbom/{target_id}/export")
+    assert res.status_code == 200
+    disposition = res.headers["content-disposition"]
+    # Exactly one quoted parameter, and the injected one never materialises.
+    assert disposition.count('"') == 2
+    assert "filename=owned.json" not in disposition
+
+
 def test_export_default_is_cyclonedx_json(client, engine):
     _login(client, engine)
     target_id = _target_with_components(engine)
@@ -88,7 +136,7 @@ def test_export_default_is_cyclonedx_json(client, engine):
     assert body["bomFormat"] == "CycloneDX"
     assert body["specVersion"] == "1.5"
     assert {c["name"] for c in body["components"]} == {"requests", "lodash"}
-    assert res.headers["content-disposition"].endswith('.json"')
+    assert res.headers["content-disposition"].endswith(".json")
 
 
 def test_export_cyclonedx_json_explicit(client, engine):
@@ -121,7 +169,7 @@ def test_export_spdx_json_is_valid_spdx_shape(client, engine):
     for rel in body["relationships"]:
         assert rel["spdxElementId"] == "SPDXRef-DOCUMENT"
         assert rel["relationshipType"] == "DESCRIBES"
-    assert res.headers["content-disposition"].endswith('.spdx.json"')
+    assert res.headers["content-disposition"].endswith(".spdx.json")
 
 
 def test_export_csv_contains_component_rows(client, engine):
@@ -135,7 +183,7 @@ def test_export_csv_contains_component_rows(client, engine):
     assert "requests" in text
     assert "2.31.0" in text
     assert "lodash" in text
-    assert res.headers["content-disposition"].endswith('.csv"')
+    assert res.headers["content-disposition"].endswith(".csv")
 
 
 def test_export_pdf_returns_pdf_bytes(client, engine):
@@ -146,7 +194,7 @@ def test_export_pdf_returns_pdf_bytes(client, engine):
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/pdf"
     assert res.content.startswith(b"%PDF")
-    assert res.headers["content-disposition"].endswith('.pdf"')
+    assert res.headers["content-disposition"].endswith(".pdf")
 
 
 def test_export_pdf_with_no_components_does_not_error(client, engine):

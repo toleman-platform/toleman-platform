@@ -28,6 +28,16 @@ it was generated under and which sections were included -- and an excluded
 section is printed with an explicit "excluded" marker rather than simply
 being missing, because a reader cannot tell an omitted section from an
 empty one.
+
+The date range makes that requirement sharper still, because it makes the
+document *look* like a point-in-time snapshot. It is only partly one.
+Open-finding ages are measured to the window's end and scan coverage stops
+there, but a finding's triage state and an SBOM's composition have no
+queryable history in this schema, so those are unavoidably current-state.
+A Q1 export run in September would otherwise silently mix 250-day ages and
+September triage decisions into what reads as a Q1 snapshot; see
+POINT_IN_TIME_NOTE, which is printed on every report for the same reason
+the filter header is.
 """
 import io
 import re
@@ -41,10 +51,16 @@ from sqlmodel import Session, func, select
 
 from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
-from app.api.findings import _apply_category, _filtered_findings_query
+from app.api.findings import (
+    _apply_category,
+    _filtered_findings_query,
+    _target_facet,
+    list_tool_facets,
+)
 from app.core.csv_export import safe_csv_writer
+from app.core.downloads import attachment_disposition
 from app.core.time import utcnow
-from app.core.tool_registry import all_categories
+from app.core.tool_registry import all_categories, all_known_tools
 from app.models.models import (
     Finding,
     FindingState,
@@ -147,8 +163,27 @@ UNFILTERED_SUMMARY = "None - this report is unfiltered"
 # coverage table.
 FILTER_SCOPE_NOTE = (
     "Target-level filters (scope, repo group, environment, owner) narrow every section. "
-    "Finding-level filters (severity, finding state, tool, category, finding window) narrow the "
-    "finding sections only; scan coverage and SBOM summary describe each in-scope target's current state."
+    "Finding-level filters (severity, finding state, tool, category) narrow which findings are "
+    "counted; scan coverage and the SBOM summary are not narrowed by them, because when a "
+    "repository was last scanned does not change because the reader asked to see only critical "
+    "findings. The finding window behaves differently again -- see the point-in-time note below."
+)
+
+# The asymmetry a dated report would otherwise hide. A finding window makes
+# this document look like a snapshot of a past period, and for two of its
+# figures it genuinely is (ages are measured to the window's end, scan
+# coverage stops there). For two others it cannot be: this platform stores
+# no queryable history of a finding's triage state or of an SBOM's
+# composition, so those are unavoidably today's values. Saying which is
+# which is the difference between a period report and a misleading one --
+# without this, a Q1 export run in September silently mixes 250-day ages
+# and September triage decisions into what reads as a Q1 snapshot.
+POINT_IN_TIME_NOTE = (
+    "Figures are stated as at the 'Figures As Of' timestamp above: open-finding ages are measured to "
+    "that instant, and scan coverage is the latest run per tool on or before it. Two figures are "
+    "NOT reconstructed as of that date and are current-state regardless: each finding's triage "
+    "state, and the SBOM component summary. A report with a finding window is therefore a "
+    "period-scoped view of today's triage decisions, not a snapshot of how the queue looked then."
 )
 
 
@@ -234,6 +269,26 @@ class ReportFilters:
             {"label": "Finding window", "value": window},
         ]
 
+    def target_level_narrowed(self) -> bool:
+        """Whether anything beyond `target_id` narrows the set of repos.
+
+        `target_id` is excluded because a single-target report already says
+        so on its Scope line; this exists to stop an org-wide report
+        describing itself as covering "all targets" when a group or
+        environment filter means it plainly does not.
+        """
+        return any((self.group_id is not None, self.environment, self.owner))
+
+    def target_level_summary(self) -> str:
+        parts = []
+        if self.group_id is not None:
+            parts.append(f"group {self.group_label or self.group_id}")
+        if self.environment:
+            parts.append(f"environment {self.environment}")
+        if self.owner:
+            parts.append(f"owner {self.owner}")
+        return ", ".join(parts)
+
     def active_count(self) -> int:
         """How many filter dimensions were actually narrowed. `target_id` is
         excluded: the scope picker has always existed and is reported on its
@@ -279,7 +334,8 @@ def _age_bucket(age_days: int) -> str:
 def _resolve_targets(
     session: Session, filters: ReportFilters, ws_ids: Optional[list[int]]
 ) -> tuple[list[Target], str, str]:
-    """The in-scope targets, plus the human scope label and filename slug.
+    """The in-scope targets, the human scope label, and the raw scope name
+    the filename is built from.
 
     `ws_ids` is `accessible_workspace_ids()`'s result; None for admins
     (no filter), else the caller's workspace ids (issue #86, same
@@ -294,12 +350,22 @@ def _resolve_targets(
     result is readable, whereas a full result under filters the header
     claims were active would not be.
     """
+    # "org-wide" has always meant "every target you can see". Once target-
+    # level filters exist it can no longer say "(all targets)" unqualified:
+    # a report narrowed to one repo group is not org-wide, and a header that
+    # claims it is contradicts the Applied Filters block three rows below.
+    org_label = (
+        "org-wide (all targets)"
+        if not filters.target_level_narrowed()
+        else f"org-wide, narrowed by {filters.target_level_summary()} (see '{APPLIED_FILTERS_HEADING}')"
+    )
+
     if ws_ids is not None and not ws_ids and filters.target_id is None:
         # No memberships and no named target: an empty org-wide report. The
         # named-target case deliberately falls through to the lookup below
         # so it still 404s rather than degrading into a silent empty report,
         # which is what it did before #302.
-        return [], "org-wide (all targets)", "org-wide"
+        return [], org_label, "org-wide"
 
     query = select(Target)
     if ws_ids:
@@ -316,7 +382,7 @@ def _resolve_targets(
         query = query.where(Target.owner == filters.owner)
 
     if filters.target_id is None:
-        return list(session.exec(query.order_by(Target.name)).all()), "org-wide (all targets)", "org-wide"
+        return list(session.exec(query.order_by(Target.name)).all()), org_label, "org-wide"
 
     target = session.get(Target, filters.target_id)
     if not target or (ws_ids is not None and target.workspace_id not in ws_ids):
@@ -324,19 +390,33 @@ def _resolve_targets(
         # workspace the caller can't see (matches findings.py's get_finding).
         raise HTTPException(status_code=404, detail="target not found")
     matching = list(session.exec(query.where(Target.id == target.id)).all())
-    # The label/slug describe what was *asked for*, so a report that came
+    # The label/name describe what was *asked for*, so a report that came
     # back empty because the named repo fell outside the other filters is
-    # still filed under that repo's name instead of a blank.
-    return matching, target.name, _slugify(target.name)
+    # still filed under that repo's name instead of a blank. The name is
+    # returned raw; the Content-Disposition layer owns making it header-safe
+    # (app.core.downloads), so no caller here can forget to.
+    return matching, target.name, target.name
 
 
-def _slugify(value: str) -> str:
-    """Filename-safe slug. Target names are user-supplied, and they end up
-    in a Content-Disposition header; anything outside this set (quotes,
-    semicolons, newlines) either breaks the header or lets a name steer it,
-    so it is replaced rather than escaped."""
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")
-    return slug or "target"
+def _resolve_group_label(session: Session, filters: ReportFilters, ws_ids: Optional[list[int]]) -> None:
+    """Resolve `group_id` to the group's name, or 404.
+
+    Workspace-scoped, like every other Group lookup in this codebase (see
+    app/api/groups.py, where each lookup is followed by
+    enforce_workspace_role). An unscoped `session.get(Group, id)` here would
+    print another tenant's group name straight into the Applied Filters
+    block, turning the report's own honesty header into an enumeration
+    oracle: walk `?group_id=1..N` and read the names back off the document.
+
+    404 rather than 403, matching the target lookup below: the existence of
+    another tenant's group is itself information.
+    """
+    if filters.group_id is None or filters.group_label is not None:
+        return
+    group = session.get(Group, filters.group_id)
+    if not group or (ws_ids is not None and group.workspace_id not in ws_ids):
+        raise HTTPException(status_code=404, detail="group not found")
+    filters.group_label = group.name
 
 
 def build_posture_report(
@@ -369,14 +449,16 @@ def build_posture_report(
     included_set = {k for k in included if k in SECTION_BY_KEY}
 
     ws_ids = accessible_workspace_ids(session, user)
-    targets, scope_label, scope_slug = _resolve_targets(session, filters, ws_ids)
+    _resolve_group_label(session, filters, ws_ids)
+    targets, scope_label, scope_name = _resolve_targets(session, filters, ws_ids)
     now = utcnow()
-
-    if filters.group_id is not None and filters.group_label is None:
-        # Resolved here rather than in the endpoint so every caller of this
-        # function (tests included) gets the readable name on the document.
-        group = session.get(Group, filters.group_id)
-        filters.group_label = group.name if group else f"#{filters.group_id} (not found)"
+    # The instant every figure in this report is stated as of. A report with
+    # a finding window is evidence about a period, so its figures are
+    # measured at the end of that period, not at whatever moment the export
+    # happened to be run -- see POINT_IN_TIME_NOTE for what that does and
+    # does not reach. `min` because a window ending in the future cannot
+    # make us report on data we do not have.
+    as_of = min(now, filters.window_to) if filters.window_to else now
 
     # One Findings-page query, then narrowed per target below. `target_id`,
     # `group_id`, `environment` and `owner` are passed here as well as to
@@ -450,7 +532,15 @@ def build_posture_report(
             open_findings = session.exec(target_query.where(Finding.state == FindingState.OPEN)).all()
             ages_by_severity: dict[str, list[int]] = {}
             for f in open_findings:
-                age_days = max((now - f.first_seen).days, 0)
+                # Measured to `as_of`, not to now: on a report scoped to a
+                # finding window, "how long has this been open" means "as at
+                # the end of the period this report covers". Without the
+                # window the two are the same instant, so an undated report
+                # is unchanged. Note the *set* of findings here is still
+                # today's Open set -- that half cannot be reconstructed
+                # without state history, and POINT_IN_TIME_NOTE says so
+                # rather than letting the reader assume otherwise.
+                age_days = max((as_of - f.first_seen).days, 0)
                 ages_by_severity.setdefault(_enum_value(f.severity), []).append(age_days)
             for severity, ages in sorted(ages_by_severity.items()):
                 buckets: dict[str, int] = {}
@@ -479,9 +569,17 @@ def build_posture_report(
             # Trivy on the 3rd" is a fact about the repository, and it does
             # not become less true because the reader asked to see only
             # critical findings. FILTER_SCOPE_NOTE says so on the document.
-            all_scans = session.exec(
-                select(Scan).where(Scan.target_id == target.id).order_by(Scan.started_at.desc())
-            ).all()
+            #
+            # It IS bounded by the window's end, though: a Q1 report that
+            # lists a September scan is not describing Q1. Only the upper
+            # bound is applied -- a lower bound would drop repos last
+            # scanned before the window and read as a coverage gap that
+            # doesn't exist, which is the more dangerous error for an audit
+            # artifact. With no window, `as_of` is now and this is a no-op.
+            scan_query = select(Scan).where(Scan.target_id == target.id)
+            if filters.window_to is not None:
+                scan_query = scan_query.where(Scan.started_at <= as_of)
+            all_scans = session.exec(scan_query.order_by(Scan.started_at.desc())).all()
             seen_tools: set[str] = set()
             for s in all_scans:
                 if s.tool in seen_tools:
@@ -541,29 +639,54 @@ def build_posture_report(
         else f"{section_count} of {len(REPORT_SECTIONS)} - see '{SECTION_MANIFEST_HEADING}' below"
     )
 
+    target_rows = [
+        {"id": t.id, "name": t.name, "repo_url": t.repo_url, "label": t.label, "default_branch": t.default_branch}
+        for t in targets
+    ]
+
+    # An empty report is the one outcome a reader is most likely to
+    # misread -- "no targets" and "no problems" look identical once the
+    # tables are blank. Say which it is, rather than leaving it to be
+    # inferred from a Target Count of 0.
+    if targets:
+        result_note = ""
+    elif filters.active_count():
+        result_note = (
+            "No targets matched the applied filters, so every section below is empty. "
+            "This is an empty SCOPE, not a clean result: it says nothing about the security "
+            f"posture of anything. See '{APPLIED_FILTERS_HEADING}' for what was applied."
+        )
+    else:
+        result_note = (
+            "No targets are visible to the account that generated this report, so every section "
+            "below is empty. This says nothing about the security posture of anything."
+        )
+
     return {
         "generated_at": now.isoformat() + "Z",
+        "as_of": as_of.isoformat() + "Z",
         "scope": scope_label,
-        "scope_slug": scope_slug,
+        "scope_name": scope_name,
         "target_count": len(targets),
+        "result_note": result_note,
         "filters": filters.describe(),
         "filters_summary": filters.summary(),
         "filters_active_count": filters.active_count(),
         "filter_scope_note": FILTER_SCOPE_NOTE,
+        "point_in_time_note": POINT_IN_TIME_NOTE,
         "sections": section_manifest,
         "sections_included": [k for k in SECTION_KEYS if k in included_set],
         "sections_summary": sections_summary,
-        "targets": [
-            {"id": t.id, "name": t.name, "repo_url": t.repo_url, "label": t.label, "default_branch": t.default_branch}
-            for t in targets
-        ]
-        if "targets" in included_set
-        else [],
+        # All six gated the same way. The want_* flags above already skip
+        # the work; this second gate is what the renderers read, and having
+        # three of the six rely on the flags alone was an invitation for a
+        # future edit to leave rows in a section the manifest calls excluded.
+        "targets": target_rows if "targets" in included_set else [],
         "totals_by_severity_state": totals_rows if "totals" in included_set else [],
         "severity_state_rows": severity_state_rows if "severity_state" in included_set else [],
-        "open_age_rows": open_age_rows,
-        "scan_rows": scan_rows,
-        "sbom_rows": sbom_rows,
+        "open_age_rows": open_age_rows if "open_age" in included_set else [],
+        "scan_rows": scan_rows if "scan_coverage" in included_set else [],
+        "sbom_rows": sbom_rows if "sbom" in included_set else [],
     }
 
 
@@ -574,10 +697,13 @@ def render_csv(data: dict) -> str:
 
     writer.writerow(["Toleman Compliance Posture Report"])
     writer.writerow(["Generated At", data["generated_at"]])
+    writer.writerow(["Figures As Of", data["as_of"]])
     writer.writerow(["Scope", data["scope"]])
     writer.writerow(["Target Count", data["target_count"]])
     writer.writerow(["Filters Applied", data["filters_summary"]])
     writer.writerow(["Sections Included", data["sections_summary"]])
+    if data["result_note"]:
+        writer.writerow(["Result", data["result_note"]])
     writer.writerow([])
 
     # Honesty block 1: what was filtered. Always rendered, unfiltered
@@ -588,6 +714,7 @@ def render_csv(data: dict) -> str:
     for row in data["filters"]:
         writer.writerow([row["label"], row["value"]])
     writer.writerow(["Note", data["filter_scope_note"]])
+    writer.writerow(["Point-in-time note", data["point_in_time_note"]])
 
     # Honesty block 2: what was included. An excluded section is named here
     # AND marked in place below, so neither a reader scanning the manifest
@@ -695,10 +822,13 @@ def render_pdf(data: dict) -> bytes:
 
     story.append(Paragraph("Toleman Compliance Posture Report", styles["Title"]))
     story.append(Paragraph(f"Generated: {data['generated_at']}", styles["Normal"]))
+    story.append(Paragraph(f"Figures as of: {data['as_of']}", styles["Normal"]))
     story.append(Paragraph(f"Scope: {data['scope']}", styles["Normal"]))
     story.append(Paragraph(f"Targets in scope: {data['target_count']}", styles["Normal"]))
     story.append(Paragraph(f"Filters applied: {data['filters_summary']}", styles["Normal"]))
     story.append(Paragraph(f"Sections included: {data['sections_summary']}", styles["Normal"]))
+    if data["result_note"]:
+        story.append(Paragraph(f"Result: {data['result_note']}", styles["Italic"]))
     story.append(Spacer(1, 0.25 * inch))
 
     def add_table(heading: str, header: list[str], rows: list[list]):
@@ -744,6 +874,7 @@ def render_pdf(data: dict) -> bytes:
         [["Scope", data["scope"]]] + [[r["label"], r["value"]] for r in data["filters"]],
     )
     story.append(Paragraph(data["filter_scope_note"], styles["Italic"]))
+    story.append(Paragraph(data["point_in_time_note"], styles["Italic"]))
     story.append(Spacer(1, 0.25 * inch))
 
     # Honesty block 2: which sections this document does and does not carry.
@@ -818,8 +949,16 @@ def _report_filename(data: dict, extension: str) -> str:
     is often all anyone reads before opening it -- a narrowed export that
     files itself under the same name as a full one is the same honesty
     problem as an unlabelled document, one directory level up.
+
+    The scope segment goes in as the repository's real name, non-ASCII
+    included; app.core.downloads.attachment_disposition is what makes it
+    header-safe, and it sends an ASCII fallback alongside the true UTF-8
+    name rather than flattening every non-Latin repo to one placeholder.
+    Only whitespace is folded here, because a filename with spaces in it
+    invites the exact quoting mistakes this is trying to avoid.
     """
-    parts = ["toleman-posture-report", data["scope_slug"]]
+    scope = re.sub(r"\s+", "-", data["scope_name"].strip()) or "report"
+    parts = ["toleman-posture-report", scope]
     if data["filters_active_count"]:
         parts.append("filtered")
     included = len(data["sections_included"])
@@ -827,6 +966,31 @@ def _report_filename(data: dict, extension: str) -> str:
         parts.append(f"{included}of{len(REPORT_SECTIONS)}-sections")
     parts.append(utcnow().strftime("%Y%m%d"))
     return f"{'-'.join(parts)}.{extension}"
+
+
+def _reject_unknown(label: str, values: Optional[list[Optional[str]]], allowed) -> None:
+    """400 on a filter value that matches nothing this caller could filter by.
+
+    The alternative is a 200 carrying an empty report, which for a
+    compliance artifact is the worst possible outcome: it looks like a clean
+    result, and the Applied Filters block faithfully prints the typo as
+    though it were meaningful. `allowed` is always derived from the caller's
+    own visible data, so the error message cannot enumerate another
+    tenant's values.
+    """
+    allowed_set = set(allowed)
+    for value in values or []:
+        if value is None:
+            continue
+        if value not in allowed_set:
+            options = sorted(allowed_set)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"unknown {label} '{value}'"
+                    + (f"; expected one of {options}" if options else f"; no {label} values are recorded")
+                ),
+            )
 
 
 @router.get("/sections")
@@ -890,23 +1054,40 @@ def posture_report(
         # Caught rather than quietly returning nothing: an empty compliance
         # report is the one failure mode nobody double-checks.
         raise HTTPException(status_code=400, detail="date_from must be on or before date_to")
-    if category is not None and category not in all_categories():
-        # A typo'd category would otherwise narrow the report to zero
-        # findings and look like a clean bill of health.
-        raise HTTPException(
-            status_code=400, detail=f"unknown category '{category}'; expected one of {all_categories()}"
-        )
+
+    # Every free-text filter is validated against the values that actually
+    # exist for this caller. A typo in any of them would otherwise narrow
+    # the report to nothing and come back as a clean-looking empty document
+    # -- exactly the failure the honesty header exists to prevent, arriving
+    # through a different door. The candidate sets are the caller's own
+    # facets, so a rejection message can never enumerate another tenant's
+    # tools, environments or owners.
+    _reject_unknown("category", [category], all_categories())
+    _reject_unknown(
+        "tool",
+        tool,
+        # Registry tools are accepted even with no findings yet: filtering
+        # by a configured-but-not-yet-run scanner is a legitimate (empty)
+        # question, unlike a misspelling of one.
+        sorted(set(all_known_tools()) | set(list_tool_facets(session, user))),
+    )
+    _reject_unknown("environment", [environment], _target_facet(session, user, Target.environment))
+    _reject_unknown("owner", [owner], _target_facet(session, user, Target.owner))
+
     if sections is not None:
+        # `?sections=` with nothing after it parses as [""], not [], so the
+        # blanks are stripped first -- otherwise an empty selection falls
+        # through to the unknown-section branch and reports the wrong
+        # problem, which is how this read as handled while never running.
+        sections = [s for s in sections if s.strip()]
+        if not sections:
+            raise HTTPException(status_code=400, detail="at least one report section must be selected")
         unknown = [s for s in sections if s not in SECTION_BY_KEY]
         if unknown:
             raise HTTPException(
                 status_code=400,
                 detail=f"unknown report section(s) {unknown}; expected some of {list(SECTION_KEYS)}",
             )
-        if not sections:
-            # `?sections=` with nothing after it is far more likely to be a
-            # client bug than a request for a report with no content.
-            raise HTTPException(status_code=400, detail="at least one report section must be selected")
 
     filters = ReportFilters(
         target_id=target_id,
@@ -924,12 +1105,11 @@ def posture_report(
 
     if format == "pdf":
         pdf_bytes = render_pdf(data)
-        filename = _report_filename(data, "pdf")
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": attachment_disposition(_report_filename(data, "pdf")),
                 # The browser fetches this with XHR and reads the filename
                 # back off the response (see api.exportPostureReport), which
                 # cross-origin requires the header to be explicitly exposed.
@@ -938,12 +1118,11 @@ def posture_report(
         )
 
     csv_text = render_csv(data)
-    filename = _report_filename(data, "csv")
     return StreamingResponse(
         iter([csv_text]),
         media_type="text/csv",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": attachment_disposition(_report_filename(data, "csv")),
             "Access-Control-Expose-Headers": "Content-Disposition",
         },
     )

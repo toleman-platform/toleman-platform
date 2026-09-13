@@ -702,6 +702,10 @@ def test_posture_named_target_outside_the_other_filters_returns_an_empty_report(
     document says which filters were applied, so empty is readable."""
     _login(client, engine)
     target_id, _ = _make_target_ws(engine, name="dev-only", environment="dev")
+    # A second target carrying the environment being filtered for, so this
+    # exercises "the named repo is not in production" rather than the
+    # separate "production isn't a recorded environment at all" rejection.
+    _make_target_ws(engine, name="prod-only", environment="production")
     _make_finding(engine, target_id, title="Something", rule_id="r1")
 
     res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&environment=production")
@@ -912,3 +916,214 @@ def test_posture_filename_does_not_let_a_target_name_steer_the_header(client, en
     disposition = res.headers["content-disposition"]
     assert disposition.count('"') == 2
     assert "filename=other" not in disposition
+
+
+def test_posture_filename_keeps_a_non_ascii_target_name(client, engine):
+    """Sanitising to ASCII alone is safe but lossy: every non-Latin repo
+    would file under one identical placeholder name. RFC 6266 sends both --
+    an ASCII fallback and the real percent-encoded UTF-8 name."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="日本語")
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv")
+    assert res.status_code == 200
+    disposition = res.headers["content-disposition"]
+    assert "%E6%97%A5%E6%9C%AC%E8%AA%9E" in disposition
+    assert 'filename="toleman-posture-report-' in disposition
+
+
+# --- workspace scoping of the group filter itself --------------------------
+
+def test_posture_group_filter_does_not_leak_another_workspaces_group_name(client, engine):
+    """The Applied Filters block prints the group's *name*, so the lookup
+    behind it has to be workspace-scoped or the honesty header becomes an
+    enumeration oracle: walk ?group_id=1..N and read other tenants' group
+    names straight off the document."""
+    _, ws_a = _make_target_ws(engine, name="mine")
+    _, ws_b = _make_target_ws(engine, name="theirs")
+    their_group = _make_group(engine, ws_b, name="ACME-SECRET-PROJECT")
+
+    _, uid = _login(client, engine, email="nosy@example.com", role=UserRole.DEVELOPER)
+    _assign(engine, uid, ws_a, WorkspaceRole.DEVELOPER)
+
+    res = client.get(f"/api/reports/posture?format=csv&group_id={their_group}")
+    assert res.status_code == 404
+    assert "ACME-SECRET-PROJECT" not in res.text
+
+
+def test_posture_group_filter_404s_for_an_unknown_group(client, engine):
+    _login(client, engine)
+    res = client.get("/api/reports/posture?format=csv&group_id=99999")
+    assert res.status_code == 404
+
+
+def test_posture_admin_can_still_filter_by_any_group(client, engine):
+    target_id, ws = _make_target_ws(engine, name="admin-visible")
+    group_id = _make_group(engine, ws, name="prod")
+    _assign_group(engine, target_id, group_id)
+    _login(client, engine, email="admin2@example.com", role=UserRole.ADMIN)
+
+    res = client.get(f"/api/reports/posture?format=csv&group_id={group_id}")
+    assert res.status_code == 200
+    assert _applied_filters(_rows(res))["Repo group"] == "prod"
+
+
+# --- unknown free-text filter values are rejected, not silently empty ------
+
+@pytest.mark.parametrize(
+    "param,value",
+    [("tool", "semgrepp"), ("environment", "producton"), ("owner", "team-typo")],
+)
+def test_posture_rejects_a_typo_in_a_free_text_filter(client, engine, param, value):
+    """A typo would otherwise narrow the report to nothing and come back as
+    a 200 that reads like a clean bill of health, with the Applied Filters
+    block faithfully printing the typo as though it meant something."""
+    _login(client, engine)
+    target_id, _ = _make_target_ws(engine, name="typo-repo", environment="production", owner="team-a")
+    _make_finding(engine, target_id, title="X", rule_id="r1", tool="semgrep")
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&{param}={value}")
+    assert res.status_code == 400
+
+
+def test_posture_accepts_a_registry_tool_with_no_findings_yet(client, engine):
+    """A configured-but-not-yet-run scanner is a legitimate (empty)
+    question, unlike a misspelling of one, so `tool` validates against the
+    tool registry as well as the caller's own facets."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="unscanned")
+    _make_finding(engine, target_id, title="X", rule_id="r1", tool="semgrep")
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&tool=trivy")
+    assert res.status_code == 200
+    assert _breakdown(_rows(res), "unscanned") == set()
+
+
+def test_posture_empty_section_selection_reports_the_right_problem(client, engine):
+    """`?sections=` parses as [""], not [], so the blank has to be stripped
+    before the unknown-section check or this reports the wrong error."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="emptysections")
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&sections=")
+    assert res.status_code == 400
+    assert "at least one report section" in res.json()["detail"]
+
+
+# --- a dated report says what is and is not as-of that date ----------------
+
+def test_posture_ages_and_scan_coverage_are_measured_at_the_window_end(client, engine):
+    """A Q1 report generated in September must not show 250-day ages and
+    September scans. Ages are measured to the window's end and scan coverage
+    stops there."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="asof")
+    now = utcnow()
+    _make_finding(
+        engine,
+        target_id,
+        title="Old open",
+        rule_id="r1",
+        severity=Severity.CRITICAL,
+        first_seen=now - timedelta(days=300),
+        last_seen=now,
+    )
+    _make_scan(engine, target_id, tool="semgrep", started_at=now - timedelta(days=250), findings_count=1)
+    _make_scan(engine, target_id, tool="trivy", started_at=now - timedelta(days=5), findings_count=0)
+
+    window_end = (now - timedelta(days=200)).date().isoformat()
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&date_to={window_end}")
+    assert res.status_code == 200
+    rows = _rows(res)
+
+    # Age is ~100 days (300 - 200), not ~300: measured to the window's end.
+    age_row = next(r for r in rows if len(r) == 9 and r[0] == "asof")
+    assert 99 <= int(age_row[4]) <= 101
+
+    # The scan that ran after the window is not presented as coverage for it.
+    scan_tools = {r[1] for r in rows if len(r) == 7 and r[0] == "asof"}
+    assert scan_tools == {"semgrep"}
+
+    assert _kv(rows, "Figures As Of").startswith(window_end)
+
+
+def test_posture_discloses_what_is_not_reconstructed_as_of_the_window(client, engine):
+    """Triage state and the SBOM summary cannot be reconstructed for a past
+    date (no state history is stored), so the document says so rather than
+    letting a dated report imply a full snapshot."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="disclosed")
+    _make_finding(engine, target_id, title="X", rule_id="r1")
+
+    res = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&date_to=2026-01-31")
+    rows = _rows(res)
+    note = _applied_filters(rows)["Point-in-time note"]
+    assert "triage state" in note
+    assert "SBOM component summary" in note
+
+    pdf = client.get(f"/api/reports/posture?target_id={target_id}&format=pdf&date_to=2026-01-31")
+    text = _pdf_text(pdf.content)
+    assert "Figures as of" in text
+    assert "current-state" in text
+
+
+def test_posture_undated_report_is_still_as_of_now(client, engine):
+    """No window means as_of is generation time, so the scan-coverage bound
+    is a no-op and nothing about a default export changes."""
+    _login(client, engine)
+    target_id = _make_target(engine, name="undated")
+    _make_scan(engine, target_id, tool="semgrep", findings_count=1)
+
+    rows = _rows(client.get(f"/api/reports/posture?target_id={target_id}&format=csv"))
+    assert _kv(rows, "Figures As Of") == _kv(rows, "Generated At")
+    assert any(r[:2] == ["undated", "semgrep"] for r in rows if len(r) == 7)
+
+
+# --- an empty report says it is an empty scope, not a clean result ---------
+
+def test_posture_empty_result_is_labelled_as_an_empty_scope(client, engine):
+    """"No targets matched" and "no problems found" produce identical blank
+    tables. The document has to say which one it is -- a reader should not
+    have to infer it from Target Count: 0."""
+    _login(client, engine)
+    dev_target, _ = _make_target_ws(engine, name="dev-thing", environment="dev")
+    _make_target_ws(engine, name="prod-thing", environment="production")
+    _make_finding(engine, dev_target, title="X", rule_id="r1")
+
+    # A named target excluded by another target-level filter: filters were
+    # applied and honoured, and nothing matched.
+    res = client.get(f"/api/reports/posture?target_id={dev_target}&format=csv&environment=production")
+    assert res.status_code == 200
+    rows = _rows(res)
+    assert _kv(rows, "Target Count") == "0"
+    result = _kv(rows, "Result")
+    assert "No targets matched the applied filters" in result
+    assert "not a clean result" in result
+
+    pdf = client.get(f"/api/reports/posture?target_id={dev_target}&format=pdf&environment=production")
+    assert "No targets matched" in _pdf_text(pdf.content)
+
+
+def test_posture_non_empty_report_carries_no_empty_scope_note(client, engine):
+    _login(client, engine)
+    target_id = _make_target(engine, name="populated")
+    _make_finding(engine, target_id, title="X", rule_id="r1")
+
+    rows = _rows(client.get(f"/api/reports/posture?target_id={target_id}&format=csv"))
+    assert not any(len(r) >= 1 and r[0] == "Result" for r in rows)
+
+
+def test_posture_scope_label_does_not_claim_all_targets_when_narrowed(client, engine):
+    """"org-wide (all targets)" on a report narrowed to one repo group
+    contradicts the Applied Filters block three rows below it."""
+    _login(client, engine)
+    target_id, ws = _make_target_ws(engine, name="grouped", environment="production")
+    group_id = _make_group(engine, ws, name="PCI")
+    _assign_group(engine, target_id, group_id)
+
+    rows = _rows(client.get(f"/api/reports/posture?format=csv&group_id={group_id}&environment=production"))
+    scope = _kv(rows, "Scope")
+    assert "all targets" not in scope
+    assert "narrowed by" in scope
+    assert "PCI" in scope
+
+    plain = _rows(client.get("/api/reports/posture?format=csv"))
+    assert _kv(plain, "Scope") == "org-wide (all targets)"

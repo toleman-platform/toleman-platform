@@ -28,7 +28,9 @@ what is under test is which schedules fire and against which targets, not
 the scan pipeline those two already have their own coverage for
 (test_auto_full_scan.py, test_api_scan.py).
 """
+import ast
 import inspect
+import textwrap
 from datetime import timedelta
 from unittest.mock import MagicMock
 
@@ -1073,11 +1075,16 @@ class _LifecycleStub:
     This restates the column names by hand, so on its own it would keep
     passing even if #273 landed with different ones. What actually protects
     the names is the merge tripwire at the bottom of this file; these are
-    only here to pin the predicate's logic."""
+    only here to pin the predicate's logic.
 
-    def __init__(self, deactivated_at=None, deleted_at=None):
+    `name` is here because the predicate now routes through
+    target_lifecycle.scan_refusal_reason, which names the target in the
+    message it returns for a deactivated one."""
+
+    def __init__(self, deactivated_at=None, deleted_at=None, name="stub-target"):
         self.deactivated_at = deactivated_at
         self.deleted_at = deleted_at
+        self.name = name
 
 
 def test_a_target_without_the_lifecycle_columns_is_dispatchable(engine):
@@ -1327,8 +1334,19 @@ def test_lifecycle_gate_is_collapsed_once_273_has_landed():
         f"somebody switched off. Update it to whatever the real predicate is."
     )
 
-    source = inspect.getsource(core.is_dispatchable_target)
-    assert "getattr" not in source, (
+    # Parsed, not substring-matched. The first version of this checked
+    # `"getattr" not in source`, which fails against a docstring that merely
+    # *explains* the collapse -- so the tripwire went red on the very commit
+    # that satisfied it. What it means to assert is "no getattr is called
+    # here", and that is a property of the code, not of the text.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(core.is_dispatchable_target)))
+    calls_getattr = any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        for node in ast.walk(tree)
+    )
+    assert not calls_getattr, (
         "app.core.target_lifecycle now exists, so is_dispatchable_target should call it "
         "directly instead of reading Target's lifecycle columns through getattr. The "
         "getattr was only there so this branch could import before #273 merged; leaving "

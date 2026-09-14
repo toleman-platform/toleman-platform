@@ -921,6 +921,15 @@ def distinct_finding_tools(session: Session, user: User) -> list[str]:
     the moment the endpoint grows a parameter.
     """
     ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and not ws_ids:
+        return []
+    query = select(Finding.tool).distinct()
+    if ws_ids is not None:
+        query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
+    rows = session.exec(query).all()
+    return sorted(rows)
+
+
 class FacetCount(BaseModel):
     """One option of one filter, and how many findings it would match."""
     value: str
@@ -1293,11 +1302,6 @@ def distinct_target_owners(session: Session, user: User) -> list[str]:
     return _target_facet(session, user, Target.owner)
 
 
-@router.get("/facets/tools")
-def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
-    """Distinct tool names across findings visible to the caller (issue #57),
-    for populating the tool filter."""
-    return distinct_finding_tools(session, user)
 
 
 class CategoryFacet(BaseModel):

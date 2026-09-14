@@ -36,6 +36,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, or_, select
 
+from app.core import target_lifecycle
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
 from app.core.time import utcnow
 from app.core.tool_usage import is_nuclei_enabled_for_api_scan
@@ -123,33 +124,29 @@ class ResolvedScanSchedule:
 def is_dispatchable_target(target: Target) -> bool:
     """Whether scheduled work may be started against this target at all.
 
-    Deliberately written with getattr rather than direct attribute access.
-    Target deactivate/soft-delete (#273) is landing on a parallel branch
-    that adds `deactivated_at`/`deleted_at` and an
-    `app.core.target_lifecycle` module; those columns do not exist on this
-    branch yet. Importing that module, or reading the attributes directly,
-    would make this branch fail to import on its own; waiting for the stack
-    to merge would instead ship a dispatcher that creates a Scan row every
-    single tick for every deactivated target, which #273's worker-side gate
-    then immediately fails -- forever, unattended, one per target per cycle.
-    A permanently-red scan history nobody asked for is a worse outcome than
-    one defensive getattr.
+    Collapsed onto `target_lifecycle.scan_refusal_reason` now that #273 has
+    landed. This previously read the lifecycle columns through `getattr`,
+    because #273 was on a parallel branch and neither the columns nor the
+    module existed here yet -- a no-op that became a real gate the moment
+    they arrived, chosen over shipping a dispatcher that would create a Scan
+    row every tick for every deactivated target.
 
-    So this is a no-op today (the attributes are absent, so both read None)
-    and becomes a real gate the moment those columns land, with no merge
-    conflict in either direction. Once #273 is in, this collapses to a
-    direct call into app.core.target_lifecycle and the getattr goes away.
+    That temporary shape carried a cost, which is why it is gone rather than
+    left working: a rename on the other branch would have left this silently
+    failing open, and it is the only gate between a schedule and nuclei
+    probing a deactivated host (#273 puts its own refusal in
+    `queue_full_scan`, but `queue_api_scan` does not exist on that branch).
+    A merge tripwire in tests/test_scan_schedules.py enforced the collapse:
+    it skipped while `app.core.target_lifecycle` was unimportable and went
+    red the moment it was importable while this still used `getattr`. It did
+    exactly that on the stacked branch, which is what prompted this change.
 
-    That last sentence is enforced, not aspirational: the getattr's cost is
-    that a rename on the other branch would leave this silently failing open
-    rather than failing a test, and this is the only gate standing between a
-    schedule and nuclei probing a deactivated target (#273 puts its own
-    refusal in queue_full_scan, but queue_api_scan does not exist there). So
-    tests/test_scan_schedules.py carries a merge tripwire that skips while
-    app.core.target_lifecycle is unimportable and goes red the moment it is
-    importable while this still reads through getattr.
+    `scan_refusal_reason` rather than `is_active`: active means "not
+    deactivated" alone, while dispatch also has to refuse a soft-deleted
+    target. Returning None is that module's own spelling of "work may be
+    dispatched", so this asks the question once, in the place that owns it.
     """
-    return getattr(target, "deactivated_at", None) is None and getattr(target, "deleted_at", None) is None
+    return target_lifecycle.scan_refusal_reason(target) is None
 
 
 # Why a scheduled active API scan would not actually probe anything. The

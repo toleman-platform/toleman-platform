@@ -484,8 +484,14 @@ def build_posture_report(
         severity=filters.severity or None,
         tool=filters.tool or None,
         fixability=None,
-        environment=filters.environment,
-        owner=filters.owner,
+        # (#270 x #302) _filtered_findings_query widened these to list[str]
+        # when the Findings page gained multi-select facets. The report's own
+        # filter is deliberately single-value -- one environment, one owner,
+        # per document -- so it wraps at the boundary rather than widening its
+        # API to match. Passing the bare string reaches SQLAlchemy's .in_()
+        # and raises, which is what the merge of those two changes produced.
+        environment=[filters.environment] if filters.environment else None,
+        owner=[filters.owner] if filters.owner else None,
         search=None,
         date_from=filters.window_from,
         date_to=filters.window_to,

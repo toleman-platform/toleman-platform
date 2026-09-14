@@ -2,6 +2,11 @@ backend/venv/
 # Both spellings: `python -m venv .venv` is the more common one, and only
 # `venv/` being listed here is how a whole virtualenv once reached a PR.
 backend/.venv/
+# ...and at the repo root, which is where `python -m venv .venv` lands when
+# you run it from the top of a worktree rather than from backend/. Same
+# lesson as the two lines above, learned the same way: 11,691 files staged
+# in one `git add -A`.
+.venv/
 backend/.env
 backend/.demo_credentials.json
 .demo_credentials.json

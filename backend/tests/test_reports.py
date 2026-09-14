@@ -423,6 +423,14 @@ def test_posture_specific_target_id_outside_caller_workspace_404s(client, engine
 #    feature as the filtering itself.
 # ---------------------------------------------------------------------------
 
+# The Scan History / Coverage table's width. It went 7 -> 8 when #273 added
+# the Scanning column, and these tests pick that table out of a flat CSV by
+# row width, so the number is load-bearing. Named rather than inlined
+# precisely because a bare `len(r) == 7` in four places is what made the
+# column addition look like a test failure instead of a column addition.
+SCAN_ROW_WIDTH = 8
+
+
 def _rows(res) -> list[list[str]]:
     return list(csv.reader(io.StringIO(res.text)))
 
@@ -1055,7 +1063,7 @@ def test_posture_ages_and_scan_coverage_are_measured_at_the_window_end(client, e
     assert 99 <= int(age_row[4]) <= 101
 
     # The scan that ran after the window is not presented as coverage for it.
-    scan_tools = {r[1] for r in rows if len(r) == 7 and r[0] == "asof"}
+    scan_tools = {r[1] for r in rows if len(r) == SCAN_ROW_WIDTH and r[0] == "asof"}
     assert scan_tools == {"semgrep"}
 
     assert _kv(rows, "Figures As Of").startswith(window_end)
@@ -1089,11 +1097,11 @@ def test_posture_never_scanned_is_qualified_under_a_window(client, engine):
     target_id = _make_target(engine, name="unscanned-repo")
 
     windowed = client.get(f"/api/reports/posture?target_id={target_id}&format=csv&date_to=2026-01-31")
-    row = next(r for r in _rows(windowed) if len(r) == 7 and r[0] == "unscanned-repo")
+    row = next(r for r in _rows(windowed) if len(r) == SCAN_ROW_WIDTH and r[0] == "unscanned-repo")
     assert row[3] == "not scanned as of 2026-01-31"
 
     plain = client.get(f"/api/reports/posture?target_id={target_id}&format=csv")
-    plain_row = next(r for r in _rows(plain) if len(r) == 7 and r[0] == "unscanned-repo")
+    plain_row = next(r for r in _rows(plain) if len(r) == SCAN_ROW_WIDTH and r[0] == "unscanned-repo")
     assert plain_row[3] == "never scanned"
 
 
@@ -1106,7 +1114,7 @@ def test_posture_undated_report_is_still_as_of_now(client, engine):
 
     rows = _rows(client.get(f"/api/reports/posture?target_id={target_id}&format=csv"))
     assert _kv(rows, "Figures As Of") == _kv(rows, "Generated At")
-    assert any(r[:2] == ["undated", "semgrep"] for r in rows if len(r) == 7)
+    assert any(r[:2] == ["undated", "semgrep"] for r in rows if len(r) == SCAN_ROW_WIDTH)
 
 
 # --- an empty report says it is an empty scope, not a clean result ---------

@@ -227,10 +227,15 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         #
         # push/installation_repositories/issue_comment added later, closing
         # three real gaps found while explaining this App's behavior in a
-        # support session (none needed a new permission scope, so no
-        # existing installation's owner has to re-approve anything -- unlike
-        # workflows:write above, only setup_on_update-covered changes need
-        # that):
+        # support session. Only push turned out to be a plain default_events
+        # entry (#475): issue_comment also needs "issues": "read" above, and
+        # installation_repositories is not declared here at all. A manifest only
+        # shapes Apps created from here on, so no existing installation's
+        # owner is prompted to re-approve anything either way -- but by the
+        # same token an App created before "issues": "read" was in this
+        # manifest cannot subscribe to issue_comment until its owner grants
+        # Issues read access on the App's own settings page (there is no API
+        # for it; see app_management_url below):
         #   - push: without it, nothing tells Toleman a PR merged. A
         #     target's own generated toleman-scan.yml (if TOLEMAN_API_URL/
         #     TOLEMAN_API_KEY are configured on it) already re-scans on push

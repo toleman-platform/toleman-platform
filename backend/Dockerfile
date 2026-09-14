@@ -45,6 +45,8 @@ ARG TFSEC_VERSION=1.28.14
 # still runs. Verifying the tarball is strictly stronger; it covers the
 # binary that actually ends up in the image rather than the program that
 # fetched it.
+ARG GITLEAKS_SHA256_AMD64=5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba
+ARG GITLEAKS_SHA256_ARM64=654c935542c89f565aabe7bf7c6c500830f116c114f0aeb509d2460c1ac2e6da
 ARG TRIVY_SHA256_AMD64=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
 ARG TRIVY_SHA256_ARM64=13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
 ARG GOSEC_SHA256_AMD64=d7882e505b1ff345d458bf0e893eec8019bc849f861ad73a212869540dd505ff
@@ -87,12 +89,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # reliably populate TARGETARCH, which left it empty and broke this step.
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
-        amd64) GITLEAKS_ARCH=x64 ;; \
-        arm64) GITLEAKS_ARCH=arm64 ;; \
+        amd64) GITLEAKS_ARCH=x64; GITLEAKS_SHA256="${GITLEAKS_SHA256_AMD64}" ;; \
+        arm64) GITLEAKS_ARCH=arm64; GITLEAKS_SHA256="${GITLEAKS_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GITLEAKS_ARCH}.tar.gz" \
-        | tar xz -C /usr/local/bin gitleaks; \
+    curl -fsSL -o /tmp/gitleaks.tar.gz \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GITLEAKS_ARCH}.tar.gz"; \
+    echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -; \
+    tar xz -C /usr/local/bin -f /tmp/gitleaks.tar.gz gitleaks; \
+    rm -f /tmp/gitleaks.tar.gz; \
     gitleaks version
 
 # --- Trivy (SCA / container / filesystem scanner) --------------------------
@@ -120,7 +125,7 @@ RUN set -eux; \
         arm64) TRIVY_ASSET="Linux-ARM64"; TRIVY_SHA256="${TRIVY_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -sSL -o /tmp/trivy.tar.gz \
+    curl -fsSL -o /tmp/trivy.tar.gz \
         "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_ASSET}.tar.gz"; \
     echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy; \
@@ -141,7 +146,7 @@ RUN set -eux; \
         arm64) GOSEC_ARCH=arm64; GOSEC_SHA256="${GOSEC_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -sSL -o /tmp/gosec.tar.gz \
+    curl -fsSL -o /tmp/gosec.tar.gz \
         "https://github.com/securego/gosec/releases/download/v${GOSEC_VERSION}/gosec_${GOSEC_VERSION}_linux_${GOSEC_ARCH}.tar.gz"; \
     echo "${GOSEC_SHA256}  /tmp/gosec.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/gosec.tar.gz gosec; \
@@ -173,7 +178,7 @@ RUN set -eux; \
         arm64) TFSEC_ARCH=arm64; TFSEC_SHA256="${TFSEC_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -sSL -o /usr/local/bin/tfsec \
+    curl -fsSL -o /usr/local/bin/tfsec \
         "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/tfsec-linux-${TFSEC_ARCH}"; \
     echo "${TFSEC_SHA256}  /usr/local/bin/tfsec" | sha256sum -c -; \
     chmod +x /usr/local/bin/tfsec; \
@@ -198,7 +203,7 @@ RUN set -eux; \
         arm64) NUCLEI_ARCH=arm64; NUCLEI_SHA256="${NUCLEI_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -sSL -o /tmp/nuclei.zip \
+    curl -fsSL -o /tmp/nuclei.zip \
         "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${NUCLEI_ARCH}.zip"; \
     echo "${NUCLEI_SHA256}  /tmp/nuclei.zip" | sha256sum -c -; \
     unzip -o -j /tmp/nuclei.zip nuclei -d /usr/local/bin; \
@@ -276,8 +281,15 @@ RUN set -eux; \
 # json,sys; print(chr(10).join(json.load(sys.stdin)['info']
 # ['requires_dist']))"`) against requirements.txt's pins before landing it.
 COPY requirements.txt .
+# (Pinned) semgrep was the one scanner installed without a version, so every
+# image build resolved whatever was newest that day. For the primary SAST
+# engine that means scan results are not reproducible: the same commit built a
+# week apart could produce a different finding set, with no way to say which
+# version produced a historical result. Pinned to 1.177.0, which is what the
+# unpinned install resolved to at the time of pinning -- so this is
+# behaviour-neutral today and only stops the drift.
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt semgrep checkov==3.3.17 "setuptools>=78.1.1,<81" \
+    && pip install -r requirements.txt semgrep==1.177.0 checkov==3.3.17 "setuptools>=78.1.1,<81" \
     && semgrep --version \
     && checkov --version
 

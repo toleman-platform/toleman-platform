@@ -111,6 +111,8 @@ export type FindingGroup = {
   file_count: number;
   max_priority_score: number;
   oldest_first_seen: string;
+  /** Newest first_seen in the group — what `sort=recent` orders by, matching the flat list. */
+  newest_first_seen: string;
   newest_last_seen: string;
   max_epss: Nullable<number>;
   kev_count: number;
@@ -126,6 +128,8 @@ export type FindingGroup = {
 export type FindingGroupListResult = {
   items: FindingGroup[];
   total: number;
+  /** The group set hit the server ceiling, so `total` and `total_findings` are floors. */
+  truncated: boolean;
   /** The count the flat list would have shown, so the UI can say "14 groups / 150 findings". */
   total_findings: number;
 };

@@ -2,8 +2,14 @@
 
 import { useState } from "react";
 import { ChevronRight, Loader2 } from "lucide-react";
-import { Finding, FindingGroup, Target, api } from "@/lib/api";
-import { SEVERITY_BORDER_COLOR, SEVERITY_COLOR } from "@/lib/severity";
+import { Finding, FindingGroup, FindingsQuery, Target, api } from "@/lib/api";
+import {
+  EPSS_BADGE_COLOR,
+  EPSS_NOTABLE_THRESHOLD,
+  KEV_BADGE_COLOR,
+  SEVERITY_BORDER_COLOR,
+  SEVERITY_COLOR,
+} from "@/lib/severity";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,20 +61,20 @@ function GroupSignals({ group }: { group: FindingGroup }) {
         key="kev"
         variant="outline"
         title="Listed in CISA's Known Exploited Vulnerabilities catalogue"
-        className="border-destructive/40 bg-destructive/10 px-1.5 py-0 text-[10px] font-semibold text-destructive"
+        className={cn("px-1.5 py-0 text-[10px] font-semibold", KEV_BADGE_COLOR)}
       >
         KEV {group.kev_count > 1 ? `×${group.kev_count}` : ""}
       </Badge>,
     );
   }
 
-  if (group.max_epss !== null && group.max_epss >= 0.1) {
+  if (group.max_epss !== null && group.max_epss > EPSS_NOTABLE_THRESHOLD) {
     signals.push(
       <Badge
         key="epss"
         variant="outline"
         title="Highest EPSS score in this group: predicted probability of exploitation in the next 30 days"
-        className="border-chart-3/30 bg-chart-3/10 px-1.5 py-0 text-[10px] text-chart-3"
+        className={cn("px-1.5 py-0 text-[10px]", EPSS_BADGE_COLOR)}
       >
         EPSS {Math.round(group.max_epss * 100)}%
       </Badge>,
@@ -106,6 +112,15 @@ function GroupSignals({ group }: { group: FindingGroup }) {
 }
 
 /**
+ * Members are fetched a page at a time; this bounds how many a single row will
+ * pull before it stops and says so. A licence group with 148 members is the
+ * case this exists for — it must be triageable in one action — but an
+ * unbounded loop on a pathological group is not something a row should do.
+ */
+const MEMBER_PAGE_SIZE = 200;
+const MEMBER_FETCH_CAP = 1000;
+
+/**
  * One decision, as one line.
  *
  * The old card spent four lines and a border on six facts about a single
@@ -115,16 +130,30 @@ function GroupSignals({ group }: { group: FindingGroup }) {
  */
 export function FindingGroupRow({
   group,
+  memberQuery,
   targets = [],
   onTriaged,
 }: {
   group: FindingGroup;
+  /**
+   * The exact filters the grouped list was built with.
+   *
+   * Without this the member fetch sent only `tool` and `rule_id`, so expanding
+   * a row in the "Needs action" queue listed findings the queue excludes --
+   * and because group triage acts on what the fetch returned, one click could
+   * overwrite findings triaged months ago, complete with a new rationale and a
+   * new state-log entry, none of which the reader was shown. The row's count
+   * comes from the filtered aggregate, so its member list has to come from the
+   * same filters or the two disagree.
+   */
+  memberQuery?: FindingsQuery;
   targets?: Target[];
   onTriaged?: () => void;
 }) {
   const [now] = useState(() => Date.now());
   const [expanded, setExpanded] = useState(false);
   const [members, setMembers] = useState<Finding[] | null>(null);
+  const [memberTotal, setMemberTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
@@ -133,22 +162,36 @@ export function FindingGroupRow({
   const targetName = targets.find((t) => t.id === group.representative_target_id)?.name;
   const age = daysSince(group.oldest_first_seen, now);
 
-  async function toggle() {
-    const next = !expanded;
-    setExpanded(next);
-    // Members are fetched on first expand and then kept: re-collapsing and
-    // re-expanding a row is a navigation gesture, not a reason to re-hit the
-    // API. `grouped` rows are the only ones with anything to reveal.
-    if (!next || members !== null || !group.grouped) return;
+  // More members than one row will pull. Triage is disabled rather than
+  // silently applied to the first slice: a group that renders 1,400 and closes
+  // 1,000 would leave 400 behind a decision the reader believes is finished.
+  const truncated = members !== null && memberTotal > members.length;
+
+  async function loadMembers() {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.findings({
-        tool: group.tool,
-        rule_id: group.rule_id,
-        page_size: 100,
-      });
-      setMembers(result.items);
+      const collected: Finding[] = [];
+      let page = 1;
+      let total = 0;
+      // Paged rather than capped at a single request: a group renders its full
+      // finding_count, so triaging it has to reach every one of them or the
+      // row promises more than the action delivers.
+      for (;;) {
+        const result = await api.findings({
+          ...memberQuery,
+          tool: group.tool,
+          rule_id: group.rule_id,
+          page,
+          page_size: MEMBER_PAGE_SIZE,
+        });
+        total = result.total;
+        collected.push(...result.items);
+        if (result.items.length === 0 || collected.length >= total || collected.length >= MEMBER_FETCH_CAP) break;
+        page += 1;
+      }
+      setMembers(collected);
+      setMemberTotal(total);
     } catch (e) {
       setError(e instanceof Error ? e.message : "could not load this group's findings");
     } finally {
@@ -156,15 +199,32 @@ export function FindingGroupRow({
     }
   }
 
+  async function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    // Members are fetched on first expand and then kept: re-collapsing and
+    // re-expanding a row is a navigation gesture, not a reason to re-hit the
+    // API. `grouped` rows are the only ones with anything to reveal.
+    if (!next || members !== null || !group.grouped) return;
+    await loadMembers();
+  }
+
   async function triageGroup(toState: string) {
     // One rationale recorded against every member, which is both fewer clicks
     // and a better audit trail than the same sentence retyped a dozen times.
     const ids = members?.map((m) => m.id) ?? [];
-    if (ids.length === 0) return;
+    if (ids.length === 0 || truncated) return;
     setSubmitting(true);
     try {
       await api.bulkTriage(ids, toState, reason);
       setReason("");
+      // The members just triaged may no longer match the active filters, and
+      // the cached list would otherwise keep showing them with their old
+      // states -- a second click would then re-triage findings already in that
+      // state. Dropped so the next expand re-reads the truth.
+      setMembers(null);
+      setMemberTotal(0);
+      setExpanded(false);
       onTriaged?.();
     } finally {
       setSubmitting(false);
@@ -254,13 +314,20 @@ export function FindingGroupRow({
                 ))}
               </ul>
 
+              {truncated && (
+                <p className="mt-2 text-xs text-destructive">
+                  Showing {members.length} of {memberTotal}. Group triage is disabled above this size — narrow the
+                  filters, or triage from the ungrouped list.
+                </p>
+              )}
+
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Input
                   className="h-7 min-w-[180px] flex-1 bg-background text-xs"
                   aria-label={`Rationale, applied to all ${members.length} findings in this group`}
+                  disabled={submitting || truncated}
                   placeholder="Rationale (recorded against every finding in this group)"
                   value={reason}
-                  disabled={submitting}
                   onChange={(e) => setReason(e.target.value)}
                 />
                 {TRIAGE_STATES.map((s) => (
@@ -269,7 +336,7 @@ export function FindingGroupRow({
                     size="sm"
                     variant={s === "Won't Fix" ? "destructive" : "outline"}
                     className="h-7 text-xs"
-                    disabled={submitting}
+                    disabled={submitting || truncated}
                     onClick={() => triageGroup(s)}
                   >
                     {submitting ? "Updating…" : s}

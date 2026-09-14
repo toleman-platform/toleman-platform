@@ -116,6 +116,12 @@ def group_aggregate_columns():
         func.max(severity_weight_case()).label("severity_weight"),
         func.max(Finding.priority_score).label("max_priority_score"),
         func.min(Finding.first_seen).label("oldest_first_seen"),
+        # Both ends of first_seen: `oldest` is what the row's age column shows,
+        # `newest` is what `sort=recent` orders by, so "Newest first" means the
+        # same thing in the grouped and flat views (the flat list sorts on
+        # first_seen, not last_seen -- a group re-detected by today's scan is
+        # not newly found).
+        func.max(Finding.first_seen).label("newest_first_seen"),
         func.max(Finding.last_seen).label("newest_last_seen"),
         func.count(func.distinct(Finding.target_id)).label("target_count"),
         func.count(func.distinct(Finding.file_path)).label("file_count"),

@@ -13,6 +13,7 @@ import { TargetDiffScope } from "./target-diff-scope";
 import { TargetCloneCredentials } from "./target-clone-credentials";
 import { TargetIdBadge } from "./target-id-badge";
 import { ApiScanConfig } from "./api-scan-config";
+import { ApiScanCredential } from "./api-scan-credential";
 import { TargetLifecycle } from "./target-lifecycle";
 import { TargetScanSchedule } from "./target-scan-schedule";
 import { TargetTabs, normalizeTab } from "./target-tabs";
@@ -357,6 +358,7 @@ export default async function TargetDetailPage({
           <div>
             <h2 className="mb-3 text-sm font-medium text-muted-foreground">Active API Scanning</h2>
             <ApiScanConfig targetId={targetId} initialApiBaseUrl={target.api_base_url} />
+            <ApiScanCredential targetId={targetId} />
           </div>
 
           <PipelineIntegration

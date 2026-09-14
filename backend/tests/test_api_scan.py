@@ -325,7 +325,14 @@ def test_api_scan_end_to_end_eager_creates_findings(engine, monkeypatch):
                 "matched-at": "https://api.example.com/admin",
             }
         ]
-        monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", lambda urls: canned_nuclei_output)
+        # Accepts headers because the task now passes the target's scan
+        # credential (#470); this target has none configured, so the scan
+        # stays anonymous, which is asserted rather than just tolerated.
+        def fake_run_nuclei(urls, headers=None):
+            assert headers == {}
+            return canned_nuclei_output
+
+        monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", fake_run_nuclei)
 
         import app.core.db as db_module
 
@@ -363,7 +370,7 @@ def test_api_scan_missing_nuclei_binary_records_scan_error(engine, monkeypatch):
         target_id = _make_target(engine)
         _add_endpoint(engine, target_id, "/admin")
 
-        def _raise_missing_binary(urls):
+        def _raise_missing_binary(urls, headers=None):
             raise FileNotFoundError(2, "No such file or directory", "nuclei")
 
         monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", _raise_missing_binary)

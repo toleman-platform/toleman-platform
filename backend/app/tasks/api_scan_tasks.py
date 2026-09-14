@@ -3,7 +3,7 @@ import subprocess
 
 from sqlmodel import Session
 
-from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
+from app.core.api_scan_targets import ApiScanConfigError, build_scan_headers, build_scan_urls
 from app.core.async_jobs import create_running_row
 from app.core.db import engine
 from app.core import scan_health
@@ -172,7 +172,7 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
                 _notify_api_scan_failure(session, target, error)
                 return {"error": error, "scan_id": scan.id}
 
-            raw_results = runner.run_nuclei(urls)
+            raw_results = runner.run_nuclei(urls, headers=build_scan_headers(target))
             parsed = parsers.parse_nuclei(raw_results)
             # (#229) What makes this assertion earned rather than assumed:
             # runner.run_nuclei now checks nuclei's exit code and raises

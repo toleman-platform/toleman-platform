@@ -236,6 +236,23 @@ class Target(SQLModel, table=True):
     # declared as belonging to it.
     api_base_url: Optional[str] = None
 
+    # (#470) Credential the active API scanner presents, so it tests the API
+    # rather than the login wall. Without it every probe is anonymous, every
+    # authenticated route answers 401, and the scan still reports success --
+    # an all-clear that is evidence of nothing.
+    #
+    # Modelled as one arbitrary header rather than a typed "auth method"
+    # because that single shape already covers bearer tokens, API keys and
+    # most service-to-service auth, and a wrong guess at an enum of methods
+    # is harder to undo than adding a second field later. The NAME is not
+    # secret and is stored in the clear so the UI can show what is
+    # configured; the VALUE is encrypted at rest with the same
+    # core.crypto.encrypt_secret used for the GitHub App private key, and is
+    # never returned by any route, logged, or included in a scan's stored
+    # invocation.
+    api_auth_header_name: Optional[str] = None
+    api_auth_header_value_ciphertext: Optional[str] = None
+
     # (#330) Outcome of the automatic GitHub Dependency Graph import that
     # runs when a target is created or imported. Persisted per target so
     # the result survives a reload; a task-result lookup would not.

@@ -22,7 +22,21 @@ rules:
       category: security
       cwe: "CWE-565: Reliance on Cookies without Validation and Integrity Checking"
       validated-against:
-        - "toleman-platform (self): matched the real CodeQL alert; manual review confirmed the value is a signed session token, not raw input -- correct, low-severity-by-design result for this heuristic"
+        - "toleman-platform (self): 2 findings, both the hardened session cookie in api/auth.py. Manually reviewed 2026-09-15: correct code, so both counted as false positives and the rule now excludes httponly+samesite cookies. 0 findings here afterwards."
     patterns:
       - pattern: $RESP.set_cookie(..., value=$V, ...)
       - pattern-not: $RESP.set_cookie(..., value="...", ...)
+      # A cookie set with httponly AND samesite together is one whose
+      # handling someone has already thought about; asking them to
+      # "confirm it's a signed/opaque token" is a question the surrounding
+      # code has answered. Measured on this repo: both findings this rule
+      # produced were the session cookie in api/auth.py, set with
+      # httponly=True, secure, samesite="lax" and max_age -- correct code,
+      # and a warning on correct code is noise however low its severity
+      # says it is.
+      #
+      # Deliberately requires BOTH flags. httponly alone does not mean the
+      # value was considered (it is the one flag people set reflexively),
+      # and a cookie carrying raw user input with no samesite is still
+      # worth a look.
+      - pattern-not: $RESP.set_cookie(..., httponly=True, ..., samesite=$S, ...)

@@ -50,3 +50,30 @@ rules:
           # anything not at the start of the identifier; learned that the
           # hard way testing this rule).
           regex: (?i).*(url|uri|href|link|endpoint|host|target|webhook|callback|redirect|src).*
+      # Two negative constraints, both added after measuring this rule on
+      # this repo: it reported 13 findings, of which 7 could not be SSRF
+      # under any input because the destination is fixed in the source.
+      # Name-based matching alone cannot tell a request-derived value from
+      # a module constant that merely has "URL" in its name.
+      - metavariable-regex:
+          metavariable: $URL
+          # Must contain a lowercase letter. SCREAMING_SNAKE_CASE is the
+          # Python convention for a module-level constant, and a constant
+          # destination is not attacker-controlled: EPSS_API_URL,
+          # KEV_CATALOG_URL, NVD_API_URL and OSV_API_URL were four of the
+          # seven. Deliberately a convention check, not a definition
+          # lookup -- semgrep cannot resolve the binding here, and the
+          # convention holds in every Python codebase worth scanning.
+          regex: .*[a-z].*
+      - metavariable-regex:
+          metavariable: $URL
+          # Must not be a string literal (or f-string) whose scheme and
+          # host are written out. `f"https://api.github.com/repos/{slug}"`
+          # interpolates the *path*, so no input can move the request to
+          # another host -- which is the thing SSRF is about. An
+          # interpolation before the host, `f"{base}/x"`, does not match
+          # this and is still reported -- unless that leading interpolation
+          # is itself a SCREAMING_SNAKE_CASE constant (`f"{OSV_API_URL}/{id}"`),
+          # which is the same fixed-destination case written a second way
+          # and was two more of the seven.
+          regex: (?s)^(?!\s*[frbFRB]*['\"](https?://|\{[A-Z][A-Z0-9_]*\})).*

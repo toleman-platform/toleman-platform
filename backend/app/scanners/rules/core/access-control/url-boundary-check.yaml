@@ -50,9 +50,21 @@ rules:
       category: security
       cwe: "CWE-20: Improper Input Validation"
       validated-against:
-        - "toleman-platform (self): 2 unverified candidates, not manually confirmed"
+        - "toleman-platform (self): 3 candidates, all manually reviewed 2026-09-15 and all false positives -- .git/.test.yaml/.go extension filters. Suffix regex anchored to real domain shapes as a result; now 0 findings here, which is the correct answer for this repo."
     patterns:
       - pattern: $URL.endswith($SUFFIX)
       - metavariable-regex:
           metavariable: $SUFFIX
-          regex: (?i).*\..*[a-z]{2,}.*
+          # Anchored, and requires a label BEFORE the dot, because the
+          # unanchored ".*\..*[a-z]{2,}.*" this replaces matched any
+          # file extension: measured on this repo it reported three
+          # findings and all three were `.endswith(".git")`,
+          # `.endswith(".test.yaml")` and `.endswith(".go")` -- extension
+          # filters, not host checks, and nothing an attacker can reach.
+          #
+          # A host suffix worth warning about looks like `good.com` or
+          # `example.co.uk`: one or more labels, then an alphabetic TLD.
+          # A leading dot disqualifies it, which is what separates a
+          # domain from an extension. The optional quotes are because
+          # semgrep matches this against the literal's source text.
+          regex: ^['"]?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}['"]?$

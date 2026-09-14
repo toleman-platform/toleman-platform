@@ -14,20 +14,31 @@ import { ConnectGithubCard } from "@/components/features/integrations";
 // opens it.
 export function IntegrationSummary({
   installed,
+  statusUnknown = false,
   accountLogin,
   targetsCount,
   defaultOpen,
 }: {
   installed: boolean;
+  /**
+   * The status request failed, so `installed` is a fallback rather than an
+   * answer. Without this the summary rendered "GitHub App not connected" off
+   * a failed fetch -- a factual claim about the integration derived from not
+   * knowing -- directly beneath a banner saying the state was unknown. The
+   * page contradicted itself, and the more confident half was the wrong one.
+   */
+  statusUnknown?: boolean;
   accountLogin: string | null;
   targetsCount: number;
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
-  const summaryLabel = installed
-    ? `GitHub App connected${accountLogin ? ` as ${accountLogin}` : ""} · ${targetsCount} repo${targetsCount === 1 ? "" : "s"} synced`
-    : "GitHub App not connected · add targets manually or connect below";
+  const summaryLabel = statusUnknown
+    ? "GitHub App status unavailable · couldn't reach the API to check"
+    : installed
+      ? `GitHub App connected${accountLogin ? ` as ${accountLogin}` : ""} · ${targetsCount} repo${targetsCount === 1 ? "" : "s"} synced`
+      : "GitHub App not connected · add targets manually or connect below";
 
   return (
     <div className="rounded-md border border-border bg-card">

@@ -94,7 +94,15 @@ export default function ReportsPage() {
     setFacetFailures((prev) => (prev.includes(label) ? prev : [...prev, label]));
   }, []);
 
-  useEffect(() => {
+  // Extracted from the effect so Retry can re-run it. The banner reports facet
+  // failures as well as the targets failure, so a Retry that only reloaded
+  // targets left the facet half of its own message on screen with no way to
+  // act on it.
+  const loadFacets = useCallback(() => {
+    // Deliberately does NOT clear facetFailures: this runs from an effect on
+    // mount, and clearing state synchronously inside an effect triggers a
+    // cascading render (react-hooks/set-state-in-effect). On mount there is
+    // nothing to clear anyway; the Retry handler clears before re-running.
     // Facets are decoration on the generator, not its subject: one of them
     // failing should cost the operator that one filter, not the page -- but it
     // must say so (see noteFacetFailure above).
@@ -114,6 +122,10 @@ export default function ReportsPage() {
       })
       .catch(() => { setSectionCatalog([]); noteFacetFailure("Report sections"); });
   }, [noteFacetFailure]);
+
+  useEffect(() => {
+    loadFacets();
+  }, [loadFacets]);
 
   const currentTarget = targets.find((t) => t.id === targetId);
   const scopeLabel =
@@ -387,7 +399,15 @@ export default function ReportsPage() {
           },
         ]}
         action={
-          <Button size="sm" variant="outline" onClick={reloadTargets}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setFacetFailures([]);
+              reloadTargets();
+              loadFacets();
+            }}
+          >
             Retry
           </Button>
         }

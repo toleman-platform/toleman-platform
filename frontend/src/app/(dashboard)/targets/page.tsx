@@ -110,6 +110,7 @@ export default async function TargetsPage({
 
       <IntegrationSummary
         installed={githubStatus.installed}
+        statusUnknown={githubStatusFailed}
         accountLogin={githubStatus.account_login}
         targetsCount={targetsList.length}
         defaultOpen={!githubStatusFailed && !githubStatus.installed && targetsList.length === 0}

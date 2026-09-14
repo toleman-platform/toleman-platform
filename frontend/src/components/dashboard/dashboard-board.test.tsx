@@ -105,7 +105,7 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
       <DashboardBoard
         initialWidgets={[kpiWidget("w1")]}
         catalog={CATALOG}
-        initialData={{ widgets: { w1: { widget_id: "kpi_cards", data: { open: 1, critical: 0, targets: 1, mitigated: 0 } } } }}
+        initialData={{ widgets: { w1: { widget_id: "kpi_cards", data: { open: 1, critical: 0, high: 0, targets: 1, mitigated: 0 } } } }}
         layoutFailed={false}
         catalogFailed={false}
         dataFailed
@@ -126,7 +126,7 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
       <DashboardBoard
         initialWidgets={[kpiWidget("w1")]}
         catalog={CATALOG}
-        initialData={{ widgets: { w1: { widget_id: "kpi_cards", data: { open: 3, critical: 1, targets: 2, mitigated: 0 } } } }}
+        initialData={{ widgets: { w1: { widget_id: "kpi_cards", data: { open: 3, critical: 1, high: 2, targets: 2, mitigated: 0 } } } }}
         layoutFailed={false}
         catalogFailed={false}
         dataFailed={false}

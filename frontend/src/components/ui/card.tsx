@@ -33,9 +33,25 @@ function CardHeader({ className, ...props }: React.ComponentProps<'div'>) {
   )
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<'div'>) {
+function CardTitle({
+  className,
+  // core lows: this rendered a <div>, so every page built from cards --
+  // dashboard widgets, the design-system showcase -- had no heading in its
+  // accessibility tree at all. A screen reader's "jump to next heading"
+  // command is how sighted users' F5 skim of a page translates for anyone
+  // navigating by ear, and it found nothing here.
+  //
+  // Defaults to h2, not h1 or h3: PageHeader (page-header.tsx) already
+  // renders the page's own h1, and several Card bodies in this codebase
+  // (design-system/page.tsx) nest their own literal <h3> sub-section
+  // headings one level below their CardTitle -- so the Card itself sits at
+  // h2 in that hierarchy. `as` exists for the rare page that genuinely needs
+  // a different level rather than force everyone onto one.
+  as: Comp = 'h2',
+  ...props
+}: React.ComponentProps<'h2'> & { as?: React.ElementType }) {
   return (
-    <div
+    <Comp
       data-slot="card-title"
       className={cn('leading-none font-semibold', className)}
       {...props}

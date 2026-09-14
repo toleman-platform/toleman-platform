@@ -90,39 +90,40 @@ code:
   registry's native layout (hundreds of small per-topic files) took ~2x as
   long to load as the identical rules in one file, for zero coverage
   difference. Measured, not assumed.
-- `run_layered_scan()` — runs this repo's own pack and the pruned registry
-  config as **two separate Semgrep invocations, in parallel**, with
-  different `--disable-nosem` policies (on for our pack, off for the
-  registry layer), then merges with a marker-only nosemgrep post-filter.
+- `run_layered_scan()` — runs this repo's own pack and every detected
+  language's pruned registry config as **one Semgrep invocation** with
+  `--disable-nosem`, reporting the two layers separately.
 
-**Why two invocations and a custom post-filter, not one `--config` list**:
-`--disable-nosem` is all-or-nothing per Semgrep invocation. This pack
-wants it on for its own narrow rules (matches the existing `semgrep-llm`
-posture: a compromised dependency shouldn't blind the scanner via a
-comment) but *off* for the registry layer, so a developer's prior,
-legitimate triage of a generic finding isn't defeated. Measured on this
-repo: running the registry layer with `--disable-nosem` produced 15
-findings, **all 15 false positives**, 14 of which already carried a human
-`# nosemgrep: <exact-id>` comment. Respecting nosemgrep should have
-dropped those 14 automatically — it didn't, because consolidating rules
-into a new file changes their effective check_id prefix (from e.g.
-`python.lang.security.audit.dangerous-subprocess-use-audit` to whatever
-this repo's local config path resolves to), which breaks Semgrep's
-id-based nosemgrep matching against a comment written for the *original*
-path. The fix implemented in `_line_has_nosemgrep_marker()`: check the
-flagged line for *any* nosemgrep marker, not an exact id match. Confirmed
-this brings 15 → 1 (the one remaining finding — `use-defusedcsv` on a
-class literally named `SafeCsvWriter` — had never been reviewed/suppressed
-by anyone before, so no marker-based filter could know it's safe; that's
-an honest residual, not a filter bug).
+**Inline suppression is never honoured — and that is why this is one
+invocation.** Toleman does not acknowledge a `# nosemgrep` comment. An
+ignore is requested and approved in the Toleman dashboard, where it
+carries an approval trail and can be revoked; honouring an inline marker
+would open a second, invisible suppression channel usable by anyone with
+commit access, or by a compromised dependency.
 
-**Smoke-tested end to end**, not just unit-level:
+This reverses an earlier design on this branch, so the history is worth
+knowing before someone reinstates it. The original split the scan into two
+parallel invocations for exactly one reason: `--disable-nosem` is global to
+an invocation, and the plan at the time was to disable it for our own rules
+while respecting it for the registry layer, on the theory that a
+developer's prior triage of a generic rule was worth preserving. That
+required a marker-based post-filter as well, because consolidating registry
+rules into one file changes their effective `check_id` prefix and silently
+breaks Semgrep's own id-based nosemgrep matching. With the policy settled,
+all of that came out: the post-filter and its path-resolution helper are
+deleted, and one invocation parses each file **once** instead of twice.
+
+Expect raw counts to rise on any repository that already contains
+suppression comments. On this repo the registry layer reports 18 where the
+old filtered design reported 1; the 17 difference is findings that were
+suppressed outside the approval workflow and now have to go through it.
+Those are not regressions.
+
+**Smoke-tested end to end**, not just unit-level, against this repo:
 ```
-custom findings: 50
-registry findings before filter: 15
-registry findings after nosemgrep filter: 1
+custom findings:   50
+registry findings: 18
 ```
-matches the manual benchmark run exactly.
 
 **Built 2026-09-14** (this section previously listed items 1 and 3 as not
 built; both are now done, with tests in `backend/tests/test_rule_selector.py`):
@@ -183,7 +184,20 @@ built; both are now done, with tests in `backend/tests/test_rule_selector.py`):
    The cache above is keyed on that clone's state, but nothing populates
    or updates `SEMGREP_RULES_REGISTRY_ROOT` today. Weekly is plenty —
    this isn't fast-moving content.
-2. **`runner.py`/`tool_registry.py` wiring.** Deliberately not done — see
+2. ~~**`runner.py`/`tool_registry.py` wiring.**~~ **Done 2026-09-15.** Two
+   tools, not one: `semgrep-core` (this pack) and `semgrep-registry` (the
+   pruned layer), so a Finding carries which layer produced it and per-tool
+   coverage can tell them apart. The surface defaults encode the one
+   product decision this was waiting on — CI and PR Guardrail gate a
+   developer, so they are latency-bound, while on-demand and scheduled
+   scans are not and should go as deep as they can. `semgrep-registry`
+   therefore defaults **on** for on-demand/scheduled and **off** for
+   `ci_pipeline` and `pr_guardrail` (`tool_registry.DEEP_SCAN_ONLY_TOOLS`);
+   it is a default, not a prohibition, and an operator can switch it on per
+   workspace. An unprovisioned registry clone raises `ToolNotApplicable`
+   rather than running semgrep with no `--config`, which would scan nothing,
+   exit 0, and ingest as a clean sweep that mitigates every open finding.
+   Original reasoning for deferring it is below — see
    "Wiring in" in the README, same reasoning as `semgrep-core` before it:
    tool naming, default on/off per surface, and whether the registry layer
    should ever be allowed to block a PR (its findings are lower-precision
@@ -228,8 +242,10 @@ built; both are now done, with tests in `backend/tests/test_rule_selector.py`):
 - [x] `_line_has_nosemgrep_marker()` path-resolution bug fixed — it had been failing open on every suppression whenever `repo_path` was relative (2026-09-14).
 - [x] 22 tests in `backend/tests/test_rule_selector.py`, hermetic (they build a miniature fake registry rather than depending on a network clone).
 
+- [x] Inline suppression never honoured, and the scan collapsed to one invocation now that nothing needs a per-layer nosem policy (2026-09-15).
+- [x] `runner.py`/`tool_registry.py` wiring, as `semgrep-core` and `semgrep-registry`, with CI/PR-vs-scheduled surface defaults (2026-09-15).
+
 **Designed and prototyped, not yet in the product's actual scan path:**
-- [ ] `runner.py`/`tool_registry.py` wiring — `rule_selector.py` is a standalone module today, nothing calls it from the real scan pipeline yet.
 - [ ] A scheduled job to fetch/refresh the vendored `semgrep-rules` clone itself — nothing populates `SEMGREP_RULES_REGISTRY_ROOT` today. The cache is keyed on that clone's state, so it is correct but never refreshed until this exists.
 
 **Not started / explicitly out of scope for this branch:**

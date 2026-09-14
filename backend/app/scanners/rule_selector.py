@@ -26,16 +26,16 @@ done together anywhere else in this codebase yet:
    file) roughly doubles wall-clock scan time for no coverage gain --
    both measured, see KT.md. See build_registry_config().
 
-3. Runs the registry layer and this repo's own custom rule pack as two
-   separate Semgrep invocations with different --disable-nosem policies,
-   then merges results with a nosemgrep-aware post-filter. This is
-   necessary, not cosmetic: consolidating registry rules into a new file
-   changes their effective check_id prefix, which silently breaks
-   existing `# nosemgrep: <old-fully-qualified-id>` comments already in
-   this codebase. Respecting nosemgrep on the registry layer (but not on
-   our own rules -- see the custom pack's own stated security posture)
-   cut a measured 15-false-positive run down to 1 on this repo's own
-   source. See run_layered_scan().
+3. Runs the registry layer and this repo's own custom rule pack in ONE
+   Semgrep invocation with inline suppression disabled, and reports the
+   two layers separately. Toleman never honours a `# nosemgrep` comment:
+   ignores are requested and approved in the dashboard, where they carry
+   an approval trail, so honouring an inline marker would be a second and
+   invisible suppression channel. An earlier version split this into two
+   parallel invocations purely because --disable-nosem is global to an
+   invocation; with both layers on the same policy that reason is gone,
+   and one invocation parses each file once instead of twice. See
+   run_layered_scan().
 
 Not yet wired into runner.py's TOOL_COMMANDS / tool_registry.py -- see
 KT.md's "Next steps" for why that's a deliberate separate decision
@@ -456,70 +456,10 @@ def build_registry_config(
     )
 
 
-def _resolve_reported_path(repo_path: str, reported_path: str) -> str | None:
-    """Turn a path out of Semgrep's JSON into one that can actually be
-    opened, or None if no candidate exists.
-
-    Semgrep reports paths relative to the *invocation* directory, echoing
-    back the target argument it was given -- so scanning `..` yields
-    `../backend/app/foo.py`, not `backend/app/foo.py`. Joining that onto
-    repo_path produces `../../backend/app/foo.py`, which does not exist,
-    and the caller's open() fails silently.
-
-    This mattered: with a relative repo_path every nosemgrep suppression
-    failed open, resurfacing 14 findings a human had already triaged and
-    marked -- the precise noise the registry layer's nosemgrep-respecting
-    posture exists to prevent. It went unnoticed because the original
-    benchmark ran with an absolute repo_path, where os.path.join happens
-    to discard the first argument and the bug cannot fire.
-
-    Absolute reported paths are returned as-is; otherwise the path is
-    tried as given (the common case) before falling back to joining it
-    onto repo_path.
-    """
-    if os.path.isabs(reported_path):
-        return reported_path if os.path.isfile(reported_path) else None
-    for candidate in (reported_path, os.path.join(repo_path, reported_path)):
-        if os.path.isfile(candidate):
-            return candidate
-    return None
-
-
-def _line_has_nosemgrep_marker(repo_path: str, relative_file: str, line_no: int) -> bool:
-    """Best-effort: read the exact reported line and check for ANY
-    nosemgrep marker, regardless of which rule id it names.
-
-    This deliberately does not try to match the marker's id against the
-    firing rule's id. Consolidating registry rules into a new file (see
-    build_registry_config) changes their effective check_id prefix from
-    e.g. `python.lang.security.audit.dangerous-subprocess-use-audit` to
-    whatever this repo's own config path resolves to -- so an existing
-    `# nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit`
-    comment, written when that rule was loaded from its original registry
-    path, no longer id-matches the same rule loaded from our pruned
-    config, and Semgrep's own nosemgrep handling silently stops
-    suppressing it. Measured on this repo: 15 registry-layer findings,
-    14 of which already carried a human-reviewed nosemgrep comment: with
-    id-matching, 0 were suppressed; with this marker-only check, all 14
-    were, correctly leaving the 1 finding nobody had reviewed yet."""
-    path = _resolve_reported_path(repo_path, relative_file)
-    if path is None:
-        return False
-    try:
-        with open(path, errors="ignore") as fh:
-            for i, line in enumerate(fh, start=1):
-                if i == line_no:
-                    return "nosemgrep" in line.lower() or "nosem" in line.lower()
-    except OSError:
-        pass
-    return False
-
-
 @dataclass
 class LayeredScanResult:
     custom_findings: list[dict]
-    registry_findings: list[dict]  # after the nosemgrep post-filter
-    registry_findings_before_filter: int
+    registry_findings: list[dict]
     custom_config_path: str
     # One pruned config per detected language, not one per repo: a repo
     # with a Python backend and a TypeScript frontend needs both layers,
@@ -531,6 +471,10 @@ class LayeredScanResult:
     def registry_config_paths(self) -> list[str]:
         return [c.path for c in self.registry_configs]
 
+    @property
+    def findings(self) -> list[dict]:
+        return self.custom_findings + self.registry_findings
+
 
 def run_layered_scan(
     repo_path: str,
@@ -538,32 +482,36 @@ def run_layered_scan(
     registry_root: str = DEFAULT_REGISTRY_ROOT,
     cache_dir: str | None = None,
 ) -> LayeredScanResult:
-    """Run this repo's own custom pack and the pruned registry layer as
-    two separate Semgrep invocations, in parallel, with different
-    --disable-nosem policies, then merge.
+    """Scan with this repo's own pack and the pruned registry layer in ONE
+    Semgrep invocation, with inline suppression disabled for both.
 
-    Why two invocations instead of one `--config` list: Semgrep's
-    --disable-nosem is global to the whole invocation. There is no way to
-    disable nosemgrep for one --config source and respect it for another
-    within a single run. Given this pack's own stated posture (a
-    compromised dependency or careless comment should not be able to
-    blind OUR narrow, hard-to-game rules) needs to coexist with respecting
-    a legitimate developer's prior triage of a broad, generic registry
-    rule, two invocations is the only way to get both -- confirmed by
-    testing the combined single-invocation form first and finding it
-    couldn't express this at all.
+    `--disable-nosem` is not a tuning knob here, it is product policy:
+    Toleman never honours an inline `# nosemgrep` comment, because an
+    ignore is requested and approved in the Toleman dashboard, where it
+    carries an approval trail and can be revoked. Honouring the comment
+    would open a second, invisible suppression channel that anyone with
+    commit access -- or a compromised dependency -- could use to silence a
+    finding without review.
 
-    Runs both with subprocess in parallel (not sequentially) -- measured:
-    sequential was slower than plain `semgrep --config=auto` on 2 of 3
-    benchmark repos; parallel beat or matched it on all 3, since wall time
-    becomes max(custom, registry) instead of their sum.
+    That policy is also why this is one invocation and not two. An earlier
+    version of this function ran the two layers as separate parallel
+    processes for exactly one reason: `--disable-nosem` is global to an
+    invocation, so respecting nosemgrep for the registry layer while
+    disabling it for the custom pack was impossible any other way. With
+    both layers on the same policy that constraint is gone, and one
+    invocation is strictly better -- Semgrep parses each file once instead
+    of twice, so the cost is one AST pass over the repo rather than two
+    competing for the same cores.
 
-    Polyglot repos: every detected language gets its own pruned registry
-    config, and the registry invocation is handed all of them at once.
-    This stays one subprocess, not one per language -- the parallelism
-    that matters here is custom-vs-registry, and splitting the registry
-    layer further would just contend for the same cores."""
-    import concurrent.futures
+    Findings are still reported split into custom and registry, since the
+    two have different precision by construction (ours are narrow and
+    app-specific, the registry's are broad and generic) and a caller may
+    want to treat them differently -- gate a PR on one and not the other,
+    say. `findings` gives the combined list.
+
+    Polyglot repos: every detected language contributes its own pruned
+    config, and all of them go into the same invocation.
+    """
     import json as _json
 
     cache_dir = cache_dir or tempfile.mkdtemp(prefix="toleman-registry-")
@@ -580,38 +528,33 @@ def run_layered_scan(
         if pruned and pruned.rule_count:
             registry_configs.append(pruned)
 
-    def _run_custom() -> list[dict]:
-        proc = subprocess.run(
-            ["semgrep", "scan", f"--config={custom_config_path}", "--disable-nosem", "--json", "--quiet", repo_path],
-            capture_output=True, text=True,
-        )
-        return _json.loads(proc.stdout or "{}").get("results", [])
+    registry_paths = {c.path for c in registry_configs}
+    config_args = [f"--config={custom_config_path}"] + [f"--config={p}" for p in sorted(registry_paths)]
+    proc = subprocess.run(
+        ["semgrep", "scan", *config_args, "--disable-nosem", "--json", "--quiet", repo_path],
+        capture_output=True, text=True,
+    )
+    results = _json.loads(proc.stdout or "{}").get("results", [])
 
-    def _run_registry() -> list[dict]:
-        if not registry_configs:
-            return []
-        config_args = [f"--config={c.path}" for c in registry_configs]
-        proc = subprocess.run(
-            ["semgrep", "scan", *config_args, "--json", "--quiet", repo_path],
-            capture_output=True, text=True,
-        )
-        return _json.loads(proc.stdout or "{}").get("results", [])
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        custom_future = pool.submit(_run_custom)
-        registry_future = pool.submit(_run_registry)
-        custom_findings = custom_future.result()
-        registry_findings_raw = registry_future.result()
-
-    registry_findings = [
-        r for r in registry_findings_raw
-        if not _line_has_nosemgrep_marker(repo_path, r["path"], r["start"]["line"])
-    ]
+    # Attribution by config path: Semgrep prefixes a finding's check_id
+    # with the config it came from, but that prefix is a filesystem path
+    # here, so matching on the pruned files' basenames is what separates
+    # the layers. A finding that matches neither is ours by default --
+    # the custom pack is the one loaded from a directory of many files,
+    # so its ids vary, while the registry layer is exactly these
+    # consolidated files.
+    registry_markers = {os.path.splitext(os.path.basename(p))[0] for p in registry_paths}
+    custom_findings, registry_findings = [], []
+    for r in results:
+        check_id = r.get("check_id", "")
+        if any(marker in check_id for marker in registry_markers):
+            registry_findings.append(r)
+        else:
+            custom_findings.append(r)
 
     return LayeredScanResult(
         custom_findings=custom_findings,
         registry_findings=registry_findings,
-        registry_findings_before_filter=len(registry_findings_raw),
         custom_config_path=custom_config_path,
         registry_configs=registry_configs,
     )

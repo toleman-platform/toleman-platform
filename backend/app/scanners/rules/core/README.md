@@ -315,22 +315,51 @@ yet — both deliberate next steps, see KT.md.
 semgrep scan --config=backend/app/scanners/rules/core --json .
 ```
 
-## Wiring in (not yet done)
+## Wiring in (done 2026-09-15)
 
-Following the exact `semgrep-llm` pattern in `runner.py`:
+Two tools rather than one, following the `semgrep-llm` pattern:
 
-```python
-CORE_RULES_DIR = Path(__file__).parent / "rules" / "core"
+- **`semgrep-core`** — this pack. `CORE_RULES_DIR`, `--disable-nosem`,
+  `MULTI_PATH` scoping, `_isolate_semgrep` cache isolation.
+- **`semgrep-registry`** — the pruned public registry layer, built per
+  repository by `app/scanners/rule_selector.py` and passed as one
+  `--config` per detected language.
 
-# in TOOL_COMMANDS:
-"semgrep-core": lambda path: [
-    "semgrep", "scan", f"--config={CORE_RULES_DIR}", "--disable-nosem", "--json", "--quiet", path
-],
-```
+They are separate `TOOL_COMMANDS` entries, not two `--config` flags on one
+entry, so a Finding carries which layer produced it. Per-tool coverage,
+usage assignment and triage can then tell this pack's narrow,
+app-specific rules apart from the registry's broad generic ones — the same
+reason `semgrep-llm` and `trivy-license` are separate entries.
 
-Plus the matching `MULTI_PATH` / exit-code-set entries `semgrep-llm` has,
-and a `tool_registry.py` entry so it shows up in Tool Marketplace and
-per-tool coverage reporting. Deliberately not applied yet — that's a real
-product decision (tool name, default on/off per surface, whether Tier-1
-LOW-confidence rules should default to disabled) worth making explicitly
-rather than as a side effect of writing the rules.
+### The surface defaults
+
+`semgrep-registry` defaults **on** for on-demand and scheduled scans and
+**off** for `ci_pipeline` and `pr_guardrail`
+(`tool_registry.DEEP_SCAN_ONLY_TOOLS`). The two kinds of surface have
+genuinely different budgets: a CI or PR Guardrail scan blocks a merge, so
+wall-clock is the binding constraint, while a scheduled scan has nobody
+waiting on it and should go as deep as it can. Measured, the registry
+layer roughly triples the applicable rule count and carries several times
+as many taint-mode rules — worth minutes on a nightly run, not worth it on
+a pull request.
+
+It is a default, not a prohibition. An operator who wants the registry
+layer on their pull requests turns it on per workspace like any other
+surface assignment.
+
+### Inline suppression
+
+Both tools pass `--disable-nosem`, and that is policy rather than tuning:
+Toleman never honours a `# nosemgrep` comment, because an ignore is
+requested and approved in the dashboard where it carries an approval trail
+and can be revoked. Honouring the comment would be a second, invisible
+suppression channel available to anyone with commit access.
+
+### When the registry clone is missing
+
+`semgrep-registry` raises `ToolNotApplicable` when no pruned config can be
+built — a fresh install has no vendored `semgrep-rules` clone, and a repo
+can legitimately be in a language the registry has no folder for. That is
+deliberate: semgrep with no `--config` scans nothing and exits 0, which
+ingests as a clean sweep and mitigates every open finding the tool
+previously reported. A false all-clear is worse than a loud failure.

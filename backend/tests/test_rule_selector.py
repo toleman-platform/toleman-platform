@@ -230,10 +230,75 @@ def test_polyglot_repo_scans_every_detected_language_not_just_the_first(tmp_path
 
     assert {c.language for c in result.registry_configs} == {"python", "typescript"}
 
-    registry_cmd = next(c for c in recorded if any("registry-pruned" in a for a in c))
-    config_args = [a for a in registry_cmd if a.startswith("--config=")]
-    assert len(config_args) == 2, "both languages' pruned configs must be passed to the one registry invocation"
-    assert "--disable-nosem" not in registry_cmd, "the registry layer must keep respecting developers' prior triage"
+    assert len(recorded) == 1, "the custom pack and every registry layer share one invocation"
+    config_args = [a for a in recorded[0] if a.startswith("--config=")]
+    assert len(config_args) == 3, "the custom pack plus both languages' pruned configs"
+
+
+def test_inline_suppression_is_never_honoured(tmp_path):
+    """Product policy, not a tuning choice: an ignore is requested and
+    approved in the Toleman dashboard, where it carries an approval trail
+    and can be revoked. Honouring a `# nosemgrep` comment would be a
+    second, invisible suppression channel available to anyone with commit
+    access, or to a compromised dependency."""
+    registry = tmp_path / "registry"
+    _write_registry(registry, "python", "lang", "a.yaml", [_rule("py.one")])
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("x = 1  # nosemgrep\n")
+
+    recorded: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        recorded.append(cmd)
+        return mock.Mock(returncode=0, stdout='{"results": []}', stderr="")
+
+    with mock.patch.object(rs.subprocess, "run", side_effect=fake_run):
+        rs.run_layered_scan(
+            str(repo),
+            custom_config_path="does-not-matter",
+            registry_root=str(registry),
+            cache_dir=str(tmp_path / "cache"),
+        )
+
+    assert "--disable-nosem" in recorded[0]
+
+
+def test_findings_are_attributed_to_the_layer_that_produced_them(tmp_path):
+    """One invocation still has to report the layers separately: the
+    registry's rules are broad and generic by construction, so a caller
+    may gate a PR on the custom pack alone."""
+    registry = tmp_path / "registry"
+    _write_registry(registry, "python", "lang", "a.yaml", [_rule("py.one")])
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("x = 1\n")
+
+    results = {
+        "results": [
+            {"check_id": "app.scanners.rules.core.injection.toleman-sql-injection", "path": "app.py"},
+            {"check_id": "python-registry-pruned.py.one", "path": "app.py"},
+        ]
+    }
+
+    import json as _json
+
+    with mock.patch.object(
+        rs.subprocess, "run",
+        return_value=mock.Mock(returncode=0, stdout=_json.dumps(results), stderr=""),
+    ):
+        result = rs.run_layered_scan(
+            str(repo),
+            custom_config_path="does-not-matter",
+            registry_root=str(registry),
+            cache_dir=str(tmp_path / "cache"),
+        )
+
+    assert [f["check_id"] for f in result.custom_findings] == [
+        "app.scanners.rules.core.injection.toleman-sql-injection"
+    ]
+    assert [f["check_id"] for f in result.registry_findings] == ["python-registry-pruned.py.one"]
+    assert len(result.findings) == 2
 
 
 def test_language_with_no_matching_registry_rules_is_skipped(tmp_path):
@@ -350,47 +415,3 @@ def test_a_package_name_prefix_is_not_a_match(tmp_path):
     (repo / "package.json").write_text('{"dependencies": {"expressive": "^1.0.0"}}')
 
     assert rs.detect_technologies(str(repo), "javascript") == set()
-
-
-def test_nosemgrep_marker_is_found_when_semgrep_reports_a_cwd_relative_path(tmp_path, monkeypatch):
-    """Semgrep echoes back the target argument it was given, so scanning
-    `..` reports `../pkg/mod.py`, not `pkg/mod.py`. Joining that onto
-    repo_path yields `../../pkg/mod.py`, which does not exist -- and the
-    filter then failed open, resurfacing findings a human had already
-    marked. The original benchmark missed this because it used an
-    absolute repo_path, where os.path.join discards its first argument.
-    """
-    root = tmp_path / "root"
-    (root / "pkg").mkdir(parents=True)
-    (root / "pkg" / "mod.py").write_text(
-        "import subprocess\n"
-        "subprocess.run(cmd)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit\n"
-    )
-    (root / "sub").mkdir()
-    monkeypatch.chdir(root / "sub")
-
-    assert rs._line_has_nosemgrep_marker("..", "../pkg/mod.py", 2) is True
-
-
-def test_nosemgrep_marker_is_found_via_an_absolute_repo_path(tmp_path):
-    root = tmp_path / "root"
-    (root / "pkg").mkdir(parents=True)
-    (root / "pkg" / "mod.py").write_text("x = 1  # nosemgrep\n")
-
-    assert rs._line_has_nosemgrep_marker(str(root), str(root / "pkg" / "mod.py"), 1) is True
-    assert rs._line_has_nosemgrep_marker(str(root), "pkg/mod.py", 1) is True
-
-
-def test_an_unmarked_line_is_not_suppressed(tmp_path):
-    root = tmp_path / "root"
-    root.mkdir()
-    (root / "mod.py").write_text("x = 1\ny = 2  # nosemgrep\n")
-
-    assert rs._line_has_nosemgrep_marker(str(root), "mod.py", 1) is False
-    assert rs._line_has_nosemgrep_marker(str(root), "mod.py", 2) is True
-
-
-def test_an_unresolvable_path_fails_open_rather_than_hiding_a_finding(tmp_path):
-    """No file to read means no evidence of triage, so the finding must
-    survive. Failing closed here would silently drop real results."""
-    assert rs._line_has_nosemgrep_marker(str(tmp_path), "does/not/exist.py", 1) is False

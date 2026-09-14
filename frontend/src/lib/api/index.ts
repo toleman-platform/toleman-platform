@@ -84,6 +84,12 @@ export const api = {
   deleteSlaRule: findings.deleteSlaRule,
   slaCompliance: findings.slaCompliance,
 
+  // Risk scoring (issue #201)
+  scoringWeights: findings.scoringWeights,
+  setScoringWeight: findings.setScoringWeight,
+  resetScoringWeight: findings.resetScoringWeight,
+  findingScoreBreakdown: findings.findingScoreBreakdown,
+
   // Scans & PR Guardrail
   runScan: scans.runScan,
   getScan: scans.getScan,

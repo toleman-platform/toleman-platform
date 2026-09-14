@@ -25,6 +25,7 @@ from app.core.grouping import (
     severity_weight_case,
 )
 from app.core import target_lifecycle
+from app.core.scoring_config import score_breakdown_for_finding
 from app.core.time import utcnow
 from app.core.tool_registry import UNKNOWN_TOOL_CATEGORY, all_categories, all_known_tools, tool_category, tools_in_category
 from app.core.triage import apply_triage
@@ -182,6 +183,50 @@ class FindingEnrichmentResponse(BaseModel):
     references: list[str] | None = None
     fix_versions: list[dict] | None = None
     fetched_at: datetime | None = None
+
+
+class ScoreSignalOut(BaseModel):
+    """One signal slot's contribution to a finding's priority score (#201).
+
+    `established` carries the distinction the whole feature turns on.
+    `points == 0` means two unrelated things -- the signal applied and
+    contributed nothing ("EPSS is 3%, under the threshold"), or the signal
+    was never established at all ("this finding has no CVE to look up") --
+    and the UI has to render them differently, because only one of them is
+    a statement about the finding.
+    """
+    signal: str
+    label: str
+    weight: float
+    points: int
+    established: bool
+    detail: str
+
+
+class FindingScoreBreakdownResponse(BaseModel):
+    """Why a finding's priority score is the number it is (#201).
+
+    Two scores, deliberately. `stored_score` is what is on the Finding row
+    and what every list, filter and SLA check sorts by; `score` is what the
+    current signals and the workspace's current weights produce right now.
+    They diverge legitimately -- a weight was changed, or CVE enrichment ran
+    after ingestion and established a CVSS vector that was unknown at the
+    time. Showing only the stored number would make the breakdown explain
+    something that is no longer true; showing only the live one would
+    explain a number that appears nowhere else in the product. So: both,
+    plus `stale` so the client can say which is which instead of quietly
+    picking one.
+
+    base_points + sum(signal.points) == score exactly, unless `capped`.
+    """
+    finding_id: int
+    stored_score: int
+    score: int
+    stale: bool
+    base_points: int
+    max_score: int
+    capped: bool
+    signals: list[ScoreSignalOut]
 
 
 class FindingSuggestFixResponse(BaseModel):
@@ -1030,6 +1075,56 @@ def get_finding_enrichment(
         references=deduped_references or None,
         fix_versions=json.loads(row.fixed_versions) if row.fixed_versions else None,
         fetched_at=row.fetched_at,
+    )
+
+
+@router.get("/{finding_id}/score-breakdown")
+def get_finding_score_breakdown(
+    finding_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)
+) -> FindingScoreBreakdownResponse:
+    """The account of why this finding's priority score is what it is (#201).
+
+    Every signal slot is returned, including the ones that contributed
+    nothing. That is on purpose: "we looked at internet exposure and this
+    target has none recorded" is a different and more useful answer than the
+    silence you get from omitting the row, and it is the only way a reader
+    can tell that a signal exists at all before deciding whether to weight
+    it.
+
+    Recomputed live from the workspace's current weights and the enrichment
+    cached so far; nothing is fetched from the network here, so a CVE that
+    has never been enriched keeps its CVSS signal unestablished rather than
+    stalling this request on NVD.
+    """
+    finding = session.get(Finding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        target = session.get(Target, finding.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="finding not found")
+
+    breakdown = score_breakdown_for_finding(session, finding)
+    return FindingScoreBreakdownResponse(
+        finding_id=finding_id,
+        stored_score=finding.priority_score,
+        score=breakdown.score,
+        stale=breakdown.score != finding.priority_score,
+        base_points=breakdown.base_points,
+        max_score=breakdown.max_score,
+        capped=breakdown.capped,
+        signals=[
+            ScoreSignalOut(
+                signal=c.signal.value,
+                label=c.label,
+                weight=c.weight,
+                points=c.points,
+                established=c.established,
+                detail=c.detail,
+            )
+            for c in breakdown.contributions
+        ],
     )
 
 

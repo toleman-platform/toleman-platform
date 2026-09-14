@@ -103,9 +103,13 @@ function itemBadgeClass(status: string): string {
 // multiplier a target contributes to every finding's risk score. The Repo
 // Sync card used to render it as a bare "weight 2" with no label, no units
 // and no tooltip, on every row; unreadable as anything but a constant.
+// (#201) Deliberately no longer quotes the formula. Scoring is weighted and
+// workspace-configurable, so "severity × this weight × 40" is true only on
+// the shipped defaults and wrong wherever the business-criticality slot has
+// been retuned. The direction this dial pushes stays true either way.
 const CRITICALITY_WEIGHT_EXPLANATION =
-  "How much this repo amplifies the risk score of its findings: severity × this weight × 40. " +
-  "Set per target (1-5) alongside its criticality label.";
+  "How much this repo amplifies the risk score of its findings, 1-5, set alongside its " +
+  "criticality label. How heavily it counts is configurable per workspace in Guardrails › Risk Scoring.";
 
 // Issue #185: AI/ML repo marker. The tooltip carries the detection signals
 // because a bare badge isn't contestable; someone who thinks the platform

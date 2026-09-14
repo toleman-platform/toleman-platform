@@ -4,7 +4,15 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { ExternalLink, GitPullRequest, Info, X } from "lucide-react";
-import { Finding, FindingEnrichment, FindingSuggestFix, RaiseFixPrResult, api, githubBlobUrl } from "@/lib/api";
+import {
+  Finding,
+  FindingEnrichment,
+  FindingScoreBreakdown,
+  FindingSuggestFix,
+  RaiseFixPrResult,
+  api,
+  githubBlobUrl,
+} from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import {
   EPSS_BADGE_COLOR,
@@ -23,24 +31,28 @@ import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { CriticalityChip } from "@/components/features/targets";
 
 // Issue #117: the risk/priority score was a bare number (360, 320, 240...)
-// with no explanation of what it meant. Mirrors the real formula in
-// backend/app/core/scoring.py::compute_priority_score verbatim, severity
-// weight (1-5) x target criticality weight (1-5) x 40, capped at 1000, then
-// floored to 900 for a CISA KEV-listed CVE or bumped +160 when EPSS predicts
-// >50% real-world exploit probability. Kept in one place so the tooltip
-// copy can't drift from the scoring module if that formula changes.
+// with no explanation of what it meant.
+//
+// (#201) The formula is now weighted and workspace-configurable, so this
+// tooltip names the signals and stops there. It deliberately no longer
+// restates the arithmetic as fact: in a workspace that has weighted internet
+// exposure or CVSS exploitability, the old copy would have been a confident
+// lie. The real per-finding, signal-by-signal account is one click away in
+// the detail dialog (ScoreBreakdownPanel), which asks the server instead of
+// re-deriving the formula here.
 const RISK_SCORE_MAX = 1000;
 const RISK_SCORE_EXPLANATION =
-  "Severity × target criticality × 40, capped at 1000. " +
-  "Raised to a floor of 900 for CISA KEV-listed (known exploited) vulnerabilities, " +
-  "or boosted when EPSS predicts >50% real-world exploit probability in the next 30 days. " +
+  "Out of 1000, from a weighted set of signals: tool severity, target criticality, " +
+  "CVSS exploitability, EPSS, CISA KEV, internet exposure and fixability. " +
+  "Open the finding to see exactly which signals produced this number. " +
   // (UI-04) An external review found every High finding rendering an
   // identical 320/1000 and concluded the column was decorative. It wasn't;
   // the repo scanned was a single target at one criticality weight, so the
   // formula genuinely collapses to a constant. Saying so is the difference
   // between "this feature is broken" and "this needs more than one repo".
-  "Findings of the same severity on repos of the same criticality score the same by design \u2014 " +
-  "set differing criticality weights per target for the score to separate them.";
+  "On the shipped defaults, findings of the same severity on repos of the same criticality score " +
+  "the same by design \u2014 set differing criticality weights per target, or weight more signals in " +
+  "Guardrails \u203a Risk Scoring, for the score to separate them.";
 
 function RiskScore({ score }: { score: number }) {
   return (
@@ -158,6 +170,127 @@ function SlaBadge({ finding }: { finding: Finding }) {
     >
       {daysLeft}d left
     </Badge>
+  );
+}
+
+// GET /api/findings/{id}/score-breakdown (#201): why this finding's risk
+// score is the number it is, signal by signal.
+//
+// Every signal slot is rendered, including the ones that contributed
+// nothing, because "we looked at internet exposure and nothing is recorded
+// for this target" is a more useful answer than an omitted row -- and it is
+// the only way someone can see a signal exists before deciding to weight it.
+//
+// The unknown/zero distinction from AGENTS.md §1.4 is the whole design of
+// this panel. A signal that applied and added nothing shows "0"; a signal
+// that was never established shows an em dash and says so. Rendering the
+// second as a confident 0 would claim we checked.
+function ScoreBreakdownPanel({ finding }: { finding: Finding }) {
+  const [data, setData] = useState<FindingScoreBreakdown | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .findingScoreBreakdown(finding.id)
+      .then((d) => {
+        if (!cancelled) setData(d);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "score breakdown lookup failed");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [finding.id]);
+
+  if (loading) {
+    return <p className="text-xs text-muted-foreground">Loading score breakdown...</p>;
+  }
+  if (error) {
+    // Deliberately an error, not a silent fallback to the stored number.
+    // A breakdown we could not load must not be replaced by a plausible
+    // guess at one.
+    return <p className="text-xs text-destructive">{error}</p>;
+  }
+  if (!data) return null;
+
+  return (
+    <div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Score Breakdown
+        </span>
+        <span className="font-mono text-xs text-muted-foreground">
+          <span className="text-sm font-bold text-foreground">{data.score}</span>/{data.max_score}
+        </span>
+      </div>
+
+      {data.stale && (
+        // The stored score is what every list and SLA check sorts by, so a
+        // divergence has to be stated rather than smoothed over: the
+        // breakdown explains the live number, and the list is showing the
+        // other one until the next scan re-scores this finding.
+        <p className="mb-2 text-xs text-muted-foreground">
+          Lists and SLA checks use the stored score of{" "}
+          <span className="font-mono">{data.stored_score}</span>. Weights or signals have changed
+          since this finding was last scored; it picks up the number above the next time a scan sees
+          it still present.
+        </p>
+      )}
+
+      <div className="flex flex-col divide-y divide-border rounded-md border border-border">
+        <div className="flex items-baseline justify-between gap-3 px-2.5 py-1.5">
+          <span className="text-xs text-muted-foreground">Base</span>
+          <span className="shrink-0 font-mono text-xs text-muted-foreground">+{data.base_points}</span>
+        </div>
+        {data.signals.map((signal) => (
+          <div key={signal.signal} className="flex items-baseline justify-between gap-3 px-2.5 py-1.5">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span
+                  className={`text-xs font-medium ${signal.established ? "text-foreground" : "text-muted-foreground"}`}
+                >
+                  {signal.label}
+                </span>
+                {!signal.established && (
+                  <Badge
+                    variant="outline"
+                    title="Not established. Unknown never lowers a priority score."
+                    className="px-1.5 py-0 text-[10px] font-medium text-muted-foreground"
+                  >
+                    not established
+                  </Badge>
+                )}
+                {signal.weight !== 1 && (
+                  <span className="font-mono text-[10px] text-muted-foreground" title="Configured weight for this signal">
+                    &times;{signal.weight}
+                  </span>
+                )}
+              </div>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{signal.detail}</p>
+            </div>
+            <span
+              className={`shrink-0 font-mono text-xs ${signal.points > 0 ? "text-foreground" : "text-muted-foreground"}`}
+            >
+              {/* An em dash, not "+0": we did not measure this, so there is
+                  no number to report. See AGENTS.md §1.4. */}
+              {!signal.established ? "—" : `+${signal.points}`}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {data.capped && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Capped at {data.max_score}; the contributing signals add up to more than the maximum.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -494,6 +627,12 @@ function FindingDetailDialog({ finding, open, onClose }: { finding: Finding; ope
           {finding.description && (
             <p className="whitespace-pre-wrap text-sm text-muted-foreground">{finding.description}</p>
           )}
+          {/* (#201) Above enrichment on purpose: the risk score is the
+              number on the row the user just clicked, so "why is this 640"
+              is the first question the dialog should answer. */}
+          <div className="rounded-md border border-border bg-secondary/40 p-3">
+            <ScoreBreakdownPanel finding={finding} />
+          </div>
           <FindingEnrichmentPanel finding={finding} />
           <div className="rounded-md border border-border bg-secondary/40 p-3">
             <SuggestedFixSection finding={finding} />

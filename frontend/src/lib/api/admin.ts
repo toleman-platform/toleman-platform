@@ -20,6 +20,7 @@ import type {
   OrgActivityQuery,
   OrgActivityResult,
   PullRequest,
+  PullRequestState,
   SearchResults,
   EnforcementMode,
 } from "@/types";
@@ -379,10 +380,16 @@ export function orgActivity(query: OrgActivityQuery = {}): Promise<OrgActivityRe
 }
 
 /**
- * Lists open pull requests for a target repository.
+ * Lists a target repository's pull requests in one state.
+ *
+ * The state is answered by GitHub rather than by narrowing a fetched page in
+ * the client: GitHub returns PRs newest-created first, so on a repo that
+ * closes PRs faster than a page of them is opened, a page fetched for every
+ * state and then filtered down to open is empty even though the repo has open
+ * PRs. "merged" and "closed" are both GitHub's closed set, split server-side.
  */
-export function prs(targetId: number): Promise<PullRequest[]> {
-  return jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}`);
+export function prs(targetId: number, state: PullRequestState | "all" = "open"): Promise<PullRequest[]> {
+  return jsonFetch<PullRequest[]>(`/api/github/prs/${targetId}?state=${encodeURIComponent(state)}`);
 }
 
 /**

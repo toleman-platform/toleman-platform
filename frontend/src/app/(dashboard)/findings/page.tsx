@@ -239,7 +239,11 @@ export default async function FindingsPage({
         groups={groups}
         resolved={queued.resolved}
         grouped={grouped}
-        sort={sort}
+        // The flat view has no blast-radius ordering, so handing it that value
+        // left the select matching none of its options and rendering blank.
+        // Switching grouped -> flat with `sort=blast_radius` in the URL did
+        // exactly that.
+        sort={!grouped && sort === "blast_radius" ? "exploitability" : sort}
       />
 
       {failed ? (
@@ -252,8 +256,13 @@ export default async function FindingsPage({
           groups={groupsResult.items}
           total={groupsResult.total}
           totalFindings={groupsResult.total_findings}
+          truncated={groupsResult.truncated}
           page={page}
           pageSize={pageSize}
+          // The same filters the groups were counted under. A row's member
+          // list is what group triage acts on, so it has to be drawn from the
+          // identical filter set or the row's count and its action disagree.
+          memberQuery={listQuery}
           targets={targets}
         />
       ) : (

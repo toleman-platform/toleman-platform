@@ -499,6 +499,7 @@ class FindingGroupOut(BaseModel):
     file_count: int
     max_priority_score: int
     oldest_first_seen: datetime
+    newest_first_seen: datetime
     newest_last_seen: datetime
     max_epss: float | None = None
     kev_count: int = 0
@@ -515,6 +516,10 @@ class FindingGroupOut(BaseModel):
 class FindingGroupListResponse(BaseModel):
     items: list[FindingGroupOut]
     total: int
+    # True when the group set hit MAX_GROUPS and the counts below are floors
+    # rather than totals. Stated rather than silently absorbed: this module's
+    # rule is never to round up, and a quietly capped total does exactly that.
+    truncated: bool = False
     # Findings behind the groups on this page plus every other page, i.e. the
     # number the flat list would have shown. The UI states both ("14 groups /
     # 150 findings"); a grouped count alone reads as findings having vanished.
@@ -536,25 +541,44 @@ def _ungrouped_tools() -> set[str]:
     return tools
 
 
-def _sort_groups(items: list[FindingGroupOut], sort: str) -> list[FindingGroupOut]:
+def _sort_groups(items: list[dict], sort: str) -> list[dict]:
     """Order group rows.
 
     Sorted in Python rather than SQL because the grouped and the deliberately
     ungrouped halves are two different queries (a Secrets finding must not be
     merged with its rule-mates), and ordering them separately would interleave
-    them wrongly. Every key ends on rule_id so the order is total: without it,
-    equal-scoring groups can reorder between two requests for the same page.
+    them wrongly.
+
+    Every key ends on `(tool, rule_id, representative_id)`, which is the real
+    identity of a row. An earlier version tied on `rule_id` alone and called
+    that total; it is not. `rule_id` is half the group key, and on the
+    ungrouped half every finding under one rule emits its own row carrying the
+    *same* tool and rule_id -- three gitleaks hits on one rule, all Critical,
+    all the same score, produced three identical keys. `sorted` is stable, so
+    the order fell through to whatever the database returned, which SQLite
+    makes look deterministic and Postgres does not promise at all. With a page
+    size of two, the same secret could appear on both pages and a third never
+    appear -- exactly the outcome grouping is supposed to prevent.
     """
+    identity = lambda g: (g["tool"], g["rule_id"], g["representative_id"])  # noqa: E731
+
     if sort == "severity":
-        key = lambda g: (SEVERITY_WEIGHT_BY_NAME.get(g.severity, 0), g.finding_count, g.rule_id)  # noqa: E731
-        return sorted(items, key=key, reverse=True)
+        return sorted(
+            items,
+            key=lambda g: (SEVERITY_WEIGHT_BY_NAME.get(g["severity"], 0), g["max_priority_score"], identity(g)),
+            reverse=True,
+        )
     if sort == "blast_radius":
-        return sorted(items, key=lambda g: (g.finding_count, g.max_priority_score, g.rule_id), reverse=True)
+        return sorted(items, key=lambda g: (g["finding_count"], g["max_priority_score"], identity(g)), reverse=True)
     if sort == "age":
-        return sorted(items, key=lambda g: (g.oldest_first_seen, g.rule_id))
+        return sorted(items, key=lambda g: (g["oldest_first_seen"], identity(g)))
     if sort == "recent":
-        return sorted(items, key=lambda g: (g.newest_last_seen, g.rule_id), reverse=True)
-    return sorted(items, key=lambda g: (g.max_priority_score, g.finding_count, g.rule_id), reverse=True)
+        # first_seen, not last_seen: the flat list's `recent` is "newly found",
+        # and a group re-detected by today's scan is not newly found. Ordering
+        # on last_seen here made the same control mean two different things in
+        # the two views.
+        return sorted(items, key=lambda g: (g["newest_first_seen"], identity(g)), reverse=True)
+    return sorted(items, key=lambda g: (g["max_priority_score"], g["finding_count"], identity(g)), reverse=True)
 
 
 SEVERITY_WEIGHT_BY_NAME = {
@@ -596,11 +620,19 @@ def list_finding_groups(
         new_since_days=new_since_days,
     )
     if query is None:
-        return FindingGroupListResponse(items=[], total=0, total_findings=0)
+        return FindingGroupListResponse(items=[], total=0, total_findings=0, truncated=False)
     query = _apply_category(query, category, exclude_category)
 
     ungrouped_tools = _ungrouped_tools()
-    items: list[FindingGroupOut] = []
+
+    # Two passes, and the order matters for cost. The first builds a cheap stub
+    # per group straight off the SQL aggregates, with no per-group queries at
+    # all. Only after sorting and slicing does the second pass resolve the
+    # representative, its SLA and its fixability -- and only for the rows on
+    # the requested page. Doing that work up front meant a tenant with 400
+    # distinct (tool, rule_id) pairs spent roughly 2,000 round trips to render
+    # 25 rows.
+    stubs: list[dict] = []
 
     # --- the collapsible majority ---------------------------------------
     grouped_query = query
@@ -612,47 +644,41 @@ def list_finding_groups(
     # aggregate row arrives as a bare tool string rather than a Row, and every
     # attribute read off it raises. `execute` returns the labelled Row the
     # aggregates in group_aggregate_columns() are named for.
+    #
+    # Ordered before the limit: without an ORDER BY, *which* groups survive
+    # MAX_GROUPS is whatever the plan happens to emit, so two identical
+    # requests can truncate to different sets.
     rows = session.execute(
         grouped_query.with_only_columns(*group_aggregate_columns())
         .group_by(Finding.tool, Finding.rule_id)
+        .order_by(func.max(Finding.priority_score).desc(), Finding.tool, Finding.rule_id)
         .limit(MAX_GROUPS)
     ).all()
 
     for row in rows:
-        # Scoped to `grouped_query`, never a bare select over the table: that
-        # query already carries the caller's workspace restriction and every
-        # active filter. A representative picked outside it could be a finding
-        # the caller is not entitled to see, and its title, file path and SLA
-        # are all rendered on the row.
-        rep = representative_finding(
-            session, grouped_query.where(Finding.tool == row.tool, Finding.rule_id == row.rule_id)
-        )
-        if rep is None:
-            continue
-        sla_days, sla_violated = compute_sla_status(session, rep)
-        items.append(
-            FindingGroupOut(
-                tool=row.tool,
-                rule_id=row.rule_id,
-                category=tool_category(row.tool),
-                title=rep.title,
-                severity=severity_for_weight(row.severity_weight or 0),
-                grouped=True,
-                finding_count=row.finding_count,
-                target_count=row.target_count,
-                file_count=row.file_count,
-                max_priority_score=row.max_priority_score or 0,
-                oldest_first_seen=row.oldest_first_seen,
-                newest_last_seen=row.newest_last_seen,
-                max_epss=row.max_epss or None,
-                kev_count=int(row.kev_count or 0),
-                representative_id=rep.id,
-                representative_file_path=rep.file_path,
-                representative_target_id=rep.target_id,
-                sla_days=sla_days,
-                sla_violated=sla_violated,
-                fixability=fixability_for_finding(session, rep),
-            )
+        stubs.append(
+            {
+                "tool": row.tool,
+                "rule_id": row.rule_id,
+                "grouped": True,
+                "finding": None,
+                "severity": severity_for_weight(row.severity_weight or 0),
+                "finding_count": row.finding_count,
+                "target_count": row.target_count,
+                "file_count": row.file_count,
+                "max_priority_score": row.max_priority_score or 0,
+                "oldest_first_seen": row.oldest_first_seen,
+                "newest_first_seen": row.newest_first_seen,
+                "newest_last_seen": row.newest_last_seen,
+                # `is not None`, not `or None`: a measured EPSS of exactly 0.0
+                # is a real answer ("no predicted exploitation"), and collapsing
+                # it to null turns a measurement into "never assessed".
+                "max_epss": row.max_epss if row.max_epss is not None else None,
+                "kev_count": int(row.kev_count or 0),
+                # Resolved in the second pass; the sort only needs an identity
+                # that is stable, and (tool, rule_id) already is one here.
+                "representative_id": 0,
+            }
         )
 
     # --- the deliberately ungrouped ---------------------------------------
@@ -662,43 +688,94 @@ def list_finding_groups(
     # render one list, with `grouped=False` telling the row not to offer an
     # expander that would reveal only itself.
     if ungrouped_tools:
-        singles = session.exec(query.where(Finding.tool.in_(ungrouped_tools)).limit(MAX_GROUPS)).all()
-        fixmap = _fixability_map(session, list(singles))
+        singles = session.exec(
+            query.where(Finding.tool.in_(ungrouped_tools))
+            .order_by(Finding.priority_score.desc(), Finding.id)
+            .limit(MAX_GROUPS)
+        ).all()
         for finding in singles:
-            sla_days, sla_violated = compute_sla_status(session, finding)
-            items.append(
-                FindingGroupOut(
-                    tool=finding.tool,
-                    rule_id=finding.rule_id,
-                    category=tool_category(finding.tool),
-                    title=finding.title,
-                    severity=getattr(finding.severity, "value", finding.severity),
-                    grouped=False,
-                    finding_count=1,
-                    target_count=1,
-                    file_count=1,
-                    max_priority_score=finding.priority_score,
-                    oldest_first_seen=finding.first_seen,
-                    newest_last_seen=finding.last_seen,
-                    max_epss=finding.epss_score,
-                    kev_count=1 if finding.kev_listed else 0,
-                    representative_id=finding.id,
-                    representative_file_path=finding.file_path,
-                    representative_target_id=finding.target_id,
-                    sla_days=sla_days,
-                    sla_violated=sla_violated,
-                    fixability=fixmap.get(finding.id, UNKNOWN),
-                )
+            stubs.append(
+                {
+                    "tool": finding.tool,
+                    "rule_id": finding.rule_id,
+                    "grouped": False,
+                    "finding": finding,
+                    "severity": getattr(finding.severity, "value", finding.severity),
+                    "finding_count": 1,
+                    "target_count": 1,
+                    "file_count": 1,
+                    "max_priority_score": finding.priority_score,
+                    "oldest_first_seen": finding.first_seen,
+                    "newest_first_seen": finding.first_seen,
+                    "newest_last_seen": finding.last_seen,
+                    "max_epss": finding.epss_score,
+                    "kev_count": 1 if finding.kev_listed else 0,
+                    "representative_id": finding.id,
+                }
             )
 
-    total_findings = sum(g.finding_count for g in items)
-    items = _sort_groups(items, sort)
+    total_findings = sum(g["finding_count"] for g in stubs)
+    truncated = len(rows) >= MAX_GROUPS or (ungrouped_tools and len(singles) >= MAX_GROUPS)
+
+    stubs = _sort_groups(stubs, sort)
     page = max(page, 1)
     page_size = max(min(page_size, 500), 1)
     start = (page - 1) * page_size
+    page_stubs = stubs[start : start + page_size]
+
+    # --- second pass: enrich only what this page renders -------------------
+    items: list[FindingGroupOut] = []
+    page_singles = [g["finding"] for g in page_stubs if g["finding"] is not None]
+    fixmap = _fixability_map(session, page_singles) if page_singles else {}
+
+    for stub in page_stubs:
+        rep = stub["finding"]
+        if rep is None:
+            # Scoped to `grouped_query`, never a bare select over the table:
+            # that query already carries the caller's workspace restriction and
+            # every active filter. A representative picked outside it could be
+            # a finding the caller is not entitled to see, and its title, file
+            # path and SLA are all rendered on the row.
+            rep = representative_finding(
+                session, grouped_query.where(Finding.tool == stub["tool"], Finding.rule_id == stub["rule_id"])
+            )
+            if rep is None:
+                continue
+            fixability_value = fixability_for_finding(session, rep)
+        else:
+            fixability_value = fixmap.get(rep.id, UNKNOWN)
+
+        sla_days, sla_violated = compute_sla_status(session, rep)
+        items.append(
+            FindingGroupOut(
+                tool=stub["tool"],
+                rule_id=stub["rule_id"],
+                category=tool_category(stub["tool"]),
+                title=rep.title,
+                severity=stub["severity"],
+                grouped=stub["grouped"],
+                finding_count=stub["finding_count"],
+                target_count=stub["target_count"],
+                file_count=stub["file_count"],
+                max_priority_score=stub["max_priority_score"],
+                oldest_first_seen=stub["oldest_first_seen"],
+                newest_first_seen=stub["newest_first_seen"],
+                newest_last_seen=stub["newest_last_seen"],
+                max_epss=stub["max_epss"],
+                kev_count=stub["kev_count"],
+                representative_id=rep.id,
+                representative_file_path=rep.file_path,
+                representative_target_id=rep.target_id,
+                sla_days=sla_days,
+                sla_violated=sla_violated,
+                fixability=fixability_value,
+            )
+        )
+
     return FindingGroupListResponse(
-        items=items[start : start + page_size],
-        total=len(items),
+        items=items,
+        total=len(stubs),
+        truncated=bool(truncated),
         total_findings=total_findings,
     )
 

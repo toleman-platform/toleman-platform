@@ -407,4 +407,84 @@ def test_empty_result_set_is_an_empty_page_not_an_error(client, engine):
 
     body = client.get("/api/findings/groups").json()
 
-    assert body == {"items": [], "total": 0, "total_findings": 0}
+    assert body == {"items": [], "total": 0, "total_findings": 0, "truncated": False}
+
+
+# --------------------------------------------------------------------------
+# ordering is total, not merely sorted
+# --------------------------------------------------------------------------
+
+
+def test_identical_ungrouped_rows_keep_a_stable_total_order(client, engine):
+    """Three secrets under one rule tie on every visible sort key.
+
+    They share tool, rule_id, severity and score, so an order that tiebreaks on
+    rule_id alone leaves them in whatever order the database returned -- stable
+    on SQLite, unspecified on Postgres. Paged two at a time that lets one
+    secret appear twice and another never appear.
+    """
+    target_id = _make_target(engine)
+    _login(client, engine)
+    for i in range(3):
+        _make_finding(
+            engine,
+            target_id,
+            tool="gitleaks",
+            rule_id="aws-access-key",
+            title=f"AWS key in config-{i}.py",
+            file_path=f"config-{i}.py",
+            severity=Severity.CRITICAL,
+            priority_score=320,
+        )
+
+    first = client.get("/api/findings/groups?page=1&page_size=2").json()
+    second = client.get("/api/findings/groups?page=2&page_size=2").json()
+
+    seen = [g["representative_id"] for g in first["items"] + second["items"]]
+    assert len(seen) == 3
+    assert len(set(seen)) == 3, "a secret must not appear on two pages while another is dropped"
+
+    # And the same request twice must agree with itself.
+    again = client.get("/api/findings/groups?page=1&page_size=2").json()
+    assert [g["representative_id"] for g in again["items"]] == [g["representative_id"] for g in first["items"]]
+
+
+def test_recent_means_newly_found_in_both_views(client, engine):
+    """`sort=recent` must not mean first_seen in one view and last_seen in the other."""
+    target_id = _make_target(engine)
+    _login(client, engine)
+    # Found long ago, re-detected by today's scan: not newly found.
+    _make_finding(
+        engine,
+        target_id,
+        rule_id="license:MIT",
+        title="MIT",
+        first_seen=utcnow() - timedelta(days=200),
+        last_seen=utcnow(),
+    )
+    _make_finding(engine, target_id, first_seen=utcnow() - timedelta(days=1), last_seen=utcnow())
+
+    grouped = client.get("/api/findings/groups?sort=recent").json()
+    flat = client.get("/api/findings?sort=recent").json()
+
+    assert grouped["items"][0]["rule_id"] == "license:LGPL-3.0-or-later"
+    assert flat["items"][0]["rule_id"] == "license:LGPL-3.0-or-later"
+
+
+def test_measured_zero_epss_is_not_reported_as_unknown(client, engine):
+    """0.0 is an answer -- "no predicted exploitation" -- not an absence of one."""
+    target_id = _make_target(engine)
+    _login(client, engine)
+    _make_finding(engine, target_id, tool="trivy", rule_id="CVE-2024-9", cve_id="CVE-2024-9", epss_score=0.0)
+
+    group = client.get("/api/findings/groups").json()["items"][0]
+
+    assert group["max_epss"] == 0.0
+
+
+def test_untruncated_result_says_so(client, engine):
+    target_id = _make_target(engine)
+    _login(client, engine)
+    _seed_licence_family(engine, target_id, count=3)
+
+    assert client.get("/api/findings/groups").json()["truncated"] is False

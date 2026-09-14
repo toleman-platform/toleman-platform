@@ -35,6 +35,7 @@ function makeGroup(overrides: Partial<FindingGroup> = {}): FindingGroup {
     file_count: 1,
     max_priority_score: 320,
     oldest_first_seen: new Date(Date.now() - 64 * 24 * 60 * 60 * 1000).toISOString(),
+    newest_first_seen: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
     newest_last_seen: new Date().toISOString(),
     max_epss: null,
     kev_count: 0,
@@ -140,16 +141,83 @@ describe("FindingGroupRow", () => {
     expect(findings).toHaveBeenCalledTimes(1);
   });
 
-  it("asks the API for exactly this group's members", async () => {
+  it("asks the API for exactly this group's members, under the list's own filters", async () => {
+    // Not objectContaining: the whole defect was filters being *absent*, and a
+    // containment assertion cannot see a missing key. The member list is what
+    // group triage writes to, so it has to be drawn from the same filters the
+    // row's count came from.
     findings.mockResolvedValue({ items: [], total: 0 });
-    render(<FindingGroupRow group={makeGroup()} />);
+    const memberQuery = { resolved: false, exclude_category: ["License"], severity: ["High"] };
+    render(<FindingGroupRow group={makeGroup()} memberQuery={memberQuery} />);
     fireEvent.click(screen.getByRole("button", { expanded: false }));
 
     await waitFor(() =>
-      expect(findings).toHaveBeenCalledWith(
-        expect.objectContaining({ tool: "trivy-license", rule_id: "license:LGPL-3.0-or-later" }),
-      ),
+      expect(findings).toHaveBeenCalledWith({
+        resolved: false,
+        exclude_category: ["License"],
+        severity: ["High"],
+        tool: "trivy-license",
+        rule_id: "license:LGPL-3.0-or-later",
+        page: 1,
+        page_size: 200,
+      }),
     );
+  });
+
+  it("pages until it has every member, so triage reaches all of them", async () => {
+    const firstPage = Array.from({ length: 200 }, (_, i) => makeMember(i + 1));
+    const secondPage = Array.from({ length: 40 }, (_, i) => makeMember(i + 201));
+    findings
+      .mockResolvedValueOnce({ items: firstPage, total: 240 })
+      .mockResolvedValueOnce({ items: secondPage, total: 240 });
+    bulkTriage.mockResolvedValue({ updated: 240, items: [] });
+
+    render(<FindingGroupRow group={makeGroup({ finding_count: 240 })} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+
+    await waitFor(() => expect(findings).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Accepted Risk" }));
+
+    await waitFor(() => expect(bulkTriage).toHaveBeenCalled());
+    expect(bulkTriage.mock.calls[0][0]).toHaveLength(240);
+  });
+
+  it("refuses to triage a group it could not fully load, and says so", async () => {
+    // 1,400 members, a 1,000 fetch cap: closing 1,000 of them would leave 400
+    // behind a decision the reader believes is finished.
+    // Distinct ids per page, as a real API returns: repeating one page's ids
+    // would produce duplicate React keys and drown any genuine warning.
+    findings.mockImplementation(({ page }: { page: number }) => ({
+      items: Array.from({ length: 200 }, (_, i) => makeMember((page - 1) * 200 + i + 1)),
+      total: 1400,
+    }));
+
+    render(<FindingGroupRow group={makeGroup({ finding_count: 1400 })} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+
+    await waitFor(() => expect(screen.getByText(/Showing 1000 of 1400/)).not.toBeNull());
+    expect(screen.getByRole("button", { name: "Accepted Risk" }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Accepted Risk" }));
+    expect(bulkTriage).not.toHaveBeenCalled();
+  });
+
+  it("drops the cached members after a triage so a second click cannot re-triage", async () => {
+    findings.mockResolvedValue({ items: [makeMember(38), makeMember(37)], total: 2 });
+    bulkTriage.mockResolvedValue({ updated: 2, items: [] });
+
+    render(<FindingGroupRow group={makeGroup()} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    await waitFor(() => expect(screen.getByText(/package-38/)).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "False Positive" }));
+    await waitFor(() => expect(bulkTriage).toHaveBeenCalledTimes(1));
+
+    // Collapsed, cache cleared: re-expanding re-reads rather than replaying
+    // stale ids whose state has already changed.
+    await waitFor(() => expect(screen.queryByText(/package-38/)).toBeNull());
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    await waitFor(() => expect(findings).toHaveBeenCalledTimes(2));
   });
 
   it("never fetches for an ungrouped row, which would reveal only itself", async () => {

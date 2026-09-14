@@ -70,7 +70,7 @@ jobs:
         # semgrep's pinned opentelemetry-instrumentation imports
         # `pkg_resources`, which setuptools removed in 82.0.0 and deprecated
         # in 81. A silently broken security scan is worse than a loud one.
-        run: pip install semgrep "setuptools<81"
+        run: pip install semgrep==1.136.0 "setuptools<81"
 
       - name: Run Semgrep
         # --disable-nosem: don't let a `# nosemgrep` comment silently drop a
@@ -103,7 +103,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install Gitleaks
-        run: curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar xz gitleaks
+        run: |
+          curl -fsSL --retry 5 --retry-delay 2 -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          echo "5bc41815076e6ed6ef8fbecc9d9b75bcae31f39029ceb55da08086315316e3ba  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar xz -f /tmp/gitleaks.tar.gz gitleaks
 
       - name: Run Gitleaks
         # --no-git scans the working tree rather than history, so this needs
@@ -131,7 +135,7 @@ jobs:
 
       - name: Install Trivy
         run: |
-          curl -sSL -o /tmp/trivy.tar.gz \
+          curl -fsSL --retry 5 --retry-delay 2 -o /tmp/trivy.tar.gz \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
           sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy
@@ -173,7 +177,7 @@ jobs:
 
       - name: Install Trivy
         run: |
-          curl -sSL -o /tmp/trivy.tar.gz \
+          curl -fsSL --retry 5 --retry-delay 2 -o /tmp/trivy.tar.gz \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
           sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy
@@ -190,7 +194,7 @@ jobs:
         run: |
           python -m venv /tmp/resolved-backend
           /tmp/resolved-backend/bin/pip install --upgrade pip -q
-          /tmp/resolved-backend/bin/pip install -q -r backend/requirements.txt semgrep "setuptools>=78.1.1,<81"
+          /tmp/resolved-backend/bin/pip install -q -r backend/requirements.txt semgrep==1.136.0 "setuptools>=78.1.1,<81"
 
       - name: Resolve mcp-server/requirements.txt into a real venv
         run: |

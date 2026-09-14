@@ -10,14 +10,19 @@ import { cn } from "@/lib/utils";
 //
 // A plain Link-based component (no "use client"), so the Findings page
 // stays a Server Component: findings/page.tsx computes each tab's href
-// (preserving every other active filter) and count (via
-// api.findingCategories(), itself filter-aware -- see
-// app/api/findings.py::list_category_facets) up front, so this component
-// only renders what it's given.
+// (preserving every other active filter) and count up front, so this
+// component only renders what it's given. Since #270 the counts come from
+// the `category` dimension of api.findingFacets() -- the same response the
+// filter pills render, so tabs and pills cannot disagree about one query --
+// falling back to api.findingCategories() if that call fails. Both are
+// filter-aware; see app/api/findings.py::list_finding_facets.
 export type CategoryTab = {
   id: string; // "" for the "All" tab
   label: string;
-  count: number;
+  // null when the count could not be fetched at all -- the tab renders as a
+  // bare label rather than as "0", which next to a non-empty list would be
+  // a contradiction rather than a degraded state.
+  count: number | null;
   href: string;
 };
 
@@ -39,7 +44,7 @@ export function FindingsCategoryTabs({ tabs, active }: { tabs: CategoryTab[]; ac
             )}
           >
             {tab.label}
-            <span className="ml-1.5 text-xs text-muted-foreground">{tab.count}</span>
+            {tab.count !== null && <span className="ml-1.5 text-xs text-muted-foreground">{tab.count}</span>}
           </Link>
         ))}
       </div>

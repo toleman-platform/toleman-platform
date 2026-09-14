@@ -12,7 +12,7 @@ import { settleOrNull } from "@/std-lib";
 // Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.
 import { pageSizeFromParams } from "@/lib/pagination";
-import type { FindingGroupSort } from "@/types";
+import type { FindingFilterOptions, FindingGroupSort } from "@/types";
 
 // Page size is now a user preference read off the URL (25/50/100),
 // defaulting to 25. See components/activity-pagination.tsx.
@@ -82,6 +82,10 @@ export default async function FindingsPage({
   const severity = toArray(sp.severity);
   const tool = toArray(sp.tool);
   const fixability = toArray(sp.fixability);
+  // (#251) The owning target's metadata, multi-select since #270 like every
+  // other filter in the bar.
+  const environment = toArray(sp.environment);
+  const owner = toArray(sp.owner);
   const state = toArray(sp.state);
   const search = firstValue(sp.search);
   const targetIdRaw = toArray(sp.target_id);
@@ -117,6 +121,8 @@ export default async function FindingsPage({
     severity,
     tool,
     fixability,
+    environment,
+    owner,
     target_id,
     group_id,
     search,
@@ -126,7 +132,7 @@ export default async function FindingsPage({
 
   const listQuery = { ...commonFilters, category, state, resolved: queued.resolved };
 
-  const [groupsResult, findingsResult, targets, tools, categoryFacets, groups, queueCounts] = await Promise.all([
+  const [groupsResult, findingsResult, targets, facets, groups, queueCounts] = await Promise.all([
     grouped
       ? settleOrNull(api.findingGroups({ ...listQuery, sort, page, page_size: pageSize }))
       : Promise.resolve(null),
@@ -141,14 +147,14 @@ export default async function FindingsPage({
           }),
         ),
     api.targets().catch(() => []),
-    api.findingTools().catch(() => []),
-    // Filter-aware (severity/tool/state/search/target/group/fixability/
-    // resolved, but deliberately not category itself -- see
-    // list_category_facets): each tab's count reflects every OTHER active
-    // filter and the active queue, the way a real facet count should.
-    queue === "all"
-      ? api.findingCategories({ ...commonFilters, state, resolved: queued.resolved }).catch(() => [])
-      : Promise.resolve([]),
+    // (#270) Every dimension's per-value counts in one call, taking exactly
+    // the filters the list above took. Each dimension is counted with every
+    // OTHER filter applied but not its own, so the filter bar reads as a
+    // summary of this view of the backlog; the `category` dimension it
+    // returns is what the category tabs below are counted from, so tabs and
+    // pills can't tell different stories about the same query. `null` when
+    // it fails; see the fallback below.
+    api.findingFacets(listQuery).catch(() => null),
     api.groups().catch(() => []),
     // One count per queue, each under the same non-queue filters that are
     // active now, so the tab counts describe what clicking them would show.
@@ -169,11 +175,42 @@ export default async function FindingsPage({
     ),
   ]);
 
+  // Only when the one facets call failed: a second, serialized round of the
+  // plain per-dimension endpoints. Tool, Environment and Owner have no
+  // hardcoded option set -- theirs come from real data -- so without this a
+  // single failure removes three controls and the category tabs outright,
+  // and an active ?tool=semgrep becomes something you can see the effects
+  // of but not switch off. Costs an extra round-trip on the failure path
+  // and nothing at all on the normal one.
+  const fallbackOptions: FindingFilterOptions | null = facets
+    ? null
+    : await (async () => {
+        const [toolOptions, environmentOptions, ownerOptions, categoryCounts] = await Promise.all([
+          api.findingTools().catch(() => []),
+          api.findingEnvironments().catch(() => []),
+          api.findingOwners().catch(() => []),
+          // This one still carries real counts, so the category tabs keep
+          // their numbers even on the degraded path. Only the "All findings"
+          // queue shows them; the other three already pin the category.
+          queue === "all"
+            ? api.findingCategories({ ...commonFilters, state, resolved: queued.resolved }).catch(() => [])
+            : Promise.resolve([]),
+        ]);
+        return {
+          tool: toolOptions,
+          environment: environmentOptions,
+          owner: ownerOptions,
+          category: categoryCounts,
+        };
+      })();
+
   function hrefWith(overrides: Record<string, string | undefined>): string {
     const params = new URLSearchParams();
     severity.forEach((s) => params.append("severity", s));
     tool.forEach((t) => params.append("tool", t));
     fixability.forEach((f) => params.append("fixability", f));
+    environment.forEach((e) => params.append("environment", e));
+    owner.forEach((o) => params.append("owner", o));
     targetIdRaw.forEach((t) => params.append("target_id", t));
     if (group_id) params.set("group_id", String(group_id));
     if (search) params.set("search", search);
@@ -210,9 +247,26 @@ export default async function FindingsPage({
     }),
   }));
 
+  // Counted from the same /facets call the filter bar renders (its
+  // `category` dimension), not a second round-trip: the tabs and the pills
+  // are two views of one query, so they read from one answer. On the
+  // degraded path they come from /facets/categories instead, which still
+  // counts -- so the tabs keep their numbers even when the pills lose
+  // theirs.
+  const categoryFacets: { value: string; count: number }[] = facets
+    ? facets.category
+    : (fallbackOptions?.category ?? []).map((c) => ({ value: c.category, count: c.count }));
+  const countedCategories = facets !== null || (fallbackOptions?.category.length ?? 0) > 0;
   const categoryTabs: CategoryTab[] = [
-    { id: "", label: "All", count: categoryFacets.reduce((sum, c) => sum + c.count, 0), href: hrefWith({ category: undefined }) },
-    ...categoryFacets.map((c): CategoryTab => ({ id: c.category, label: c.category, count: c.count, href: hrefWith({ category: c.category }) })),
+    {
+      id: "",
+      label: "All",
+      // null, not 0, when nothing could be counted: an "All 0" tab above a
+      // list of findings is a plain contradiction.
+      count: countedCategories ? categoryFacets.reduce((sum, c) => sum + c.count, 0) : null,
+      href: hrefWith({ category: undefined }),
+    },
+    ...categoryFacets.map((c): CategoryTab => ({ id: c.value, label: c.value, count: c.count, href: hrefWith({ category: c.value }) })),
   ];
 
   const failed = grouped ? groupsResult === null : findingsResult === null;
@@ -235,8 +289,9 @@ export default async function FindingsPage({
 
       <FindingsFilterBar
         targets={targets}
-        tools={tools}
         groups={groups}
+        facets={facets}
+        fallbackOptions={fallbackOptions}
         resolved={queued.resolved}
         grouped={grouped}
         // The flat view has no blast-radius ordering, so handing it that value

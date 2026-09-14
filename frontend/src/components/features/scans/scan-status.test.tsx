@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ScanProgress, ScanStatusBadge, formatDuration, scanProgressLabel } from "@/components/features/scans/scan-status";
+import {
+  ScanHealthBadge,
+  ScanHealthNotice,
+  ScanProgress,
+  ScanStatusBadge,
+  formatDuration,
+  scanProgressLabel,
+} from "@/components/features/scans/scan-status";
 
 describe("formatDuration", () => {
   it("shows seconds under a minute", () => {
@@ -99,5 +106,55 @@ describe("ScanProgress", () => {
   it("shows elapsed time when the server gave no estimate", () => {
     render(<ScanProgress phase="running" elapsedSeconds={45} etaSeconds={null} />);
     expect(screen.getByRole("status").textContent).toBe("running for 45s");
+  });
+});
+
+describe("ScanHealthBadge (#229)", () => {
+  it("marks a run the platform refused to trust", () => {
+    // A scan can complete, exit cleanly and report zero findings while
+    // having read a half-written vulnerability database. "Completed · 0
+    // findings" is then the most misleading thing the UI can say.
+    render(<ScanHealthBadge health="suspect" />);
+    expect(screen.getByText("Not authoritative")).toBeTruthy();
+  });
+
+  it("says nothing about a healthy run", () => {
+    const { container } = render(<ScanHealthBadge health="healthy" />);
+    expect(container.textContent).toBe("");
+  });
+
+  it("says nothing about an unassessed run", () => {
+    // Every scan recorded before #229 is "unknown". Badging those would put
+    // a warning on a year of legitimate history, and a warning on
+    // everything is a warning on nothing; making no claim is the honest
+    // position.
+    const { container } = render(<ScanHealthBadge health="unknown" />);
+    expect(container.textContent).toBe("");
+  });
+});
+
+describe("ScanHealthNotice (#229)", () => {
+  it("gives the reason, not just the verdict", () => {
+    // "Not authoritative" alone tells a user something is wrong without
+    // telling them what to do; a stale vulnerability DB and a tool that
+    // resolved no manifests call for different responses.
+    render(
+      <ScanHealthNotice
+        health="suspect"
+        note="trivy ran without a vulnerability database, so it could not have found any CVE."
+      />
+    );
+    expect(screen.getByText(/not treated as authoritative/i)).toBeTruthy();
+    expect(screen.getByText(/without a vulnerability database/i)).toBeTruthy();
+  });
+
+  it("still renders the verdict when no reason was recorded", () => {
+    render(<ScanHealthNotice health="suspect" note="" />);
+    expect(screen.getByText(/not treated as authoritative/i)).toBeTruthy();
+  });
+
+  it("renders nothing for a healthy run", () => {
+    const { container } = render(<ScanHealthNotice health="healthy" note="" />);
+    expect(container.textContent).toBe("");
   });
 });

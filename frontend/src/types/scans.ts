@@ -1,6 +1,14 @@
 import type { RunStatus } from "./common";
 import type { Nullable } from "@/std-lib";
 
+// Issue #229: whether a *completed* run can be trusted to have checked what
+// it claims. Orthogonal to status, which only says whether it finished.
+// "suspect" means the platform refused to treat it as authoritative (it did
+// not mitigate anything on the strength of it); "unknown" means nobody
+// assessed the run, which every scan recorded before #229 carries and which
+// is deliberately not a synonym for either of the other two.
+export type ScanHealth = "healthy" | "suspect" | "unknown";
+
 /**
  * Persisted scan run record capturing an individual scanner execution against a target.
  */
@@ -16,6 +24,11 @@ export type ScanRun = {
   error_message: string;
   elapsed_seconds: number;
   eta_seconds: Nullable<number>;
+  // (#229) A completed scan with findings_count 0 is only a clean result if
+  // the run was healthy; a poller that reads status alone would report a
+  // clean repo for a scan that checked nothing.
+  health: ScanHealth;
+  health_note: string;
 };
 
 /**
@@ -57,6 +70,10 @@ export type ActivePrScans = Record<string, ActivePrScan>;
 export type ScanSummaryEntry = {
   last_scan_at: Nullable<string>;
   tools: string[];
+  // (#229) Tools whose most recent run against this target was not treated
+  // as authoritative. Surfaced on the row itself because "last scan 4m ago ·
+  // trivy" otherwise reads as reassurance for a run that checked nothing.
+  suspect_tools: string[];
 };
 
 /**
@@ -76,6 +93,10 @@ export type ScanHistoryEntry = {
   completed_at: Nullable<string>;
   findings_count: number;
   error: string;
+  health: ScanHealth;
+  // Why the run was not trusted, and what was done about it. Non-empty
+  // whenever health is "suspect".
+  health_note: string;
 };
 
 /**

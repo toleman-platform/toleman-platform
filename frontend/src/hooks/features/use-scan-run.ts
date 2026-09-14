@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ScanRun } from "@/lib/api";
+import { api, type ScanHealth, type ScanRun } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import type { ScanPhase } from "@/components/features/scans/scan-status";
 
@@ -43,6 +43,12 @@ export type UseScanRunResult = {
   /** Null whenever the server could not ground an estimate in real history. */
   etaSeconds: number | null;
   error: string | null;
+  /** (#229) Whether the settled run was trusted. "unknown" until it settles,
+   * and for any server that predates the field. A caller showing
+   * "0 findings" off `onCompleted` is making a claim this qualifies. */
+  health: ScanHealth;
+  /** Why the run was not trusted, and what was done about it. */
+  healthNote: string;
   /** Begin following a scan id returned by a dispatch call. */
   track: (scanId: number) => void;
   /** Mark a dispatch as failed before any scan id exists (e.g. a 429). */
@@ -57,6 +63,8 @@ export function useScanRun({ onCompleted, onFailed }: UseScanRunOptions = {}): U
   const [error, setError] = useState<string | null>(null);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [health, setHealth] = useState<ScanHealth>("unknown");
+  const [healthNote, setHealthNote] = useState("");
 
   // The server's elapsed count and the local moment it arrived. Elapsed is
   // recomputed from this on each tick, so it advances smoothly between polls
@@ -102,6 +110,10 @@ export function useScanRun({ onCompleted, onFailed }: UseScanRunOptions = {}): U
     setEtaSeconds(run.status === "running" ? run.eta_seconds : null);
     setElapsedSeconds(run.elapsed_seconds);
     anchorRef.current = { serverSeconds: run.elapsed_seconds, at: Date.now() };
+    // (#229) Defaulted rather than assumed: a server that does not send this
+    // has told us nothing about the run, which is "unknown", not "healthy".
+    setHealth(run.health ?? "unknown");
+    setHealthNote(run.health_note ?? "");
 
     if (run.status === "failed") {
       // Prefer the real reason. `mark_stale_if_needed` writes its timeout
@@ -128,6 +140,8 @@ export function useScanRun({ onCompleted, onFailed }: UseScanRunOptions = {}): U
       setError(null);
       setEtaSeconds(null);
       setElapsedSeconds(0);
+      setHealth("unknown");
+      setHealthNote("");
       anchorRef.current = { serverSeconds: 0, at: Date.now() };
 
       cancelRef.current = pollUntilSettled(
@@ -169,8 +183,10 @@ export function useScanRun({ onCompleted, onFailed }: UseScanRunOptions = {}): U
     setError(null);
     setEtaSeconds(null);
     setElapsedSeconds(0);
+    setHealth("unknown");
+    setHealthNote("");
     anchorRef.current = null;
   }, [stop]);
 
-  return { phase, elapsedSeconds, etaSeconds, error, track, fail, reset };
+  return { phase, elapsedSeconds, etaSeconds, error, health, healthNote, track, fail, reset };
 }

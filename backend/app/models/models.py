@@ -335,6 +335,24 @@ class Scan(SQLModel, table=True):
     # can surface *why* a scan failed instead of leaving the frontend with
     # only a bare "failed" status.
     error: str = ""
+    # (#229) Whether this run could be trusted to have checked what it
+    # claims: "healthy", "suspect", or "unknown". Orthogonal to `status`,
+    # which only says whether the run finished -- a scan can complete, exit
+    # 0 and emit valid JSON while having read a half-written vulnerability
+    # database, which is exactly how a repo with five live CVEs came back
+    # clean and had all five auto-mitigated.
+    #
+    # "unknown" is the default because it is the truth for every row written
+    # before this existed and for every ingestion path that offers no
+    # evidence (the CI/CD push endpoint). It is deliberately not folded into
+    # either of the others: "healthy" would assert a check nobody made, and
+    # "suspect" would put a warning on a year of legitimate history until
+    # users stopped reading warnings.
+    health: str = "unknown"
+    # Why, in a sentence a user can act on, when health is not "healthy" --
+    # including what was done about it (existing findings left open rather
+    # than mitigated). Empty otherwise.
+    health_note: str = ""
 
 
 class SnippetScanRun(SQLModel, table=True):

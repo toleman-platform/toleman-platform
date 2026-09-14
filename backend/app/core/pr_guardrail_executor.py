@@ -113,6 +113,30 @@ def _run_guardrail_tools(
     findings: list[dict] = []
     failed: list[str] = []
     skipped: dict[str, str] = {}
+    if any(tool in ("trivy", "trivy-license") for tool in tools) and (
+        paths is None or runner.manifest_changed(paths)
+    ):
+        # (#229) Guardrail scans hardlink from the same warm vulnerability
+        # DB the scheduled scans use. Warming here too means a PR check on a
+        # deployment whose beat has not run yet pays the download once,
+        # under the shared lock, instead of once per concurrent PR.
+        #
+        # The gate mirrors run_tool's own scoping decision exactly, so we
+        # only pay for the download when trivy is actually going to run:
+        #
+        #   paths is None      unscoped scan; _run_tool_inner runs trivy
+        #                      over the whole checkout, so warm it. (Passing
+        #                      None to manifest_changed, which iterates its
+        #                      argument, raised TypeError and aborted the
+        #                      whole guardrail scan before any tool ran.)
+        #   paths given        diff-scoped; _run_tool_scoped raises
+        #                      ToolNotApplicable for a MANIFEST tool when no
+        #                      manifest changed. Warming on assignment alone
+        #                      would make the typical PR -- one that changes
+        #                      application code only -- wait on a
+        #                      multi-hundred-megabyte download for a scanner
+        #                      that is then skipped.
+        runner.ensure_warm_trivy_db()
     for tool in tools:
         try:
             raw = runner.run_tool(tool, repo_path, paths=paths)

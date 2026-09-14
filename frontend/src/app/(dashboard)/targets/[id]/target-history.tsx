@@ -4,6 +4,7 @@ import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ScanHealthBadge } from "@/components/features/scans";
 import { History } from "lucide-react";
 
 function truncate(str: string, maxLen: number): string {
@@ -77,9 +78,28 @@ export async function TargetHistory({ targetId }: { targetId: number }) {
                           {truncate(entry.error, 60)}
                         </span>
                       )}
+                      {/* (#229) A completed run that was not trusted. The
+                          reason sits next to the badge for the same reason
+                          the failure reason does above: "not authoritative"
+                          alone says something is wrong without saying what
+                          to do about it. */}
+                      <ScanHealthBadge health={entry.health} className="ml-2 text-[10px]" />
+                      {entry.health !== "healthy" && entry.health_note && (
+                        <p className="mt-1 text-xs text-muted-foreground">{entry.health_note}</p>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground">
-                      {entry.status === "completed" ? entry.findings_count : "—"}
+                      {/* A findings count printed on its own for a run the
+                          platform refused to trust is the false all-clear in
+                          miniature: "0" reads as clean. It is shown as
+                          unknown instead, which is what it is. */}
+                      {entry.status !== "completed"
+                        ? "—"
+                        : entry.health === "suspect"
+                          ? `${entry.findings_count} (unverified)`
+                          : entry.health === "unknown"
+                            ? `${entry.findings_count} (unassessed)`
+                            : entry.findings_count}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{duration(entry)}</td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">{timeAgo(entry.started_at)}</td>

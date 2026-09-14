@@ -6,17 +6,26 @@ single-user local/dev use, must move to ephemeral containers (K8s Job) before
 that feature ships.
 """
 import base64
+import fcntl
 import json
+import logging
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
 from app.core.config import settings
+from app.core.scan_health import ScanHealth
+
+logger = logging.getLogger(__name__)
 
 # Hosts clone_repo will actually clone from. github.com is the only host this
 # platform integrates with today (see repo_slug_from_url in app/core/github.py,
@@ -476,6 +485,25 @@ def run_nuclei(urls: list[str]) -> list[dict]:
         (an external network dependency this platform doesn't control);
         keeps scanning self-contained to what this process directly
         observes.
+      - `-duc` (disable update check) is the nuclei half of #229, but only
+        when a template store already exists. nuclei keeps its templates in
+        one shared directory and rewrites it in place when it decides an
+        update is due, so two concurrent runs can have one process replacing
+        the templates the other is loading -- the same shape as the trivy DB
+        race, and with the same ending: exit 0, valid JSONL, fewer findings.
+        Disabling the update check stops a scan mutating that store.
+        It is NOT passed on a host with no templates yet, because nuclei's
+        fresh-install path sits behind the same update check: passing it
+        there would leave nuclei with an empty template set, which is exit 0
+        and zero findings from a scanner that loaded no checks at all. The
+        image installs templates at build time (see backend/Dockerfile) so
+        the normal path is the isolated one.
+      - The exit code is checked (#253's lesson, which this function had
+        been skipping because it does not go through _execute). nuclei is
+        not given a findings-based exit code, so anything nonzero means it
+        broke; returning [] for that is a false all-clear, and this is the
+        one tool whose results reach ingest_findings via a path that
+        asserts its own health.
     """
     if not urls:
         return []
@@ -496,6 +524,8 @@ def run_nuclei(urls: list[str]) -> list[dict]:
             "-rate-limit", str(settings.nuclei_rate_limit),
             "-timeout", "5",
         ]
+        if nuclei_templates_present():
+            cmd.append("-duc")
         if settings.nuclei_exclude_tags:
             cmd += ["-etags", settings.nuclei_exclude_tags]
         # cmd is built entirely from settings/constants above, no shell, no
@@ -509,6 +539,16 @@ def run_nuclei(urls: list[str]) -> list[dict]:
         except OSError:
             pass
 
+    if proc.returncode != 0:
+        # (#229/#253) This function bypasses _execute, so it bypassed the
+        # exit-code check every other tool got. A broken nuclei run used to
+        # return [], which app.tasks.api_scan_tasks then ingested as a
+        # completed, healthy, zero-finding scan -- mitigating every open
+        # api-scan finding on the target.
+        detail = _strip_ansi(proc.stderr or "").strip().splitlines()
+        tail = detail[-1] if detail else "no stderr"
+        raise ToolExecutionError(f"nuclei exited {proc.returncode}: {tail[:300]}")
+
     results = []
     for line in proc.stdout.splitlines():
         line = line.strip()
@@ -521,7 +561,48 @@ def run_nuclei(urls: list[str]) -> list[dict]:
     return results
 
 
-def _run_noseyparker(cmd: list[str], cwd: str | None) -> list:
+# Where nuclei keeps the templates it scans with: the defaults nuclei itself
+# has used across v2 and v3, resolved from $HOME.
+#
+# Deliberately NOT configurable by an environment variable. An earlier
+# version honoured a NUCLEI_TEMPLATES_DIR override, which was unsafe in one
+# direction: run_nuclei passes nuclei no template-directory flag, so nuclei
+# reads from $HOME regardless of what that variable said. Pointing it at a
+# store nuclei does not use would make nuclei_templates_present() answer
+# "definitely yes" for a directory nuclei never opens, `-duc` would be
+# passed, and the scan would run with an empty template set -- exit 0, zero
+# findings, reported as a clean API. That is precisely the false positive
+# the docstring below says this function must never produce, so the knob is
+# gone rather than documented. If a template store ever does need to move,
+# it has to move for nuclei too (a flag in run_nuclei), not just for us.
+def _nuclei_template_dirs() -> list[Path]:
+    home = Path.home()
+    return [
+        home / "nuclei-templates",
+        home / ".local" / "nuclei-templates",
+        home / ".config" / "nuclei" / "nuclei-templates",
+    ]
+
+
+def nuclei_templates_present() -> bool:
+    """Is there a template store for nuclei to scan with?
+
+    Governs `-duc` (see run_nuclei). A false negative costs one update
+    check; a false positive costs a scan with no templates reported as a
+    clean API -- so this answers "definitely yes" or "assume not".
+    """
+    for candidate in _nuclei_template_dirs():
+        try:
+            if candidate.is_dir() and any(candidate.iterdir()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _run_noseyparker(
+    cmd: list[str], cwd: str | None, run: "ScanRunContext", env: dict[str, str] | None = None
+) -> list:
     """Scan into a temp datastore, then report out of it (#255).
 
     Unlike every other tool here, noseyparker's scan step writes no findings
@@ -535,15 +616,19 @@ def _run_noseyparker(cmd: list[str], cwd: str | None) -> list:
     try:
         # scan_cmd is the caller's fixed argv with only the datastore path
         # substituted in, no shell.
-        proc = subprocess.run(scan_cmd, capture_output=True, text=True, cwd=cwd)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+        proc = subprocess.run(scan_cmd, capture_output=True, text=True, cwd=cwd, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         if proc.returncode != 0:
             detail = _strip_ansi(proc.stderr or "").strip().splitlines()
             raise ToolExecutionError(
                 f"noseyparker scan exited {proc.returncode}: {(detail[-1] if detail else 'no stderr')[:300]}"
             )
+        # (#229) These three tools return before _execute's stderr check,
+        # so they need their own: a warning about the tool's own inputs is
+        # the difference between "found nothing" and "could not look".
+        _note_stderr("noseyparker", proc.stderr, run.health)
         report = subprocess.run(
             ["noseyparker", "report", "--datastore", str(datastore), "--format", "json"],
-            capture_output=True, text=True, cwd=cwd,
+            capture_output=True, text=True, cwd=cwd, env=env,
         )
         if report.returncode != 0:
             detail = _strip_ansi(report.stderr or "").strip().splitlines()
@@ -561,7 +646,9 @@ def _run_noseyparker(cmd: list[str], cwd: str | None) -> list:
         shutil.rmtree(datastore.parent, ignore_errors=True)
 
 
-def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
+def _run_gitleaks(
+    cmd: list[str], cwd: str | None, run: "ScanRunContext", env: dict[str, str] | None = None
+) -> list:
     """Run gitleaks with its report going to a real file (#253).
 
     Substitutes GITLEAKS_REPORT_PLACEHOLDER for a temp path, then reads the
@@ -574,11 +661,12 @@ def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
     try:
         # resolved is the caller's fixed argv with only the report path
         # substituted in, no shell.
-        proc = subprocess.run(resolved, capture_output=True, text=True, cwd=cwd)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+        proc = subprocess.run(resolved, capture_output=True, text=True, cwd=cwd, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
         if proc.returncode != 0:
             detail = _strip_ansi(proc.stderr or "").strip().splitlines()
             tail = detail[-1] if detail else "no stderr"
             raise ToolExecutionError(f"gitleaks exited {proc.returncode}: {tail[:300]}")
+        _note_stderr("gitleaks", proc.stderr, run.health)  # (#229)
         if not report_path.exists():
             # Exited 0 but wrote nothing. Do not assume "clean"; gitleaks
             # writes a report (even `[]`) on every successful run.
@@ -594,7 +682,9 @@ def _run_gitleaks(cmd: list[str], cwd: str | None) -> list:
         shutil.rmtree(report_path.parent, ignore_errors=True)
 
 
-def _run_modelscan(cmd: list[str]) -> dict:
+def _run_modelscan(
+    cmd: list[str], run: "ScanRunContext", env: dict[str, str] | None = None
+) -> dict:
     """Run modelscan with its report directed at a temp file and read it back
     (issue #186). See MODELSCAN_REPORT_PLACEHOLDER for why stdout is unusable.
 
@@ -614,10 +704,12 @@ def _run_modelscan(cmd: list[str]) -> dict:
         resolved = [str(report_path) if part == MODELSCAN_REPORT_PLACEHOLDER else part for part in cmd]
         # resolved is the caller's fixed argv with only the report path
         # substituted in, no shell.
-        proc = subprocess.run(resolved, capture_output=True, text=True)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+        proc = subprocess.run(resolved, capture_output=True, text=True, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
 
         if proc.returncode in (2, 4):
             raise ToolExecutionError(f"modelscan failed (exit {proc.returncode})")
+
+        _note_stderr("modelscan", proc.stderr, run.health)  # (#229)
 
         if not report_path.exists():
             # Exit 3 (nothing supported to scan) legitimately writes no
@@ -751,6 +843,724 @@ def _merge_reports(reports: list[dict | list]) -> dict | list:
     return merged_dict
 
 
+# --- Concurrent-run isolation and scan health (#229) -----------------------
+#
+# Two defects, one issue. Both are about a scan that did not really run
+# looking exactly like a scan that passed.
+#
+# 1. Shared mutable tool state. trivy keeps its vulnerability DB in one
+#    per-user cache directory ($TRIVY_CACHE_DIR, default $HOME/.cache/trivy)
+#    and replaces it in place when it decides an update is due. A second
+#    trivy reading it mid-replacement finishes happily: exit 0, valid JSON,
+#    and either an empty Results list or Results whose Vulnerabilities
+#    arrays are empty. That is what #229 reproduced -- six concurrent scans,
+#    one of which reported a repo with five live CVEs as clean, while the
+#    same command run alone four minutes later found all five.
+#
+#    The fix is NOT to hardlink out of that shared directory. A hardlink
+#    shares an inode, so an in-place writer -- which is precisely what the
+#    issue's own diagnosis says trivy is -- reaches straight through it.
+#    Instead Toleman keeps its *own* warm copy under settings.tool_cache_dir
+#    that nothing writes except ensure_warm_trivy_db, which downloads into a
+#    staging directory and publishes it by replacing the warm directory
+#    whole, under an exclusive lock, while seeders hold a shared one. A
+#    published generation is therefore never written again, which is what
+#    makes hardlinking from it an actual snapshot. Each run hardlinks into
+#    its own TRIVY_CACHE_DIR and passes --skip-db-update, so no scan process
+#    can be the thing rewriting a DB another scan is reading.
+#
+#    semgrep is treated more narrowly on purpose: the file it genuinely
+#    rewrites on every run is its settings file, and that gets isolated. Its
+#    registry rule cache is left shared, because giving every run a private
+#    empty one would re-download the whole ruleset per scan -- trading a
+#    race for a guaranteed cost, which is the trap the warm copy above
+#    exists to avoid. nuclei is handled in run_nuclei (see `-duc` there).
+#
+# 2. A zero-finding result being trusted unconditionally. Isolation makes
+#    the race very unlikely; it does not make an empty result *provable*,
+#    and it does nothing for a DB that is simply broken or months stale. So
+#    each run also collects evidence about itself into a ScanHealth --
+#    whether the database behind it was actually usable (a real file of a
+#    plausible size, with metadata that parses and is not long past its own
+#    refresh deadline), whether that database changed underneath the running
+#    scan, warnings the tool wrote to stderr, and whether it produced a
+#    report at all -- and app.core.ingestion refuses to mitigate existing
+#    findings off a run that is not positively healthy. Zero vulnerabilities
+#    is accepted as a clean result only when the database behind it has been
+#    verified; that is the requirement #229's reproduction failed, whether
+#    it surfaced as an empty Results list or as Results with empty
+#    Vulnerabilities. Same rule osv_malware.py already applies with its
+#    None-vs-{} return; see app/core/scan_health.py.
+
+
+@dataclass
+class ScanRunContext:
+    """Everything one tool run needs beyond its argv.
+
+    Passed explicitly down through run_tool_checked -> _run_tool_inner ->
+    _execute rather than carried in a ContextVar. A ContextVar would be
+    correct only for a plain synchronous call stack: ThreadPoolExecutor and
+    loop.run_in_executor do not propagate one, and under eventlet two runs
+    can share a context and read -- then rmtree -- each other's cache
+    directory. Every one of those failures is silent and biased toward
+    "clean", which is the exact direction this issue says never to fail in.
+    An explicit parameter fails loudly at the call site instead.
+    """
+
+    tool: str
+    health: ScanHealth
+    # Environment for the tool's subprocess. None means "inherit ours".
+    env: dict[str, str] | None = None
+    # This run's private TRIVY_CACHE_DIR, when it got one.
+    trivy_cache: Path | None = None
+    # The run's private cache root, removed when the run ends.
+    cache_dir: Path | None = None
+    # Whether the private cache was populated from the warm copy. Governs
+    # whether trivy may be told --skip-db-update: telling it to skip the
+    # update when it has no DB at all would turn every scan on a cold cache
+    # into a hard failure.
+    seeded: bool = False
+    # (size, mtime_ns) of the private DB before the tool ran, so a change
+    # underneath a running scan is detectable rather than assumed away.
+    db_fingerprint: tuple | None = None
+
+
+# Layout under settings.tool_cache_dir.
+TRIVY_WARM_DIRNAME = "trivy-warm"
+TRIVY_STAGING_PREFIX = "trivy-staging-"
+RUN_CACHE_DIRNAME = "runs"
+CACHE_LOCK_FILENAME = "trivy-warm.lock"
+
+# Per-run caches are removed in a finally block, but a worker killed by
+# SIGKILL or the OOM killer never reaches it -- and with task_acks_late that
+# is an expected path, not a rare one. Anything older than this is from a
+# run that cannot still be alive: the stale-job timeout
+# (settings.stale_job_timeout_seconds, 15 minutes) is an order of magnitude
+# below it, so this can never delete a cache a live scan is using.
+RUN_CACHE_MAX_AGE_SECONDS = 6 * 60 * 60
+
+# Where trivy puts the DB and its metadata inside a cache directory.
+TRIVY_DB_FILE_PATH = "db/trivy.db"
+TRIVY_DB_METADATA_PATH = "db/metadata.json"
+
+# Floor on a believable trivy.db. A complete one is hundreds of megabytes;
+# this is not a completeness check (the format is trivy's to change) but a
+# truncation check -- a partially-written or zero-length file is the shape a
+# mid-download or mid-replacement read leaves behind, and that file must
+# never be read as "checked, nothing found".
+MIN_TRIVY_DB_BYTES = 32 * 1024 * 1024
+
+# How far past trivy's own declared NextUpdate the DB has to be before a run
+# against it stops counting as evidence. NextUpdate passing is routine
+# (trivy publishes every few hours and refreshes opportunistically); days
+# past it means the refresh has been failing, and anything published since
+# cannot be found.
+TRIVY_DB_STALE_GRACE_HOURS = 72
+
+# How long a scan will wait for another process to finish warming the DB
+# before giving up and running unseeded. Bounded because this is called from
+# a Celery task: the first of six concurrent scans downloads while the other
+# five wait here, which is the point, but none of them may wait forever.
+WARM_LOCK_TIMEOUT_SECONDS = 600
+
+# How long the download itself may take, bounded separately from the lock.
+# It runs while holding LOCK_EX, so an unbounded download is an unbounded
+# hold: every other scan in a fan-out queues behind it, and Celery's own
+# stale_job_timeout_seconds (900) keeps counting meanwhile. Left unbounded,
+# one slow first download could get the rest of the fan-out marked
+# stale-failed -- the warming path manufacturing the outage it exists to
+# prevent. Deliberately well inside that 900s budget so a scan that waited
+# still has time to clone and run.
+WARM_DOWNLOAD_TIMEOUT_SECONDS = 420
+SEED_LOCK_TIMEOUT_SECONDS = 60
+
+# Lockfiles whose presence means this repository's dependencies really are
+# resolved, so trivy reporting *no package sources at all* contradicts the
+# checkout in front of it.
+#
+# Deliberately lockfiles only, and deliberately not MANIFEST_FILENAMES.
+# That list exists to answer "could a diff have moved the dependency set",
+# which is a much lower bar: it includes Dockerfile, package.json, setup.py
+# and pyproject.toml, none of which guarantee trivy emits a Results entry.
+# Firing on those would leave Dockerfile-only repos, and any repo with a
+# package.json and no lockfile, permanently unable to mitigate anything --
+# the same trap SUSPECT_STDERR_MARKERS is narrow to avoid.
+RESOLVED_LOCKFILES = frozenset({
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "poetry.lock", "Pipfile.lock", "uv.lock", "pdm.lock",
+    "go.sum", "Gemfile.lock", "Cargo.lock", "composer.lock",
+    "gradle.lockfile", "paket.lock", "mix.lock", "conan.lock",
+})
+
+# A lockfile can legitimately resolve to nothing ({"packages":{}} in a fresh
+# npm project), and trivy emits no Results entry for one that does. Requiring
+# some substance keeps the heuristic off those repos.
+MIN_LOCKFILE_BYTES = 512
+
+# Substrings a scanner writes to stderr when part of the work it was asked
+# to do did not actually happen. Matched case-insensitively anywhere in the
+# stream.
+#
+# Each entry is about the tool's *inputs* (its database, its rules, the
+# network it needed to fetch them) rather than about one file in the
+# checkout. "failed to analyze <file>" and "no such file or directory" were
+# considered and left out for that reason: both fire on an ordinary repo
+# containing a broken symlink or an unreadable binary, and a marker that
+# fires routinely would block mitigation forever on repositories where
+# nothing is actually wrong.
+SUSPECT_STDERR_MARKERS = (
+    "failed to download",
+    "unable to open db",
+    "unable to open the database",
+    "failed to open the database",
+    "unable to initialize",
+    "failed to initialize",
+    "db error",
+    "database error",
+    "context deadline exceeded",
+    "i/o timeout",
+    "connection refused",
+    "too many requests",
+    "partial results",
+)
+
+
+def tool_cache_root() -> Path:
+    return Path(settings.tool_cache_dir)
+
+
+def trivy_warm_dir() -> Path:
+    return tool_cache_root() / TRIVY_WARM_DIRNAME
+
+
+def _run_cache_root() -> Path:
+    return tool_cache_root() / RUN_CACHE_DIRNAME
+
+
+@contextmanager
+def _cache_lock(exclusive: bool, timeout_seconds: float):
+    """Coordinate warmers against seeders across processes.
+
+    A seeder takes a shared lock for the few milliseconds it spends
+    hardlinking; a warmer takes the exclusive one for as long as the
+    download takes. Without this, a warmer could replace the warm directory
+    halfway through a seeder's copy, which is the very race being fixed one
+    level up.
+
+    Polled rather than blocking: a blocking flock cannot be bounded, and
+    this runs inside a Celery task that must not hang forever on a warmer
+    that died holding the lock. Yields True when the lock was acquired and
+    False on timeout; the caller decides what a missed lock means (a seeder
+    proceeds unseeded, a warmer gives up and lets the next scan try).
+    """
+    root = tool_cache_root()
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / CACHE_LOCK_FILENAME
+    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    handle = open(lock_path, "a+")
+    acquired = False
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), mode | fcntl.LOCK_NB)
+                acquired = True
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.2)
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        handle.close()
+
+
+def sweep_stale_run_caches() -> int:
+    """Remove per-run caches left behind by a worker that was killed.
+
+    Cheap enough to run at the start of every run (one listdir), which is
+    the only sweeper this gets: there is no cron in this project, and a
+    directory that only grows is how a disk fills up quietly.
+
+    Covers two roots, because warming leaves its own debris. A SIGKILL or
+    OOM between ensure_warm_trivy_db's two renames strands a
+    ``trivy-warm.replaced-*`` directory, and one during the download
+    strands a ``trivy-staging-*`` one -- each a full copy of the database,
+    which is the largest thing this platform writes to disk. The happy
+    paths remove both; nothing else did.
+    """
+    cutoff = time.time() - RUN_CACHE_MAX_AGE_SECONDS
+    removed = 0
+
+    def _sweep(root: Path, matches) -> int:
+        if not root.is_dir():
+            return 0
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            return 0
+        count = 0
+        for entry in entries:
+            if not matches(entry):
+                continue
+            try:
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+            except OSError:
+                continue
+            shutil.rmtree(entry, ignore_errors=True)
+            count += 1
+        return count
+
+    removed += _sweep(_run_cache_root(), lambda _entry: True)
+    removed += _sweep(
+        tool_cache_root(),
+        lambda entry: entry.name.startswith(TRIVY_STAGING_PREFIX)
+        or entry.name.startswith(f"{TRIVY_WARM_DIRNAME}.replaced-"),
+    )
+    return removed
+
+
+def _parse_trivy_timestamp(value) -> datetime | None:
+    """Parse trivy's RFC3339 metadata timestamps.
+
+    Go writes nanosecond precision, which datetime.fromisoformat rejects
+    (it accepts 3 or 6 fractional digits), so the fraction is trimmed before
+    parsing rather than reaching for a dependency.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    match = re.match(r"^(.*\.\d{1,6})\d*(.*)$", text)
+    if match:
+        text = match.group(1) + match.group(2)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def trivy_db_state(cache_dir: Path) -> tuple[bool, str]:
+    """Is there a usable vulnerability database in ``cache_dir``?
+
+    Returns ``(ok, reason_if_not)``. This is the evidence that decides
+    whether zero vulnerabilities may be read as a clean repository, so it
+    checks the database *file*, not just the metadata beside it: a cache
+    caught mid-replacement can carry perfectly parseable metadata next to a
+    trivy.db that is missing or half-written, and metadata alone would wave
+    that through -- which is how #229's reproduction reported clean.
+    """
+    db_file = cache_dir / TRIVY_DB_FILE_PATH
+    if not db_file.is_file():
+        return False, "there was no vulnerability database file (db/trivy.db), so no CVE could have been found"
+    try:
+        size = db_file.stat().st_size
+    except OSError:
+        return False, "the vulnerability database file could not be read"
+    if size < MIN_TRIVY_DB_BYTES:
+        return False, (
+            f"the vulnerability database file is only {size} bytes, far short of a complete one "
+            "(truncated, or still being written)"
+        )
+    metadata_file = cache_dir / TRIVY_DB_METADATA_PATH
+    if not metadata_file.is_file():
+        return False, "the vulnerability database carries no metadata, so its contents cannot be vouched for"
+    try:
+        metadata = json.loads(metadata_file.read_text())
+    except (OSError, ValueError):
+        return False, "the vulnerability database metadata was unreadable"
+    if not isinstance(metadata, dict) or not metadata.get("Version"):
+        return False, "the vulnerability database metadata declares no schema version"
+    next_update = _parse_trivy_timestamp(metadata.get("NextUpdate"))
+    if next_update is None:
+        return False, "the vulnerability database does not say when it is next due for refresh"
+    overdue_by = datetime.now(timezone.utc) - next_update
+    if overdue_by > timedelta(hours=TRIVY_DB_STALE_GRACE_HOURS):
+        return False, (
+            f"the vulnerability database is {overdue_by.days} day(s) past its own refresh deadline, "
+            "so anything published since then cannot be found"
+        )
+    return True, ""
+
+
+def _trivy_db_fingerprint(cache_dir: Path) -> tuple | None:
+    """Identity of the DB behind a run, cheap enough to take twice.
+
+    Compared before and after the scan. Nothing should be able to rewrite a
+    private cache mid-run any more, but "should" is what #229 was built on;
+    an actual before/after comparison is the difference between believing
+    the DB was stable and knowing it.
+    """
+    try:
+        db_stat = (cache_dir / TRIVY_DB_FILE_PATH).stat()
+        meta_stat = (cache_dir / TRIVY_DB_METADATA_PATH).stat()
+    except OSError:
+        return None
+    return (db_stat.st_size, db_stat.st_mtime_ns, meta_stat.st_size, meta_stat.st_mtime_ns)
+
+
+def ensure_warm_trivy_db(timeout_seconds: float = WARM_LOCK_TIMEOUT_SECONDS) -> tuple[bool, str]:
+    """Make sure Toleman's own warm copy of the trivy DB is present and fresh.
+
+    Returns ``(warm, detail)``. Called before a scan fans out (see
+    app.tasks.scan_tasks.run_scan) and on a schedule; NOT from run_tool, so
+    running a tool never has a hidden network download inside it.
+
+    This is what makes --skip-db-update reachable at all. Per-run caches are
+    deleted when their run ends and nothing writes back to them, so without
+    a warm copy that something maintains, six concurrent scans would mean
+    six full database downloads -- a cost this platform would pay on every
+    PR Guardrail scan too.
+
+    The exclusive lock is the fan-out interlock the issue asks for: the
+    first of N concurrent scans downloads while the rest wait here, then all
+    of them hardlink the same finished database. A scan that cannot get the
+    lock in time runs unseeded rather than waiting forever; it is slower and
+    it does not get --skip-db-update, but it is not wrong.
+
+    Publication is a whole-directory replace, never an in-place write, so a
+    hardlink taken from a published generation can never be modified
+    underneath the run holding it.
+
+    NEVER RAISES. Every failure comes back as ``(False, detail)``. That is a
+    requirement rather than an observation: both callers treat warming as
+    best-effort and neither wraps it, so an exception here would take down
+    the thing it exists to speed up. In run_scan it would fail the scan; in
+    the PR Guardrail executor the call sits outside the per-tool try, so it
+    would abort every tool on the PR. The guard lives here, with the
+    contract, rather than at each call site where a third caller would have
+    to remember it.
+    """
+    try:
+        return _warm_trivy_db_unguarded(timeout_seconds)
+    except Exception as exc:  # noqa: BLE001 -- see NEVER RAISES above
+        logger.warning("trivy DB warming failed unexpectedly", exc_info=True)
+        return False, f"warming failed unexpectedly ({exc.__class__.__name__})"
+
+
+def _warm_trivy_db_unguarded(timeout_seconds: float) -> tuple[bool, str]:
+    """The real work. Call ensure_warm_trivy_db, which guarantees the
+    no-raise contract; this one may raise from anything it touches --
+    tempfile.mkdtemp, or _cache_lock's own mkdir/open before it yields.
+    """
+    warm = trivy_warm_dir()
+    ok, _ = trivy_db_state(warm)
+    if ok:
+        return True, "already warm"
+
+    with _cache_lock(exclusive=True, timeout_seconds=timeout_seconds) as acquired:
+        if not acquired:
+            return False, "timed out waiting for another process to warm the database"
+        # Re-check under the lock: whoever we queued behind has probably
+        # just done this work for us.
+        ok, _ = trivy_db_state(warm)
+        if ok:
+            return True, "warmed by another process"
+
+        root = tool_cache_root()
+        staging = None
+        previous = None
+        try:
+            staging = Path(tempfile.mkdtemp(prefix=TRIVY_STAGING_PREFIX, dir=str(root)))
+            # `trivy image --download-db-only` is the documented way to
+            # fetch the DB and nothing else; it contacts no registry and
+            # needs no image or daemon despite the subcommand's name.
+            proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+                ["trivy", "image", "--download-db-only", "--cache-dir", str(staging)],
+                capture_output=True, text=True, timeout=WARM_DOWNLOAD_TIMEOUT_SECONDS,
+            )
+            if proc.returncode != 0:
+                detail = _strip_ansi(proc.stderr or "").strip().splitlines()
+                return False, f"trivy exited {proc.returncode}: {(detail[-1] if detail else 'no stderr')[:200]}"
+            ok, reason = trivy_db_state(staging)
+            if not ok:
+                # A download that "succeeded" into an unusable cache must
+                # not be published; publishing it would hand every
+                # subsequent scan a verified-looking database that is not
+                # one.
+                #
+                # Note what this check is and is not. The real completeness
+                # evidence is the exit code above: `--download-db-only`
+                # verifies the OCI layer it pulled. trivy_db_state is a
+                # structural sanity check, and it is deliberately the same
+                # predicate every scan applies at read time -- which is
+                # exactly why it must not be the only gate. One bad
+                # publication that satisfies it would look verified to every
+                # subsequent scan for as long as the DB stays inside its
+                # freshness window.
+                return False, f"downloaded database is not usable: {reason}"
+
+            # Rotate-then-publish, with a rollback. The window between these
+            # two renames is short but not empty, and a failure inside it
+            # used to leave the install with no warm copy at all: every
+            # later scan would run unseeded and re-download, which is the
+            # cost this whole path exists to remove.
+            if warm.exists():
+                previous = root / f"{TRIVY_WARM_DIRNAME}.replaced-{uuid.uuid4().hex}"
+                os.replace(warm, previous)
+            try:
+                os.replace(staging, warm)
+            except OSError:
+                if previous is not None and not warm.exists():
+                    # Put the working copy back before giving up.
+                    try:
+                        os.replace(previous, warm)
+                        previous = None
+                    except OSError:
+                        pass
+                raise
+            staging = None  # published; do not remove it below
+            return True, "downloaded"
+        except subprocess.TimeoutExpired:
+            return False, f"the database download exceeded {WARM_DOWNLOAD_TIMEOUT_SECONDS:.0f}s"
+        except FileNotFoundError:
+            # No trivy binary on this host. Never fatal here: warming is a
+            # best-effort optimisation, and a scan that cannot find trivy
+            # fails loudly on its own in _execute.
+            return False, "the trivy binary is not installed"
+        except OSError as exc:
+            return False, f"could not publish the warmed database ({exc.__class__.__name__})"
+        finally:
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
+            if previous is not None:
+                shutil.rmtree(previous, ignore_errors=True)
+
+
+def _seed_trivy_cache(private: Path) -> bool:
+    """Hardlink the warm database into this run's private cache.
+
+    Hardlinks, not copies, because the warm directory is only ever replaced
+    whole (see ensure_warm_trivy_db) -- so a link into a published
+    generation names a file nothing will write again, which is what makes it
+    a snapshot rather than shared mutable state. The shared lock held here
+    is what keeps a warmer from replacing the directory halfway through.
+    """
+    source = trivy_warm_dir() / "db"
+    if not source.is_dir():
+        return False
+    destination = private / "db"
+
+    def _link_or_copy(src: str, dst: str) -> None:
+        """Hardlink the database itself; copy everything beside it.
+
+        The database file is hundreds of megabytes and trivy has no reason
+        to rewrite it under --skip-db-update, so linking it is what makes
+        seeding cheap. Its metadata is a few hundred bytes, and a hardlink
+        there is a standing bet that trivy never touches it in place -- a
+        bet that costs the whole warm copy if it is ever wrong, because the
+        write would land in the published generation every other run is
+        linked to, the fingerprints would stop matching, and trivy would
+        read as suspect on every scan from then on. Copying the small file
+        removes the bet instead of testing it.
+        """
+        if Path(src).name == Path(TRIVY_DB_FILE_PATH).name:
+            os.link(src, dst)
+        else:
+            shutil.copy2(src, dst)
+
+    with _cache_lock(exclusive=False, timeout_seconds=SEED_LOCK_TIMEOUT_SECONDS) as acquired:
+        if not acquired:
+            return False
+        try:
+            shutil.copytree(source, destination, copy_function=_link_or_copy, dirs_exist_ok=True)
+        except (OSError, shutil.Error):
+            # Both directories live under settings.tool_cache_dir, so a
+            # cross-device link should be impossible; if it happens anyway,
+            # running unseeded is correct and a partial tree is not.
+            shutil.rmtree(destination, ignore_errors=True)
+            return False
+    ok, _ = trivy_db_state(private)
+    return ok
+
+
+def _isolate_trivy(run_cache: Path) -> tuple[dict[str, str], bool, Path | None]:
+    private = run_cache / "trivy"
+    private.mkdir(parents=True, exist_ok=True)
+    seeded = _seed_trivy_cache(private)
+    return {"TRIVY_CACHE_DIR": str(private)}, seeded, private
+
+
+def _isolate_semgrep(run_cache: Path) -> tuple[dict[str, str], bool, Path | None]:
+    # Only the settings file, not XDG_CACHE_HOME. semgrep rewrites its
+    # settings file on every single run, so concurrent runs genuinely race
+    # it; its registry rule cache is left shared because handing each run an
+    # empty private one would re-download the whole ruleset per scan.
+    private = run_cache / "semgrep"
+    private.mkdir(parents=True, exist_ok=True)
+    return {"SEMGREP_SETTINGS_FILE": str(private / "settings.yml")}, False, None
+
+
+# Tools with shared mutable state, and how to give one run a private copy.
+# A tool absent here needs no isolation (gitleaks, gosec, tfsec, checkov and
+# modelscan read the checkout and their own installed rules, and noseyparker
+# already scans into a per-run temp datastore).
+TOOL_CACHE_ISOLATION = {
+    "trivy": _isolate_trivy,
+    "trivy-license": _isolate_trivy,
+    "semgrep": _isolate_semgrep,
+    # semgrep-llm runs the in-repo ruleset rather than the registry, but it
+    # is the same binary writing the same settings file, so it races the
+    # same way.
+    "semgrep-llm": _isolate_semgrep,
+}
+
+
+@contextmanager
+def _isolated_run(tool: str, health: ScanHealth):
+    """Give this run its own copy of ``tool``'s mutable state, then remove it."""
+    isolate = TOOL_CACHE_ISOLATION.get(tool)
+    run = ScanRunContext(tool=tool, health=health)
+    run_cache: Path | None = None
+    if isolate is not None:
+        sweep_stale_run_caches()
+        try:
+            base = _run_cache_root()
+            base.mkdir(parents=True, exist_ok=True)
+            run_cache = Path(tempfile.mkdtemp(prefix=f"{tool}-", dir=str(base)))
+            overrides, seeded, trivy_cache = isolate(run_cache)
+            run.env = {**os.environ, **overrides}
+            run.cache_dir = run_cache
+            run.trivy_cache = trivy_cache
+            run.seeded = seeded
+            if trivy_cache is not None:
+                run.db_fingerprint = _trivy_db_fingerprint(trivy_cache)
+        except OSError as exc:
+            # Falling back to the shared cache is worse than isolation but
+            # better than failing the scan outright -- and the run is marked
+            # suspect, so it cannot silently clear anything either way.
+            if run_cache is not None:
+                shutil.rmtree(run_cache, ignore_errors=True)
+                run_cache = None
+            run = ScanRunContext(tool=tool, health=health)
+            health.degrade(
+                f"could not isolate {tool}'s cache for this run ({exc.__class__.__name__}), "
+                "so it shared mutable state with any concurrent scan"
+            )
+    try:
+        yield run
+    finally:
+        if run_cache is not None:
+            shutil.rmtree(run_cache, ignore_errors=True)
+
+
+def _isolation_flags(tool: str, cmd: list[str], run: ScanRunContext) -> list[str]:
+    """Per-tool argv additions that depend on the isolated cache.
+
+    trivy only: with a seeded private DB there is nothing to update and no
+    reason to let this process write one, so --skip-db-update makes the run
+    deterministic and takes it out of the race entirely. Without a seeded DB
+    the flag is omitted, because trivy refuses to scan with no database.
+    """
+    if not run.seeded:
+        return cmd
+    if tool in ("trivy", "trivy-license") and "--skip-db-update" not in cmd:
+        # argv is ["trivy", "fs", ...]; the flag goes after the subcommand.
+        return [*cmd[:2], "--skip-db-update", *cmd[2:]]
+    return cmd
+
+
+def _note_stderr(tool: str, stderr: str, health: ScanHealth) -> None:
+    """Degrade the run for anything the tool said about not finishing.
+
+    #253 taught this codebase that a crashed scanner must not read as a
+    clean pass. This is the same lesson one notch quieter: the tool did not
+    crash, and the only evidence is a line it wrote on the way past.
+    """
+    text = _strip_ansi(stderr or "").lower()
+    if not text:
+        return
+    for marker in SUSPECT_STDERR_MARKERS:
+        if marker in text:
+            health.degrade(f'{tool} warned "{marker}" while scanning, so its results may be incomplete')
+
+
+def has_resolved_lockfile(repo_path: Path) -> bool:
+    """Does this checkout carry a lockfile with real content in it?
+
+    `.git` is pruned: a packfile is not a lockfile and walking one is wasted
+    work.
+    """
+    for _dirpath, dirnames, filenames in os.walk(repo_path):
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        for name in filenames:
+            if name not in RESOLVED_LOCKFILES:
+                continue
+            try:
+                if os.path.getsize(os.path.join(_dirpath, name)) >= MIN_LOCKFILE_BYTES:
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _assess_trivy_run(repo_path: Path, raw: dict | list, run: ScanRunContext) -> None:
+    """Post-run checks that need the report, the checkout and the cache.
+
+    Scoped to ``trivy``. ``trivy-license`` runs with `--scanners license` and
+    never loads the vulnerability database at all, so judging it on the
+    database's state would mark every license scan suspect forever and leave
+    license findings permanently unable to clear.
+    """
+    if run.tool != "trivy":
+        return
+
+    if run.trivy_cache is not None:
+        ok, reason = trivy_db_state(run.trivy_cache)
+        if not ok:
+            run.health.degrade(f"trivy's vulnerability database was not usable for this run: {reason}")
+        elif run.db_fingerprint is not None and _trivy_db_fingerprint(run.trivy_cache) != run.db_fingerprint:
+            run.health.degrade(
+                "trivy's vulnerability database changed while the scan was running, so the scan "
+                "read it mid-replacement and cannot be treated as complete"
+            )
+
+    # trivy emits one Results entry per package source it resolved,
+    # independently of whether anything in it was vulnerable. An empty
+    # Results list from a checkout that carries a real lockfile therefore
+    # means trivy resolved nothing at all -- a different statement from
+    # "resolved your dependencies, none are vulnerable". Only the second is
+    # a clean result, and only the second may clear existing findings.
+    examined_something = isinstance(raw, dict) and bool(raw.get("Results"))
+    if not examined_something and has_resolved_lockfile(repo_path):
+        run.health.degrade(
+            "trivy reported no package sources at all for a repository that contains a dependency "
+            "lockfile, so it did not resolve this repository's dependencies"
+        )
+
+
+def run_tool_checked(
+    tool: str, repo_path: Path, paths: list[str] | None = None
+) -> tuple[dict | list, ScanHealth]:
+    """``run_tool``, plus a verdict on whether this run can be trusted (#229).
+
+    The raw report is the same value ``run_tool`` returns. The ScanHealth
+    beside it is what lets a caller tell "scanned it, found nothing" from
+    "produced nothing useful" -- the distinction ``osv_malware.py`` gets for
+    free by returning None instead of {}, and that a scanner CLI's bytes
+    cannot express on their own.
+
+    Callers that intend to *clear* existing findings on a zero-finding
+    result must use this and pass the health through to
+    ``app.core.ingestion.ingest_findings``; ``run_tool`` remains for the
+    paths that only want the report.
+    """
+    if tool not in TOOL_COMMANDS:
+        raise ValueError(f"unsupported tool: {tool}")
+
+    health = ScanHealth(tool=tool)
+    with _isolated_run(tool, health) as run:
+        raw = _run_tool_inner(tool, repo_path, paths, run)
+        _assess_trivy_run(repo_path, raw, run)
+    return raw, health
+
+
 def run_tool(tool: str, repo_path: Path, paths: list[str] | None = None) -> dict | list:
     """Run ``tool`` over ``repo_path``.
 
@@ -763,12 +1573,20 @@ def run_tool(tool: str, repo_path: Path, paths: list[str] | None = None) -> dict
     an empty finding list from a tool that never examined a single file is
     indistinguishable from a clean pass, and this codebase does not allow
     that ambiguity (see osv_malware.py, issue #229).
-    """
-    if tool not in TOOL_COMMANDS:
-        raise ValueError(f"unsupported tool: {tool}")
 
+    Cache isolation (#229) applies here too -- every run still gets its own
+    private trivy cache and semgrep settings file. Only the health verdict
+    is dropped, which is why any caller that mitigates findings has to use
+    run_tool_checked instead.
+    """
+    return run_tool_checked(tool, repo_path, paths)[0]
+
+
+def _run_tool_inner(
+    tool: str, repo_path: Path, paths: list[str] | None, run: ScanRunContext
+) -> dict | list:
     if paths is not None:
-        return _run_tool_scoped(tool, repo_path, paths)
+        return _run_tool_scoped(tool, repo_path, paths, run)
 
     # gosec's ./... walk fails outright (nonzero exit, no packages found)
     # on a repo with no Go source at all -- unlike the diff-scoped PACKAGE
@@ -783,11 +1601,33 @@ def run_tool(tool: str, repo_path: Path, paths: list[str] | None = None) -> dict
     if tool == "gosec" and next(repo_path.rglob("*.go"), None) is None:
         raise ToolNotApplicable("no Go files in this repository")
 
+    # (#229) Same guard, driven off the extension map the diff-scoped path
+    # already uses, for the IaC and model scanners.
+    #
+    # Without it these reach _execute on a repo with nothing of their file
+    # type, exit 0, and write no report -- which the empty-stdout branch
+    # now (correctly) degrades the run's health for. That would make an
+    # ordinary repo with no Terraform permanently suspect, and a suspect
+    # run never mitigates, so its findings could never be cleared. The same
+    # trap as trusting an empty result, sprung from the opposite side: a
+    # health signal so eager that nothing can ever be marked fixed is not
+    # safer than one that is too quiet, just differently wrong.
+    #
+    # "Not applicable" is the honest answer here and the codebase already
+    # has a word for it.
+    extensions = TOOL_EXTENSIONS.get(tool)
+    if extensions and not any(next(repo_path.rglob(f"*{ext}"), None) for ext in extensions):
+        raise ToolNotApplicable(
+            f"no files in this repository match what {tool} scans ({', '.join(extensions)})"
+        )
+
     cmd = TOOL_COMMANDS[tool](str(repo_path))
-    return _execute(tool, cmd, repo_path)
+    return _execute(tool, cmd, repo_path, run)
 
 
-def _run_tool_scoped(tool: str, repo_path: Path, paths: list[str]) -> dict | list:
+def _run_tool_scoped(
+    tool: str, repo_path: Path, paths: list[str], run: ScanRunContext
+) -> dict | list:
     strategy = TOOL_SCOPING.get(tool, MULTI_PATH)
 
     if strategy == MANIFEST:
@@ -799,7 +1639,7 @@ def _run_tool_scoped(tool: str, repo_path: Path, paths: list[str]) -> dict | lis
         # tree; scan the whole checkout. Scoping trivy to the manifest file
         # alone would report only direct pins, which is precisely the blind
         # spot #239 is about.
-        return _execute(tool, TOOL_COMMANDS[tool](str(repo_path)), repo_path)
+        return _execute(tool, TOOL_COMMANDS[tool](str(repo_path)), repo_path, run)
 
     relevant = paths_for_tool(tool, paths)
     if not relevant:
@@ -810,14 +1650,14 @@ def _run_tool_scoped(tool: str, repo_path: Path, paths: list[str]) -> dict | lis
         if not packages:
             raise ToolNotApplicable("no Go files changed in this diff")
         cmd = ["gosec", "-fmt=json", "-quiet", *packages]
-        return _execute(tool, cmd, repo_path)
+        return _execute(tool, cmd, repo_path, run)
 
     absolute = [str(repo_path / p) for p in relevant]
 
     if strategy == PER_FILE:
         reports = []
         for abs_path in absolute:
-            reports.append(_execute(tool, TOOL_COMMANDS[tool](abs_path), repo_path))
+            reports.append(_execute(tool, TOOL_COMMANDS[tool](abs_path), repo_path, run))
         return _merge_reports(reports)
 
     # MULTI_PATH: the command builder produces one trailing path; replace it
@@ -830,7 +1670,7 @@ def _run_tool_scoped(tool: str, repo_path: Path, paths: list[str]) -> dict | lis
             cmd.extend(["-f", abs_path])
     else:
         cmd = base[:-1] + absolute
-    return _execute(tool, cmd, repo_path)
+    return _execute(tool, cmd, repo_path, run)
 
 
 # Scanner CLIs colourise their own error output. That markup is meaningless
@@ -866,21 +1706,30 @@ TOOL_SUCCESS_EXIT_CODES = {
 }
 
 
-def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
+def _execute(tool: str, cmd: list[str], repo_path: Path, run: ScanRunContext) -> dict | list:
+    """Run one tool invocation and fold what it says about itself into ``run``.
+
+    ``run`` is a required parameter rather than ambient state (#229): every
+    caller below is inside a run, and a stand-in that forgets it fails here,
+    loudly, instead of silently scanning with a shared cache and recording no
+    health.
+    """
     cwd = str(repo_path) if tool == "gosec" else None
+    env = run.env
+    cmd = _isolation_flags(tool, cmd, run)
 
     if tool == "modelscan":
-        return _run_modelscan(cmd)
+        return _run_modelscan(cmd, run, env=env)
 
     if tool == "gitleaks":
-        return _run_gitleaks(cmd, cwd)
+        return _run_gitleaks(cmd, cwd, run, env=env)
 
     if tool == "noseyparker":
-        return _run_noseyparker(cmd, cwd)
+        return _run_noseyparker(cmd, cwd, run, env=env)
 
     # cmd is the caller's fixed per-tool argv (see the scanner command
     # builders above), no shell.
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
 
     # (#253) Check this BEFORE falling through to the empty-stdout defaults
     # below. A tool that dies writes nothing to stdout, and "nothing on
@@ -900,6 +1749,14 @@ def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
         tail = detail[-1] if detail else "no stderr"
         raise ToolExecutionError(f"{tool} exited {proc.returncode}: {tail[:300]}")
 
+    # (#229) The run survived its exit-code check, so anything it complained
+    # about on stderr is a *warning*: it kept going and produced a report,
+    # but part of what it was asked to do may not have happened. #253 taught
+    # this codebase to stop reading a crash as a clean pass; this is the same
+    # lesson one notch quieter, where the tool did not crash and the only
+    # evidence is a line it wrote on the way past.
+    _note_stderr(tool, proc.stderr, run.health)
+
     # checkov's JSON shape depends on how many IaC frameworks it found files
     # for in the target repo: a dict for a single framework, a list of
     # per-framework dicts when it spans more than one; parsers.parse_checkov
@@ -909,8 +1766,19 @@ def _execute(tool: str, cmd: list[str], repo_path: Path) -> dict | list:
     dict_default_tools = ("semgrep", "trivy", "trivy-license", "gosec", "tfsec", "checkov")
     stdout = proc.stdout.strip()
     if not stdout:
+        # The empty defaults below are kept (parsers downstream expect a
+        # shape, not an exception) but they are a *fallback*, not a result.
+        # A tool that exits 0 and writes nothing has told us nothing, and
+        # "nothing" has been read as "clean" twice in this file's history
+        # already (#253, #229). Record it so it cannot be the third.
+        run.health.degrade(
+            f"{tool} exited successfully but wrote no report, so there were no results to read"
+        )
         return {} if tool in dict_default_tools else []
     try:
         return json.loads(stdout)
     except json.JSONDecodeError:
+        run.health.degrade(
+            f"{tool} produced output that is not valid JSON, so its findings could not be read"
+        )
         return {} if tool in dict_default_tools else []

@@ -222,4 +222,33 @@ describe("useScanRun", () => {
     expect(getScan).toHaveBeenCalledWith(2);
     expect(getScan.mock.calls.every(([id]) => id === 2)).toBe(true);
   });
+
+  it("carries the scan-health verdict through to the caller (#229)", async () => {
+    // A completed scan reporting zero findings is only good news if the run
+    // was one the platform trusted. Without this the caller renders
+    // "0 findings" for a scanner that checked nothing.
+    getScan.mockResolvedValue(
+      run({
+        status: "completed",
+        findings_count: 0,
+        health: "suspect",
+        health_note: "trivy ran without a vulnerability database.",
+      })
+    );
+    const { result } = renderHook(() => useScanRun());
+    act(() => result.current.track(1));
+    await advanceOnePoll();
+
+    expect(result.current.health).toBe("suspect");
+    expect(result.current.healthNote).toContain("vulnerability database");
+  });
+
+  it("treats a server that says nothing about health as unknown, not healthy", async () => {
+    getScan.mockResolvedValue(run({ status: "completed", findings_count: 0 }));
+    const { result } = renderHook(() => useScanRun());
+    act(() => result.current.track(1));
+    await advanceOnePoll();
+
+    expect(result.current.health).toBe("unknown");
+  });
 });

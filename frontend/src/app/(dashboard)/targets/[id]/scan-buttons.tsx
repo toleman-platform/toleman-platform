@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
 import { Button } from "@/components/ui/button";
-import { ScanProgress } from "@/components/features/scans";
+import { ScanHealthNotice, ScanProgress } from "@/components/features/scans";
 import { useScanRun } from "@/hooks/features/use-scan-run";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 
@@ -140,6 +140,14 @@ export function ScanButtons({ targetId, workspaceId }: { targetId: number; works
           <ScanProgress phase="running" tool={r.tool} elapsedSeconds={r.elapsed_seconds} etaSeconds={r.eta_seconds} />
         </div>
       ))}
+
+      {/* (#229) The line below reports the finding count the scan produced.
+          When the run was not one the platform trusted, that number alone is
+          the false all-clear -- a repo with five live CVEs reported "0
+          findings" this way. The notice qualifies it in place, next to the
+          number it qualifies, rather than somewhere the user has to go
+          looking. */}
+      <ScanHealthNotice health={scan.health} note={scan.healthNote} className="text-left" />
 
       {result && <p className="text-xs text-muted-foreground">{result}</p>}
     </div>

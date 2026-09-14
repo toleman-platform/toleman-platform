@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, AiProvider, GithubTokenView, PlatformConfigView, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { AsyncContent } from "@/components/ui/async-content";
@@ -31,6 +31,21 @@ const GITHUB_TTL_OPTIONS: { value: string; label: string }[] = [
   { value: "8760", label: "1 year" },
 ];
 
+/**
+ * Fields the operator can edit that also have a stored server value. Absent =
+ * untouched, so the rendered value falls through to `config`.
+ */
+type ConfigDraft = {
+  provider?: AiProvider;
+  baseUrl?: string;
+  model?: string;
+  jiraUrl?: string;
+  jiraProjectKey?: string;
+  jiraIssueType?: string;
+  jiraAutoCreateSeverity?: string;
+  siemExportSeverity?: string;
+};
+
 export function GlobalIntegrations() {
   // Issue: every read on this page used to be a bare `api.x().then(setX)`
   // with no `.catch`. A failed config read left `config` null, which this
@@ -44,11 +59,42 @@ export function GlobalIntegrations() {
   const configState = useAsyncData<PlatformConfigView>(() => api.getConfig());
   const config = configState.data;
 
-  const [provider, setProvider] = useState<AiProvider>("anthropic");
+  // Editable fields are a *draft layered over server state*, not a copy of it
+  // seeded by an effect. Copying meant "what the server holds" and "what the
+  // operator typed" were the same variable, so there was no way to say which
+  // provider is actually active while a radio sits unsaved -- and the seeding
+  // effect was a setState-in-effect cascade besides. An absent key here means
+  // "not edited; show what the server says".
+  const [draft, setDraft] = useState<ConfigDraft>({});
+
+  function edit<K extends keyof ConfigDraft>(key: K, value: ConfigDraft[K]) {
+    setDraft((d) => ({ ...d, [key]: value }));
+  }
+
+  /** Drop the edits a successful save has just made the server's problem. */
+  function commitDraft(...keys: (keyof ConfigDraft)[]) {
+    setDraft((d) => {
+      const next = { ...d };
+      for (const k of keys) delete next[k];
+      return next;
+    });
+  }
+
+  const provider: AiProvider = draft.provider ?? config?.ai_provider ?? "anthropic";
+  const baseUrl = draft.baseUrl ?? config?.openai_compatible_base_url ?? "";
+  const model = draft.model ?? config?.openai_compatible_model ?? "";
+  const jiraUrl = draft.jiraUrl ?? config?.jira_url ?? "";
+  const jiraProjectKey = draft.jiraProjectKey ?? config?.jira_project_key ?? "";
+  const jiraIssueType = draft.jiraIssueType ?? (config?.jira_issue_type || "Task");
+  const jiraAutoCreateSeverity = draft.jiraAutoCreateSeverity ?? config?.jira_auto_create_severity ?? "";
+  // `??` twice, never `||`: "" is the stored value for "auto-export disabled",
+  // and coalescing that falsy value back to "High" showed the operator a
+  // threshold the server was not holding. null (never configured) does fall
+  // back to High.
+  const siemExportSeverity = draft.siemExportSeverity ?? config?.siem_export_severity ?? "High";
+
   const [apiKey, setApiKey] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
   const [compatKey, setCompatKey] = useState("");
-  const [model, setModel] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -64,11 +110,7 @@ export function GlobalIntegrations() {
   const [slackTestResult, setSlackTestResult] = useState<string | null>(null);
 
   // Jira (issue #74)
-  const [jiraUrl, setJiraUrl] = useState("");
   const [jiraApiToken, setJiraApiToken] = useState("");
-  const [jiraProjectKey, setJiraProjectKey] = useState("");
-  const [jiraIssueType, setJiraIssueType] = useState("Task");
-  const [jiraAutoCreateSeverity, setJiraAutoCreateSeverity] = useState("");
   const [jiraSaving, setJiraSaving] = useState(false);
   const [jiraTesting, setJiraTesting] = useState(false);
   const [jiraSaved, setJiraSaved] = useState(false);
@@ -77,7 +119,6 @@ export function GlobalIntegrations() {
 
   // SIEM Webhook
   const [siemWebhookUrl, setSiemWebhookUrl] = useState("");
-  const [siemExportSeverity, setSiemExportSeverity] = useState("High");
   const [siemSaving, setSiemSaving] = useState(false);
   const [siemTesting, setSiemTesting] = useState(false);
   const [siemSaved, setSiemSaved] = useState(false);
@@ -92,7 +133,11 @@ export function GlobalIntegrations() {
   // Workspace-scoped GitHub Personal Access Token (issue #74)
   const workspacesState = useAsyncData<WorkspaceSummary[]>(() => api.workspaces());
   const workspaces = workspacesState.data ?? [];
-  const [githubWorkspaceId, setGithubWorkspaceId] = useState<number | null>(null);
+  const [githubWorkspaceChoice, setGithubWorkspaceChoice] = useState<number | null>(null);
+  // Derived rather than defaulted from an effect: the card points at the first
+  // workspace the moment the list lands, an explicit pick wins, and there is
+  // no render where the id is stale relative to the list.
+  const githubWorkspaceId = githubWorkspaceChoice ?? workspaces[0]?.id ?? null;
   const [githubToken, setGithubToken] = useState("");
   const [githubTtl, setGithubTtl] = useState("");
   const [githubSaving, setGithubSaving] = useState(false);
@@ -102,13 +147,6 @@ export function GlobalIntegrations() {
   const [githubSaved, setGithubSaved] = useState(false);
   const [githubError, setGithubError] = useState<string | null>(null);
   const [githubTestResult, setGithubTestResult] = useState<string | null>(null);
-
-  // Default the PAT card to the first workspace once the list lands. Kept as
-  // an effect rather than folded into the workspaces fetcher so the
-  // selection survives a background refetch of the list.
-  useEffect(() => {
-    if (githubWorkspaceId === null && workspaces.length > 0) setGithubWorkspaceId(workspaces[0].id);
-  }, [workspaces, githubWorkspaceId]);
 
   // The PAT read used to be `.catch(() => {})`, which collapsed "the read
   // failed" into the same blank render as "no token stored". An unknown
@@ -140,31 +178,11 @@ export function GlobalIntegrations() {
   }
 
   function selectGithubWorkspace(workspaceId: number) {
-    setGithubWorkspaceId(workspaceId);
+    setGithubWorkspaceChoice(workspaceId);
     setGithubError(null);
     setGithubTestResult(null);
     setGithubSaved(false);
   }
-
-  // Seed the editable fields from whatever the server last told us. Keyed on
-  // the config object's identity, which `useAsyncData` only replaces when a
-  // request actually resolves, so this runs on first load and after each
-  // save-triggered refetch rather than on every render.
-  useEffect(() => {
-    if (!config) return;
-    setProvider(config.ai_provider || "anthropic");
-    setBaseUrl(config.openai_compatible_base_url || "");
-    setModel(config.openai_compatible_model || "");
-    setJiraUrl(config.jira_url || "");
-    setJiraProjectKey(config.jira_project_key || "");
-    setJiraIssueType(config.jira_issue_type || "Task");
-    setJiraAutoCreateSeverity(config.jira_auto_create_severity || "");
-    // `??`, not `||`: "" is the stored value for "auto-export disabled", and
-    // `||` coalesced that falsy value back to "High" on the next read -- so
-    // an operator who disabled SIEM export saw a threshold the server was
-    // not actually holding. null (never configured) still falls back to High.
-    setSiemExportSeverity(config.siem_export_severity ?? "High");
-  }, [config]);
 
   async function saveGithubToken() {
     if (!githubToken.trim()) return;
@@ -268,6 +286,7 @@ export function GlobalIntegrations() {
       await api.updateConfig(payload);
       setJiraApiToken("");
       setJiraSaved(true);
+      commitDraft("jiraUrl", "jiraProjectKey", "jiraIssueType", "jiraAutoCreateSeverity");
       refresh();
     } catch (e) {
       setJiraError(e instanceof Error ? e.message : "failed to save");
@@ -301,6 +320,7 @@ export function GlobalIntegrations() {
       await api.updateConfig(payload);
       setSiemWebhookUrl("");
       setSiemSaved(true);
+      commitDraft("siemExportSeverity");
       refresh();
     } catch (e) {
       setSiemError(e instanceof Error ? e.message : "failed to save");
@@ -340,6 +360,7 @@ export function GlobalIntegrations() {
       setApiKey("");
       setCompatKey("");
       setSaved(true);
+      commitDraft("provider", "baseUrl", "model");
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to save");
@@ -385,7 +406,7 @@ export function GlobalIntegrations() {
       ? config.anthropic_api_key_set
       : Boolean(config.openai_compatible_base_url && config.openai_compatible_model));
   const savedProviderLabel = PROVIDERS.find((p) => p.value === savedProvider)?.label ?? savedProvider;
-  const providerDirty = Boolean(config) && provider !== savedProvider;
+  const providerDirty = Boolean(config) && draft.provider !== undefined && draft.provider !== savedProvider;
 
   const canSave = provider === "anthropic" ? true : baseUrl.trim().length > 0 && model.trim().length > 0;
 
@@ -668,7 +689,7 @@ export function GlobalIntegrations() {
                       value={p.value}
                       checked={provider === p.value}
                       onChange={() => {
-                        setProvider(p.value);
+                        edit("provider", p.value);
                         setSaved(false);
                       }}
                       className="h-4 w-4 accent-primary"
@@ -720,7 +741,7 @@ export function GlobalIntegrations() {
                       className="bg-secondary"
                       placeholder="http://localhost:11434/v1 (Ollama) or https://api.moonshot.cn/v1 (Kimi)"
                       value={baseUrl}
-                      onChange={(e) => setBaseUrl(e.target.value)}
+                      onChange={(e) => edit("baseUrl", e.target.value)}
                     />
                   </div>
                   <div className="flex flex-col gap-1">
@@ -747,7 +768,7 @@ export function GlobalIntegrations() {
                       className="bg-secondary"
                       placeholder="llama3.1, qwen2.5:0.5b, kimi-k2, ..."
                       value={model}
-                      onChange={(e) => setModel(e.target.value)}
+                      onChange={(e) => edit("model", e.target.value)}
                     />
                   </div>
                 </div>
@@ -897,7 +918,7 @@ export function GlobalIntegrations() {
                     placeholder="https://yourorg.atlassian.net"
                     value={jiraUrl}
                     onChange={(e) => {
-                      setJiraUrl(e.target.value);
+                      edit("jiraUrl", e.target.value);
                       setJiraSaved(false);
                       setJiraTestResult(null);
                     }}
@@ -933,7 +954,7 @@ export function GlobalIntegrations() {
                       placeholder="SEC"
                       value={jiraProjectKey}
                       onChange={(e) => {
-                        setJiraProjectKey(e.target.value);
+                        edit("jiraProjectKey", e.target.value);
                         setJiraSaved(false);
                       }}
                     />
@@ -948,7 +969,7 @@ export function GlobalIntegrations() {
                       placeholder="Task"
                       value={jiraIssueType}
                       onChange={(e) => {
-                        setJiraIssueType(e.target.value);
+                        edit("jiraIssueType", e.target.value);
                         setJiraSaved(false);
                       }}
                     />
@@ -963,7 +984,7 @@ export function GlobalIntegrations() {
                     className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
                     value={jiraAutoCreateSeverity}
                     onChange={(e) => {
-                      setJiraAutoCreateSeverity(e.target.value);
+                      edit("jiraAutoCreateSeverity", e.target.value);
                       setJiraSaved(false);
                     }}
                   >
@@ -1049,7 +1070,7 @@ export function GlobalIntegrations() {
                     className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
                     value={siemExportSeverity}
                     onChange={(e) => {
-                      setSiemExportSeverity(e.target.value);
+                      edit("siemExportSeverity", e.target.value);
                       setSiemSaved(false);
                     }}
                   >

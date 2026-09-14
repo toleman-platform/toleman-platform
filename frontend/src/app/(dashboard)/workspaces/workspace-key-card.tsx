@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Copy, Eye, EyeOff, RotateCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
@@ -28,9 +28,11 @@ export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
   // concludes the workspace has no key. Loading and failure are now each
   // rendered as themselves.
   const keyState = useAsyncData(() => api.workspaceApiKey(workspaceId), { deps: [workspaceId] });
-  const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null);
   // A regenerate returns the new key once and once only, so it is held here
-  // rather than re-read; a refetch would return the stored (masked) value.
+  // rather than re-read. Safe to keep outside the fetch state because the
+  // parent remounts this card with `key={workspaceId}` on a workspace switch,
+  // so one workspace's key can never survive into another's heading.
+  const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null);
   const apiKey = regeneratedKey ?? keyState.data?.api_key ?? null;
 
   const [revealed, setRevealed] = useState(false);
@@ -39,11 +41,6 @@ export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
   const [confirming, setConfirming] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Reset the one-shot regenerated key when the card is pointed at a
-  // different workspace, so one workspace's key can never be shown under
-  // another's heading.
-  useEffect(() => setRegeneratedKey(null), [workspaceId]);
 
   // `navigator.clipboard` is undefined on a non-secure origin (plain http over
   // a LAN is a normal self-hosted deployment), where this threw unhandled.

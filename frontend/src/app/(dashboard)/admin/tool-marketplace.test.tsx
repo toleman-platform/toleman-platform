@@ -21,17 +21,27 @@ const { workspaces, toolsRegistry, toolAssignments, activeToolInstalls } = vi.ho
   activeToolInstalls: vi.fn(() => Promise.resolve({})),
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    workspaces,
-    toolsRegistry,
-    toolAssignments,
-    activeToolInstalls,
-    installTool: vi.fn(),
-    getToolInstall: vi.fn(),
-    saveToolAssignment: vi.fn(),
-  },
-}));
+// Spread the real module rather than enumerating its exports: this file holds
+// two suites (health badges and the workspace picker) that need different
+// parts of @/lib/api, and a hand-listed mock silently drops whatever the other
+// suite depends on -- `workspaceDisplayName` is a pure helper the picker
+// asserts the real behaviour of, not something worth stubbing.
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      workspaces,
+      toolsRegistry,
+      toolAssignments,
+      activeToolInstalls,
+      installTool: vi.fn(),
+      getToolInstall: vi.fn(),
+      saveToolAssignment: vi.fn(),
+    },
+  };
+});
 
 afterEach(() => {
   workspaces.mockReset();
@@ -69,6 +79,18 @@ async function renderMarketplace(entries: ToolRegistryEntry[]) {
   // Wait for the registry fetch to resolve and the grouped cards to render.
   await screen.findByText(entries[0].display_name);
 }
+
+// Every mocked call gets a usable default before each test, so a suite only
+// has to prime what it actually asserts. Without this, a test that cares only
+// about the workspace picker still crashes on `.then` of an unprimed
+// toolsRegistry -- which is exactly how two independently-written suites
+// behave once they share one mock.
+beforeEach(() => {
+  workspaces.mockResolvedValue([]);
+  toolsRegistry.mockResolvedValue([]);
+  toolAssignments.mockResolvedValue([]);
+  activeToolInstalls.mockResolvedValue({});
+});
 
 describe("ToolMarketplace install/health badge", () => {
   it("shows healthy for an installed tool with a reported version", async () => {
@@ -124,5 +146,33 @@ describe("ToolMarketplace install/health badge", () => {
     ]);
     expect(await screen.findByText("healthy")).toBeDefined();
     expect(screen.queryByText("unverified")).toBeNull();
+  });
+});
+
+
+describe("ToolMarketplace workspace picker", () => {
+  it("disambiguates two workspaces that share a name", async () => {
+    workspaces.mockResolvedValue([
+      { id: 1, name: "default", organization_id: 1, enforcement_mode: null },
+      { id: 2, name: "default", organization_id: 2, enforcement_mode: null },
+    ]);
+    render(<ToolMarketplace />);
+
+    expect(await screen.findByRole("option", { name: "default (#1)" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "default (#2)" })).toBeDefined();
+    // A bare "default" with no id suffix would mean the old, ambiguous label
+    // is still leaking through for one of the two rows.
+    expect(screen.queryByRole("option", { name: "default" })).toBeNull();
+  });
+
+  it("leaves a workspace's name alone when nothing else in the list collides", async () => {
+    workspaces.mockResolvedValue([
+      { id: 1, name: "production", organization_id: 1, enforcement_mode: null },
+      { id: 2, name: "staging", organization_id: 1, enforcement_mode: null },
+    ]);
+    render(<ToolMarketplace />);
+
+    expect(await screen.findByRole("option", { name: "production" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "staging" })).toBeDefined();
   });
 });

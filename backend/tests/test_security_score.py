@@ -15,6 +15,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import app.api.deps as deps_module
 from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
+from app.core import security_score
 from app.core.security_score import compute_security_score
 from app.core.time import utcnow
 from app.main import app
@@ -473,6 +474,65 @@ def test_weakest_component_reported(engine):
         result = compute_security_score(session, [target_id])
 
     assert result["weakest_component"] == "coverage"
+
+
+def test_no_weakest_component_when_nothing_is_weak(engine, monkeypatch):
+    """A perfect posture must not name a penalty.
+
+    `weakest_component` was an unconditional min() over the five components,
+    so an instance scoring 100 on every one still reported a "weakest" -- and
+    the dashboard rendered a red "Score penalty: Open findings score" callout
+    with that row highlighted destructive, next to a Grade A. Naming a 100/100
+    component as the thing dragging the score down is the same class of
+    untruth as rendering a failed fetch as a zero.
+
+    The five component functions are patched rather than a perfect instance
+    being constructed: coverage needs a recent scan and trend needs history,
+    and what is under test is the reporting rule, not the arithmetic that
+    reaches 100.
+    """
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+
+    for name, weight in (
+        ("_findings_score", security_score.FINDINGS_WEIGHT),
+        ("_sla_score", security_score.SLA_WEIGHT),
+        ("_coverage_score", security_score.COVERAGE_WEIGHT),
+        ("_fp_rate_score", security_score.FP_WEIGHT),
+        ("_trend_score", security_score.TREND_WEIGHT),
+    ):
+        monkeypatch.setattr(
+            security_score, name, lambda *a, _w=weight, **k: {"score": 100.0, "weight": _w}
+        )
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    assert result["score"] == 100.0
+    assert result["weakest_component"] is None, "a perfect posture has no penalty to name"
+
+
+def test_weakest_component_named_when_one_is_below_perfect(engine, monkeypatch):
+    """The converse: anything short of 100 is genuinely costing score."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+
+    scores = {
+        "_findings_score": (100.0, security_score.FINDINGS_WEIGHT),
+        "_sla_score": (99.0, security_score.SLA_WEIGHT),
+        "_coverage_score": (100.0, security_score.COVERAGE_WEIGHT),
+        "_fp_rate_score": (100.0, security_score.FP_WEIGHT),
+        "_trend_score": (100.0, security_score.TREND_WEIGHT),
+    }
+    for name, (value, weight) in scores.items():
+        monkeypatch.setattr(
+            security_score, name, lambda *a, _v=value, _w=weight, **k: {"score": _v, "weight": _w}
+        )
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    assert result["weakest_component"] == "sla"
 
 
 # ---------------------------------------------------------------------------

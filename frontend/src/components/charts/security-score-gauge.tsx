@@ -131,10 +131,17 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
           />
         </svg>
 
-        {/* Center content: optically centered in the interior dome */}
+        {/* Centred on the arc's own centre (cy=80), not above it. The previous
+            `top: 24, height: 84` put this block's midpoint at y=66 -- a 14px
+            lift described as optical centring, but read on review as the
+            number sitting closer to the top of the radial bar than its middle.
+            The arc is a 230 degree sweep with its gap at the bottom, so there
+            is a case for a small lift; 14px was too much of one. Anchored to
+            cy with a 4px lift, which keeps the numeral visually inside the
+            dome without detaching it from the ring. */}
         <div
           className="absolute inset-x-0 flex flex-col items-center justify-center pointer-events-none"
-          style={{ top: 24, height: 84 }}
+          style={{ top: 34, height: 84 }}
         >
           <span className="text-4xl sm:text-[44px] font-extrabold font-tabular tracking-tight text-foreground leading-none">
             {animatedScore}

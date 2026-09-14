@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useFocusTrap } from "@/components/ui/drawer";
 
 export type ConfirmDialogProps = {
   open: boolean;
@@ -23,9 +24,9 @@ export type ConfirmDialogProps = {
 // consequential-but-reversible changes (e.g. admin-role escalation),
 // issue #118. No radix-dialog dependency in this repo yet, so this is a
 // small self-contained modal: overlay + centered card, Escape/backdrop-click
-// to cancel, focus moved to the confirm button on open. Render at the call
-// site with `open` gating so unmounted state never renders a floating
-// invisible dialog.
+// to cancel, focus trapped inside and moved to Cancel (not Confirm) on open.
+// Render at the call site with `open` gating so unmounted state never
+// renders a floating invisible dialog.
 export function ConfirmDialog({
   open,
   title,
@@ -37,17 +38,30 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const confirmRef = useRef<HTMLButtonElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    confirmRef.current?.focus();
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onCancel]);
+  // admin L8: this used to autofocus Confirm. These dialogs exist
+  // specifically to gate destructive/consequential actions -- delete an SLA
+  // rule, revoke a key, downgrade enforcement -- so a keyboard user who
+  // opens one and reflexively hits Enter must land on Cancel, not on the
+  // action the dialog exists to double-check. `initialFocusRef` below is
+  // what makes that Cancel instead of the container's first focusable child
+  // (which would have been Cancel anyway here, but only by DOM-order
+  // accident; naming it is the actual fix).
+  //
+  // core M3 / admin L7: focus trap + centralized Escape, shared with Drawer
+  // and FindingDetailDialog -- see useFocusTrap in drawer.tsx for why
+  // Escape is handled there instead of the `document` listener this file
+  // used to own by itself (it was also dismissing whatever else was
+  // listening for Escape behind this dialog, e.g. BulkActionBar's
+  // selection-clear shortcut).
+  useFocusTrap({
+    active: open,
+    onEscape: onCancel,
+    containerRef,
+    initialFocusRef: cancelRef,
+  });
 
   if (!open || typeof document === "undefined") return null;
 
@@ -59,6 +73,7 @@ export function ConfirmDialog({
       }}
     >
       <div
+        ref={containerRef}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
@@ -84,11 +99,10 @@ export function ConfirmDialog({
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="outline" size="sm" onClick={onCancel} disabled={loading}>
+          <Button ref={cancelRef} variant="outline" size="sm" onClick={onCancel} disabled={loading}>
             {cancelLabel}
           </Button>
           <Button
-            ref={confirmRef}
             variant={tone === "destructive" ? "destructive" : "default"}
             size="sm"
             onClick={onConfirm}

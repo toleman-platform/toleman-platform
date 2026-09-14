@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Group, type PostureReportOptions, type ReportSection, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { FINDING_STATE_ORDER, SEVERITY_ORDER } from "@/lib/severity";
 import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { MultiSelectDropdown } from "@/components/multi-select-filter";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
+import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import {
   DocGenField,
   DocGenSelect,
@@ -31,8 +33,21 @@ const FALLBACK_INCLUDED = [
 ];
 
 export default function ReportsPage() {
-  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  const {
+    data: targetsData,
+    status: targetsStatus,
+    refetch: reloadTargets,
+  } = useAsyncData<Target[]>(() => api.targets());
   const targets = targetsData ?? [];
+  // Unlike the facet fetches below (groups/tools/categories/...), which are
+  // decoration the generator can run without, Targets *is* the Scope step:
+  // `targets ?? []` used to make a rejected request indistinguishable from a
+  // workspace that genuinely has none, so Generate went quietly disabled with
+  // nothing on screen saying why. useAsyncData already turns the rejection
+  // into a status rather than an uncaught throw (see use-async-data.ts); the
+  // bug was this page reading only `data` and throwing that status away one
+  // line later -- the same shape `settledOr` exists to prevent in std-lib.
+  const targetsFailed = targetsStatus === "error";
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const targetId = selectedTargetId ?? (targets.length > 0 ? ALL_TARGETS : null);
   const setTargetId = setSelectedTargetId;
@@ -66,25 +81,51 @@ export default function ReportsPage() {
   const [sectionCatalog, setSectionCatalog] = useState<ReportSection[]>([]);
   const [sections, setSections] = useState<string[]>([]);
 
-  useEffect(() => {
+  // Which facet fetches failed. The premise below is right -- a facet is
+  // decoration on the generator, so one failing should cost that one filter
+  // rather than the page -- but the previous `.catch(() => setX([]))` also
+  // threw away the fact that it failed. An empty filter and a filter whose
+  // options could not be loaded look identical, so an operator scopes a
+  // compliance report by "all tools" believing they have seen the list.
+  // std-lib's `settledOr` states the rule: a secondary fetch may degrade the
+  // page, but the page has to keep the boolean and render the degradation.
+  const [facetFailures, setFacetFailures] = useState<string[]>([]);
+  const noteFacetFailure = useCallback((label: string) => {
+    setFacetFailures((prev) => (prev.includes(label) ? prev : [...prev, label]));
+  }, []);
+
+  // Extracted from the effect so Retry can re-run it. The banner reports facet
+  // failures as well as the targets failure, so a Retry that only reloaded
+  // targets left the facet half of its own message on screen with no way to
+  // act on it.
+  const loadFacets = useCallback(() => {
+    // Deliberately does NOT clear facetFailures: this runs from an effect on
+    // mount, and clearing state synchronously inside an effect triggers a
+    // cascading render (react-hooks/set-state-in-effect). On mount there is
+    // nothing to clear anyway; the Retry handler clears before re-running.
     // Facets are decoration on the generator, not its subject: one of them
-    // failing should cost the operator that one filter, not the page.
-    api.groups().then(setGroups).catch(() => setGroups([]));
-    api.findingTools().then(setTools).catch(() => setTools([]));
+    // failing should cost the operator that one filter, not the page -- but it
+    // must say so (see noteFacetFailure above).
+    api.groups().then(setGroups).catch(() => { setGroups([]); noteFacetFailure("Repo groups"); });
+    api.findingTools().then(setTools).catch(() => { setTools([]); noteFacetFailure("Tools"); });
     api
       .findingCategories()
       .then((facets) => setCategories(facets.map((f) => f.category)))
-      .catch(() => setCategories([]));
-    api.findingEnvironments().then(setEnvironments).catch(() => setEnvironments([]));
-    api.findingOwners().then(setOwners).catch(() => setOwners([]));
+      .catch(() => { setCategories([]); noteFacetFailure("Categories"); });
+    api.findingEnvironments().then(setEnvironments).catch(() => { setEnvironments([]); noteFacetFailure("Environments"); });
+    api.findingOwners().then(setOwners).catch(() => { setOwners([]); noteFacetFailure("Owners"); });
     api
       .reportSections()
       .then((catalog) => {
         setSectionCatalog(catalog);
         setSections(catalog.map((s) => s.key));
       })
-      .catch(() => setSectionCatalog([]));
-  }, []);
+      .catch(() => { setSectionCatalog([]); noteFacetFailure("Report sections"); });
+  }, [noteFacetFailure]);
+
+  useEffect(() => {
+    loadFacets();
+  }, [loadFacets]);
 
   const currentTarget = targets.find((t) => t.id === targetId);
   const scopeLabel =
@@ -337,6 +378,39 @@ export default function ReportsPage() {
       <PageHeader
         title="Compliance Reports"
         description="Audit-ready posture export built from live workspace data, finding counts by severity and state, SLA age, scan coverage, and SBOM summary. Narrow it with the same filters as the Findings page, and pick the sections you need; whatever you choose is recorded on the document itself."
+      />
+
+      <PartialFailureBanner
+        sources={[
+          {
+            label: "Targets",
+            failed: targetsFailed,
+            consequence: "The scope picker can't list your repositories, and Generate stays off until it does.",
+          },
+          {
+            // One entry for all six facets rather than six near-identical
+            // rows: the operator's decision is the same whichever failed --
+            // that filter is not showing every option it should, so a report
+            // scoped with it is narrower than it appears.
+            label: facetFailures.length > 0 ? `Filter options (${facetFailures.join(", ")})` : "Filter options",
+            failed: facetFailures.length > 0,
+            consequence:
+              "Those filters are missing options, so a report left on their defaults may be scoped more narrowly than it looks.",
+          },
+        ]}
+        action={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setFacetFailures([]);
+              reloadTargets();
+              loadFacets();
+            }}
+          >
+            Retry
+          </Button>
+        }
       />
 
       <DocumentGeneratorPanel

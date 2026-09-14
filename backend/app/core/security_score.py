@@ -414,7 +414,23 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     else:
         composite = sum(c["score"] * c["weight"] for c in components.values()) / 100.0
 
-    weakest = min(components.items(), key=lambda kv: kv[1]["score"])[0] if target_ids else None
+    # A penalty has to name something that is actually costing score. An
+    # unconditional min() always returns a component, so an instance where
+    # every component scores 100 still reported a "weakest" one -- and the
+    # dashboard rendered a red "Score penalty: Open findings score" callout,
+    # with that row highlighted destructive, on a perfect Grade A posture.
+    # Naming a 100/100 component as the thing dragging the score down is the
+    # same class of untruth as rendering a failed fetch as a zero: the number
+    # is right and the claim attached to it is not.
+    #
+    # Ties are left to dict order deliberately. When several components share
+    # the lowest score they are equally responsible, and picking a different
+    # one per request would make the callout flicker between them on reload.
+    weakest = None
+    if target_ids:
+        candidate, detail = min(components.items(), key=lambda kv: kv[1]["score"])
+        if detail["score"] < 100:
+            weakest = candidate
 
     return {
         "score": round(composite, 1),

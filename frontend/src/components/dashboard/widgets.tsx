@@ -621,7 +621,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
       ) : score.target_count === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">No targets in scope.</p>
       ) : (
-        <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-center gap-6 sm:gap-8">
+        <div className="flex w-full flex-wrap items-center justify-center gap-6 sm:justify-between sm:gap-8">
           {/* max-w-4xl (896px), not max-w-2xl (672px): the gauge (280px) +
               gap (32px) + score list (up to 480px) need ~792px to sit on one
               line, and 672px was just short of that; forcing an unwanted
@@ -661,9 +661,19 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               mobile instead of wrapping. Letting it shrink is what lets the
               grid track (and the whole page) stay pinned to the real
               viewport width; flex-wrap plus a max-width cap is enough to
-              keep it from looking cramped once there IS room. */}
+              keep it from looking cramped once there IS room.
+
+              The row no longer caps itself at `max-w-4xl` with `mx-auto`, and
+              the list grows (`flex-1 basis-[320px]`) instead of stopping dead
+              at 480px. Both caps together left a wide card centring a ~720px
+              block inside it, with a band of empty space down each side --
+              raised on review. `min-w-0` keeps the shrink behaviour the
+              paragraph above depends on: the list can still collapse rather
+              than forcing the grid track wider than the viewport, and the
+              560px cap only applies from `sm:` up, so narrow layouts wrap
+              exactly as before. */}
           <SecurityScoreGauge score={score.score} grade={score.grade} />
-          <div className="grid w-full max-w-[480px] grid-cols-1 gap-2 text-xs">
+          <div className="grid w-full min-w-0 flex-1 basis-[320px] grid-cols-1 gap-2 text-xs sm:max-w-[560px]">
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;

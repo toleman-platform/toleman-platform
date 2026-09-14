@@ -1,5 +1,5 @@
 import { GitBranch } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, type Group } from "@/lib/api";
 import { AddTargetToggle } from "./add-target-toggle";
 import { ConnectedRefresher } from "./connected-refresher";
 import { IntegrationSummary } from "./integration-summary";
@@ -8,6 +8,7 @@ import { TargetsFilterBar } from "./targets-filter-bar";
 import { TargetsList } from "./targets-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
+import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { ReloadButton } from "@/components/reload-button";
 import { PageHeader } from "@/components/ui/page-header";
 import { settleOrNull, settledOr } from "@/std-lib";
@@ -35,10 +36,29 @@ export default async function TargetsPage({
   // summary the "Needs attention" quick filter counted 0 while the default
   // "most findings" sort silently collapsed to alphabetical. See
   // targets-list.tsx for what each boolean now suppresses.
-  const [targetsResult, githubStatus, groupsList, scanSettled, targetSettled, me] = await Promise.all([
+  const [targetsResult, [githubStatus, githubStatusFailed], [groupsList, groupsFailed], scanSettled, targetSettled, me] = await Promise.all([
     settleOrNull(api.targets({ group_id })),
-    api.githubAppStatus().catch(() => ({ app_configured: false, app_slug: null, installed: false, account_login: null })),
-    api.groups().catch(() => []),
+    // settledOr, not `.catch(() => ({ installed: false }))`: that fallback is
+    // not a neutral default, it is a factual claim that the GitHub App is not
+    // installed. A transient status failure therefore told an admin their
+    // integration was disconnected AND auto-opened the reconnect flow below
+    // (`defaultOpen`), inviting them to re-do setup that was never broken.
+    // Unknown has to read as unknown.
+    settledOr(api.githubAppStatus(), {
+      apps: [],
+      app_configured: false,
+      app_slug: null,
+      installed: false,
+      account_login: null,
+      webhook_secret_set: false,
+      webhook_reachable: false,
+      public_api_url: "",
+    }),
+    // Same class as the GitHub status above and the actor list on the audit
+    // log: an empty group list and a group list that could not be fetched
+    // render as the same filter, and the reader cannot tell that the repo
+    // groups they organise by are simply missing from the control.
+    settledOr(api.groups(), [] as Group[]),
     settledOr(api.scanSummary(), {}),
     settledOr(api.targetsSummary(), {}),
     // (#356) The add-target form's empty-workspace state differs by role:
@@ -73,11 +93,27 @@ export default async function TargetsPage({
           org sync controls) collapsed to a one-line summary by default so it
           doesn't push the actual target inventory below the fold, expand to
           reach the full ConnectGithubCard. */}
+      <PartialFailureBanner
+        sources={[
+          {
+            label: "GitHub App status",
+            failed: githubStatusFailed,
+            consequence: "the connection state below is unknown, not disconnected",
+          },
+          {
+            label: "Repo groups",
+            failed: groupsFailed,
+            consequence: "the group filter is empty, so grouped views are unavailable",
+          },
+        ]}
+      />
+
       <IntegrationSummary
         installed={githubStatus.installed}
+        statusUnknown={githubStatusFailed}
         accountLogin={githubStatus.account_login}
         targetsCount={targetsList.length}
-        defaultOpen={!githubStatus.installed && targetsList.length === 0}
+        defaultOpen={!githubStatusFailed && !githubStatus.installed && targetsList.length === 0}
       />
 
       <div className="flex flex-col gap-3">
@@ -115,7 +151,7 @@ export default async function TargetsPage({
         )}
       </div>
 
-      <AddTargetToggle defaultOpen={!githubStatus.installed && targetsList.length === 0} isAdmin={isAdmin} />
+      <AddTargetToggle defaultOpen={!githubStatusFailed && !githubStatus.installed && targetsList.length === 0} isAdmin={isAdmin} />
 
     </div>
   );

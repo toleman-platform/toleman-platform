@@ -138,6 +138,11 @@ export const api = {
   // Security & SBOM
   aibom: security.aibom,
   getDiscoveredEndpoints: security.getDiscoveredEndpoints,
+  setEndpointScope: security.setEndpointScope,
+  getApiScanCredential: security.getApiScanCredential,
+  setApiScanCredential: security.setApiScanCredential,
+  clearApiScanCredential: security.clearApiScanCredential,
+  testApiScanCredential: security.testApiScanCredential,
   runDiscovery: security.runDiscovery,
   getDiscoveryRun: security.getDiscoveryRun,
   runApiScan: security.runApiScan,

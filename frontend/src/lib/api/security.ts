@@ -40,6 +40,58 @@ export function getDiscoveredEndpoints(
 }
 
 /**
+ * Mark a discovered endpoint in or out of scope for active scanning (#469).
+ * An excluded endpoint is never probed, including when it is part of an
+ * explicit selection.
+ */
+/** Whether an active-scan credential is configured, and under which header
+ * name. The stored value is never returned by the API (#470). */
+export function getApiScanCredential(
+  targetId: number,
+): Promise<{ target_id: number; configured: boolean; header_name: string | null }> {
+  return jsonFetch(`/api/api-scan/${targetId}/credential`);
+}
+
+/** Store (or replace) the credential the active scanner presents. */
+export function setApiScanCredential(
+  targetId: number,
+  headerName: string,
+  headerValue: string,
+): Promise<{ target_id: number; configured: boolean; header_name: string | null }> {
+  return jsonFetch(`/api/api-scan/${targetId}/credential`, {
+    method: "PUT",
+    body: JSON.stringify({ header_name: headerName, header_value: headerValue }),
+  });
+}
+
+export function clearApiScanCredential(
+  targetId: number,
+): Promise<{ target_id: number; configured: boolean; header_name: string | null }> {
+  return jsonFetch(`/api/api-scan/${targetId}/credential`, { method: "DELETE" });
+}
+
+/** One request with the stored credential, reporting whether it was
+ * accepted. Catches the silent failure: a wrong token 401s every route and
+ * the scan still reports zero findings. */
+export function testApiScanCredential(
+  targetId: number,
+): Promise<{ target_id: number; status_code: number; accepted: boolean; detail: string }> {
+  return jsonFetch(`/api/api-scan/${targetId}/credential/test`, { method: "POST" });
+}
+
+export function setEndpointScope(
+  targetId: number,
+  endpointId: number,
+  excluded: boolean,
+  reason?: string,
+): Promise<{ id: number; method: string; route: string; excluded: boolean; exclusion_reason: string | null }> {
+  return jsonFetch(`/api/discovery/${targetId}/endpoints/${endpointId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ excluded, reason: reason ?? null }),
+  });
+}
+
+/**
  * Dispatches an asynchronous endpoint discovery task.
  */
 export function runDiscovery(

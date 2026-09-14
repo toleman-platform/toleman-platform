@@ -1,11 +1,14 @@
+import re
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, require_workspace_role
 from app.api.deps import get_session
-from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
+from app.core.api_scan_targets import ApiScanConfigError, build_scan_headers, build_scan_urls
+from app.core.crypto import encrypt_secret
 from app.core.tool_usage import is_nuclei_enabled_for_api_scan
 from app.core.async_jobs import create_running_row
 from app.core.staleness import mark_stale_if_needed
@@ -79,10 +82,23 @@ def trigger_api_scan(
             detail="Active API scanning (nuclei) is disabled for this workspace; enable it in Tool Marketplace",
         )
     try:
-        urls, endpoints = build_scan_urls(session, target, payload.endpoint_ids)
+        scope = build_scan_urls(session, target, payload.endpoint_ids)
+        urls, endpoints = scope.urls, scope.endpoints
     except ApiScanConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not urls:
+        # Distinguish "nothing discovered" from "everything discovered is
+        # out of scope". They look identical from a zero-URL list and lead
+        # an operator to completely different next actions: run discovery,
+        # versus review the exclusions they themselves set.
+        if scope.skipped:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"no scannable endpoints: all {len(scope.skipped)} discovered "
+                    "endpoint(s) are out of scope for this scan"
+                ),
+            )
         raise HTTPException(
             status_code=400,
             detail="no scannable endpoints; run API Discovery first, or check the endpoint selection",
@@ -96,7 +112,18 @@ def trigger_api_scan(
 
     return JSONResponse(
         status_code=202,
-        content={"scan_id": scan.id, "target_id": target_id, "status": scan.status, "endpoint_count": len(endpoints)},
+        content={
+            "scan_id": scan.id,
+            "target_id": target_id,
+            "status": scan.status,
+            "endpoint_count": len(endpoints),
+            # Surfaced so the UI can say what was left alone and why,
+            # rather than showing a smaller number with no explanation.
+            "skipped": [
+                {"endpoint_id": s.endpoint.id, "method": s.endpoint.method, "route": s.endpoint.route, "reason": s.reason}
+                for s in scope.skipped
+            ],
+        },
     )
 
 
@@ -134,4 +161,139 @@ def get_latest_api_scan(target_id: int, session: Session = Depends(get_session),
             "completed_at": scan.completed_at,
             "error_message": scan.error,
         },
+    }
+
+
+# Header names are a restricted token grammar (RFC 9110 field-name), and a
+# name carrying CR/LF or a colon would let a caller inject a second header
+# into the config file this ends up in. Kept narrow deliberately: every
+# real auth header name is letters, digits and hyphens.
+_HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+
+
+class SetApiScanCredentialRequest(BaseModel):
+    header_name: str
+    header_value: str
+
+    @field_validator("header_name")
+    @classmethod
+    def _check_name(cls, v: str) -> str:
+        v = v.strip()
+        if not _HEADER_NAME_RE.match(v):
+            raise ValueError("header_name must be 1-64 characters of letters, digits or hyphens")
+        return v
+
+    @field_validator("header_value")
+    @classmethod
+    def _check_value(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("header_value must not be blank")
+        if "\n" in v or "\r" in v:
+            raise ValueError("header_value must not contain newlines")
+        return v.strip()
+
+
+@router.get("/{target_id}/credential")
+def get_api_scan_credential(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Whether a credential is configured, and under which header name.
+
+    Never returns the value, not even to the person who set it, and not
+    masked: a mask still confirms length. The only operations on a stored
+    credential are replace and clear.
+    """
+    target = _get_target(target_id, session)
+    return {
+        "target_id": target.id,
+        "configured": bool(target.api_auth_header_name and target.api_auth_header_value_ciphertext),
+        "header_name": target.api_auth_header_name,
+    }
+
+
+@router.put("/{target_id}/credential")
+def set_api_scan_credential(
+    target_id: int,
+    payload: SetApiScanCredentialRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Store the credential the active scanner presents for this target.
+
+    DEVELOPER, the same bar as triggering a scan: this decides what
+    authority the scanner's traffic carries.
+    """
+    target = _get_target(target_id, session)
+    target.api_auth_header_name = payload.header_name
+    target.api_auth_header_value_ciphertext = encrypt_secret(payload.header_value)
+    session.add(target)
+    session.commit()
+    return {"target_id": target.id, "configured": True, "header_name": target.api_auth_header_name}
+
+
+@router.delete("/{target_id}/credential")
+def clear_api_scan_credential(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Remove the credential. Scans go back to anonymous, which is a
+    supported mode, not an error -- so this does not disable scanning."""
+    target = _get_target(target_id, session)
+    target.api_auth_header_name = None
+    target.api_auth_header_value_ciphertext = None
+    session.add(target)
+    session.commit()
+    return {"target_id": target.id, "configured": False, "header_name": None}
+
+
+@router.post("/{target_id}/credential/test")
+def test_api_scan_credential(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Make one request with the stored credential and report whether it
+    was accepted.
+
+    This exists because the failure it catches is silent. A wrong or
+    expired token makes every authenticated route answer 401, and the scan
+    still completes and still reports zero findings -- which reads as a
+    clean API rather than as a scan that never got in. An operator needs to
+    find that out here, deliberately, rather than from a green result.
+
+    Sends exactly one GET at the target's own configured api_base_url, the
+    same host boundary every other part of active scanning uses; never a
+    caller-supplied URL, and never one of the discovered routes, which
+    could be destructive.
+    """
+    target = _get_target(target_id, session)
+    if not target.api_base_url:
+        raise HTTPException(status_code=400, detail="target has no api_base_url configured")
+    try:
+        headers = build_scan_headers(target)
+    except ApiScanConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not headers:
+        raise HTTPException(status_code=400, detail="no credential is configured for this target")
+
+    try:
+        response = httpx.get(target.api_base_url, headers=headers, timeout=10, follow_redirects=False)
+    except httpx.HTTPError as exc:
+        # str(exc) is httpx's own message about the connection, never the
+        # request headers, so this cannot echo the credential back.
+        raise HTTPException(status_code=502, detail=f"could not reach {target.api_base_url}: {exc}")
+
+    rejected = response.status_code in (401, 403)
+    return {
+        "target_id": target.id,
+        "status_code": response.status_code,
+        "accepted": not rejected,
+        "detail": (
+            "the API rejected this credential; scans would test the login wall, not the API"
+            if rejected
+            else "the API did not reject this credential"
+        ),
     }

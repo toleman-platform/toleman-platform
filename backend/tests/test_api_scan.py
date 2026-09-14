@@ -105,9 +105,9 @@ def test_build_scan_urls_joins_route_onto_base(engine):
     _add_endpoint(engine, target_id, "/users/{id}")
     with Session(engine) as session:
         target = session.get(Target, target_id)
-        urls, endpoints = build_scan_urls(session, target)
-        assert urls == ["https://api.example.com/users/{id}"]
-        assert len(endpoints) == 1
+        scope = build_scan_urls(session, target)
+        assert scope.urls == ["https://api.example.com/users/{id}"]
+        assert len(scope.endpoints) == 1
 
 
 def test_build_scan_urls_rejects_route_that_pivots_host(engine):
@@ -121,10 +121,11 @@ def test_build_scan_urls_rejects_route_that_pivots_host(engine):
     _add_endpoint(engine, target_id, "/legit")
     with Session(engine) as session:
         target = session.get(Target, target_id)
-        urls, endpoints = build_scan_urls(session, target)
+        scope = build_scan_urls(session, target)
         # The two malicious routes are dropped, not fatal to the whole scan.
-        assert urls == ["https://api.example.com/legit"]
-        assert len(endpoints) == 1
+        assert scope.urls == ["https://api.example.com/legit"]
+        assert len(scope.endpoints) == 1
+        assert len(scope.skipped) == 2
 
 
 def test_build_scan_urls_filters_to_selected_endpoint_ids(engine):
@@ -133,8 +134,8 @@ def test_build_scan_urls_filters_to_selected_endpoint_ids(engine):
     _add_endpoint(engine, target_id, "/drop")
     with Session(engine) as session:
         target = session.get(Target, target_id)
-        urls, endpoints = build_scan_urls(session, target, endpoint_ids=[keep_id])
-        assert urls == ["https://api.example.com/keep"]
+        scope = build_scan_urls(session, target, endpoint_ids=[keep_id])
+        assert scope.urls == ["https://api.example.com/keep"]
 
 
 def test_build_scan_urls_ignores_endpoint_ids_from_other_targets(engine):
@@ -148,8 +149,7 @@ def test_build_scan_urls_ignores_endpoint_ids_from_other_targets(engine):
     _add_endpoint(engine, target_id, "/mine")
     with Session(engine) as session:
         target = session.get(Target, target_id)
-        urls, _ = build_scan_urls(session, target, endpoint_ids=[foreign_id])
-        assert urls == []
+        assert build_scan_urls(session, target, endpoint_ids=[foreign_id]).urls == []
 
 
 def test_parse_nuclei_maps_severity_and_cve():
@@ -325,7 +325,14 @@ def test_api_scan_end_to_end_eager_creates_findings(engine, monkeypatch):
                 "matched-at": "https://api.example.com/admin",
             }
         ]
-        monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", lambda urls: canned_nuclei_output)
+        # Accepts headers because the task now passes the target's scan
+        # credential (#470); this target has none configured, so the scan
+        # stays anonymous, which is asserted rather than just tolerated.
+        def fake_run_nuclei(urls, headers=None):
+            assert headers == {}
+            return canned_nuclei_output
+
+        monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", fake_run_nuclei)
 
         import app.core.db as db_module
 
@@ -363,7 +370,7 @@ def test_api_scan_missing_nuclei_binary_records_scan_error(engine, monkeypatch):
         target_id = _make_target(engine)
         _add_endpoint(engine, target_id, "/admin")
 
-        def _raise_missing_binary(urls):
+        def _raise_missing_binary(urls, headers=None):
             raise FileNotFoundError(2, "No such file or directory", "nuclei")
 
         monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", _raise_missing_binary)

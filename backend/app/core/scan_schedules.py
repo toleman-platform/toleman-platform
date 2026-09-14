@@ -205,7 +205,7 @@ def describe_api_scan_readiness(session: Session, target: Target) -> ApiScanRead
             ),
         )
     try:
-        urls, _endpoints = build_scan_urls(session, target)
+        urls = build_scan_urls(session, target).urls
     except ApiScanConfigError as exc:
         return ApiScanReadiness(ready=False, reason="no_api_base_url", detail=str(exc))
     if not urls:

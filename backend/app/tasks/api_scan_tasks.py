@@ -3,7 +3,7 @@ import subprocess
 
 from sqlmodel import Session
 
-from app.core.api_scan_targets import ApiScanConfigError, build_scan_urls
+from app.core.api_scan_targets import ApiScanConfigError, build_scan_headers, build_scan_urls
 from app.core.async_jobs import create_running_row
 from app.core.db import engine
 from app.core import scan_health
@@ -149,7 +149,20 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
             return {"error": refusal, "scan_id": scan.id}
 
         try:
-            urls, endpoints = build_scan_urls(session, target, endpoint_ids)
+            scope = build_scan_urls(session, target, endpoint_ids)
+            urls, endpoints = scope.urls, scope.endpoints
+            if scope.skipped:
+                # Logged, not swallowed: an operator watching a scan shrink
+                # needs to be able to tell a working scope rule from a
+                # discovery run that found nothing.
+                for skip in scope.skipped:
+                    logger.info(
+                        "api scan skipping %s %s for target %s: %s",
+                        skip.endpoint.method,
+                        skip.endpoint.route,
+                        target_id,
+                        skip.reason,
+                    )
             if not urls:
                 error = "no scannable endpoints (check api_base_url and that endpoints are discovered)"
                 scan.status = "failed"
@@ -159,7 +172,7 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
                 _notify_api_scan_failure(session, target, error)
                 return {"error": error, "scan_id": scan.id}
 
-            raw_results = runner.run_nuclei(urls)
+            raw_results = runner.run_nuclei(urls, headers=build_scan_headers(target))
             parsed = parsers.parse_nuclei(raw_results)
             # (#229) What makes this assertion earned rather than assumed:
             # runner.run_nuclei now checks nuclei's exit code and raises

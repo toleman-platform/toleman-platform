@@ -1,7 +1,8 @@
 import secrets
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
@@ -10,6 +11,31 @@ from app.core.enforcement import VALID_ENFORCEMENT_MODES
 from app.models.models import Organization, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/workspaces", tags=["workspaces"])
+
+
+class WorkspaceRead(BaseModel):
+    """Workspace as it is safe to return on a read.
+
+    Every field of Workspace except `api_key`. Returning the ORM row
+    directly serialises that column too, which hands the workspace's
+    CI-ingestion key to anyone who asked only for the workspace list or
+    who saved an unrelated setting. There is already a deliberate,
+    single-purpose way to read that key -- GET /{workspace_id}/key -- and
+    the routes that mint a key still return it inline, so nothing needs
+    the bulk read to carry it.
+
+    New columns on Workspace do NOT appear here automatically; that is the
+    point. Anything added to the model is invisible to these routes until
+    someone adds it here and decides it is safe to expose.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    organization_id: int
+    name: str
+    created_at: datetime
+    enforcement_mode: str | None = None
 
 
 class CreateWorkspaceRequest(BaseModel):
@@ -53,7 +79,7 @@ class UpdateWorkspaceRequest(BaseModel):
         return v.strip() if v is not None else v
 
 
-@router.get("")
+@router.get("", response_model=list[WorkspaceRead])
 def list_workspaces(session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Workspaces the caller can see (issue #32: the admin workspace-role UI
     needs the full list of *its own* workspaces, not just the ones a target
@@ -123,7 +149,7 @@ def create_workspace(
     return ws
 
 
-@router.patch("/{workspace_id}")
+@router.patch("/{workspace_id}", response_model=WorkspaceRead)
 def update_workspace(
     workspace_id: int,
     payload: UpdateWorkspaceRequest,

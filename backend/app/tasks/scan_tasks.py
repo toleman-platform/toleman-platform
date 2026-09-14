@@ -314,16 +314,26 @@ def warm_scanner_caches() -> dict:
 
 @celery_app.task(name="app.tasks.scan_tasks.run_scheduled_full_scans")
 def run_scheduled_full_scans():
-    """Beat-scheduled (celery_app.conf.beat_schedule, every 24h): refresh
-    every target's default-branch baseline.
+    """Refresh every target's default-branch baseline, platform-wide.
 
-    Without this, "no baseline yet" (GH-07's fix) is a real but *permanent*
-    state for any target nobody happens to click Scan on, and an existing
-    baseline only ever reflects whatever the repo looked like on the one day
-    someone last ran it manually -- posture pages and PR Guardrail diffs both
-    quietly drift out of date. This dispatches queue_full_scan per target;
-    each per-tool Scan still runs (and can still fail/retry) independently
-    via run_scan, so one target's clone failure can't block another's.
+    Without scheduled refreshes, "no baseline yet" (GH-07's fix) is a real
+    but *permanent* state for any target nobody happens to click Scan on,
+    and an existing baseline only ever reflects whatever the repo looked
+    like on the one day someone last ran it manually -- posture pages and PR
+    Guardrail diffs both quietly drift out of date. This dispatches
+    queue_full_scan per target; each per-tool Scan still runs (and can still
+    fail/retry) independently via run_scan, so one target's clone failure
+    can't block another's.
+
+    (#306) No longer the beat entry. Cadence is data now
+    (app.core.scan_schedules / ScanSchedule rows, dispatched by
+    app.tasks.schedule_tasks), so the *scheduled* path resolves a per-
+    workspace or per-target interval and can be turned off for a target that
+    should not be scanned; this task is the unconditional every-target
+    version, kept registered as a deliberate operator escape hatch ("re-
+    baseline everything now") and because removing a registered task name
+    breaks any queued message still carrying it. It is not wired to a
+    schedule; nothing fires it on a timer.
     """
     with Session(engine) as session:
         # (#273) Deactivated and soft-deleted targets are excluded in the

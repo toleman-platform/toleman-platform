@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from sqlalchemy import Column, Index, JSON, UniqueConstraint
+from sqlalchemy import Column, Index, JSON, UniqueConstraint, text
 from sqlmodel import SQLModel, Field
 
 from app.core.time import utcnow
@@ -1198,6 +1198,126 @@ class SlaRule(SQLModel, table=True):
     severity: Severity
     days_to_fix: int
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class ScanScheduleType(str, Enum):
+    """Which kind of scan a ScanSchedule row drives (issue #306).
+
+    Deliberately NOT a tool name. A schedule says "keep this target's
+    posture fresh", not "run semgrep"; which tools that actually means is
+    already a per-workspace decision (`WorkspaceToolConfig`/#75, resolved by
+    `app.core.tool_usage.tools_for_surface`). Encoding tool names here would
+    give an operator two places to turn the same scanner off and no rule for
+    which one wins.
+    """
+    # Every on_demand_scan-enabled SAST/SCA tool against the default branch,
+    # dispatched via app.tasks.scan_tasks.queue_full_scan (the same path the
+    # "Scan now" button and the GitHub App import already use).
+    FULL_SCAN = "full_scan"
+    # Active API scanning (nuclei, #72) against the endpoints already
+    # discovered for this target, dispatched via
+    # app.tasks.api_scan_tasks.queue_api_scan. Only ever reaches a host the
+    # target's owner explicitly declared in Target.api_base_url.
+    API_SCAN = "api_scan"
+
+
+class ScanSchedule(SQLModel, table=True):
+    """A configurable scan cadence (issue #306), stored as data instead of
+    the two hardcoded ``timedelta(hours=24)`` entries that used to live in
+    ``celery_app.conf.beat_schedule``.
+
+    Two scopes, following the same NULL-means-inherit convention SlaRule
+    (#70) uses for ``group_id`` and Workspace/Group/Target
+    ``enforcement_mode`` (#62) use for their override columns:
+
+      * ``target_id`` NULL  -> the workspace default for this scan type,
+        applied to every target in the workspace that has no row of its own.
+      * ``target_id`` set    -> this one target's override; it stops being
+        covered by the workspace-default row entirely.
+
+    The two *value* columns inherit independently and at field level, so a
+    target can say "disabled" without also having to pin an interval, or
+    "every 6 hours" while inheriting enabled-ness:
+
+      * ``enabled`` NULL         -> inherit (workspace default, then the
+        shipped default in app.core.scan_schedules.SHIPPED_DEFAULTS).
+      * ``interval_hours`` NULL  -> same.
+
+    ``last_run_at``/``next_run_at`` are what make the beat dispatcher safe
+    across a restart, and they are deliberately two columns rather than one
+    derived value:
+
+      * ``next_run_at`` is the due-ness clock. It lives in the database, so
+        restarting Beat cannot re-arm a schedule that already fired (the old
+        hardcoded 24h entry had the opposite problem: Beat records a fresh
+        interval schedule's *creation* time as its last run, so a deploy
+        every 12h meant the 24h entry never fired at all).
+      * ``last_run_at`` is the honesty column. NULL means "this schedule has
+        never actually fired", which is a real state a fresh install spends
+        its first interval in, and the UI must say so rather than rendering
+        an empty cell that reads like "nothing to see here". It is never
+        seeded at creation time for exactly that reason.
+
+    ``last_dispatched_count`` keeps the same distinction one level down: a
+    schedule that fired and dispatched zero scans (every covered target was
+    unconfigured for active API scanning, say) is not the same as one that
+    never fired, and neither is the same as one that dispatched five.
+    """
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "target_id", "scan_type", name="uq_scan_schedule_workspace_target_type"
+        ),
+        # The constraint above cannot police the workspace-default rows,
+        # because Postgres treats NULL as distinct for uniqueness: two rows
+        # with target_id NULL, the same workspace and the same scan_type do
+        # not collide under it. That is not a cosmetic gap here. Both rows
+        # would pass due_schedules, both would cover every target in the
+        # workspace, and every target would be scanned twice per cycle
+        # forever -- while every read path (which takes .first()) kept
+        # showing exactly one healthy schedule, so nothing would ever
+        # surface it.
+        #
+        # SlaRule documents the same NULL gap and answers it with a
+        # lookup-then-write API guard. That is not enough for this table:
+        # the row that matters is created by ensure_workspace_default_rows
+        # running unattended every few minutes on every worker, where a
+        # lookup-then-insert is a real check-then-act race rather than a
+        # theoretical one. So it is enforced in the schema instead, as a
+        # partial unique index. Both dialects are spelled out because tests
+        # build this table from the model metadata on SQLite while
+        # deployments get it from the Alembic migration on Postgres, and an
+        # invariant that only exists in production is one nothing catches.
+        Index(
+            "uq_scan_schedule_workspace_default",
+            "workspace_id",
+            "scan_type",
+            unique=True,
+            postgresql_where=text("target_id IS NULL"),
+            sqlite_where=text("target_id IS NULL"),
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    # NULL = the workspace-wide default for this scan type; kept unique by
+    # the partial index above, not by the UniqueConstraint.
+    target_id: Optional[int] = Field(default=None, foreign_key="target.id", index=True)
+    scan_type: ScanScheduleType = Field(index=True)
+    interval_hours: Optional[int] = None
+    enabled: Optional[bool] = None
+    # NULL = never fired. See the class docstring; this is load-bearing for
+    # the UI, not just bookkeeping.
+    last_run_at: Optional[datetime] = None
+    last_dispatched_count: Optional[int] = None
+    # NULL would mean "due on the next dispatcher tick". In practice every
+    # write path sets this explicitly (creation and any enable/interval
+    # change set it to now + the effective interval, so switching a schedule
+    # on never triggers an immediate fan-out across every target); the
+    # nullable column is the safe reading for a row written by something
+    # that forgot to.
+    next_run_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class WorkspaceToolConfig(SQLModel, table=True):

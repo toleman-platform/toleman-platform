@@ -15,6 +15,11 @@ import type {
   PrGuardrailOrgLog,
   PrGuardrailFinding,
   PrGuardrailFindingPage,
+  ScanScheduleType,
+  ScanSchedulePatch,
+  ScanScheduleView,
+  TargetScanSchedules,
+  WorkspaceScanSchedules,
 } from "@/types";
 import type { Nullable } from "@/std-lib";
 
@@ -236,4 +241,63 @@ export function rejectIgnore(findingId: number): Promise<PrGuardrailFinding> {
  */
 export function revokeIgnore(findingId: number): Promise<PrGuardrailFinding> {
   return jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/revoke-ignore`, { method: "POST" });
+}
+
+// Issue #306: configurable scheduled SAST/DAST scans. Reads are open to
+// any workspace member ("is this actually being scanned, and when did it
+// last run?"); writes are SECURITY_ENGINEER-or-admin gated server-side,
+// same as the SLA rules.
+
+/**
+ * Retrieves the workspace-level scan schedule defaults every target inherits.
+ */
+export function workspaceScanSchedules(workspaceId: number): Promise<WorkspaceScanSchedules> {
+  return jsonFetch<WorkspaceScanSchedules>(`/api/scan-schedules/workspace/${workspaceId}`);
+}
+
+/**
+ * Retrieves a target's effective scan schedules plus its API-scan readiness.
+ */
+export function targetScanSchedules(targetId: number): Promise<TargetScanSchedules> {
+  return jsonFetch<TargetScanSchedules>(`/api/scan-schedules/target/${targetId}`);
+}
+
+/**
+ * Saves a workspace-level schedule override for one scan type.
+ */
+export function saveWorkspaceScanSchedule(
+  workspaceId: number,
+  scanType: ScanScheduleType,
+  patch: ScanSchedulePatch,
+): Promise<ScanScheduleView> {
+  return jsonFetch<ScanScheduleView>(`/api/scan-schedules/workspace/${workspaceId}/${scanType}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+}
+
+/**
+ * Saves a target-level schedule override for one scan type.
+ */
+export function saveTargetScanSchedule(
+  targetId: number,
+  scanType: ScanScheduleType,
+  patch: ScanSchedulePatch,
+): Promise<ScanScheduleView> {
+  return jsonFetch<ScanScheduleView>(`/api/scan-schedules/target/${targetId}/${scanType}`, {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+}
+
+/**
+ * Drops the target's override entirely so it inherits the workspace default
+ * again -- not the same as saving nulls into it, see the route's docstring in
+ * app/api/scan_schedules.py.
+ */
+export function resetTargetScanSchedule(
+  targetId: number,
+  scanType: ScanScheduleType,
+): Promise<ScanScheduleView> {
+  return jsonFetch<ScanScheduleView>(`/api/scan-schedules/target/${targetId}/${scanType}`, { method: "DELETE" });
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Group, type PostureReportOptions, type ReportSection, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { FINDING_STATE_ORDER, SEVERITY_ORDER } from "@/lib/severity";
@@ -81,25 +81,39 @@ export default function ReportsPage() {
   const [sectionCatalog, setSectionCatalog] = useState<ReportSection[]>([]);
   const [sections, setSections] = useState<string[]>([]);
 
+  // Which facet fetches failed. The premise below is right -- a facet is
+  // decoration on the generator, so one failing should cost that one filter
+  // rather than the page -- but the previous `.catch(() => setX([]))` also
+  // threw away the fact that it failed. An empty filter and a filter whose
+  // options could not be loaded look identical, so an operator scopes a
+  // compliance report by "all tools" believing they have seen the list.
+  // std-lib's `settledOr` states the rule: a secondary fetch may degrade the
+  // page, but the page has to keep the boolean and render the degradation.
+  const [facetFailures, setFacetFailures] = useState<string[]>([]);
+  const noteFacetFailure = useCallback((label: string) => {
+    setFacetFailures((prev) => (prev.includes(label) ? prev : [...prev, label]));
+  }, []);
+
   useEffect(() => {
     // Facets are decoration on the generator, not its subject: one of them
-    // failing should cost the operator that one filter, not the page.
-    api.groups().then(setGroups).catch(() => setGroups([]));
-    api.findingTools().then(setTools).catch(() => setTools([]));
+    // failing should cost the operator that one filter, not the page -- but it
+    // must say so (see noteFacetFailure above).
+    api.groups().then(setGroups).catch(() => { setGroups([]); noteFacetFailure("Repo groups"); });
+    api.findingTools().then(setTools).catch(() => { setTools([]); noteFacetFailure("Tools"); });
     api
       .findingCategories()
       .then((facets) => setCategories(facets.map((f) => f.category)))
-      .catch(() => setCategories([]));
-    api.findingEnvironments().then(setEnvironments).catch(() => setEnvironments([]));
-    api.findingOwners().then(setOwners).catch(() => setOwners([]));
+      .catch(() => { setCategories([]); noteFacetFailure("Categories"); });
+    api.findingEnvironments().then(setEnvironments).catch(() => { setEnvironments([]); noteFacetFailure("Environments"); });
+    api.findingOwners().then(setOwners).catch(() => { setOwners([]); noteFacetFailure("Owners"); });
     api
       .reportSections()
       .then((catalog) => {
         setSectionCatalog(catalog);
         setSections(catalog.map((s) => s.key));
       })
-      .catch(() => setSectionCatalog([]));
-  }, []);
+      .catch(() => { setSectionCatalog([]); noteFacetFailure("Report sections"); });
+  }, [noteFacetFailure]);
 
   const currentTarget = targets.find((t) => t.id === targetId);
   const scopeLabel =
@@ -360,6 +374,16 @@ export default function ReportsPage() {
             label: "Targets",
             failed: targetsFailed,
             consequence: "The scope picker can't list your repositories, and Generate stays off until it does.",
+          },
+          {
+            // One entry for all six facets rather than six near-identical
+            // rows: the operator's decision is the same whichever failed --
+            // that filter is not showing every option it should, so a report
+            // scoped with it is narrower than it appears.
+            label: facetFailures.length > 0 ? `Filter options (${facetFailures.join(", ")})` : "Filter options",
+            failed: facetFailures.length > 0,
+            consequence:
+              "Those filters are missing options, so a report left on their defaults may be scoped more narrowly than it looks.",
           },
         ]}
         action={

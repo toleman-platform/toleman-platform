@@ -270,7 +270,7 @@ describe("scan verdict badge distinguishes states StatusBadge already models", (
     expect(label.parentElement?.className).not.toContain("chart-3");
   });
 
-  it("reads an overridden PR as resolved, not as still queued", async () => {
+  it("reads an overridden PR as risk-accepted, not as a clean pass", async () => {
     prsByState({
       open: [pr({ number: 1, scan_status: "overridden", latest_scan_id: 55 })],
     });
@@ -278,17 +278,22 @@ describe("scan verdict badge distinguishes states StatusBadge already models", (
     render(<PrHistoryPage />);
     const label = await screen.findByText("overridden");
 
-    // A security engineer already reviewed and cleared this PR; it is not
-    // waiting on anything the amber "queued" treatment would imply.
-    expect(label.parentElement?.className).toContain("chart-5");
-    expect(label.parentElement?.className).not.toContain("chart-3");
+    // chart-3, matching LOG_STATUS_COLOR.overridden in the PR Guardrail audit
+    // log rendered directly below on this same page, for this same field. An
+    // earlier version used chart-5 -- the same green as "passed" -- so a
+    // reviewer skimming the list by colour read a PR whose guardrail finding
+    // had been risk-accepted as one that scanned clean, while the log two
+    // inches down correctly showed it amber.
+    expect(label.parentElement?.className).toContain("chart-3");
+    expect(label.parentElement?.className).not.toContain("chart-5");
   });
 
   it("gives a guardrail block and a tool failure visually distinct badges", async () => {
-    // Both are bad news (destructive), but a diff the guardrail rejected and
-    // a scan that crashed before judging anything are different problems --
-    // before this fix both fell into the same "failed" bucket and rendered
-    // with the identical icon.
+    // A diff the guardrail rejected is a verdict; a scan that crashed before
+    // judging anything produced none. Only the first is destructive -- the
+    // second is an unmeasured outcome and renders neutral, matching
+    // LOG_STATUS_COLOR.error in the audit log below. Before this fix both fell
+    // into the same "failed" bucket and rendered in the same red.
     prsByState({
       open: [
         pr({ number: 1, title: "blocked pr", scan_status: "blocked", latest_scan_id: 55 }),
@@ -305,5 +310,9 @@ describe("scan verdict badge distinguishes states StatusBadge already models", (
     expect(blockedIcon).not.toBeNull();
     expect(errorIcon).not.toBeNull();
     expect(blockedIcon?.getAttribute("class")).not.toBe(errorIcon?.getAttribute("class"));
+    // Colour, not just icon: an icon difference is a weak signal in a small
+    // badge and invisible to a colourblind reviewer.
+    expect(blockedLabel.parentElement?.className).toContain("destructive");
+    expect(errorLabel.parentElement?.className).not.toContain("destructive");
   });
 });

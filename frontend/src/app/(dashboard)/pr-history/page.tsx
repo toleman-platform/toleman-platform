@@ -99,9 +99,17 @@ function prStateBadgeStatus(state: PullRequestState) {
 function scanBadgeStatus(scanStatus: string) {
   if (scanStatus === "passed") return "passed";
   if (scanStatus === "blocked") return "blocked";
-  if (scanStatus === "error") return "failed";
+  // "unknown" (neutral), not "failed" (destructive): a tool that crashed
+  // before it could judge anything has produced no verdict, and rendering it
+  // in the same red as a real block claims one. Matches
+  // LOG_STATUS_COLOR.error, which the audit log on this same page already
+  // renders muted for exactly this reason.
+  if (scanStatus === "error") return "unknown";
   if (scanStatus === "running") return "running";
-  if (scanStatus === "overridden") return "completed";
+  // Its own variant rather than "completed": green made a PR whose guardrail
+  // finding was risk-accepted look identical to one that scanned clean, while
+  // the audit log directly below rendered the same status amber.
+  if (scanStatus === "overridden") return "overridden";
   if (scanStatus === "not scanned") return "unknown";
   return "unknown";
 }

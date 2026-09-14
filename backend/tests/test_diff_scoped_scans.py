@@ -67,7 +67,7 @@ class TestManifestGating:
         pins, the #239 blind spot. It must get the whole checkout."""
         seen = {}
 
-        def fake_execute(tool, cmd, repo_path):
+        def fake_execute(tool, cmd, repo_path, run):
             seen["cmd"] = cmd
             return {}
 
@@ -80,7 +80,7 @@ class TestManifestGating:
 class TestPerToolScoping:
     def test_semgrep_receives_every_changed_file(self, tmp_path, monkeypatch):
         seen = {}
-        monkeypatch.setattr(runner, "_execute", lambda t, c, p: seen.setdefault("cmd", c) or {})
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p, run: seen.setdefault("cmd", c) or {})
         runner.run_tool("semgrep", tmp_path, paths=["a.py", "b.py"])
         assert str(tmp_path / "a.py") in seen["cmd"]
         assert str(tmp_path / "b.py") in seen["cmd"]
@@ -91,7 +91,7 @@ class TestPerToolScoping:
     def test_gitleaks_runs_once_per_file_and_merges(self, tmp_path, monkeypatch):
         calls = []
 
-        def fake_execute(tool, cmd, repo_path):
+        def fake_execute(tool, cmd, repo_path, run):
             calls.append(cmd)
             return [{"finding": len(calls)}]
 
@@ -102,7 +102,7 @@ class TestPerToolScoping:
 
     def test_tfsec_ignores_files_it_cannot_read(self, tmp_path, monkeypatch):
         calls = []
-        monkeypatch.setattr(runner, "_execute", lambda t, c, p: calls.append(c) or {})
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p, run: calls.append(c) or {})
         runner.run_tool("tfsec", tmp_path, paths=["main.tf", "app.py", "README.md"])
         assert len(calls) == 1, "only the .tf file should have been scanned"
 
@@ -112,7 +112,7 @@ class TestPerToolScoping:
 
     def test_checkov_uses_repeatable_f_not_d(self, tmp_path, monkeypatch):
         seen = {}
-        monkeypatch.setattr(runner, "_execute", lambda t, c, p: seen.setdefault("cmd", c) or {})
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p, run: seen.setdefault("cmd", c) or {})
         runner.run_tool("checkov", tmp_path, paths=["main.tf", "k8s.yaml"])
         assert "-d" not in seen["cmd"]
         assert seen["cmd"].count("-f") == 2
@@ -133,7 +133,7 @@ class TestPerToolScoping:
         """paths=None must reproduce the old command exactly, scheduled and
         default-branch scans still scan everything."""
         seen = {}
-        monkeypatch.setattr(runner, "_execute", lambda t, c, p: seen.setdefault("cmd", c) or {})
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p, run: seen.setdefault("cmd", c) or {})
         runner.run_tool("semgrep", tmp_path)
         assert seen["cmd"] == runner.TOOL_COMMANDS["semgrep"](str(tmp_path))
 
@@ -151,7 +151,7 @@ class TestPerToolScoping:
     def test_gosec_full_scan_still_runs_a_real_go_repo(self, tmp_path, monkeypatch):
         (tmp_path / "main.go").write_text("package main\n")
         seen = {}
-        monkeypatch.setattr(runner, "_execute", lambda t, c, p: seen.setdefault("cmd", c) or {})
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p, run: seen.setdefault("cmd", c) or {})
         runner.run_tool("gosec", tmp_path)
         assert seen["cmd"] == runner.TOOL_COMMANDS["gosec"](str(tmp_path))
 
@@ -159,7 +159,7 @@ class TestPerToolScoping:
         nested = tmp_path / "cmd" / "server"
         nested.mkdir(parents=True)
         (nested / "main.go").write_text("package main\n")
-        monkeypatch.setattr(runner, "_execute", lambda t, c, p: {})
+        monkeypatch.setattr(runner, "_execute", lambda t, c, p, run: {})
         runner.run_tool("gosec", tmp_path)  # must not raise
 
 

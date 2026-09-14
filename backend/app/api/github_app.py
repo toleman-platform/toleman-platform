@@ -21,6 +21,7 @@ from app.core.github_app import (
     webhook_reachable,
 )
 from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, User, Workspace
+from app.core import target_lifecycle
 from app.tasks.sbom_tasks import queue_dependency_graph_sync
 from app.tasks.scan_tasks import queue_full_scan
 
@@ -71,6 +72,13 @@ def manifest_data(org: str | None = None):
         "manifest": manifest,
         "post_url": f"{base}?state={state}",
         "webhook_url": manifest["hook_attributes"]["url"],
+        # (#355) The frontend reads this from /status now, because it has
+        # to warn before any App exists and without minting a state token
+        # per page load. Still reported here so anyone POSTing this
+        # manifest to GitHub by hand (or any other API client) gets the
+        # same answer about whether GitHub will accept it; this endpoint
+        # deliberately still returns a complete, submittable manifest, the
+        # rejection it would earn is GitHub's to give.
         "webhook_reachable": webhook_reachable(BACKEND_URL),
     }
 
@@ -80,7 +88,11 @@ def status(session: Session = Depends(get_session)):
     """Multi-App aware (#34): returns every registered App and its
     installations under ``apps``, plus the original single-app fields
     (first configured app / first installation) for back-compat with
-    existing callers that only care "is anything connected"."""
+    existing callers that only care "is anything connected".
+
+    Also carries ``webhook_reachable``/``public_api_url`` (#355), which are
+    about the App that does *not* exist yet: whether creating one can work
+    at all from this deployment's address. See the return block below."""
     configs = session.exec(select(GitHubAppConfig)).all()
     installations = session.exec(select(GitHubInstallation)).all()
 
@@ -126,6 +138,23 @@ def status(session: Session = Depends(get_session)):
         "installed": bool(installations),
         "account_login": installations[0].account_login if installations else None,
         "webhook_secret_set": bool(configs and configs[0].webhook_secret),
+        # (#355) Everything the Integrations card needs to decide, before
+        # any App exists, whether "Connect GitHub" can succeed at all: a
+        # localhost PUBLIC_API_URL means GitHub rejects the manifest and
+        # creates nothing (see webhook_reachable's docstring). This has to
+        # ride on /status rather than /manifest-data, which is where the
+        # frontend read it before, for two reasons: /status is what the
+        # card loads on mount whether or not any App exists (the old
+        # warning rendered only next to already-created Apps, so a fresh
+        # install -- the only install that hits this -- never saw it), and
+        # /manifest-data mints a CSRF state token into _pending_states on
+        # every call, which is not something a page load should do just to
+        # render a warning.
+        #
+        # public_api_url is echoed so the warning can name the offending
+        # value instead of telling the operator to go and find it.
+        "webhook_reachable": webhook_reachable(BACKEND_URL),
+        "public_api_url": BACKEND_URL,
     }
 
 
@@ -261,7 +290,18 @@ def _sync_repos(session: Session) -> int:
     org/account, or a second App entirely) silently never saw that
     installation's repos at all."""
     installations = session.exec(select(GitHubInstallation)).all()
-    existing_urls = {t.repo_url for t in session.exec(select(Target)).all()}
+    # (#273) Soft-deleted targets are deliberately NOT part of the
+    # already-imported set. The dead row still holds that repo_url, so
+    # counting it would mean a repository someone deleted could never be
+    # re-imported: the sync would skip it forever while the operator saw
+    # nothing appear and no error explaining why. Excluding it lets the repo
+    # come back as a fresh target (new id, clean history) while the old row
+    # and its findings stay put for the audit trail. Deactivated targets DO
+    # count as existing -- they weren't removed, they're just switched off,
+    # and re-importing would create a confusing duplicate.
+    existing_urls = {
+        t.repo_url for t in session.exec(target_lifecycle.live_targets(select(Target))).all()
+    }
     created = 0
     new_targets: list[Target] = []
     for installation in installations:

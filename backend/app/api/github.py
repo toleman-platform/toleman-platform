@@ -5,6 +5,7 @@ from sqlmodel import Session, select
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.github_token import resolve_github_token
+from app.core import target_lifecycle
 from app.models.models import PRGuardrailScan, Target
 
 router = APIRouter(prefix="/api/github", tags=["github"])
@@ -189,7 +190,10 @@ def org_activity(
     the source, not a client-side guess), then the combined, sorted result
     is paginated in-process.
     """
-    query = select(Target)
+    # (#273) Live targets only: this makes a real GitHub API call per target,
+    # and a deleted one is both a wasted call and a repo that shouldn't be
+    # appearing in an org activity feed at all.
+    query = target_lifecycle.live_targets(select(Target))
     if target_id is not None:
         query = query.where(Target.id == target_id)
     targets = session.exec(query).all()

@@ -5,7 +5,16 @@ import { Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { NewTargetForm } from "./new-target-form";
 
-export function AddTargetToggle({ defaultOpen }: { defaultOpen: boolean }) {
+export function AddTargetToggle({
+  defaultOpen,
+  // (#356) Passed straight through to NewTargetForm; see its own prop
+  // docs. Threaded rather than fetched there so the form has the role on
+  // its first render instead of racing it.
+  isAdmin,
+}: {
+  defaultOpen: boolean;
+  isAdmin: boolean | null;
+}) {
   const [open, setOpen] = useState(defaultOpen);
 
   if (!open) {
@@ -25,7 +34,7 @@ export function AddTargetToggle({ defaultOpen }: { defaultOpen: boolean }) {
           <X className="h-4 w-4" />
         </Button>
       </div>
-      <NewTargetForm />
+      <NewTargetForm isAdmin={isAdmin} />
     </div>
   );
 }

@@ -43,6 +43,10 @@ export const api = {
   target: targets.target,
   createTarget: targets.createTarget,
   updateTarget: targets.updateTarget,
+  // (#273) Lifecycle actions, not attributes -- see lib/api/targets.ts.
+  deactivateTarget: targets.deactivateTarget,
+  reactivateTarget: targets.reactivateTarget,
+  deleteTarget: targets.deleteTarget,
   saveCloneCredentials: targets.saveCloneCredentials,
   targetsSummary: targets.targetsSummary,
   targetGroups: targets.targetGroups,
@@ -67,7 +71,10 @@ export const api = {
   findingGroups: findings.findingGroups,
   triage: findings.triage,
   bulkTriage: findings.bulkTriage,
+  findingFacets: findings.findingFacets,
   findingTools: findings.findingTools,
+  findingEnvironments: findings.findingEnvironments,
+  findingOwners: findings.findingOwners,
   findingCategories: findings.findingCategories,
   findingEnrichment: findings.findingEnrichment,
   suggestFix: findings.suggestFix,
@@ -77,6 +84,12 @@ export const api = {
   updateSlaRule: findings.updateSlaRule,
   deleteSlaRule: findings.deleteSlaRule,
   slaCompliance: findings.slaCompliance,
+
+  // Risk scoring (issue #201)
+  scoringWeights: findings.scoringWeights,
+  setScoringWeight: findings.setScoringWeight,
+  resetScoringWeight: findings.resetScoringWeight,
+  findingScoreBreakdown: findings.findingScoreBreakdown,
 
   // Scans & PR Guardrail
   runScan: scans.runScan,
@@ -105,6 +118,13 @@ export const api = {
   rejectIgnore: scans.rejectIgnore,
   revokeIgnore: scans.revokeIgnore,
 
+  // Scheduled scans (issue #306)
+  workspaceScanSchedules: scans.workspaceScanSchedules,
+  targetScanSchedules: scans.targetScanSchedules,
+  saveWorkspaceScanSchedule: scans.saveWorkspaceScanSchedule,
+  saveTargetScanSchedule: scans.saveTargetScanSchedule,
+  resetTargetScanSchedule: scans.resetTargetScanSchedule,
+
   // Dashboard
   summary: dashboard.summary,
   stats: dashboard.stats,
@@ -131,6 +151,7 @@ export const api = {
   exportSbom: security.exportSbom,
   getOrgSbom: security.getOrgSbom,
   exportOrgSbom: security.exportOrgSbom,
+  reportSections: security.reportSections,
   exportPostureReport: security.exportPostureReport,
   aiStatus: security.aiStatus,
   analyzeFinding: security.analyzeFinding,

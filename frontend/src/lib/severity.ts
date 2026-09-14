@@ -60,6 +60,18 @@ export const IGNORE_STATUS_COLOR: Record<string, string> = {
   revoked: "border-border bg-muted text-muted-foreground",
 };
 
+// Triage states, split the way the backend splits them
+// (app/models/models.py's OPEN_FINDING_STATES / RESOLVED_FINDING_STATES):
+// "still needs attention" vs "already triaged". Kept here, next to
+// STATE_COLOR, as the one frontend definition every state picker imports --
+// the Findings page's filter bar narrows to one half depending on which tab
+// is active, the Reports page's report builder (#302) offers all of them,
+// and a third hand-written copy is how those two come to disagree about
+// whether "Reopened" is open.
+export const OPEN_FINDING_STATES = ["Open", "Reopened"];
+export const RESOLVED_FINDING_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Mitigated"];
+export const FINDING_STATE_ORDER = [...OPEN_FINDING_STATES, ...RESOLVED_FINDING_STATES];
+
 export const STATE_COLOR: Record<string, string> = {
   Open: "text-destructive",
   "Accepted Risk": "text-chart-3",
@@ -83,6 +95,14 @@ export const AUTH_EVENT_LABEL: Record<string, string> = {
   role_changed: "Role changed",
   workspace_role_changed: "Workspace role changed",
   workspace_role_removed: "Workspace role removed",
+  // (#273) Target lifecycle. Deliberately worded as what happened to the
+  // repository rather than as a generic "target updated": these rows are
+  // read to answer "why did this repo stop being scanned" and "who removed
+  // the record of these findings", and the label is the first thing that
+  // has to answer it.
+  target_deactivated: "Target deactivated",
+  target_reactivated: "Target reactivated",
+  target_deleted: "Target deleted",
 };
 
 export const AUTH_EVENT_COLOR: Record<string, string> = {
@@ -93,4 +113,12 @@ export const AUTH_EVENT_COLOR: Record<string, string> = {
   role_changed: "border-chart-3/20 bg-chart-3/10 text-chart-3",
   workspace_role_changed: "border-chart-3/20 bg-chart-3/10 text-chart-3",
   workspace_role_removed: "border-chart-3/20 bg-chart-3/10 text-chart-3",
+  // Deactivation is amber like a permission change: consequential, not
+  // necessarily bad. Deletion gets the destructive treatment shared with a
+  // failed login -- it is the one event here that removes a repository from
+  // every posture surface at once, and it should be the row an admin's eye
+  // lands on when scanning this log.
+  target_deactivated: "border-chart-3/20 bg-chart-3/10 text-chart-3",
+  target_reactivated: "border-chart-5/20 bg-chart-5/10 text-chart-5",
+  target_deleted: "border-destructive/20 bg-destructive/10 text-destructive",
 };

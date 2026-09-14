@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { parseServerTimestamp } from "@/lib/format/date";
 
 const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix"];
 
@@ -27,7 +28,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
  * finding-row.tsx captures the clock once at mount.
  */
 export function daysSince(iso: string, now: number): number {
-  const then = new Date(iso).getTime();
+  const then = parseServerTimestamp(iso);
   if (Number.isNaN(then)) return 0;
   return Math.max(0, Math.floor((now - then) / MS_PER_DAY));
 }

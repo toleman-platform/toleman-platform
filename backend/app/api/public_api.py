@@ -24,6 +24,7 @@ from app.core.async_jobs import create_running_row
 from app.core.autofix import AutofixError, Patch, find_suppression_comment, open_fix_pr, suggest_fix
 from app.core.mcp_audit import log_mcp_action
 from app.core.rate_limit import enforce_rate_limit
+from app.core import target_lifecycle
 from app.models.models import Finding, Scan, SnippetScanRun, Target, User
 from app.scanners import parsers
 from app.core.tool_usage import tools_for_surface
@@ -46,7 +47,10 @@ def mcp_agent(request: Request) -> str:
 
 def _get_target_scoped(target_id: int, session: Session, user: User) -> Target:
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) A soft-deleted target 404s on the public API too. An MCP agent
+    # holding a target id from a previous session must not be the one caller
+    # that can still see, or scan, a repo the operator removed.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and target.workspace_id not in ws_ids:
@@ -64,7 +68,7 @@ def list_targets(
     if ws_ids is not None and not ws_ids:
         targets = []
     else:
-        query = select(Target)
+        query = target_lifecycle.live_targets(select(Target))
         if ws_ids is not None:
             query = query.where(Target.workspace_id.in_(ws_ids))
         targets = session.exec(query).all()
@@ -190,6 +194,13 @@ def trigger_scan(
     )
 
     target = _get_target_scoped(target_id, session, user)
+    # (#273) Same gate as the internal POST /api/scans/run, and here for the
+    # same reason the tool-assignment check below is: a public API token must
+    # not be a way to route around a decision made in the workspace's own
+    # configuration.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     if tool not in PARSER_MAP:
         raise HTTPException(status_code=400, detail=f"unsupported tool: {tool}")
     # (#232) Same gate as the internal POST /api/scans/run; an assignment

@@ -111,9 +111,12 @@ services:
       context: ./backend
     image: toleman-backend:local
     restart: unless-stopped
-    # -B embeds Celery Beat (the scheduler for celery_app.conf.beat_schedule,
-    # e.g. the daily full-scan refresh) in this same worker process rather
-    # than running it as a separate service. Safe here specifically because
+    # -B embeds Celery Beat (the scheduler for celery_app.conf.beat_schedule:
+    # the every-few-minutes tick that dispatches whichever configured scan
+    # schedules are due, #306, plus the daily GitHub repo sync) in this same
+    # worker process rather than running it as a separate service. Without
+    # -B somewhere, no scheduled scan ever runs -- the schedules just sit in
+    # the database looking configured. Safe here specifically because
     # this deployment runs exactly one celery-worker replica: -B with more
     # than one worker process sharing a schedule fires every scheduled task
     # once per replica, not once total. Scaling celery-worker beyond one

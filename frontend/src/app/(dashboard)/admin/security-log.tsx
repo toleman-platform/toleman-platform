@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
 import { AUTH_EVENT_COLOR, AUTH_EVENT_LABEL } from "@/lib/severity";
 import { ShieldAlert } from "lucide-react";
+import { serverDate } from "@/lib/format/date";
 
 const EVENT_TYPES: AuthEventType[] = [
   "login_success",
@@ -20,6 +21,14 @@ const EVENT_TYPES: AuthEventType[] = [
   "role_changed",
   "workspace_role_changed",
   "workspace_role_removed",
+  // (#273) Target lifecycle events are written to this same trail, so they
+  // need to be filterable from it. Without these three the only way to
+  // answer "who deleted this target" was to page through every login event
+  // on the platform, which would have undercut the reason soft delete was
+  // chosen in the first place.
+  "target_deactivated",
+  "target_reactivated",
+  "target_deleted",
 ];
 
 const SELECT_CLASS =
@@ -139,7 +148,7 @@ export function SecurityLog() {
                       )}
                     </div>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {new Date(e.created_at).toLocaleString()}
+                      {serverDate(e.created_at).toLocaleString()}
                     </span>
                   </div>
                 </CardContent>

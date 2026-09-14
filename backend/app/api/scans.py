@@ -7,7 +7,9 @@ from app.api.deps import get_session
 from app.core import scan_eta
 from app.core.async_jobs import create_running_row
 from app.core.rate_limit import enforce_rate_limit
+from app.core.scan_health import SUSPECT
 from app.core.staleness import mark_stale_if_needed
+from app.core import target_lifecycle
 from app.models.models import Scan, Target, User
 from app.core.tool_usage import tools_for_surface
 from app.scanners import parsers
@@ -43,16 +45,23 @@ def scans_summary(
     timestamp and a handful of tool names. The two queries below return
     at most one row per (target, tool) pair and one row per target,
     respectively, regardless of how many times each has actually run.
-    Response shape is byte-for-byte identical; see
+    Response shape was byte-for-byte identical when this was written; see
     tests/test_scans_summary.py, written against the old implementation
     before this rewrite specifically so behavior could be pinned rather
-    than re-derived.
+    than re-derived. It has since gained one key, `suspect_tools` (#229),
+    which is additive -- those tests assert per key rather than comparing
+    whole dicts, which is what let it be added without rewriting them.
     """
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return {}
 
     def scoped(query):
+        # (#273) The soft-delete filter is a subquery, not part of the
+        # workspace join, because that join only happens for non-admin
+        # callers -- an admin would otherwise still see a deleted target's
+        # scan cadence on the Scans page.
+        query = target_lifecycle.exclude_deleted_targets(query, Scan.target_id)
         if ws_ids is not None:
             return query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
         return query
@@ -71,6 +80,47 @@ def scans_summary(
     last_scan_rows = session.exec(
         scoped(select(Scan.target_id, func.max(last_scan_column)).group_by(Scan.target_id))
     ).all()
+
+    # (#229) Which tools' *most recent* run against each target was not
+    # treated as authoritative. Without this the Scans page shows "last scan
+    # 4m ago · trivy" for a run that read a half-written vulnerability DB,
+    # found nothing, and was refused permission to mitigate -- a row that
+    # reads as reassuring when it is the opposite.
+    #
+    # Two queries, both one row per (target, tool) pair: the id of the latest
+    # scan for each pair, then which of those ids are suspect. Scan.id is
+    # used as the recency key rather than started_at because it is monotonic
+    # per insert and needs no correlated subquery to resolve back to a row.
+    # Restricted to completed scans. func.max(Scan.id) otherwise picks a
+    # rescan that is still running, whose health has not been decided yet --
+    # so kicking off a re-run would make the previous run's suspect verdict
+    # disappear from the page for as long as the new one takes. The badge
+    # exists to say "nothing was mitigated, re-run this", and it must not
+    # vanish at the moment someone acts on it.
+    #
+    # The id list this materialises is bounded by (targets x tools), one row
+    # per group -- not by scan history, which is the growth this endpoint was
+    # rewritten to avoid. Worth folding into a subquery if target counts ever
+    # reach the thousands; at that point the IN list, not the scan volume,
+    # becomes the limit.
+    latest_scan_ids = [
+        row[2]
+        for row in session.exec(
+            scoped(
+                select(Scan.target_id, Scan.tool, func.max(Scan.id))
+                .where(Scan.status == "completed")
+                .group_by(Scan.target_id, Scan.tool)
+            )
+        ).all()
+    ]
+    suspect_by_target: dict[int, set[str]] = {}
+    if latest_scan_ids:
+        for target_id, tool in session.exec(
+            select(Scan.target_id, Scan.tool).where(
+                Scan.id.in_(latest_scan_ids), Scan.health == SUSPECT
+            )
+        ).all():
+            suspect_by_target.setdefault(target_id, set()).add(tool)
 
     tools_by_target: dict[int, set[str]] = {}
     for target_id, tool in tool_rows:
@@ -91,6 +141,7 @@ def scans_summary(
                 else None
             ),
             "tools": sorted(tools),
+            "suspect_tools": sorted(suspect_by_target.get(target_id, ())),
         }
         for target_id, tools in tools_by_target.items()
     }
@@ -131,6 +182,17 @@ def run_native_scan(
     target = session.get(Target, target_id)
     if not target:
         return {"error": "target not found"}
+    # (#273) A deactivated target refuses on-demand scans here, at the
+    # dispatch point, rather than relying on the Scan buttons not rendering.
+    # Reported in this endpoint's existing 200-with-{"error"} convention
+    # (see the unsupported-tool and workspace-disabled-tool refusals just
+    # below) rather than a 4xx, so the client handles one shape. A
+    # soft-deleted target comes back as plain "target not found" -- see
+    # target_lifecycle.scan_refusal_reason for why deletion isn't spelled
+    # out at product surfaces.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        return {"error": refusal}
     if tool not in PARSER_MAP:
         return {"error": f"unsupported tool: {tool}"}
     # (#232) The request always names a tool explicitly; there is no
@@ -181,7 +243,9 @@ def active_scans(
     if ws_ids is not None and not ws_ids:
         return {}
 
-    query = select(Scan).where(Scan.status == "running")
+    query = target_lifecycle.exclude_deleted_targets(
+        select(Scan).where(Scan.status == "running"), Scan.target_id
+    )
     if ws_ids is not None:
         query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
     running = session.exec(query).all()
@@ -233,7 +297,11 @@ def scan_history(
     which is itself operational information.
     """
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) A soft-deleted target 404s here like any other missing one; its
+    # Scan rows still exist (that's the point of the soft delete) but they
+    # are reachable through the audit log, not through a product page that
+    # is supposed to show the target as gone.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and target.workspace_id not in ws_ids:
@@ -265,6 +333,14 @@ def scan_history(
                 # invisible reads as "nothing happened", which is the
                 # false-all-clear shape this codebase keeps refusing.
                 "error": r.error,
+                # (#229) Same reasoning one step further in. A scan can
+                # *complete* and still not be trustworthy -- a trivy run
+                # against a half-written vulnerability DB exits 0 with valid
+                # JSON and zero findings. `findings_count: 0` on its own
+                # reads as a clean repo; these two say whether it earned
+                # that reading.
+                "health": r.health,
+                "health_note": r.health_note,
             }
             for r in rows
         ],
@@ -295,5 +371,10 @@ def get_scan(
         "started_at": scan.started_at,
         "completed_at": scan.completed_at,
         "error_message": scan.error,
+        # (#229) Whether this completed run is authoritative, and why not.
+        # A poller that only sees status="completed" and findings_count=0
+        # would report a clean repo for a scan that checked nothing.
+        "health": scan.health,
+        "health_note": scan.health_note,
         **scan_eta.progress_for(session, scan),
     }

@@ -21,6 +21,7 @@ from sqlmodel import Session, func, select
 from app.core.fp_learning import AUTO_SUPPRESS_REASON_PREFIX
 from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.models.models import Finding, FindingState, OPEN_FINDING_STATES as OPEN_STATES, Severity, Target
 
@@ -32,14 +33,21 @@ WidgetResolver = Callable[[Session, "list[int] | None", dict], Any]
 
 
 def _scoped_targets(session: Session, ws_ids: "list[int] | None") -> list[Target]:
-    query = select(Target)
+    # (#273) Soft-deleted targets are excluded from every widget: a deleted
+    # repo must not keep inflating "targets onboarded", nor appear in a
+    # top-risk ranking.
+    query = target_lifecycle.live_targets(select(Target))
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
     return list(session.exec(query).all())
 
 
 def _scoped_findings_query(ws_ids: "list[int] | None"):
-    query = select(Finding)
+    # (#273) The soft-delete filter is a subquery, not an extra condition on
+    # the workspace join below -- that join only happens for non-admin
+    # callers, so an admin's KPI cards and trend charts would otherwise keep
+    # counting findings belonging to deleted targets.
+    query = target_lifecycle.exclude_deleted_targets(select(Finding), Finding.target_id)
     if ws_ids is not None:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     return query
@@ -48,7 +56,11 @@ def _scoped_findings_query(ws_ids: "list[int] | None"):
 def _target_names(session: Session, target_ids: set[int]) -> dict[int, str]:
     if not target_ids:
         return {}
-    rows = session.exec(select(Target).where(Target.id.in_(target_ids))).all()
+    # (#273) Live only. The ids handed in here come from findings that have
+    # already been filtered, so a deleted target should never reach this --
+    # filtering anyway means a ranking widget degrades to omitting a row
+    # rather than naming a repo the reader was told no longer exists.
+    rows = session.exec(target_lifecycle.live_targets(select(Target)).where(Target.id.in_(target_ids))).all()
     return {t.id: t.name for t in rows}
 
 
@@ -286,7 +298,16 @@ def resolve_live_scan_activity(session: Session, ws_ids, config: dict) -> dict:
     from app.models.models import Scan
 
     limit = max(1, min(int(config.get("limit", 8)), 50))
-    query = select(Scan).where(Scan.status == "running")
+    # (#273) The twin of GET /api/scans/active's own filter, and it has to be
+    # here too rather than inherited: this resolver builds its own query
+    # instead of calling that endpoint (see the docstring above). Without
+    # it, a deleted target's in-flight scan keeps rendering -- and because
+    # _target_names() correctly refuses to resolve a deleted target, the
+    # widget shows the literal fallback string "target #47" rather than a
+    # name, which is the worst of both outcomes.
+    query = target_lifecycle.exclude_deleted_targets(
+        select(Scan).where(Scan.status == "running"), Scan.target_id
+    )
     if ws_ids is not None:
         query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
     running = list(session.exec(query).all())

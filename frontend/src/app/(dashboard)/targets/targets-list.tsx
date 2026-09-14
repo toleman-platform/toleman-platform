@@ -26,8 +26,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { pollUntilSettled } from "@/lib/poll";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
 import type { TargetSort } from "./targets-filter-bar";
-import { Rocket, X } from "lucide-react";
+import { PowerOff, Rocket, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { parseServerTimestamp, serverDate } from "@/lib/format/date";
+import { TargetRowActions } from "./target-row-actions";
 
 function paginateSlice<T>(items: T[], page: number, pageSize: number): { items: T[]; clampedPage: number } {
   const totalPages = Math.max(1, Math.ceil(items.length / pageSize));
@@ -36,14 +38,40 @@ function paginateSlice<T>(items: T[], page: number, pageSize: number): { items: 
   return { items: items.slice(start, start + pageSize), clampedPage };
 }
 
-type QuickFilter = "all" | "attention" | "unscanned" | "stale";
+// (#273) "deactivated" is a real tab, not just a badge. The issue's whole
+// definition of deactivate is "still visible and filterable" -- a state you
+// can't filter to is one you can only find by scrolling, which for an org
+// with hundreds of repos is the same as not having it.
+type QuickFilter = "all" | "attention" | "unscanned" | "stale" | "deactivated";
 
 const QUICK_FILTERS: { value: QuickFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "attention", label: "Needs attention" },
   { value: "unscanned", label: "Never scanned" },
   { value: "stale", label: "Stale (30d+)" },
+  { value: "deactivated", label: "Deactivated" },
 ];
+
+// A target whose scanning is switched off. Deliberately `warning`-toned
+// rather than neutral: this is not a decorative attribute, it is the reason
+// the row's findings count and scan freshness have stopped moving, and a
+// grey chip would read as just another label like "Dev" or "CI".
+function DeactivatedBadge({ target }: { target: Target }) {
+  if (target.is_active !== false) return null;
+  return (
+    <Badge
+      variant="warning"
+      title={
+        "Scanning is off for this target: on-demand, CI pushes, PR Guardrail, active API scanning and the " +
+        "nightly baseline refresh are all refused. Findings and history are kept."
+      }
+      className="shrink-0 gap-1 px-1.5 py-0 text-[10px]"
+    >
+      <PowerOff className="h-2.5 w-2.5" />
+      Deactivated
+    </Badge>
+  );
+}
 
 const ITEM_STATUS_LABEL: Record<string, string> = {
   pending: "Queued",
@@ -76,9 +104,13 @@ function itemBadgeClass(status: string): string {
 // multiplier a target contributes to every finding's risk score. The Repo
 // Sync card used to render it as a bare "weight 2" with no label, no units
 // and no tooltip, on every row; unreadable as anything but a constant.
+// (#201) Deliberately no longer quotes the formula. Scoring is weighted and
+// workspace-configurable, so "severity × this weight × 40" is true only on
+// the shipped defaults and wrong wherever the business-criticality slot has
+// been retuned. The direction this dial pushes stays true either way.
 const CRITICALITY_WEIGHT_EXPLANATION =
-  "How much this repo amplifies the risk score of its findings: severity × this weight × 40. " +
-  "Set per target (1-5) alongside its criticality label.";
+  "How much this repo amplifies the risk score of its findings, 1-5, set alongside its " +
+  "criticality label. How heavily it counts is configurable per workspace in Guardrails › Risk Scoring.";
 
 // Issue #185: AI/ML repo marker. The tooltip carries the detection signals
 // because a bare badge isn't contestable; someone who thinks the platform
@@ -129,11 +161,11 @@ function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
       </span>
     );
   }
-  const ageDays = (now - new Date(lastScanAt).getTime()) / 86_400_000;
+  const ageDays = (now - parseServerTimestamp(lastScanAt)) / 86_400_000;
   return (
     <span
       className={ageDays > 30 ? "text-chart-3" : undefined}
-      title={`Last scanned ${new Date(lastScanAt).toLocaleString()}`}
+      title={`Last scanned ${serverDate(lastScanAt).toLocaleString()}`}
     >
       scanned {timeAgo(lastScanAt)}
     </span>
@@ -262,14 +294,20 @@ export function TargetsList({
     let attention = 0;
     let unscanned = 0;
     let stale = 0;
+    let deactivated = 0;
     for (const t of base) {
       const entry = targetSummary[String(t.id)];
       if (entry && (entry.critical > 0 || entry.high > 0)) attention++;
+      // (#273) A deactivated target is not "stale" or "never scanned" in
+      // the sense those tabs mean -- nobody needs to go scan it, that is
+      // the point. It still counts in them (the facts are true) but it has
+      // its own tab so "which repos did we switch off" is one click.
+      if (t.is_active === false) deactivated++;
       const at = scanSummary[String(t.id)]?.last_scan_at;
       if (!at) unscanned++;
-      else if ((now - new Date(at).getTime()) / 86_400_000 > 30) stale++;
+      else if ((now - parseServerTimestamp(at)) / 86_400_000 > 30) stale++;
     }
-    return { all: base.length, attention, unscanned, stale };
+    return { all: base.length, attention, unscanned, stale, deactivated };
   }, [targets, search, criticality, targetSummary, scanSummary, now]);
 
   const filtered = useMemo(() => {
@@ -283,10 +321,11 @@ export function TargetsList({
         const entry = targetSummary[String(t.id)];
         if (!entry || (entry.critical === 0 && entry.high === 0)) return false;
       }
+      if (quick === "deactivated" && t.is_active !== false) return false;
       if (quick === "unscanned" && scanSummary[String(t.id)]?.last_scan_at) return false;
       if (quick === "stale") {
         const at = scanSummary[String(t.id)]?.last_scan_at;
-        if (!at || (now - new Date(at).getTime()) / 86_400_000 <= 30) return false;
+        if (!at || (now - parseServerTimestamp(at)) / 86_400_000 <= 30) return false;
       }
       return true;
     });
@@ -299,7 +338,7 @@ export function TargetsList({
     const highOf = (t: Target) => targetSummary[String(t.id)]?.high ?? 0;
     const scannedAt = (t: Target) => {
       const at = scanSummary[String(t.id)]?.last_scan_at;
-      return at ? new Date(at).getTime() : 0;
+      return at ? parseServerTimestamp(at) : 0;
     };
 
     const byName = (a: Target, b: Target) => a.name.localeCompare(b.name);
@@ -757,7 +796,17 @@ export function TargetsList({
       {visible.length > 0 && (
       <div className="divide-y divide-border rounded-lg border border-border bg-card">
       {visible.map((t) => (
-          <div key={t.id} className="flex items-center gap-3 px-4 transition-colors hover:bg-secondary/40"
+          <div key={t.id}
+            className={cn(
+              "flex items-center gap-3 px-4 transition-colors hover:bg-secondary/40",
+              // (#273) A deactivated target must render visibly as
+              // deactivated, not just quietly stop scanning. The badge
+              // states it; the dimming is what makes it legible at a glance
+              // down a list of 35 rows, where a single small chip is easy to
+              // miss. Deliberately mild (not hidden, not struck through):
+              // the row is still real, still linkable and still counted.
+              t.is_active === false && "bg-secondary/20 opacity-70",
+            )}
             style={{ paddingTop: "var(--density-row-py)", paddingBottom: "var(--density-row-py)" }}
           >
             <input
@@ -772,6 +821,7 @@ export function TargetsList({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium text-foreground">{t.name}</span>
+                  <DeactivatedBadge target={t} />
                   <CriticalityChip label={t.label} />
                   <AiRepoBadge target={t} />
                   {t.pipeline_integrated && (
@@ -804,7 +854,17 @@ export function TargetsList({
                       running is the exact complaint behind #212: the row
                       stated the most stale thing it knew and said nothing
                       about the work happening right then. */}
-                  {activeScans[String(t.id)]?.length ? (
+                  {t.is_active === false ? (
+                    /* (#273) Not the freshness line. "never scanned" and
+                       "stale (30d+)" are both rendered in warning colour
+                       because they mean someone should go scan this; for a
+                       deactivated target that reading is wrong -- nobody
+                       needs to act, the scans stopped on purpose. Stating
+                       why avoids the row looking like a neglected repo. */
+                    <span className="text-muted-foreground" title="Scanning is off for this target">
+                      scanning off
+                    </span>
+                  ) : activeScans[String(t.id)]?.length ? (
                     <ScanProgress
                       phase="running"
                       tool={activeScans[String(t.id)]!.map((scan) => scan.tool).join(", ")}
@@ -838,6 +898,9 @@ export function TargetsList({
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">risk</div>
               </div>
             </Link>
+            {/* (#273) Outside the <Link>: buttons nested inside an anchor
+                are invalid markup and every click would also navigate. */}
+            <TargetRowActions targetId={t.id} targetName={t.name} isActive={t.is_active !== false} />
           </div>
       ))}
       </div>

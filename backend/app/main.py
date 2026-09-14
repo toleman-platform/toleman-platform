@@ -20,7 +20,7 @@ from app.models.models import User
 configure_logging(settings.log_level)
 
 logger = logging.getLogger(__name__)
-from app.api import auth, targets, findings, ingest, scans, dashboard, workspaces, github, ai, audit, security_audit, admin, admin_workspace_roles, discovery, github_app, config as config_api, tools, pr_guardrail, webhooks, search, policies, sbom, reports, groups, sla_rules, notification_preferences, api_scan, pipeline_templates, fp_rules, api_tokens, public_api, github_token
+from app.api import admin, admin_workspace_roles, ai, api_scan, api_tokens, audit, auth, config as config_api, dashboard, discovery, findings, fp_rules, github, github_app, github_token, groups, ingest, notification_preferences, pipeline_templates, policies, pr_guardrail, public_api, reports, sbom, scan_schedules, scans, scoring_weights, search, security_audit, sla_rules, targets, tools, webhooks, workspaces
 from app.api.auth import current_user, require_admin
 
 
@@ -108,6 +108,14 @@ app.include_router(workspaces.router, dependencies=login_required)
 app.include_router(targets.router, dependencies=login_required)
 app.include_router(groups.router, dependencies=login_required)
 app.include_router(sla_rules.router, dependencies=login_required)
+# (#306) Configurable scheduled scans. login_required rather than
+# admin_required: reads (is this target actually being scanned, and when
+# did it last run?) are for any workspace member; the writes gate
+# themselves at SECURITY_ENGINEER inside the handlers, same as sla_rules.
+app.include_router(scan_schedules.router, dependencies=login_required)
+# (#201) Reads are workspace-scoped for any member; writes are gated at
+# SECURITY_ENGINEER inside the handlers, same as sla_rules above.
+app.include_router(scoring_weights.router, dependencies=login_required)
 app.include_router(fp_rules.router, dependencies=login_required)
 app.include_router(findings.router, dependencies=login_required)
 app.include_router(scans.router, dependencies=login_required)

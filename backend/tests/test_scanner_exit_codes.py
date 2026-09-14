@@ -48,6 +48,12 @@ class TestExitCodeIsChecked:
         assert "exited 1" in str(ei.value)
 
     def test_the_failure_names_the_tool_and_the_cause(self, monkeypatch, tmp_path):
+        # tfsec only runs on a repo that actually holds Terraform
+        # (TOOL_EXTENSIONS applicability gate); without a .tf file it is
+        # skipped as ToolNotApplicable and never reaches the exit-code check
+        # this test is about. The subprocess is faked, so contents are
+        # irrelevant -- the file just has to exist.
+        (tmp_path / "main.tf").write_text('resource "null_resource" "x" {}')
         self._fake_proc(monkeypatch, 2, stderr="could not load rules from /etc/x")
         with pytest.raises(ToolExecutionError) as ei:
             runner.run_tool("tfsec", tmp_path)
@@ -62,9 +68,16 @@ class TestExitCodeIsChecked:
         out = runner.run_tool("semgrep", tmp_path)
         assert out == {"results": [{"x": 1}]}
 
-    def test_zero_exit_with_no_output_is_still_clean(self, monkeypatch, tmp_path):
+    def test_zero_exit_with_no_output_does_not_raise(self, monkeypatch, tmp_path):
         """The legitimate empty case must keep working; this fix must not
-        turn quiet successes into failures."""
+        turn quiet successes into failures.
+
+        (#229) The *return value* is still the empty default -- parsers
+        downstream expect a shape, not an exception. What changed is that
+        the run's ScanHealth now records that there was no report to read,
+        so an empty stdout can no longer clear existing findings. See
+        tests/test_scan_health.py::TestRunToolChecked.
+        """
         self._fake_proc(monkeypatch, 0, stdout="")
         assert runner.run_tool("trivy", tmp_path) == {}
 

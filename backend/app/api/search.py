@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, or_, select
 
 from app.api.deps import get_session
+from app.core import target_lifecycle
 from app.models.models import Finding, Target
 
 router = APIRouter(prefix="/api/search", tags=["search"])
@@ -31,8 +32,10 @@ def search(q: str = "", session: Session = Depends(get_session)):
         .limit(RESULT_LIMIT)
     ).all()
 
+    # (#273) Global search must not be the one place a deleted target is
+    # still reachable by name -- every link it renders would 404.
     targets = session.exec(
-        select(Target)
+        target_lifecycle.live_targets(select(Target))
         .where(or_(Target.name.ilike(like), Target.repo_url.ilike(like)))
         .limit(RESULT_LIMIT)
     ).all()

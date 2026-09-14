@@ -16,6 +16,7 @@ import { AlertBanner } from "@/components/ui/alert-banner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, History as HistoryIcon } from "lucide-react";
+import { serverDate } from "@/lib/format/date";
 
 // Split into two sub-pages (query-param tabs, same convention as
 // targets/[id]/target-tabs.tsx: tab state lives in the URL, not component
@@ -220,7 +221,7 @@ export function ApprovalQueue() {
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {DECISION_LABEL[f.ignore_status] || f.ignore_status} by {f.ignore_reviewed_by}
-                          {f.ignore_reviewed_at ? ` · ${new Date(f.ignore_reviewed_at).toLocaleString()}` : ""}
+                          {f.ignore_reviewed_at ? ` · ${serverDate(f.ignore_reviewed_at).toLocaleString()}` : ""}
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">

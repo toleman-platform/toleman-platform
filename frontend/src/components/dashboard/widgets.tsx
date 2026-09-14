@@ -506,8 +506,23 @@ function scoreComponentDetail(key: string, c: SecurityScore["components"][keyof 
       return `${(c as SecurityScore["components"]["findings"]).open_findings} open on default branch`;
     case "sla":
       return `${(c as SecurityScore["components"]["sla"]).in_violation} in violation`;
-    case "coverage":
-      return `${(c as SecurityScore["components"]["coverage"]).scanned_targets}/${(c as SecurityScore["components"]["coverage"]).total_targets} scanned`;
+    case "coverage": {
+      // (#273) `total_targets` is the *scannable* count: deactivated targets
+      // are excluded from both sides of the fraction server-side, because
+      // leaving them in the denominator makes the score decay daily for
+      // repos nobody is allowed to scan. That exclusion has to be legible
+      // HERE, next to the number, not only in the JSON -- an entirely
+      // deactivated scope otherwise renders "(0/0 scanned) 100/100", a
+      // confident full marks for an estate that scans nothing, which is
+      // exactly the confident-zero-for-unmeasured-data anti-pattern.
+      const cov = c as SecurityScore["components"]["coverage"];
+      const deactivated = cov.deactivated_targets ?? 0;
+      if (cov.total_targets === 0 && deactivated > 0) {
+        return `no scannable targets · all ${deactivated} deactivated`;
+      }
+      const excluded = deactivated > 0 ? ` · ${deactivated} deactivated, excluded` : "";
+      return `${cov.scanned_targets}/${cov.total_targets} scanned${excluded}`;
+    }
     case "fp_rate":
       return `${(c as SecurityScore["components"]["fp_rate"]).false_positives}/${(c as SecurityScore["components"]["fp_rate"]).total_findings} false positives`;
     default:
@@ -699,6 +714,23 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
                   </Link>
                 ) : null}
               </div>
+            )}
+            {/* (#273) The server's own wording, rendered rather than
+                restated, so the explanation for a suppressed coverage
+                number lives in exactly one place. Warning-toned when the
+                whole scope is deactivated: at that point the gauge reads a
+                flat 100 for an estate nothing scans, and a grey footnote is
+                not enough to carry that. Amber when some targets were
+                excluded is deliberate too -- it is a real gap in what this
+                score measures, not decoration. */}
+            {score.components.coverage.note && (
+              <p
+                className={`mt-1 text-[11px] ${
+                  score.components.coverage.total_targets === 0 ? "text-warning" : "text-muted-foreground"
+                }`}
+              >
+                Coverage: {score.components.coverage.note}.
+              </p>
             )}
           </div>
         </div>

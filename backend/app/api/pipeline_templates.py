@@ -20,7 +20,7 @@ from app.api.auth import accessible_workspace_ids, current_user, enforce_workspa
 from app.api.deps import get_session
 from app.core.pipeline_workflow import SUPPORTED_TOOLS
 from app.core.time import utcnow
-from app.models.models import PipelineWorkflowTemplate, User, WorkspaceRole
+from app.models.models import PipelineWorkflowTemplate, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/pipeline-templates", tags=["pipeline-templates"])
 
@@ -104,9 +104,23 @@ def create_template(
     user: User = Depends(current_user),
 ):
     # enforce_workspace_role raises 403 itself if the caller lacks DEVELOPER+
-    # on payload.workspace_id (or the workspace doesn't exist / isn't
-    # accessible), same bar as #66's single-target pipeline-integrate.
+    # on payload.workspace_id, same bar as #66's single-target
+    # pipeline-integrate.
+    #
+    # (#356) It does NOT establish that the workspace exists, which this
+    # comment used to claim. A global admin returns at the first line of
+    # enforce_workspace_role (app/api/auth.py) before _resolve_workspace_id
+    # is ever called, and a non-admin is rejected by a missing
+    # WorkspaceMembership rather than by a missing workspace. So a
+    # nonexistent workspace_id reached commit() against a real FK column,
+    # Postgres raised ForeignKeyViolation, and the unhandled IntegrityError
+    # escaped CORSMiddleware before a response existed; the browser reported
+    # a CORS error for what is really a bad id. See create_target in
+    # app/api/targets.py for the full path. Check explicitly, after the role
+    # check so the 404 can't be used to probe which workspace ids are real.
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
+    if not session.get(Workspace, payload.workspace_id):
+        raise HTTPException(status_code=404, detail="workspace not found")
     steps = _validate_steps(payload.steps)
     template = PipelineWorkflowTemplate(
         workspace_id=payload.workspace_id,

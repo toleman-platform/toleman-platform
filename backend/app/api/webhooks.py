@@ -55,6 +55,7 @@ from app.core.db import engine
 from app.core.github_app import resolve_config_for_installation
 from app.core.enforcement import resolve_enforcement_mode
 from app.core.pr_guardrail_executor import reply_to_pr, set_commit_status, submit_ignore_request
+from app.core import target_lifecycle
 from app.models.models import GitHubAppConfig, GitHubInstallation, PRGuardrailFinding, PRGuardrailScan, PRGuardrailStatus, Target
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,25 @@ def _verify_signature(
     return False
 
 
+def _target_for_repo(session: Session, repo_clone_url: str | None) -> Target | None:
+    """Resolve the registered Target for a webhook payload's repository.
+
+    (#273) Soft-deleted targets are excluded, which does two things at once.
+    A deleted repo stops triggering scans, comments and commit statuses --
+    GitHub keeps delivering events for it regardless of what we did in our
+    own database, so "deleted" has to be enforced on the receiving side.
+    And it lets the same repository be registered again as a fresh target
+    later: the old soft-deleted row still holds that repo_url, and an
+    unfiltered lookup would keep matching the dead one forever while the new
+    target silently never got a single webhook.
+    """
+    if not repo_clone_url:
+        return None
+    return session.exec(
+        target_lifecycle.live_targets(select(Target)).where(Target.repo_url == repo_clone_url)
+    ).first()
+
+
 def _handle_pull_request(session: Session, payload: dict) -> dict:
     action = payload.get("action")
     pr = payload.get("pull_request") or {}
@@ -134,7 +154,7 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
 
     repo_clone_url = payload.get("repository", {}).get("clone_url")
     pr_number = payload.get("number")
-    target = session.exec(select(Target).where(Target.repo_url == repo_clone_url)).first()
+    target = _target_for_repo(session, repo_clone_url)
     if not target:
         logger.info("webhook: no target registered for %s, ignoring", repo_clone_url)
         return {"ok": True, "skipped": "no matching target"}
@@ -144,6 +164,15 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
     # checked here too, before any of that gets created, so a disabled
     # target never gets a placeholder row or a "pending" commit status that
     # nothing will ever follow up to resolve.
+    # (#273) Checked before the placeholder row and the "pending" commit
+    # status below, for the same reason enforcement_mode="disabled" is: a
+    # deactivated target must not get a PRGuardrailScan row or a pending
+    # check on GitHub's PR list that nothing will ever resolve. The executor
+    # refuses too (defence in depth for the queued-task window), but by then
+    # both artefacts would already exist.
+    if not target_lifecycle.is_active(target):
+        return {"ok": True, "skipped": "target deactivated"}
+
     if resolve_enforcement_mode(session, target) == "disabled":
         return {"ok": True, "skipped": "enforcement_mode=disabled"}
 
@@ -210,9 +239,16 @@ def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
     *does* arrive reliably -- every other trigger in this file already
     depends on it."""
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = session.exec(select(Target).where(Target.repo_url == repo_clone_url)).first()
+    target = _target_for_repo(session, repo_clone_url)
     if not target:
         return {"ok": True, "skipped": "no matching target"}
+
+    # (#273) queue_full_scan_for_target_task would refuse this anyway (the
+    # guard is in queue_full_scan itself), but returning the reason here
+    # keeps the webhook response honest about why nothing was queued instead
+    # of reporting "queued: true" for work that will be dropped.
+    if not target_lifecycle.is_active(target):
+        return {"ok": True, "skipped": "target deactivated"}
 
     base_ref = (pr.get("base") or {}).get("ref")
     if base_ref != target.default_branch:
@@ -235,9 +271,14 @@ def _handle_push(session: Session, payload: dict) -> dict:
 
     ref = payload.get("ref", "")
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = session.exec(select(Target).where(Target.repo_url == repo_clone_url)).first()
+    target = _target_for_repo(session, repo_clone_url)
     if not target:
         return {"ok": True, "skipped": "no matching target"}
+
+    # (#273) Same as _handle_pr_merged above: report the real reason rather
+    # than claiming a scan was queued.
+    if not target_lifecycle.is_active(target):
+        return {"ok": True, "skipped": "target deactivated"}
 
     if ref != f"refs/heads/{target.default_branch}":
         # Pushes to any other branch already get scanned (if at all) via the
@@ -304,7 +345,7 @@ def _handle_issue_comment(session: Session, payload: dict) -> dict:
     # finding with that id exists somewhere in the whole platform.
     pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = session.exec(select(Target).where(Target.repo_url == repo_clone_url)).first()
+    target = _target_for_repo(session, repo_clone_url)
     if not pr_scan or not target or pr_scan.target_id != target.id or pr_scan.pr_number != issue.get("number"):
         return {"ok": True, "skipped": "finding does not belong to this PR"}
 

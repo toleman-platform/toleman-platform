@@ -14,6 +14,7 @@ from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
 from app.core.async_jobs import create_running_row
 from app.core.aibom import AiComponent, aibom_summary, build_aibom
 from app.core.csv_export import safe_csv_writer
+from app.core.downloads import attachment_disposition
 from app.core.github import repo_slug_from_url
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.github_token import resolve_github_token
@@ -21,6 +22,7 @@ from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components  # noqa: F401, re-exported, see note below
 from app.scanners.parsers import parse_sbom_upload
 from app.core.staleness import mark_stale_if_needed
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.models.models import AiBomComponent, SbomComponent, SbomRun, Target, User, WorkspaceRole
 from app.tasks.sbom_tasks import run_sbom_generation
@@ -44,7 +46,12 @@ MAX_SBOM_UPLOAD_BYTES = 25 * 1024 * 1024
 
 def _get_target(target_id: int, session: Session) -> Target:
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) Soft-deleted targets 404; deactivation is checked at the
+    # generation route only, so an existing SBOM/AIBOM stays readable and
+    # exportable for a deactivated target. Keeping the inventory of a repo
+    # you stopped scanning is often exactly why you deactivated rather than
+    # deleted it.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     return target
 
@@ -87,7 +94,7 @@ def _aggregate_org_components(session: Session) -> tuple[list[dict], dict, list[
     Mirrors the per-target GET's persisted-state-only pattern, just widened to
     every Target row (this app has no workspace-scoping on list_targets() yet,
     so 'org-wide' here means every Target in the DB, matching that)."""
-    targets = session.exec(select(Target)).all()
+    targets = session.exec(target_lifecycle.live_targets(select(Target))).all()
     targets_by_id = {t.id: t for t in targets}
 
     # Only the target's own default branch counts as "current" SBOM state,
@@ -199,6 +206,11 @@ def generate_sbom(
     get the same components/new_count payload this used to return
     synchronously."""
     target = _get_target(target_id, session)
+    # (#273) SBOM generation clones the repo and runs a tool over the
+    # checkout; same refusal as every other dispatch path.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
 
     run = create_running_row(
         session, SbomRun(target_id=target_id, branch=target.default_branch, status="running")
@@ -226,6 +238,15 @@ def malware_check(
     "osv-malware"). Returns a distinct "failed" status when OSV is
     unreachable, so a network outage is never reported as clean."""
     target = _get_target(target_id, session)
+    # (#273) This persists Critical `Finding` rows and fans out to Jira,
+    # SIEM and notifications (see check_and_ingest_malware ->
+    # ingest_malicious_packages). No clone and no subprocess, which is why
+    # it was missed in the first sweep -- but "does it execute a scanner"
+    # was the wrong test. The one that matters is "can this make a
+    # deactivated target acquire new findings", and this can.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     result = check_and_ingest_malware(session, target)
     return {**result, "target_id": target_id}
 
@@ -248,6 +269,12 @@ def import_github_sbom(
     was rejected); distinct from an empty import, which is a legitimate
     "repo has no dependencies" result and is reported as count 0."""
     target = _get_target(target_id, session)
+    # (#273) Writes the dependency inventory AND runs the OSV malware check
+    # over the freshly-merged components, so it is a finding-producing path
+    # for a repo whose scanning is switched off.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     slug = repo_slug_from_url(target.repo_url)
     token = resolve_github_token(session, target.workspace_id, slug)
     try:
@@ -296,6 +323,14 @@ async def upload_sbom(
     doubles that), so a large or concurrent upload could exhaust a worker.
     """
     target = _get_target(target_id, session)
+    # (#273) The exact analogue of POST /api/ingest/{id}: an outside party
+    # handing us scan-derived data for this target, which lands as
+    # persisted components and then as Critical malware findings via the
+    # best-effort check below. Refused before the body is even read, so a
+    # deactivated target can't be used to push 25MB through a worker either.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     content = await file.read(MAX_SBOM_UPLOAD_BYTES + 1)
     if len(content) > MAX_SBOM_UPLOAD_BYTES:
         raise HTTPException(
@@ -599,10 +634,16 @@ def export_aibom(target_id: int, session: Session = Depends(get_session)):
         branch=target.default_branch,
         timestamp=utcnow().isoformat() + "Z",
     )
+    # Target name and branch are both user-controlled and go into an HTTP
+    # header, which is latin-1: interpolating them raw let a name with a
+    # quote or semicolon steer the header, and made a non-ASCII repo name a
+    # hard 500 on encode. attachment_disposition sends a sanitised ASCII
+    # fallback plus the real UTF-8 name (RFC 6266). Same fix as #302 applied
+    # to the posture export; this file had five more instances of it.
     base = f"aibom-{target.name}-{target.default_branch}"
     return JSONResponse(
         content=document,
-        headers={"Content-Disposition": f'attachment; filename="{base}.cdx.json"'},
+        headers={"Content-Disposition": attachment_disposition(f"{base}.cdx.json")},
     )
 
 
@@ -624,31 +665,32 @@ def export_sbom(
         .order_by(SbomComponent.name)
     ).all()
 
+    # Header-safe in all four formats; see the note on the AIBOM export above.
     base = f"sbom-{target.name}-{target.default_branch}"
 
     if format == "spdx-json":
         document = _build_spdx_document(target, components)
         return JSONResponse(
             content=document,
-            headers={"Content-Disposition": f'attachment; filename="{base}.spdx.json"'},
+            headers={"Content-Disposition": attachment_disposition(f"{base}.spdx.json")},
         )
     if format == "csv":
         csv_text = _render_sbom_csv(target, components)
         return StreamingResponse(
             iter([csv_text]),
             media_type="text/csv",
-            headers={"Content-Disposition": f'attachment; filename="{base}.csv"'},
+            headers={"Content-Disposition": attachment_disposition(f"{base}.csv")},
         )
     if format == "pdf":
         pdf_bytes = _render_sbom_pdf(target, components)
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
-            headers={"Content-Disposition": f'attachment; filename="{base}.pdf"'},
+            headers={"Content-Disposition": attachment_disposition(f"{base}.pdf")},
         )
 
     document = _build_cyclonedx_document(target, components)
     return JSONResponse(
         content=document,
-        headers={"Content-Disposition": f'attachment; filename="{base}.json"'},
+        headers={"Content-Disposition": attachment_disposition(f"{base}.json")},
     )

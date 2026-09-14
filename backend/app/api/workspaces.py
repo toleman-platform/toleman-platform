@@ -180,14 +180,30 @@ def regenerate_workspace_key_by_id(
     return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
 
 
-@router.post("/bootstrap")
+@router.post("/bootstrap", deprecated=True)
 def bootstrap(
     org_name: str,
     workspace_name: str,
     session: Session = Depends(get_session),
     _admin: User = Depends(require_admin),
 ):
-    """Local/dev helper to create an Org + Workspace + API key without a full auth flow.
+    """DEV-ONLY curl helper. Use POST /api/workspaces instead.
+
+    Creates an Org + Workspace + API key from *query parameters*, so a
+    developer can get a usable deployment with one curl and no UI. That
+    shape (ids and names in the query string, find-or-create instead of a
+    409 on a name collision, no request body to validate) is why nothing in
+    frontend/src calls this and nothing should: it exists for a shell, not
+    for a client.
+
+    Until #356 this was the only supported way to create a workspace that
+    didn't depend on a GitHub App installation callback firing, which made
+    a curl against an undocumented admin route part of real onboarding
+    whenever the App flow couldn't complete (see #355). POST /api/workspaces
+    above is now the supported path and is what the Workspaces page calls;
+    this stays only so existing local scripts and dev docs keep working, and
+    is marked deprecated in the OpenAPI schema to say so. Behaviour is
+    deliberately unchanged.
 
     Creating a brand-new org/workspace (and its API key) is a platform-level
     action, not something scoped to any particular workspace, so this is

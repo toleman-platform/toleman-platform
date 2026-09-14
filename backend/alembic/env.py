@@ -89,7 +89,33 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            # One transaction per revision instead of one around the whole
+            # `upgrade head` run (#217). Required as soon as any revision
+            # uses `op.get_context().autocommit_block()`, which b1d4f7a09c62
+            # does for `CREATE INDEX CONCURRENTLY`: leaving the transaction
+            # is what autocommit_block is *for*, so under the default
+            # run-level transaction it commits everything applied so far and
+            # begins a fresh one. The result would be a run that is neither
+            # all-or-nothing nor honestly per-migration, with the boundary
+            # falling wherever that one revision happens to sit in the
+            # chain.
+            #
+            # Not a behavioural change for the existing chain. No revision
+            # before b1d4f7a09c62 uses autocommit_block (grep for it), each
+            # is self-contained DDL, and every one of them has already been
+            # applied on its own to a live database as it landed -- an
+            # incremental deploy upgrading from revision N-1 to N is exactly
+            # the per-migration case. What does change is the failure mode
+            # of a multi-revision catch-up run: revisions that succeeded
+            # before the failing one now stay applied, and `alembic_version`
+            # names the last one that worked, instead of the whole run
+            # rolling back. That is the more useful failure -- `init_db()`
+            # runs this on startup, so the alternative is re-running the
+            # same successful DDL on every restart until the broken
+            # revision is fixed.
+            transaction_per_migration=True,
         )
 
         with context.begin_transaction():

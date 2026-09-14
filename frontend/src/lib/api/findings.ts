@@ -6,19 +6,29 @@ import type {
   FindingEnrichment,
   CategoryFacetsQuery,
   CategoryFacet,
+  FindingFacets,
+  FindingFacetsQuery,
   FindingGroupsQuery,
   FindingGroupListResult,
   FindingSuggestFix,
   RaiseFixPrResult,
   SlaRule,
   SlaComplianceData,
+  ScoringWeights,
+  FindingScoreBreakdown,
 } from "@/types";
 import type { Nullable } from "@/std-lib";
 
 /**
- * Retrieves a paginated and filtered list of findings.
+ * Every filter GET /api/findings accepts, serialized in one place so the
+ * list, the grouped list, the category tabs and the facet counts (#270) can
+ * never drift on what a given filter means -- the backend shares one query
+ * builder (app/api/findings.py::_filtered_findings_query) for exactly that
+ * reason, and a count that disagrees with the list under it is worse than no
+ * count. Paging and sorting are deliberately not here: only a list has pages
+ * and an order.
  */
-export function findings(query: FindingsQuery = {}): Promise<FindingListResult> {
+function findingFilterParams(query: FindingFacetsQuery): URLSearchParams {
   const params = new URLSearchParams();
   appendMulti(params, "target_id", query.target_id);
   if (query.group_id) params.set("group_id", String(query.group_id));
@@ -28,10 +38,20 @@ export function findings(query: FindingsQuery = {}): Promise<FindingListResult> 
   if (query.category) params.set("category", query.category);
   appendMulti(params, "exclude_category", query.exclude_category);
   appendMulti(params, "fixability", query.fixability);
+  appendMulti(params, "environment", query.environment);
+  appendMulti(params, "owner", query.owner);
   if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
   if (query.search) params.set("search", query.search);
-  appendMulti(params, "rule_id", query.rule_id);
   if (query.new_since_days) params.set("new_since_days", String(query.new_since_days));
+  return params;
+}
+
+/**
+ * Retrieves a paginated and filtered list of findings.
+ */
+export function findings(query: FindingsQuery = {}): Promise<FindingListResult> {
+  const params = findingFilterParams(query);
+  appendMulti(params, "rule_id", query.rule_id);
   if (query.sort) params.set("sort", query.sort);
   if (query.page) params.set("page", String(query.page));
   if (query.page_size) params.set("page_size", String(query.page_size));
@@ -46,18 +66,7 @@ export function findings(query: FindingsQuery = {}): Promise<FindingListResult> 
  * which findings are in scope.
  */
 export function findingGroups(query: FindingGroupsQuery = {}): Promise<FindingGroupListResult> {
-  const params = new URLSearchParams();
-  appendMulti(params, "target_id", query.target_id);
-  if (query.group_id) params.set("group_id", String(query.group_id));
-  appendMulti(params, "state", query.state);
-  appendMulti(params, "severity", query.severity);
-  appendMulti(params, "tool", query.tool);
-  if (query.category) params.set("category", query.category);
-  appendMulti(params, "exclude_category", query.exclude_category);
-  appendMulti(params, "fixability", query.fixability);
-  if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
-  if (query.search) params.set("search", query.search);
-  if (query.new_since_days) params.set("new_since_days", String(query.new_since_days));
+  const params = findingFilterParams(query);
   if (query.sort) params.set("sort", query.sort);
   if (query.page) params.set("page", String(query.page));
   if (query.page_size) params.set("page_size", String(query.page_size));
@@ -89,6 +98,25 @@ export function bulkTriage(
 }
 
 /**
+ * (#270) Per-value counts for every filterable dimension in one call.
+ *
+ * One round-trip rather than seven: the filter bar needs all of them on
+ * every page load, and seven separate calls is both slower and a way for
+ * the numbers to disagree with each other mid-flight.
+ */
+export function findingFacets(query: FindingFacetsQuery = {}): Promise<FindingFacets> {
+  return jsonFetch<FindingFacets>(`/api/findings/facets?${findingFilterParams(query).toString()}`);
+}
+
+/*
+ * The plain option-list endpoints below are not what the Findings page reads
+ * on a good day -- findingFacets() returns these option sets *with* their
+ * counts in one call -- but they are what it degrades to when that call
+ * fails: controls without numbers beat no controls at all, and an active
+ * ?tool=semgrep you cannot see is an active filter you cannot clear.
+ */
+
+/**
  * Lists the distinct scanner tools currently represented in findings.
  */
 export function findingTools(): Promise<string[]> {
@@ -96,19 +124,30 @@ export function findingTools(): Promise<string[]> {
 }
 
 /**
+ * Distinct environments among targets the caller can see (#251). A backend
+ * facet that had no client until the report builder (#302) needed it; nulls
+ * are already dropped server-side, so an org that has labelled nothing yet
+ * gets [] and the filter is simply not offered.
+ */
+export function findingEnvironments(): Promise<string[]> {
+  return jsonFetch<string[]>("/api/findings/facets/environments");
+}
+
+/**
+ * Distinct owners among targets the caller can see (#251). Same contract as
+ * findingEnvironments above.
+ */
+export function findingOwners(): Promise<string[]> {
+  return jsonFetch<string[]>("/api/findings/facets/owners");
+}
+
+/**
  * Retrieves per-category finding counts for category tabs.
  */
 export function findingCategories(query: CategoryFacetsQuery = {}): Promise<CategoryFacet[]> {
-  const params = new URLSearchParams();
-  appendMulti(params, "target_id", query.target_id);
-  if (query.group_id) params.set("group_id", String(query.group_id));
-  appendMulti(params, "state", query.state);
-  appendMulti(params, "severity", query.severity);
-  appendMulti(params, "tool", query.tool);
-  appendMulti(params, "fixability", query.fixability);
-  if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
-  if (query.search) params.set("search", query.search);
-  return jsonFetch<CategoryFacet[]>(`/api/findings/facets/categories?${params.toString()}`);
+  return jsonFetch<CategoryFacet[]>(
+    `/api/findings/facets/categories?${findingFilterParams(query).toString()}`,
+  );
 }
 
 /**
@@ -188,4 +227,42 @@ export function deleteSlaRule(id: number): Promise<{ ok: boolean }> {
  */
 export function slaCompliance(): Promise<SlaComplianceData> {
   return jsonFetch<SlaComplianceData>("/api/dashboard/sla-compliance");
+}
+
+// (#201) Workspace-scoped risk-scoring weights. All three return the full
+// effective configuration, so the caller never has to merge a mutation's
+// result back into a list it is holding.
+
+/**
+ * Retrieves a workspace's effective risk-scoring weights.
+ */
+export function scoringWeights(workspaceId: number): Promise<ScoringWeights> {
+  return jsonFetch<ScoringWeights>(`/api/scoring-weights?workspace_id=${workspaceId}`);
+}
+
+/**
+ * Sets one signal's weight for a workspace.
+ */
+export function setScoringWeight(w: {
+  workspace_id: number;
+  signal: string;
+  weight: number;
+}): Promise<ScoringWeights> {
+  return jsonFetch<ScoringWeights>("/api/scoring-weights", { method: "PUT", body: JSON.stringify(w) });
+}
+
+/**
+ * Reverts one signal to the shipped baseline by dropping the override row.
+ */
+export function resetScoringWeight(ruleId: number): Promise<ScoringWeights> {
+  return jsonFetch<ScoringWeights>(`/api/scoring-weights/${ruleId}`, { method: "DELETE" });
+}
+
+/**
+ * Why this finding's priority score is the number it is (#201). Computed
+ * server-side from the workspace's weights and whatever enrichment is
+ * cached; never fetches from NVD, so this cannot hang on an upstream.
+ */
+export function findingScoreBreakdown(findingId: number): Promise<FindingScoreBreakdown> {
+  return jsonFetch<FindingScoreBreakdown>(`/api/findings/${findingId}/score-breakdown`);
 }

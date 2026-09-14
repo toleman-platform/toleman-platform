@@ -504,7 +504,7 @@ def test_run_snippet_scan_persists_parsed_findings(engine, monkeypatch):
         session.refresh(run)
         run_id = run.id
 
-    def fake_execute(tool, cmd, repo_path):
+    def fake_execute(tool, cmd, repo_path, run):
         if tool == "semgrep":
             return {"results": [{
                 "check_id": "python.lang.security.audit.dangerous-system-call",
@@ -545,7 +545,7 @@ def test_run_snippet_scan_marks_failed_on_exception(engine, monkeypatch):
         session.refresh(run)
         run_id = run.id
 
-    def boom(tool, cmd, repo_path):
+    def boom(tool, cmd, repo_path, run):
         raise RuntimeError("semgrep exploded")
 
     monkeypatch.setattr(runner, "_execute", boom)

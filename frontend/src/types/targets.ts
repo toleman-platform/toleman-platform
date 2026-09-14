@@ -26,8 +26,13 @@ export type EnforcementModeSource = "target" | "group" | "workspace" | "default"
 
 /**
  * Status of the automatic GitHub Dependency Graph import on target creation.
+ *
+ * "skipped" (#273): the import declined to run because the target is
+ * deactivated. Deliberately distinct from "unavailable" (GitHub refused to
+ * answer) and "failed" -- nothing is broken, the inventory is simply frozen
+ * at whatever was last imported.
  */
-export type DependencySyncStatus = "pending" | "ok" | "unavailable" | "failed";
+export type DependencySyncStatus = "pending" | "ok" | "unavailable" | "failed" | "skipped";
 
 /**
  * Code repository or project asset monitored by the platform.
@@ -59,6 +64,36 @@ export type Target = {
   dependency_sync_error: Nullable<string>;
   dependency_sync_at: Nullable<string>;
   dependency_component_count: Nullable<number>;
+  // (#273) Lifecycle. `is_active` is derived server-side from
+  // deactivated_at, the same server-owns-the-precedence shape as
+  // is_ai_repo_effective; never re-derive it here, and never render a
+  // target as active because the timestamp field happened to be missing
+  // from an older response. deactivated_at rides along for "deactivated
+  // 3 days ago" display.
+  //
+  // A deactivated target is still scanned by nothing: on-demand, CI push
+  // ingestion, PR Guardrail, active API scanning, the nightly baseline
+  // refresh and pipeline rollout all refuse it server-side. The UI hiding
+  // a button is a courtesy, not the enforcement.
+  is_active: boolean;
+  deactivated_at: Nullable<string>;
+  // Soft-deleted targets never appear in any list response, so this is
+  // effectively always null on anything the client receives; typed for
+  // completeness rather than as something to branch on.
+  deleted_at: Nullable<string>;
+};
+
+/**
+ * Result of DELETE /api/targets/{id} (#273).
+ *
+ * Soft delete: the response reports what was deliberately NOT destroyed, so
+ * the UI can say it out loud instead of leaving the operator to infer it.
+ */
+export type DeleteTargetResult = {
+  id: number;
+  deleted_at: string;
+  retained_findings: number;
+  retention: string;
 };
 
 /**

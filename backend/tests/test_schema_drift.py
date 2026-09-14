@@ -1,0 +1,339 @@
+"""Pins the model/schema facts behind issue #217.
+
+`alembic revision --autogenerate` diffs `SQLModel.metadata` against a live
+database, so anything the database has and metadata does not reads to it as a
+deletion. #217 is a generated migration that, among routine operations,
+wanted to `drop_table('discoveredendpoint')` and
+`drop_index('ix_aibomcomponent_upsert_key')`. `init_db()` runs
+`alembic upgrade head` on startup, so committing that unread would have run
+both on deploy.
+
+The two have opposite causes, and this file pins both so neither can drift
+back silently.
+
+`ix_aibomcomponent_upsert_key` is a real object that a migration in the chain
+created (3d006423f58b) and that `app.core.aibom` depends on: it is the upsert
+key. The model simply never declared it, so metadata could not account for it
+and autogenerate proposed removing it. That is a genuine bug in the model, and
+it is fixed -- `AiBomComponent.__table_args__` now declares the index. The
+tests below hold the model and the migration to the same definition.
+
+`discoveredendpoint` is the opposite: autogenerate is right about it. There is
+no `DiscoveredEndpoint` model anywhere in the tree, no migration in the chain
+ever created the table, and API Discovery's live data is in `apiendpoint`
+(`ApiEndpoint` in app/models/models.py, written by
+`app.core.discovery_ingestion.upsert_endpoints`, created by the initial
+revision 404553cc4bf6). The old table is an orphan from the pre-Alembic
+`SQLModel.metadata.create_all()` era. Nothing here is broken, so nothing here
+is fixed; what these tests pin is the shape of the answer, so that a future
+reader does not "repair" the drift by inventing a model for a dead table.
+Whether the orphan can actually be dropped is a live-data question -- do the
+deployed rows have counterparts in `apiendpoint`? -- and the audit for it is
+tracked in #438.
+
+Also pinned here: the coupling between b1d4f7a09c62's `autocommit_block()`
+and env.py's `transaction_per_migration=True`, which neither file can enforce
+about the other and which fails silently rather than loudly.
+
+No database, no engine, no migrations run: these assertions read
+`SQLModel.metadata`, the model classes themselves, and the parsed source of
+the revision files.
+"""
+import ast
+from pathlib import Path
+
+from sqlalchemy import Index
+from sqlmodel import SQLModel
+
+from app.models import models  # noqa: F401  -- registers tables on the metadata
+
+BACKEND = Path(__file__).resolve().parents[1]
+ENV_PY = BACKEND / "alembic" / "env.py"
+VERSIONS = BACKEND / "alembic" / "versions"
+AIBOM_MIGRATION = VERSIONS / "3d006423f58b_add_aibom_components_190.py"
+INDEX_BACKFILL = VERSIONS / "b1d4f7a09c62_add_finding_scan_query_indexes_217.py"
+
+
+def _table_operations() -> set[tuple[str, str, str]]:
+    """Every `op.<something>('<literal>', ...)` call across the migration
+    chain, as (revision filename, call name, first string argument).
+
+    Parsed rather than grepped on purpose. Several migration docstrings
+    quote `drop_table('discoveredendpoint')` verbatim while explaining why
+    they refused to ship it -- 506252dfc555's is the fullest account -- so a
+    substring search would flag the prose that documents the problem as if
+    it were the problem. Only real calls count.
+    """
+    found = set()
+    for migration in sorted(VERSIONS.glob("*.py")):
+        tree = ast.parse(migration.read_text(), filename=str(migration))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            first = node.args[0]
+            if name and isinstance(first, ast.Constant) and isinstance(first.value, str):
+                found.add((migration.name, name, first.value))
+    return found
+
+
+def _migration_create_index(path: Path, index_name: str) -> tuple[str, list[str], bool]:
+    """(table, columns, unique) for the `op.create_index` call in `path` that
+    creates `index_name`, read out of the parsed call rather than matched as
+    text, so the assertion is about what the migration does and not about
+    which words appear in it."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if (func.attr if isinstance(func, ast.Attribute) else None) != "create_index":
+            continue
+        if len(node.args) < 3:
+            continue
+        name, table, columns = node.args[0], node.args[1], node.args[2]
+        if not (isinstance(name, ast.Constant) and name.value == index_name):
+            continue
+
+        unique = False
+        for keyword in node.keywords:
+            if keyword.arg == "unique" and isinstance(keyword.value, ast.Constant):
+                unique = bool(keyword.value.value)
+        return (
+            table.value,
+            [element.value for element in columns.elts],
+            unique,
+        )
+
+    raise AssertionError(f"{path.name} has no op.create_index call for {index_name}")
+
+
+def _calls_autocommit_block(path: Path) -> bool:
+    """True when `path` actually calls `.autocommit_block()`.
+
+    Parsed, not matched: b1d4f7a09c62's own docstring explains the block at
+    length, so a substring search is satisfied by the prose describing the
+    thing rather than by the thing.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "autocommit_block"
+        for node in ast.walk(tree)
+    )
+
+
+def _configure_kwargs_in(path: Path, function_name: str, keyword: str) -> list:
+    """Values passed as `keyword` to `context.configure(...)` inside
+    `function_name`.
+
+    Scoped to one function because env.py configures twice, once per
+    migration mode, and only the online path is the one `init_db()` drives.
+    A comment mentioning the keyword does not count.
+    """
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name == function_name):
+            continue
+        found = []
+        for inner in ast.walk(node):
+            if not (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Attribute)
+                and inner.func.attr == "configure"
+            ):
+                continue
+            for kw in inner.keywords:
+                if kw.arg == keyword and isinstance(kw.value, ast.Constant):
+                    found.append(kw.value.value)
+        return found
+    raise AssertionError(f"{path.name} has no function named {function_name}")
+
+
+def _declared_in_table_args(model, index_name) -> Index:
+    """The `Index` the model itself declares under `__table_args__`.
+
+    Deliberately not `Table.indexes`: an index reaches the table from several
+    directions (a `Field(index=True)`, this declaration, a stray import) and
+    what is being asserted here is specifically that *the model source
+    declares it*, because that is the thing whose absence caused #217.
+    """
+    declared = getattr(model, "__table_args__", ())
+    for arg in declared:
+        if isinstance(arg, Index) and arg.name == index_name:
+            return arg
+    raise AssertionError(
+        f"{model.__name__}.__table_args__ does not declare an Index named "
+        f"{index_name}; found {[getattr(a, 'name', a) for a in declared]}"
+    )
+
+
+def _index(table_name: str, index_name: str):
+    table = SQLModel.metadata.tables[table_name]
+    for index in table.indexes:
+        if index.name == index_name:
+            return index
+    raise AssertionError(
+        f"{table_name} has no index named {index_name}; "
+        f"found {sorted(i.name for i in table.indexes)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# aibomcomponent -- the index autogenerate wanted to drop, and shouldn't have.
+# ---------------------------------------------------------------------------
+
+
+def test_aibomcomponent_is_in_the_metadata():
+    assert "aibomcomponent" in SQLModel.metadata.tables
+
+
+def test_aibomcomponent_upsert_index_is_declared_on_the_model():
+    """The drop #217 caught. 3d006423f58b creates this index and
+    `app.core.aibom.upsert_aibom_components` keys on exactly these columns, so
+    it has to be in metadata too; an index that exists only in the database
+    is an index Alembic will offer to delete.
+
+    Asserted from both directions: the model source declares it
+    (`__table_args__`), and it reached `SQLModel.metadata`, which is the
+    thing Alembic actually diffs. The first without the second would be a
+    declaration that never took effect.
+    """
+    declared = _declared_in_table_args(models.AiBomComponent, "ix_aibomcomponent_upsert_key")
+    in_metadata = _index("aibomcomponent", "ix_aibomcomponent_upsert_key")
+    assert declared is in_metadata
+
+    assert declared.unique is True
+    # Order matters to Alembic's comparison as much as to the index itself.
+    assert [c.name for c in declared.columns] == ["target_id", "branch", "name", "component_type"]
+
+
+def test_aibomcomponent_target_id_index_is_declared_on_the_model():
+    assert _index("aibomcomponent", "ix_aibomcomponent_target_id").unique is not True
+
+
+def test_aibomcomponent_model_and_migration_agree_on_the_upsert_index():
+    """A model declaration that has quietly drifted from the migration that
+    built the index is the same failure wearing a different hat: metadata
+    would describe one index, the database would hold another, and
+    autogenerate would propose reconciling them by dropping what is there.
+
+    So both sides are read from what they actually say -- the model's
+    `__table_args__`, and the migration's parsed `op.create_index` call --
+    and compared. Comparing the model against `Table.indexes`, or the
+    migration against its own text, would let a mismatch through.
+    """
+    declared = _declared_in_table_args(models.AiBomComponent, "ix_aibomcomponent_upsert_key")
+    table, columns, unique = _migration_create_index(
+        AIBOM_MIGRATION, "ix_aibomcomponent_upsert_key"
+    )
+
+    assert table == "aibomcomponent" == models.AiBomComponent.__table__.name
+    assert declared.unique is True and unique is True
+    # Column order is part of the index's identity, to Postgres and to
+    # Alembic's comparison alike.
+    assert [c.name for c in declared.columns] == columns
+
+
+# ---------------------------------------------------------------------------
+# discoveredendpoint -- an orphan table, not a model that went missing.
+# ---------------------------------------------------------------------------
+
+
+def test_apiendpoint_is_the_live_api_discovery_table():
+    """`ApiEndpoint` is what API Discovery reads and writes, and
+    404553cc4bf6 creates `apiendpoint` with this index. This is the table the
+    feature actually uses -- the reason `discoveredendpoint` is dead weight
+    rather than something to restore."""
+    assert "apiendpoint" in SQLModel.metadata.tables
+    _index("apiendpoint", "ix_apiendpoint_target_id")
+
+
+def test_discoveredendpoint_has_no_model_and_no_migration():
+    """Autogenerate is *correct* that this table corresponds to nothing. It
+    is an orphan left in deployed databases by the pre-Alembic
+    `SQLModel.metadata.create_all()` era, superseded by `apiendpoint`.
+
+    The failure mode this guards against is someone reading a generated
+    `drop_table('discoveredendpoint')`, assuming Alembic is confused about a
+    rename, and "fixing" it by adding a model or a `__tablename__` override
+    for a table no code path touches. That would resurrect a dead schema and
+    make the real question -- whether the deployed rows were ever carried
+    over into `apiendpoint` -- harder to ask, not easier.
+    """
+    assert "discoveredendpoint" not in SQLModel.metadata.tables
+
+    creators = [
+        revision
+        for revision, call, table in _table_operations()
+        if call == "create_table" and table == "discoveredendpoint"
+    ]
+    assert creators == [], f"a migration now creates discoveredendpoint: {creators}"
+
+
+def test_no_migration_drops_discoveredendpoint():
+    """Dropping it may well be the right end state -- it is superseded and
+    unreferenced -- but not before someone has counted the rows in a real
+    deployment and checked them against `apiendpoint`. Until that audit has
+    run, a drop must not be in the chain: `init_db()` runs
+    `alembic upgrade head` on startup, so it would execute itself on the
+    next deploy rather than at a moment anyone had chosen."""
+    droppers = [
+        revision
+        for revision, call, table in _table_operations()
+        if call == "drop_table" and table == "discoveredendpoint"
+    ]
+    assert droppers == [], f"a migration now drops discoveredendpoint: {droppers}"
+
+
+# ---------------------------------------------------------------------------
+# finding / scan -- the indexes b1d4f7a09c62 backfills onto drifted databases.
+# ---------------------------------------------------------------------------
+
+
+def test_finding_and_scan_query_indexes_are_declared():
+    """These are the columns the codebase filters by constantly. The models
+    declare them and 404553cc4bf6 creates them; b1d4f7a09c62 backfills them
+    onto databases that predate the migration chain. If a name here stops
+    matching, that backfill quietly creates a second index under a different
+    name instead of finding the existing one."""
+    for name in (
+        "ix_finding_target_id",
+        "ix_finding_branch",
+        "ix_finding_priority_score",
+        "ix_finding_state",
+    ):
+        _index("finding", name)
+
+    _index("scan", "ix_scan_target_id")
+
+
+def test_autocommit_block_is_paired_with_transaction_per_migration():
+    """A coupling that is invisible from either file on its own.
+
+    b1d4f7a09c62 uses `op.get_context().autocommit_block()` to run
+    `CREATE INDEX CONCURRENTLY`, which cannot execute inside a transaction.
+    Leaving the transaction is exactly what the block does -- so unless
+    env.py configures `transaction_per_migration=True`, that block commits
+    the run-level transaction and every revision applied before it in the
+    same `alembic upgrade head` call goes with it.
+
+    Nothing fails loudly if the pairing is broken; the run just silently
+    stops being all-or-nothing. Hence this test. If a future change drops
+    the autocommit_block, drop this too.
+
+    Both halves are read from the parsed source. The migration's docstring
+    discusses `autocommit_block()` and `transaction_per_migration=True` at
+    length, and env.py's comment does the same, so substring matching here
+    would pass on the prose alone -- the exact failure this file's own
+    docstring warns about.
+    """
+    assert _calls_autocommit_block(INDEX_BACKFILL), (
+        "b1d4f7a09c62 no longer calls autocommit_block; re-read "
+        "test_autocommit_block_is_paired_with_transaction_per_migration"
+    )
+    assert _configure_kwargs_in(
+        ENV_PY, "run_migrations_online", "transaction_per_migration"
+    ) == [True]

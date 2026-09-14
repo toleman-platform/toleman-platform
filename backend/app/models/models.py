@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, Index, JSON, UniqueConstraint, text
 from sqlmodel import SQLModel, Field
 
 from app.core.time import utcnow
@@ -74,6 +74,19 @@ class AuthEventType(str, Enum):
     ROLE_CHANGED = "role_changed"
     WORKSPACE_ROLE_CHANGED = "workspace_role_changed"
     WORKSPACE_ROLE_REMOVED = "workspace_role_removed"
+    # (#273) Target lifecycle. These aren't access-control events like the
+    # six above, but they belong in the same trail for the same reason:
+    # they're the destructive platform actions whose *absence* from a log
+    # would be the problem. "Who stopped scanning this repo, and when" and
+    # "who deleted the record of these findings" are exactly the questions a
+    # security tool has to be able to answer about itself, and AuthAuditLog
+    # is this codebase's only real audit *write* path (log_auth_event); the
+    # findings feed in app/api/audit.py is derived from FindingStateLog/Scan
+    # rows rather than written to directly, so there is nothing there to
+    # record "a target stopped existing" against.
+    TARGET_DEACTIVATED = "target_deactivated"
+    TARGET_REACTIVATED = "target_reactivated"
+    TARGET_DELETED = "target_deleted"
 
 
 class AuthAuditLog(SQLModel, table=True):
@@ -233,7 +246,11 @@ class Target(SQLModel, table=True):
     # private repo with no token, 403/404); it is NOT an empty inventory,
     # and must never render as clean. "ok" with a count of 0 is the only
     # thing that means "GitHub says this repo has no dependencies".
-    dependency_sync_status: Optional[str] = None   # pending / ok / unavailable / failed
+    # "skipped" (#273) is the import declining to run because the target is
+    # deactivated: not a failure, and distinct from "unavailable" (GitHub
+    # refused to answer) -- nothing here needs fixing, the inventory is just
+    # frozen at whatever was last imported.
+    dependency_sync_status: Optional[str] = None   # pending / ok / unavailable / failed / skipped
     dependency_sync_error: Optional[str] = None
     dependency_sync_at: Optional[datetime] = None
     dependency_component_count: Optional[int] = None
@@ -270,6 +287,37 @@ class Target(SQLModel, table=True):
     client_cert_ciphertext: str = ""
     client_key_ciphertext: str = ""
     clone_proxy_url: str = ""
+
+    # (#273) Lifecycle. Until this, a registered target was permanent: a
+    # decommissioned repo, a typo'd registration and a test target created
+    # while exploring the product all accumulated forever, and there was no
+    # delete endpoint at all (only DELETE /{id}/groups/{group_id}, which
+    # un-tags a target rather than removing it).
+    #
+    # Two *timestamps* rather than an is_active/is_deleted boolean pair
+    # beside them: a boolean plus a "when" column is two fields encoding one
+    # fact, and they drift the first time one write path forgets the other.
+    # NULL means "not in that state", and the column simultaneously answers
+    # when it entered it, which is what the audit trail actually needs.
+    # Callers should read these through app.core.target_lifecycle rather
+    # than testing the columns ad hoc -- there are a dozen scan-dispatch
+    # paths and roughly as many list/aggregate queries that have to agree
+    # on the same two predicates.
+    #
+    # deactivated_at: scanning stops (on-demand, CI push, PR guardrail,
+    # active API scan, scheduled baseline refresh, pipeline rollout), but
+    # the target stays visible, filterable and fully readable, and its
+    # findings keep counting. Reversible.
+    deactivated_at: Optional[datetime] = None
+    # deleted_at: soft delete. The target disappears from every list, every
+    # dashboard/score/report aggregate and every scan dispatch path, but no
+    # row is destroyed -- not the Target, not its Findings, Scans or
+    # PRGuardrailScans. This is a security tool: "someone deleted the record
+    # of a finding" is itself a fact that has to remain answerable, so the
+    # default cannot be a cascade that makes the question unanswerable. A
+    # hard delete stays available as a deliberate follow-up product call;
+    # it is not the thing a Delete button should do by default.
+    deleted_at: Optional[datetime] = None
 
 
 class Group(SQLModel, table=True):
@@ -335,6 +383,24 @@ class Scan(SQLModel, table=True):
     # can surface *why* a scan failed instead of leaving the frontend with
     # only a bare "failed" status.
     error: str = ""
+    # (#229) Whether this run could be trusted to have checked what it
+    # claims: "healthy", "suspect", or "unknown". Orthogonal to `status`,
+    # which only says whether the run finished -- a scan can complete, exit
+    # 0 and emit valid JSON while having read a half-written vulnerability
+    # database, which is exactly how a repo with five live CVEs came back
+    # clean and had all five auto-mitigated.
+    #
+    # "unknown" is the default because it is the truth for every row written
+    # before this existed and for every ingestion path that offers no
+    # evidence (the CI/CD push endpoint). It is deliberately not folded into
+    # either of the others: "healthy" would assert a check nobody made, and
+    # "suspect" would put a warning on a year of legitimate history until
+    # users stopped reading warnings.
+    health: str = "unknown"
+    # Why, in a sentence a user can act on, when health is not "healthy" --
+    # including what was done about it (existing findings left open rather
+    # than mitigated). Empty otherwise.
+    health_note: str = ""
 
 
 class SnippetScanRun(SQLModel, table=True):
@@ -503,6 +569,28 @@ class CveEnrichment(SQLModel, table=True):
     cwe_ids: Optional[str] = None  # JSON-encoded list[str], e.g. '["CWE-444"]'
     nvd_references: Optional[str] = None  # JSON-encoded list[str] of URLs
     nvd_found: bool = Field(default=False)
+
+    # (#201) The CVSS vector above, decomposed into the four exploitability
+    # metrics the risk-scoring engine consumes; see app/core/cvss.py for the
+    # parser and app/core/scoring.py for the signal slot they feed.
+    #
+    # A denormalisation of `cvss_vector`, not an independent source of
+    # truth: parse_cvss_vector() is authoritative, these columns are what it
+    # produced, written when the row is fetched and backfilled on read for
+    # rows that predate this (see app/core/cve_enrichment.py). Persisted
+    # rather than parsed per request so the decomposition is visible in the
+    # API and queryable -- "show me everything network-reachable with no
+    # privileges required" is a filter, not a computation.
+    #
+    # NULL everywhere means "not established", which is NOT the same as a
+    # benign value and must never be scored as one. That is why there is no
+    # "unknown" sentinel string: a column that is either a real CVSS value or
+    # NULL cannot accidentally be compared as if unknown were a metric value.
+    cvss_version: Optional[str] = None              # "3.1", "4.0", "2.0", ...
+    cvss_attack_vector: Optional[str] = None        # network / adjacent / local / physical
+    cvss_attack_complexity: Optional[str] = None    # low / medium / high
+    cvss_privileges_required: Optional[str] = None  # none / low / high
+    cvss_user_interaction: Optional[str] = None     # none / passive / required / active
 
     # OSV.dev (https://osv.dev/docs); queried directly by CVE ID via
     # GET /v1/vulns/{cve_id}, which resolves CVE as an alias without needing
@@ -795,6 +883,31 @@ class AiBomComponent(SQLModel, table=True):
     Populated during the existing SBOM generation run, which already has a
     checkout (app/tasks/sbom_tasks.py), so no extra clone.
     """
+
+    # This index is the upsert key app.core.aibom.upsert_aibom_components keys
+    # on: a model is identified by target + branch + name + type. Version is
+    # deliberately NOT part of it -- an unpinned reference that later gains a
+    # revision is the same dependency, now pinned, not a new one.
+    #
+    # It is declared here, and not only in the migration that created it
+    # (alembic/versions/3d006423f58b_add_aibom_components_190.py), because a
+    # unique index that exists in the database but not in the model metadata
+    # is invisible to Alembic's comparison: `--autogenerate` sees an index in
+    # the database that nothing in metadata accounts for and emits
+    # `op.drop_index('ix_aibomcomponent_upsert_key')`. That was one of the
+    # unrelated operations #217 found sitting in generated migrations. Keep
+    # this declaration in step with the migration; the guard for it is
+    # tests/test_schema_drift.py.
+    __table_args__ = (
+        Index(
+            "ix_aibomcomponent_upsert_key",
+            "target_id",
+            "branch",
+            "name",
+            "component_type",
+            unique=True,
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     target_id: int = Field(foreign_key="target.id", index=True)
@@ -1107,6 +1220,189 @@ class SlaRule(SQLModel, table=True):
     severity: Severity
     days_to_fix: int
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class ScanScheduleType(str, Enum):
+    """Which kind of scan a ScanSchedule row drives (issue #306).
+
+    Deliberately NOT a tool name. A schedule says "keep this target's
+    posture fresh", not "run semgrep"; which tools that actually means is
+    already a per-workspace decision (`WorkspaceToolConfig`/#75, resolved by
+    `app.core.tool_usage.tools_for_surface`). Encoding tool names here would
+    give an operator two places to turn the same scanner off and no rule for
+    which one wins.
+    """
+    # Every on_demand_scan-enabled SAST/SCA tool against the default branch,
+    # dispatched via app.tasks.scan_tasks.queue_full_scan (the same path the
+    # "Scan now" button and the GitHub App import already use).
+    FULL_SCAN = "full_scan"
+    # Active API scanning (nuclei, #72) against the endpoints already
+    # discovered for this target, dispatched via
+    # app.tasks.api_scan_tasks.queue_api_scan. Only ever reaches a host the
+    # target's owner explicitly declared in Target.api_base_url.
+    API_SCAN = "api_scan"
+
+
+class ScanSchedule(SQLModel, table=True):
+    """A configurable scan cadence (issue #306), stored as data instead of
+    the two hardcoded ``timedelta(hours=24)`` entries that used to live in
+    ``celery_app.conf.beat_schedule``.
+
+    Two scopes, following the same NULL-means-inherit convention SlaRule
+    (#70) uses for ``group_id`` and Workspace/Group/Target
+    ``enforcement_mode`` (#62) use for their override columns:
+
+      * ``target_id`` NULL  -> the workspace default for this scan type,
+        applied to every target in the workspace that has no row of its own.
+      * ``target_id`` set    -> this one target's override; it stops being
+        covered by the workspace-default row entirely.
+
+    The two *value* columns inherit independently and at field level, so a
+    target can say "disabled" without also having to pin an interval, or
+    "every 6 hours" while inheriting enabled-ness:
+
+      * ``enabled`` NULL         -> inherit (workspace default, then the
+        shipped default in app.core.scan_schedules.SHIPPED_DEFAULTS).
+      * ``interval_hours`` NULL  -> same.
+
+    ``last_run_at``/``next_run_at`` are what make the beat dispatcher safe
+    across a restart, and they are deliberately two columns rather than one
+    derived value:
+
+      * ``next_run_at`` is the due-ness clock. It lives in the database, so
+        restarting Beat cannot re-arm a schedule that already fired (the old
+        hardcoded 24h entry had the opposite problem: Beat records a fresh
+        interval schedule's *creation* time as its last run, so a deploy
+        every 12h meant the 24h entry never fired at all).
+      * ``last_run_at`` is the honesty column. NULL means "this schedule has
+        never actually fired", which is a real state a fresh install spends
+        its first interval in, and the UI must say so rather than rendering
+        an empty cell that reads like "nothing to see here". It is never
+        seeded at creation time for exactly that reason.
+
+    ``last_dispatched_count`` keeps the same distinction one level down: a
+    schedule that fired and dispatched zero scans (every covered target was
+    unconfigured for active API scanning, say) is not the same as one that
+    never fired, and neither is the same as one that dispatched five.
+    """
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "target_id", "scan_type", name="uq_scan_schedule_workspace_target_type"
+        ),
+        # The constraint above cannot police the workspace-default rows,
+        # because Postgres treats NULL as distinct for uniqueness: two rows
+        # with target_id NULL, the same workspace and the same scan_type do
+        # not collide under it. That is not a cosmetic gap here. Both rows
+        # would pass due_schedules, both would cover every target in the
+        # workspace, and every target would be scanned twice per cycle
+        # forever -- while every read path (which takes .first()) kept
+        # showing exactly one healthy schedule, so nothing would ever
+        # surface it.
+        #
+        # SlaRule documents the same NULL gap and answers it with a
+        # lookup-then-write API guard. That is not enough for this table:
+        # the row that matters is created by ensure_workspace_default_rows
+        # running unattended every few minutes on every worker, where a
+        # lookup-then-insert is a real check-then-act race rather than a
+        # theoretical one. So it is enforced in the schema instead, as a
+        # partial unique index. Both dialects are spelled out because tests
+        # build this table from the model metadata on SQLite while
+        # deployments get it from the Alembic migration on Postgres, and an
+        # invariant that only exists in production is one nothing catches.
+        Index(
+            "uq_scan_schedule_workspace_default",
+            "workspace_id",
+            "scan_type",
+            unique=True,
+            postgresql_where=text("target_id IS NULL"),
+            sqlite_where=text("target_id IS NULL"),
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    # NULL = the workspace-wide default for this scan type; kept unique by
+    # the partial index above, not by the UniqueConstraint.
+    target_id: Optional[int] = Field(default=None, foreign_key="target.id", index=True)
+    scan_type: ScanScheduleType = Field(index=True)
+    interval_hours: Optional[int] = None
+    enabled: Optional[bool] = None
+    # NULL = never fired. See the class docstring; this is load-bearing for
+    # the UI, not just bookkeeping.
+    last_run_at: Optional[datetime] = None
+    last_dispatched_count: Optional[int] = None
+    # NULL would mean "due on the next dispatcher tick". In practice every
+    # write path sets this explicitly (creation and any enable/interval
+    # change set it to now + the effective interval, so switching a schedule
+    # on never triggers an immediate fan-out across every target); the
+    # nullable column is the safe reading for a row written by something
+    # that forgot to.
+    next_run_at: Optional[datetime] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class ScoringSignal(str, Enum):
+    """The fixed signal slots the risk-prioritisation engine scores on
+    (#201).
+
+    Deliberately a closed enum rather than a rules DSL. The issue asks for
+    "configurable weights with shipped baselines", and #69's widget catalog
+    settled the same argument the same way: a concrete set of things the
+    platform actually knows how to compute, each of which can be turned up
+    or down, beats an expression language that can express anything and
+    explain nothing. Every slot here is a signal this codebase already has
+    real data for; adding one means writing the code that derives it, which
+    is exactly the gate that keeps the breakdown honest.
+
+    What is deliberately NOT here: first-party reachability. That is phase 3
+    of #201 and depends on #183, an unresolved design spike. Shipping an
+    inert `reachability` slot would advertise a signal nothing computes, and
+    a weight that does nothing is worse than an absent one -- someone would
+    set it and believe their scores accounted for reachability.
+    """
+
+    SEVERITY = "severity"                            # base tool severity (1-5)
+    CVSS_EXPLOITABILITY = "cvss_exploitability"      # decomposed AV/AC/PR/UI (CVE-backed findings)
+    EPSS = "epss"                                    # predicted 30-day exploit probability
+    KEV = "kev"                                      # CISA Known Exploited Vulnerabilities
+    INTERNET_EXPOSURE = "internet_exposure"          # Target.label / Target.environment
+    BUSINESS_CRITICALITY = "business_criticality"    # Target.criticality_weight + #251 metadata
+    FIXABILITY = "fixability"                        # #246: can this be closed today
+
+
+class ScoringWeight(SQLModel, table=True):
+    """A workspace-scoped weight for one scoring signal slot (#201).
+
+    Same shape as SlaRule/PolicyRule: workspace-scoped rows, one per
+    (workspace, signal), created only when someone actually overrides
+    something. Absence of a row means "use the shipped baseline" -- the same
+    "None = inherit" philosophy as WorkspaceToolConfig (#75) and
+    Workspace/Group/Target.enforcement_mode (#62), rather than requiring
+    every workspace to enumerate every signal before any of them apply. The
+    practical consequence is the one the issue asks for: an install that
+    configures nothing scores exactly as it did before this table existed.
+    See app.core.scoring.BASELINE_WEIGHTS for those defaults and why the
+    three new signals baseline at 0.0.
+
+    `weight` is a multiplier on that signal's contribution, not a point
+    value; 1.0 is the shipped baseline behaviour for a signal that ships on,
+    0.0 switches the signal off entirely. Clamped to >= 0 at both the API
+    boundary and in the scoring engine, which is what structurally
+    guarantees the issue's hard rule: no signal can ever *subtract* from a
+    priority, so an unknown or absent signal can never lower one either.
+    """
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "signal", name="uq_scoring_weight_workspace_signal"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    workspace_id: int = Field(foreign_key="workspace.id", index=True)
+    signal: ScoringSignal = Field(index=True)
+    weight: float
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class WorkspaceToolConfig(SQLModel, table=True):

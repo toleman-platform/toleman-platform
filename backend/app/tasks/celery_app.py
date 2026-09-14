@@ -27,6 +27,7 @@ celery_app = Celery(
         "app.tasks.tool_install_tasks",
         "app.tasks.github_sync_tasks",
         "app.tasks.snippet_scan_tasks",
+        "app.tasks.schedule_tasks",
     ],
 )
 celery_app.conf.task_routes = {
@@ -67,6 +68,14 @@ celery_app.conf.task_routes = {
     # real subprocess (semgrep/gitleaks) invocation against a temp dir,
     # same class of off-request-thread work as scan_tasks/api_scan_tasks.
     "app.tasks.snippet_scan_tasks.*": {"queue": "scans"},
+    # schedule_tasks (#306): the beat dispatcher itself. It does almost no
+    # work of its own (one indexed SELECT, then .delay() per due schedule),
+    # but it goes to the same queue as everything else for the reason spelled
+    # out under tool_install_tasks above: an unrouted task lands on the
+    # default "celery" queue that no worker in this deployment consumes, and
+    # the symptom would be "scheduled scans silently stopped happening" with
+    # nothing failing anywhere.
+    "app.tasks.schedule_tasks.*": {"queue": "scans"},
 }
 
 # task_acks_late + reject_on_worker_lost: if a worker dies mid-scan (OOM, pod
@@ -77,18 +86,40 @@ celery_app.conf.task_routes = {
 celery_app.conf.task_acks_late = True
 celery_app.conf.task_reject_on_worker_lost = True
 
-# Refreshes every target's default-branch baseline daily (app.tasks.scan_tasks
-# .run_scheduled_full_scans) so PR Guardrail always has something real to diff
-# against (GH-07) instead of relying on someone having clicked Scan manually,
-# and so posture pages don't quietly go stale between manual runs. Requires
-# `celery -A app.tasks.celery_app beat` (or `worker -B`, see docker-compose.yml's
-# celery-worker command) actually running somewhere; a worker with no beat
-# process never fires entries in this schedule, it just sits registered and
-# unused.
+# (#306) How often the dispatcher asks "is any schedule due?", NOT how often
+# scans run. Cadence is per-workspace/per-target data now (ScanSchedule rows,
+# resolved by app.core.scan_schedules), so this only sets the resolution at
+# which a schedule can come due -- and therefore how quickly a cadence change
+# someone makes in the UI takes effect, rather than waiting out the interval
+# that was in force when the current one started. Minutes, because an hour
+# (the minimum configurable interval) has to be expressible without being
+# rounded to something that isn't what the operator typed; not seconds,
+# because each tick is a database round trip that runs forever.
+SCHEDULE_DISPATCH_INTERVAL = timedelta(minutes=5)
+
+# Keeps every target's default-branch baseline fresh so PR Guardrail always
+# has something real to diff against (GH-07) instead of relying on someone
+# having clicked Scan manually, and so posture pages don't quietly go stale
+# between manual runs. Requires `celery -A app.tasks.celery_app beat` (or
+# `worker -B`, see docker-compose.yml's celery-worker command) actually
+# running somewhere; a worker with no beat process never fires entries in
+# this schedule, it just sits registered and unused.
+#
+# (#306) run-scheduled-full-scans used to live here as a second entry, also
+# hardcoded at timedelta(hours=24). It is gone, not disabled: leaving it in
+# alongside the dispatcher would fan a full scan out across every target
+# twice a day from two independent clocks, which is exactly the duplicated
+# bulk dispatch #229 warns about. The task itself
+# (app.tasks.scan_tasks.run_scheduled_full_scans) stays registered and
+# unchanged for anyone invoking it directly; what moved is *who decides when
+# it runs*, from this dict to ScanSchedule rows. The shipped default for a
+# workspace that configures nothing is still "full scan, every 24h, every
+# target" (app.core.scan_schedules.SHIPPED_DEFAULTS), so an install that
+# touches none of this sees no behaviour change.
 celery_app.conf.beat_schedule = {
-    "run-scheduled-full-scans": {
-        "task": "app.tasks.scan_tasks.run_scheduled_full_scans",
-        "schedule": timedelta(hours=24),
+    "dispatch-due-scan-schedules": {
+        "task": "app.tasks.schedule_tasks.dispatch_due_scan_schedules_task",
+        "schedule": SCHEDULE_DISPATCH_INTERVAL,
     },
     # (#385's webhook UX work, revised) The installation_repositories webhook
     # event was meant to be the only trigger for this -- a repo added to an
@@ -111,6 +142,15 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.github_sync_tasks.sync_repos_task",
         "schedule": timedelta(hours=24),
     },
+    # (#229) Keep Toleman's own warm copy of the trivy vulnerability DB
+    # current, and sweep per-run caches a killed worker left behind. Every
+    # 6h because that is roughly trivy's own publication cadence; warming on
+    # a schedule is what keeps the download off the critical path of a
+    # user-triggered scan, and off PR Guardrail entirely.
+    "warm-scanner-caches": {
+        "task": "app.tasks.scan_tasks.warm_scanner_caches",
+        "schedule": timedelta(hours=6),
+    },
 }
 
 
@@ -118,16 +158,29 @@ celery_app.conf.beat_schedule = {
 def _queue_missing_baseline_scans(**kwargs):
     """Beat records a fresh timedelta schedule's creation time as its last
     run and only fires once a full interval has elapsed *after that* -- it
-    does not treat the first tick as immediately due. So the 24h entry
-    above alone leaves any target with no baseline yet (GH-07) stuck that
-    way for up to 24h after every deploy that (re)starts Beat, not
-    "shortly", regardless of PR activity against it in the meantime.
-    worker_ready fires once when this process finishes bootstrapping and is
-    genuinely ready to accept tasks; queuing the catch-up pass here (scoped
-    to targets that still have zero completed scans, see
+    does not treat the first tick as immediately due. So a 24h schedule
+    alone leaves any target with no baseline yet (GH-07) stuck that way for
+    up to 24h after every deploy that (re)starts Beat, not "shortly",
+    regardless of PR activity against it in the meantime. worker_ready fires
+    once when this process finishes bootstrapping and is genuinely ready to
+    accept tasks; queuing the catch-up pass here (scoped to targets that
+    still have zero completed scans, see
     queue_full_scan_for_targets_missing_a_baseline's docstring) closes that
     gap without waiting on Beat's own timing, and is a no-op on any restart
     where nothing is actually missing a baseline.
+
+    (#306) Making cadence configurable did NOT make this redundant, and the
+    dispatcher was written specifically not to regress it. Moving the clock
+    into ScanSchedule rows fixes the *opposite* half of Beat's first-tick
+    behaviour -- a restart can no longer re-arm a schedule that already
+    fired, so a deploy every 12h no longer means a 24h schedule never fires
+    at all -- but a fresh workspace's materialised default is still seeded
+    one full interval out (ensure_workspace_default_rows explains why:
+    seeding it due-now would turn every worker restart into a platform-wide
+    fan-out). So the first-scan gap this handler exists to close is exactly
+    as real as it was, and this stays the thing that closes it: scoped to
+    targets with no baseline at all, which is what keeps it a one-time
+    catch-up rather than a third schedule racing the other two.
 
     Imported lazily: scan_tasks imports celery_app at module level, so a
     top-level import back here would be circular.
@@ -153,3 +206,19 @@ def _queue_missing_baseline_scans(**kwargs):
         sync_repos_task()
     except Exception:
         logger.exception("repo-sync catch-up pass failed on worker startup")
+
+    # (#229) And the same for warming, for a different reason than the two
+    # above: those close Beat's first-tick gap, this one covers Beat not
+    # running at all. docker-compose.yml embeds it with `-B`, but
+    # charts/toleman/templates/celery-worker.yaml does not -- so on
+    # Kubernetes `warm-scanner-caches` never fires, and every scan runs
+    # unseeded and re-downloads the database. Warming from worker_ready
+    # means the deployment shape cannot decide whether the isolated path is
+    # reachable. Cheap where Beat does run: ensure_warm_trivy_db returns
+    # "already warm" without touching the network.
+    try:
+        from app.tasks.scan_tasks import warm_scanner_caches
+
+        warm_scanner_caches()
+    except Exception:
+        logger.exception("scanner-cache warm pass failed on worker startup")

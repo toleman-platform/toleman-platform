@@ -2,13 +2,14 @@
 
 import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
-import { Tag, Timer, GitBranch, ShieldCheck, ShieldAlert } from "lucide-react";
+import { Tag, Timer, GitBranch, ShieldCheck, ShieldAlert, SlidersHorizontal } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
 import { Groups } from "./groups";
 import { SlaRules } from "./sla-rules";
 import { WorkflowTemplates } from "./workflow-templates";
 import { FpRules } from "./fp-rules";
 import { Policies } from "./policies";
+import { RiskScoring } from "./risk-scoring";
 
 // IA review (#224): this is the old admin/page.tsx "Scan Config" group,
 // promoted to its own top-level route. Same tabs, same components, same
@@ -19,6 +20,13 @@ const TABS = [
   { id: "workflow-templates", label: "Workflow Templates", icon: GitBranch },
   { id: "fp-rules", label: "False Positive Rules", icon: ShieldCheck },
   { id: "policies", label: "Policies", icon: ShieldAlert },
+  // (#201) Risk Scoring sits here rather than under Control Plane, matching
+  // SLA Rules directly above it: same workspace-scoped shape, same
+  // SECURITY_ENGINEER gate, same "security policy, not repo organisation"
+  // reasoning. #224 moved scan-policy config out of Control Plane for
+  // exactly this reason, and a scoring weight is as much a policy decision
+  // as a days-to-fix window.
+  { id: "risk-scoring", label: "Risk Scoring", icon: SlidersHorizontal },
 ] as const;
 
 const TAB_IDS = TABS.map((t) => t.id);
@@ -32,7 +40,7 @@ export default function GuardrailsPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Guardrails"
-        description="Repo groups, SLA rules, workflow templates, false-positive rules, and policies."
+        description="Repo groups, SLA rules, workflow templates, false-positive rules, policies, and risk scoring."
       />
 
       <div className="min-w-0 overflow-x-auto border-b border-border">
@@ -60,6 +68,7 @@ export default function GuardrailsPage() {
       {tab === "workflow-templates" && <WorkflowTemplates />}
       {tab === "fp-rules" && <FpRules />}
       {tab === "policies" && <Policies />}
+      {tab === "risk-scoring" && <RiskScoring />}
     </div>
   );
 }

@@ -9,6 +9,7 @@ from app.core.github import repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.tool_usage import tools_for_surface
 from app.models.models import NotificationEventType, Scan, Target
@@ -22,6 +23,11 @@ PARSER_MAP = parsers.PARSER_MAP
 # running: modelscan would find no model files, and the LLM ruleset would
 # find no LLM calls, so running them everywhere is wasted scan budget.
 AI_ONLY_TOOLS = ("modelscan", "semgrep-llm")
+
+# Tools that scan against Toleman's warmed vulnerability database (#229).
+# Naming them here rather than reaching into runner keeps the "when do we
+# warm" decision next to the task that fans scans out.
+DB_BACKED_TOOLS = ("trivy", "trivy-license")
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +99,26 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                     session.commit()
             return {"error": "target not found"}
 
+        # (#273) Re-checked here and not only at the dispatch points, because
+        # a task can sit in the queue for minutes: a repo deactivated (or
+        # deleted) between "click Scan" and "a worker picks it up" would
+        # otherwise still get cloned and scanned. The row is settled as
+        # "failed" with the reason rather than left running, so the UI does
+        # not show a spinner that never resolves -- the same treatment
+        # target-not-found already gets above.
+        refusal = target_lifecycle.scan_refusal_reason(target)
+        if refusal:
+            if scan_id is not None:
+                existing = session.get(Scan, scan_id)
+                if existing:
+                    existing.status = "failed"
+                    existing.error = refusal
+                    existing.completed_at = utcnow()
+                    session.add(existing)
+                    session.commit()
+            logger.info("scan refused for target %s: %s", target_id, refusal)
+            return {"error": refusal}
+
         if scan_id is not None:
             scan = session.get(Scan, scan_id)
             if not scan:
@@ -131,12 +157,46 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
                 session.commit()
                 return {"scan_id": scan.id, "ingested": 0, "skipped": "not an AI/ML repo"}
 
-            raw = runner.run_tool(tool, repo_path)
+            # (#229) run_tool_checked, not run_tool: this is the path that
+            # can *mitigate* existing findings, so it needs the runner's
+            # verdict on whether the run actually checked anything, not just
+            # its output. Concurrent scans of the same tool were racing one
+            # shared trivy vulnerability-DB cache, and the loser exited 0
+            # with valid JSON and no findings -- which then cleared five live
+            # CVEs off the record. ingest_findings refuses to mitigate on a
+            # run that is not positively healthy.
+            if tool in DB_BACKED_TOOLS:
+                # (#229) Warm Toleman's own copy of the vulnerability DB
+                # before scanning. This is the fan-out interlock: when six
+                # scans are dispatched together the first one downloads
+                # while the rest wait on the lock inside here, then all six
+                # hardlink the same finished database and run with
+                # --skip-db-update. Without it every run would either
+                # re-download the DB or race the shared user cache, which is
+                # the race that produced this issue.
+                warm, detail = runner.ensure_warm_trivy_db()
+                if not warm:
+                    # Not fatal: the scan still runs, just unseeded and
+                    # without --skip-db-update. It is recorded because a
+                    # scan that had to fetch its own database is exactly the
+                    # kind this issue says not to trust silently.
+                    logger.warning(
+                        "trivy DB warm-up did not complete before scan %s: %s", scan.id, detail
+                    )
+            raw, health = runner.run_tool_checked(tool, repo_path)
             parsed = PARSER_MAP[tool](raw)
             for item in parsed:
                 item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
-            count = ingest_findings(session, target, scan, tool=tool, branch=target.default_branch, parsed=parsed)
-            return {"scan_id": scan.id, "ingested": count}
+            if not health.healthy:
+                logger.warning(
+                    "scan %s (%s on target %s) is not authoritative: %s",
+                    scan.id, tool, target.id, health.summary(),
+                )
+            count = ingest_findings(
+                session, target, scan,
+                tool=tool, branch=target.default_branch, parsed=parsed, health=health,
+            )
+            return {"scan_id": scan.id, "ingested": count, "health": health.status}
         except runner.ToolNotApplicable as exc:
             # Same distinction AI_ONLY_TOOLS draws above: nothing here for
             # this tool to look at (e.g. gosec on a repo with no Go source)
@@ -192,6 +252,18 @@ def queue_full_scan(session: Session, target: Target) -> list[int]:
     nothing it wasn't asked to run is not the same failure mode as a PR
     check silently checking nothing.
     """
+    # (#273) The single chokepoint for every fan-out caller -- GitHub App
+    # repo import, the `push`/PR-merged webhooks, the beat-scheduled refresh
+    # and the startup baseline catch-up all come through here, so a
+    # deactivated or deleted target is refused once rather than in four
+    # places that could drift. The scheduled/catch-up callers additionally
+    # filter their own SELECTs so they don't walk the whole table to
+    # no-op on each row.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        logger.info("full scan not queued for target %s: %s", target.id, refusal)
+        return []
+
     scan_ids: list[int] = []
     for tool in tools_for_surface(session, target.workspace_id, "on_demand_scan"):
         scan = Scan(target_id=target.id, tool=tool, branch=target.default_branch, status="running")
@@ -222,21 +294,55 @@ def queue_full_scan_for_target_task(target_id: int) -> list[int]:
         return queue_full_scan(session, target)
 
 
+@celery_app.task(name="app.tasks.scan_tasks.warm_scanner_caches")
+def warm_scanner_caches() -> dict:
+    """Beat-scheduled (#229): keep Toleman's warm trivy DB current.
+
+    Per-run caches are deleted when their run ends and nothing writes back
+    to them, so the warm copy is the only thing standing between this
+    platform and a full database download per scan -- including on every PR
+    Guardrail scan, which does not get to warm it itself. run_scan warms
+    lazily as well; this exists so the cost lands on a schedule instead of
+    on whichever user happens to click Scan after the DB goes stale.
+    """
+    warm, detail = runner.ensure_warm_trivy_db()
+    removed = runner.sweep_stale_run_caches()
+    if not warm:
+        logger.warning("scheduled trivy DB warm-up failed: %s", detail)
+    return {"warm": warm, "detail": detail, "stale_run_caches_removed": removed}
+
+
 @celery_app.task(name="app.tasks.scan_tasks.run_scheduled_full_scans")
 def run_scheduled_full_scans():
-    """Beat-scheduled (celery_app.conf.beat_schedule, every 24h): refresh
-    every target's default-branch baseline.
+    """Refresh every target's default-branch baseline, platform-wide.
 
-    Without this, "no baseline yet" (GH-07's fix) is a real but *permanent*
-    state for any target nobody happens to click Scan on, and an existing
-    baseline only ever reflects whatever the repo looked like on the one day
-    someone last ran it manually -- posture pages and PR Guardrail diffs both
-    quietly drift out of date. This dispatches queue_full_scan per target;
-    each per-tool Scan still runs (and can still fail/retry) independently
-    via run_scan, so one target's clone failure can't block another's.
+    Without scheduled refreshes, "no baseline yet" (GH-07's fix) is a real
+    but *permanent* state for any target nobody happens to click Scan on,
+    and an existing baseline only ever reflects whatever the repo looked
+    like on the one day someone last ran it manually -- posture pages and PR
+    Guardrail diffs both quietly drift out of date. This dispatches
+    queue_full_scan per target; each per-tool Scan still runs (and can still
+    fail/retry) independently via run_scan, so one target's clone failure
+    can't block another's.
+
+    (#306) No longer the beat entry. Cadence is data now
+    (app.core.scan_schedules / ScanSchedule rows, dispatched by
+    app.tasks.schedule_tasks), so the *scheduled* path resolves a per-
+    workspace or per-target interval and can be turned off for a target that
+    should not be scanned; this task is the unconditional every-target
+    version, kept registered as a deliberate operator escape hatch ("re-
+    baseline everything now") and because removing a registered task name
+    breaks any queued message still carrying it. It is not wired to a
+    schedule; nothing fires it on a timer.
     """
     with Session(engine) as session:
-        targets = session.exec(select(Target)).all()
+        # (#273) Deactivated and soft-deleted targets are excluded in the
+        # query, not skipped in the loop. This is the one task that touches
+        # every target in the deployment on a timer, so it is where "scanning
+        # is off for this repo" has to hold without anyone having clicked
+        # anything -- a deactivate that the nightly job quietly undoes every
+        # 24h would be the worst version of this feature.
+        targets = session.exec(target_lifecycle.scannable_targets(select(Target))).all()
         for target in targets:
             try:
                 queue_full_scan(session, target)
@@ -278,7 +384,9 @@ def queue_full_scan_for_targets_missing_a_baseline(session: Session) -> list[int
     a second schedule.
     """
     queued: list[int] = []
-    for target in session.exec(select(Target)).all():
+    # (#273) Same scannable-only scope as run_scheduled_full_scans above; a
+    # worker restart must not be a way to scan a deactivated target once.
+    for target in session.exec(target_lifecycle.scannable_targets(select(Target))).all():
         if _has_completed_scan(session, target):
             continue
         try:

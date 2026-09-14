@@ -1,9 +1,12 @@
 import logging
 from sqlmodel import Session, select
 
-from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, Severity, Target
+from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, ScoringSignal, Severity, Target
 from app.core.dedup import compute_dedup_hash
+from app.core.cve_enrichment import warm_cve_enrichment
 from app.core.scoring import compute_priority_score
+from app.core.scoring_config import cvss_for_enrichment, enrichment_map, workspace_scoring_weights
+from app.core.fixability import UNKNOWN, fixability_for_enrichment
 from app.core.epss import fetch_epss_scores
 from app.core.kev import fetch_kev_cve_set
 from app.core.crypto import decrypt_secret
@@ -11,6 +14,7 @@ from app.core.jira_integration import create_jira_ticket_for_finding, jira_confi
 from app.core.notifications import dispatch_notification
 from app.core.siem_export import send_finding_to_siem
 from app.core.fp_learning import apply_auto_suppression, find_matching_rule
+from app.core.scan_health import SUSPECT, UNKNOWN, ScanHealth
 from app.core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -120,7 +124,52 @@ def _maybe_notify_new_finding(session: Session, target: Target, finding: Finding
         logger.exception("Notification dispatch failed for finding %s", finding.id)
 
 
-def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, branch: str, parsed: list[dict]) -> int:
+def _may_mitigate(parsed: list[dict], health: ScanHealth | None) -> tuple[bool, str]:
+    """May this run clear findings it did not report? (#229)
+
+    Returns ``(allowed, reason_if_not)``.
+
+    The rule this enforces is the one ``app/core/osv_malware.py`` already
+    enforces for malicious packages, where a failed check returns ``None``
+    and a completed-but-clean one returns ``{}`` so an outage can never read
+    as an all-clear. A scanner's empty report carries no such distinction on
+    its own, so:
+
+      * A run with a health signal may mitigate only when that signal is
+        healthy. A degraded run is refused even when it *did* report
+        findings: a trivy process that saw two of five CVEs would otherwise
+        mitigate the other three, which is #229's failure with a smaller
+        blast radius, not a different one.
+      * A run with no health signal (the CI/CD push path, which has no
+        scanner of ours behind it) may mitigate only when it actually
+        reported something. A run that produced findings demonstrably ran;
+        an empty result backed by no evidence at all is exactly the
+        ambiguity this issue is about, and it clears nothing.
+
+    Findings left Open by a refused run are not lost: the next healthy run
+    of the same tool mitigates them normally if they really are gone.
+    """
+    if health is not None:
+        if health.healthy:
+            return True, ""
+        return False, health.summary()
+    if parsed:
+        return True, ""
+    return False, (
+        "this run reported no findings and supplied no evidence that it completed, "
+        "so existing findings were left as they are"
+    )
+
+
+def ingest_findings(
+    session: Session,
+    target: Target,
+    scan: Scan,
+    tool: str,
+    branch: str,
+    parsed: list[dict],
+    health: ScanHealth | None = None,
+) -> int:
     """
     Shared ingestion path for Push (CI/CD) and Pull (native) scans.
 
@@ -128,6 +177,12 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
       hash exists -> update last_seen
       hash new -> create Finding
       hash present in earlier scan of same target/branch but absent this run -> Mitigated
+
+    ``health`` (#229) is the runner's verdict on whether this run can be
+    trusted to have checked what it claims; see ``_may_mitigate`` for how it
+    gates that last rule, and ``app/core/scan_health.py`` for why a scanner
+    needs one at all. ``None`` means the caller has no evidence to offer,
+    which is deliberately not the same as "healthy".
     """
     seen_hashes = set()
     # New Finding rows created this run, so the Jira auto-create hook below
@@ -139,6 +194,68 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
     cve_ids = sorted({item["cve_id"] for item in parsed if item.get("cve_id")})
     epss_scores = fetch_epss_scores(cve_ids) if cve_ids else {}
     kev_set = fetch_kev_cve_set() if cve_ids else set()
+
+    # (#201) This workspace's scoring weights, resolved once for the whole
+    # run rather than per finding; an unconfigured workspace gets the
+    # shipped baseline, which scores identically to before #201 existed.
+    weights = workspace_scoring_weights(session, target.workspace_id)
+
+    # The CVSS-exploitability and fixability signals read the CveEnrichment
+    # cache, whose only other writer is a human opening a finding's detail
+    # view. Left at that, those signals would fire only for CVEs somebody
+    # had already browsed -- so this warms the cache for the CVEs in this
+    # batch, but ONLY when the workspace actually weights one of them above
+    # zero. On the shipped baseline (both 0.0) nothing is fetched and this
+    # run makes exactly the network calls it made before #201; the cost
+    # arrives with the feature rather than with the upgrade.
+    #
+    # Deliberately before the loop: get_cve_enrichment commits its own row,
+    # and running that partway through would commit half-built Finding rows
+    # with it. Nothing of this run's is in the session yet at this point.
+    if cve_ids and any(
+        weights.get(signal, 0.0) > 0
+        for signal in (ScoringSignal.CVSS_EXPLOITABILITY, ScoringSignal.FIXABILITY)
+    ):
+        warm_cve_enrichment(session, cve_ids)
+
+    # Read after the warm-up so this run's findings are scored against what
+    # it just fetched. Still only a cache read: a CVE the warm-up did not
+    # resolve leaves both signals unestablished, which contributes nothing
+    # rather than subtracting anything -- the failsafe direction.
+    #
+    # Whether a later scan picks it up depends on *why* it was unresolved,
+    # and the two cases differ:
+    #   - beyond this run's lookup budget: never attempted, so the next scan
+    #     tries it and the score rises once the data lands.
+    #   - the upstream fetch failed: get_cve_enrichment caches a
+    #     both-not-found row and never re-fetches (#71's forever-cache), so
+    #     the signal stays unestablished for that CVE until something
+    #     invalidates the row. An outage during a scan therefore leaves a
+    #     durable hole rather than a retried one. Acknowledged, tracked
+    #     separately; it never lowers a score, only withholds an uplift.
+    enrichments = enrichment_map(session, cve_ids)
+
+    def score_for(severity, finding_cve_id, epss_score, kev_listed) -> int:
+        """One finding's priority, from this run's weights and signals.
+
+        Shared by the create and the re-score paths below so a finding
+        cannot be scored one way on first sight and another way on the next,
+        which is the whole failure this closes.
+        """
+        enrichment = enrichments.get(finding_cve_id) if finding_cve_id else None
+        return compute_priority_score(
+            severity,
+            target.criticality_weight,
+            epss_score=epss_score,
+            kev_listed=kev_listed,
+            cvss=cvss_for_enrichment(enrichment),
+            cve_id=finding_cve_id,
+            target_label=target.label,
+            target_environment=target.environment,
+            target_owner=target.owner,
+            fixability=fixability_for_enrichment(enrichment) if finding_cve_id else UNKNOWN,
+            weights=weights,
+        )
 
     for item in parsed:
         dedup_hash = compute_dedup_hash(
@@ -160,6 +277,24 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             # isn't worth the network cost; MVP tradeoff, staleness is acceptable.
             existing.last_seen = utcnow()
             existing.scan_id = scan.id
+            # (#201) Re-score every time a scan observes the finding again.
+            #
+            # priority_score used to be write-once at creation, which was
+            # survivable while the formula was three hardcoded constants and
+            # actively broken once it became configurable: after a weight
+            # change the backlog would hold two scoring regimes at once,
+            # `ORDER BY priority_score` would be comparing numbers computed
+            # under different rules, and the detail view's `stale` flag
+            # would never clear. Worse than the upgrade-time re-rank this
+            # issue works hardest to avoid, because it never converges.
+            #
+            # Cheap: the weights, the target metadata and the enrichment
+            # rows are all already in hand, and the stored epss/kev are
+            # reused rather than re-fetched, so this adds no queries and no
+            # network calls to the rescan path.
+            existing.priority_score = score_for(
+                existing.severity, existing.cve_id, existing.epss_score, existing.kev_listed
+            )
             if existing.state == FindingState.MITIGATED:
                 _transition(session, existing, FindingState.REOPENED, "reappeared in scan")
             session.add(existing)
@@ -181,9 +316,7 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
             line_start=item.get("line_start"),
             line_end=item.get("line_end"),
             severity=severity,
-            priority_score=compute_priority_score(
-                severity, target.criticality_weight, epss_score=epss_score, kev_listed=kev_listed
-            ),
+            priority_score=score_for(severity, finding_cve_id, epss_score, kev_listed),
             branch=branch,
             cve_id=finding_cve_id,
             epss_score=epss_score,
@@ -221,24 +354,55 @@ def ingest_findings(session: Session, target: Target, scan: Scan, tool: str, bra
         _maybe_export_to_siem(session, target, finding)
         _maybe_notify_new_finding(session, target, finding)
 
-    # mark findings absent from this run (same target+branch+tool, still Open) as Mitigated
-    stale = session.exec(
-        select(Finding).where(
-            Finding.target_id == target.id,
-            Finding.branch == branch,
-            Finding.tool == tool,
-            Finding.state == FindingState.OPEN,
+    # mark findings absent from this run (same target+branch+tool, still Open)
+    # as Mitigated -- but only when this run is allowed to make that claim
+    # (#229). Clearing a live vulnerability off the record is the most
+    # consequential thing this function does and the hardest for a user to
+    # notice, so it is the one step that demands positive evidence rather
+    # than the absence of an error.
+    may_mitigate, blocked_reason = _may_mitigate(parsed, health)
+    if may_mitigate:
+        stale = session.exec(
+            select(Finding).where(
+                Finding.target_id == target.id,
+                Finding.branch == branch,
+                Finding.tool == tool,
+                Finding.state == FindingState.OPEN,
+            )
+        ).all()
+        for f in stale:
+            if f.dedup_hash not in seen_hashes:
+                _transition(session, f, FindingState.MITIGATED, "not present in latest scan")
+    else:
+        logger.warning(
+            "scan %s (%s on target %s) was not treated as authoritative; "
+            "existing findings left untouched: %s",
+            scan.id, tool, target.id, blocked_reason,
         )
-    ).all()
-    for f in stale:
-        if f.dedup_hash not in seen_hashes:
-            _transition(session, f, FindingState.MITIGATED, "not present in latest scan")
 
     session.commit()
 
     scan.findings_count = len(parsed)
     scan.status = "completed"
     scan.completed_at = utcnow()
+    # Persist the verdict alongside the result it qualifies, so every surface
+    # that renders this scan can say the run was not treated as authoritative
+    # instead of showing a bare, clean-looking zero. UNKNOWN is kept distinct
+    # from both of the others on purpose: it means nobody assessed this run,
+    # which is a weaker statement than "healthy" and a different one from
+    # "suspect" (see app/core/scan_health.py).
+    if health is None:
+        scan.health = UNKNOWN
+        scan.health_note = "" if may_mitigate else blocked_reason
+    else:
+        scan.health = health.status
+        scan.health_note = health.summary()
+    if not may_mitigate and scan.health == SUSPECT:
+        # Say what was *done* about it, not just what was wrong with it. A
+        # user reading "the database was missing" still has to guess whether
+        # their findings were cleared; that guess is the whole problem.
+        consequence = "Existing findings were left open rather than mitigated."
+        scan.health_note = f"{scan.health_note}. {consequence}" if scan.health_note else consequence
     session.add(scan)
     session.commit()
 

@@ -12,6 +12,7 @@ from app.core.aibom import extract_ai_components, upsert_aibom_components
 from app.core.github_dependency_graph import DependencyGraphUnavailable, fetch_dependency_graph
 from app.core.osv_malware_ingestion import check_and_ingest_malware
 from app.core.sbom_ingestion import upsert_components
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.models.models import NotificationEventType, SbomComponent, SbomRun, Target
 from app.scanners import runner
@@ -95,6 +96,22 @@ def run_sbom_generation(self, target_id: int, run_id: int):
             session.add(run)
             session.commit()
             return {"error": "target not found", "run_id": run.id}
+
+        # (#273) Re-checked on the worker, same reasoning as run_scan,
+        # run_api_scan and run_discovery: POST /api/sbom/{target_id} refuses
+        # at dispatch, but this task clones the repo for the AIBOM pass and
+        # runs check_and_ingest_malware, which persists Critical findings.
+        # A target deactivated while this sat in the queue must not have
+        # either happen to it.
+        refusal = target_lifecycle.scan_refusal_reason(target)
+        if refusal:
+            run.status = "failed"
+            run.error = refusal
+            run.completed_at = utcnow()
+            session.add(run)
+            session.commit()
+            logger.info("sbom generation refused for target %s: %s", target_id, refusal)
+            return {"error": refusal, "run_id": run.id}
 
         try:
             new_components: list = []
@@ -322,6 +339,30 @@ def sync_dependency_graph(target_id: int):
         target = session.get(Target, target_id)
         if not target:
             return {"error": "target not found"}
+
+        # (#273) The last inventory write that was not behind a lifecycle
+        # gate. Genuinely hard to reach -- no clone, no findings, and only
+        # dispatched at target creation or GitHub App import, so it fires
+        # for a deactivated target only if the deactivation lands inside
+        # that window -- but "hard to reach" is not a reason for one write
+        # path to disagree with the other eleven.
+        #
+        # Recorded as its own "skipped" status rather than "failed": nothing
+        # failed, and a red badge on the Dependencies tab would send someone
+        # hunting for a GitHub problem that does not exist. Returning
+        # silently is not an option either -- queue_dependency_graph_sync
+        # has already written "pending", and leaving it there is a spinner
+        # that never resolves, which this codebase treats as its own bug.
+        refusal = target_lifecycle.scan_refusal_reason(target)
+        if refusal:
+            target.dependency_sync_status = "skipped"
+            target.dependency_sync_error = refusal
+            target.dependency_sync_at = utcnow()
+            target.dependency_component_count = None
+            session.add(target)
+            session.commit()
+            logger.info("dependency graph sync skipped for target %s: %s", target_id, refusal)
+            return {"target_id": target_id, "status": "skipped", "count": 0}
 
         status, error, count = "ok", None, 0
         try:

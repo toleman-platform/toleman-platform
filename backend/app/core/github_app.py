@@ -1,3 +1,5 @@
+import ipaddress
+import socket
 import time
 from urllib.parse import urlparse
 
@@ -9,9 +11,95 @@ from app.core.crypto import decrypt_secret
 from app.models.models import GitHubAppConfig, GitHubInstallation, Target
 
 
+def _webhook_hostname(backend_url: str) -> str:
+    """The host out of a PUBLIC_API_URL, tolerating a missing scheme.
+
+    ``urlparse("localhost:8000")`` does not mean what it looks like: with no
+    ``//`` present it reads ``localhost`` as the *scheme* and ``8000`` as
+    the path, so ``.hostname`` is None. Nothing in app.core.config requires
+    a scheme, so a schemeless PUBLIC_API_URL used to fall straight through
+    webhook_reachable's loopback check and classify as reachable -- no
+    warning, an enabled Connect button, and GitHub's rejection page.
+
+    Re-parsing with a leading ``//`` forces the netloc reading, which is
+    what the value obviously means. Returns "" when there is no host to be
+    had (an empty setting, or an unbracketed IPv6 literal, which is not
+    parseable as a URL at all); callers treat that as unreachable rather
+    than as a host that happens not to be loopback."""
+    candidate = backend_url.strip()
+    parsed = urlparse(candidate)
+    if not parsed.netloc and "//" not in candidate:
+        parsed = urlparse(f"//{candidate}")
+    # The "//" guard matters: a value that already has one and still parsed
+    # to an empty netloc ("http://", "http://:8000") has no host, and
+    # re-parsing it would read the scheme itself as the hostname.
+    #
+    # The trailing dot of a fully-qualified name ("localhost.") is legal in a
+    # URL and resolves identically, so it is dropped rather than left to turn
+    # a loopback host into an unrecognised one.
+    return (parsed.hostname or "").lower().rstrip(".")
+
+
+def _is_unroutable_host(hostname: str) -> bool:
+    """Whether an address at this host is certainly not reachable from
+    GitHub's servers.
+
+    Two families, both certain rather than likely:
+
+    **Loopback names.** ``localhost`` and, per RFC 6761, anything under
+    ``*.localhost``, which is reserved to the loopback interface.
+
+    **Any IP literal that is not globally routable.** ``ip.is_global`` is
+    the test, not ``is_loopback`` (which misses a LAN address entirely) and
+    not ``is_private`` (which misses link-local, CGNAT and the reserved
+    ranges). What that buys, beyond the loopback cases this started as:
+
+      - ``192.168.1.50``, ``10.0.0.5``, ``172.16.3.4`` -- RFC 1918. An
+        on-prem deployment reachable on the LAN is an ordinary
+        configuration, and it is exactly as unreachable from github.com as
+        localhost is.
+      - ``169.254.169.254`` and ``fe80::1`` -- link-local, including the
+        cloud metadata endpoint.
+      - ``127.0.0.2`` and the rest of 127.0.0.0/8, not just ``127.0.0.1``.
+      - the unspecified addresses (``0.0.0.0``, ``::``).
+
+    Certain because Toleman only ever talks to ``api.github.com`` (hardcoded
+    across this module and its siblings; there is no GitHub-host setting),
+    so the delivery has to come back from the public internet. There is no
+    deployment shape in which an RFC 1918 address is reachable from there,
+    which is what makes this a block rather than the advisory that
+    connect-github-card.tsx gives a dotless *name*.
+
+    Two parsing details behind the literals above:
+
+      - ``127.1`` is inet_aton shorthand for 127.0.0.1. ``ipaddress``
+        rejects it (it wants four octets) but resolvers, browsers and curl
+        all accept it, so it is a real way to spell localhost.
+      - ``::ffff:127.0.0.1`` is an IPv4-mapped IPv6 address, whose IPv6
+        form reports ``is_loopback`` False and has to be unwrapped first.
+    """
+    if hostname == "localhost" or hostname.endswith(".localhost"):
+        return True
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        # Not an address ipaddress recognises. inet_aton still accepts the
+        # shorthand forms (127.1, 2130706433); anything it rejects too is a
+        # hostname, not an address.
+        try:
+            ip = ipaddress.ip_address(socket.inet_aton(hostname))
+        except (OSError, ValueError):
+            return False
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+    return not ip.is_global
+
+
 def webhook_reachable(backend_url: str) -> bool:
     """Whether GitHub can plausibly reach the given backend URL's webhook
-    endpoint -- i.e. it isn't a localhost address. Takes the URL as a
+    endpoint -- i.e. it is a publicly routable address rather than a
+    localhost or LAN one. Takes the URL as a
     parameter rather than reading settings.public_api_url itself, same
     convention as build_manifest's own app_url/backend_url params just
     below: keeps this testable by callers without needing to monkeypatch a
@@ -25,11 +113,47 @@ def webhook_reachable(backend_url: str) -> bool:
     check, without pulling a FastAPI router module into the Celery
     worker's import graph) can use the same answer.
 
-    Surfaced rather than blocked at App-creation time: creating the App is
-    still worth doing while a tunnel or domain is being set up, since
-    on-demand scanning works regardless."""
-    parsed = urlparse(backend_url)
-    return (parsed.hostname or "") not in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+    False is not a degraded mode at App-creation time, it is a hard stop
+    (#355). The manifest declares ``hook_attributes.url`` and GitHub
+    validates that URL when the manifest is submitted, rejecting a
+    loopback host outright ("Hook url is not supported because it isn't
+    reachable over the public Internet (localhost)"); nothing is created,
+    so the outcome is no App rather than a working App minus automatic
+    scanning. That was survivable once -- before #234 the manifest carried
+    no hook URL at all, so a localhost install got an App that simply
+    never received events, which is what the "warn, don't block" comment
+    that used to sit here described -- and it stopped being true the
+    moment hook_attributes landed. The api/UI layer therefore blocks the
+    create action on this answer instead of letting the operator discover
+    it from github.com.
+
+    ``target_has_pr_guardrail_coverage`` below uses the same answer for a
+    different question: for an App that already exists (created while this
+    was public, then pointed back at localhost) deliveries stop arriving,
+    and that genuinely is a degraded mode.
+
+    False is reserved for what is *certain*: a host that is not globally
+    routable (see ``_is_unroutable_host`` -- loopback names, and any IP
+    literal from a private, loopback, link-local, CGNAT or reserved range),
+    or a value with no parseable host at all. Certainty is the bar because
+    of what False now does -- it disables the Connect button, which has no
+    override, and it is the same answer
+    ``target_has_pr_guardrail_coverage`` uses to decide which path scans a
+    target's PRs. A wrong False is not a cosmetic warning, it is an
+    operator with no way to proceed.
+
+    A dotless single-label host (``http://backend:8000``, a compose service
+    name) is reported reachable for that reason and that reason only. It is
+    *almost* certainly unreachable from GitHub too, and saying nothing
+    about it would be unhelpful -- so connect-github-card.tsx warns on it
+    without blocking, where clicking Connect anyway is the override. What
+    genuinely cannot be judged from the string is a dotted name on
+    split-horizon or internal-only DNS, which looks exactly like a public
+    one from here."""
+    hostname = _webhook_hostname(backend_url)
+    if not hostname:
+        return False
+    return not _is_unroutable_host(hostname)
 
 
 def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token: str) -> dict:
@@ -126,10 +250,22 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         #     auto-approved from a comment.
         #
         # backend_url must be reachable *from GitHub*; see
-        # settings.public_api_url. A localhost value produces an App whose
-        # deliveries can never arrive; build_manifest's caller warns about
-        # that rather than failing, since creating the App is still useful
-        # for on-demand scanning while a tunnel/domain is set up.
+        # settings.public_api_url. GitHub validates this URL when the
+        # manifest is submitted and refuses any host it cannot reach over
+        # the public internet -- a loopback address, and equally a LAN one
+        # -- so such a value does not produce a degraded App, it produces
+        # no App at all:
+        # the flow dies on github.com with "Hook url is not supported
+        # because it isn't reachable over the public Internet (localhost)".
+        # webhook_reachable() is what the api/UI layer uses to stop that
+        # attempt before it leaves the browser (#355); this comment used to
+        # claim the opposite, which is why the old behaviour read as
+        # deliberate.
+        #
+        # Permanent for the life of the App, too: there is no API to change
+        # a GitHub App's hook URL after creation, only its settings page by
+        # hand (the same limitation update_webhook_secret in
+        # app/api/github_app.py already documents for the webhook secret).
         "default_events": ["pull_request", "push", "installation_repositories", "issue_comment"],
         "hook_attributes": {
             "url": f"{backend_url}/api/webhooks/github",

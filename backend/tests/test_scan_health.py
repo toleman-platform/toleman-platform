@@ -585,7 +585,7 @@ class TestApplicabilityBeforeHealth:
 
     def test_checkov_on_a_repo_with_no_iac_is_not_applicable(self, tmp_path):
         (tmp_path / "app.py").write_text("print('hi')")
-        run = runner.ScanRunContext(health=ScanHealth())
+        run = runner.ScanRunContext(tool="checkov", health=ScanHealth(tool="checkov"))
         with pytest.raises(runner.ToolNotApplicable):
             runner._run_tool_inner("checkov", tmp_path, None, run)
         assert run.health.status != "suspect", (
@@ -595,7 +595,7 @@ class TestApplicabilityBeforeHealth:
 
     def test_checkov_on_a_repo_with_terraform_does_run(self, tmp_path, monkeypatch):
         (tmp_path / "main.tf").write_text('resource "null_resource" "x" {}')
-        run = runner.ScanRunContext(health=ScanHealth())
+        run = runner.ScanRunContext(tool="checkov", health=ScanHealth(tool="checkov"))
         monkeypatch.setattr(runner, "_execute", lambda *a, **k: {})
         runner._run_tool_inner("checkov", tmp_path, None, run)  # must not raise
 
@@ -803,6 +803,12 @@ class TestToolsThatBypassExecute:
         assert health.healthy is False
 
     def test_modelscan_warnings_reach_the_verdict(self, monkeypatch, tmp_path):
+        # modelscan only runs on a repo that actually holds a model file
+        # (TOOL_EXTENSIONS applicability gate); without one it is skipped as
+        # ToolNotApplicable and never reaches the stderr check under test.
+        # Contents are irrelevant -- the subprocess is faked below.
+        (tmp_path / "model.pkl").write_bytes(b"\x80\x04N.")
+
         def fake_run(cmd, **kwargs):
             report = cmd[cmd.index("-o") + 1]
             Path(report).write_text(json.dumps({"summary": {"total_issues": 0}, "issues": []}))

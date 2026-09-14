@@ -20,9 +20,15 @@ from pathlib import Path
 
 import pytest
 
+from app.core.scan_health import ScanHealth
 from app.models.models import Severity
 from app.scanners.parsers import parse_modelscan
-from app.scanners.runner import MODELSCAN_REPORT_PLACEHOLDER, ToolExecutionError, _run_modelscan
+from app.scanners.runner import (
+    MODELSCAN_REPORT_PLACEHOLDER,
+    ScanRunContext,
+    ToolExecutionError,
+    _run_modelscan,
+)
 
 # Verbatim from a real modelscan 0.8.8 run.
 REAL_UNSAFE_REPORT = {
@@ -159,25 +165,33 @@ def _cmd():
     return ["modelscan", "-p", "/repo", "-r", "json", "-o", MODELSCAN_REPORT_PLACEHOLDER]
 
 
+def _ctx():
+    """A real run context (#229). _run_modelscan bypasses _execute, so it
+    records its own stderr health signal and needs somewhere to put it;
+    these tests are about exit codes, so a fresh healthy context per call
+    is exactly right."""
+    return ScanRunContext(tool="modelscan", health=ScanHealth(tool="modelscan"))
+
+
 def test_exit_1_is_success_with_findings_not_a_failure(monkeypatch):
     """Exit 1 means 'scan ok, vulnerabilities found'. Treating it as an error
     would discard exactly the findings this tool exists to produce; the
     hazard checkov/tfsec avoid with --soft-fail, which modelscan lacks."""
     monkeypatch.setattr(subprocess, "run", _fake_run(1, REAL_UNSAFE_REPORT))
-    raw = _run_modelscan(_cmd())
+    raw = _run_modelscan(_cmd(), _ctx())
     assert len(raw["issues"]) == 1
 
 
 def test_exit_0_clean_scan(monkeypatch):
     monkeypatch.setattr(subprocess, "run", _fake_run(0, REAL_CLEAN_REPORT))
-    assert _run_modelscan(_cmd())["issues"] == []
+    assert _run_modelscan(_cmd(), _ctx())["issues"] == []
 
 
 def test_exit_3_no_supported_files_is_a_clean_success(monkeypatch):
     """A repo with no model files is legitimately clean, not an error and
     not a silent skip."""
     monkeypatch.setattr(subprocess, "run", _fake_run(3, None))
-    raw = _run_modelscan(_cmd())
+    raw = _run_modelscan(_cmd(), _ctx())
     assert raw["issues"] == []
     assert raw["summary"]["total_issues"] == 0
 
@@ -188,7 +202,7 @@ def test_real_failures_raise_rather_than_reporting_clean(monkeypatch, code):
     scans. Recording them as zero findings would be a false all-clear."""
     monkeypatch.setattr(subprocess, "run", _fake_run(code, None))
     with pytest.raises(ToolExecutionError):
-        _run_modelscan(_cmd())
+        _run_modelscan(_cmd(), _ctx())
 
 
 def test_unreadable_report_raises(monkeypatch):
@@ -204,7 +218,7 @@ def test_unreadable_report_raises(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", _run)
     with pytest.raises(ToolExecutionError):
-        _run_modelscan(_cmd())
+        _run_modelscan(_cmd(), _ctx())
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +243,9 @@ def test_real_modelscan_detects_a_generated_malicious_pickle(tmp_path):
     (tmp_path / "unsafe.pkl").write_bytes(pickle.dumps(Evil()))
     (tmp_path / "clean.pkl").write_bytes(pickle.dumps({"weights": [1, 2, 3]}))
 
-    raw = _run_modelscan(["modelscan", "-p", str(tmp_path), "-r", "json", "-o", MODELSCAN_REPORT_PLACEHOLDER])
+    raw = _run_modelscan(
+        ["modelscan", "-p", str(tmp_path), "-r", "json", "-o", MODELSCAN_REPORT_PLACEHOLDER], _ctx()
+    )
     findings = parse_modelscan(raw)
 
     assert len(findings) == 1

@@ -16,7 +16,16 @@ from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
 from app.core.time import utcnow
 from app.main import app
-from app.models.models import Finding, FindingState, Organization, Severity, Target, User, Workspace
+from app.models.models import (
+    Finding,
+    FindingState,
+    Organization,
+    Severity,
+    Target,
+    User,
+    UserRole,
+    Workspace,
+)
 
 
 @pytest.fixture()
@@ -263,7 +272,16 @@ def test_group_excludes_findings_from_other_workspaces(client, engine):
     _make_finding(engine, mine, title="Mine")
 
     with Session(engine) as session:
-        user = User(email="scoped@example.com", name="Scoped", password_hash=hash_password("whatever123"))
+        # Explicitly not an admin: User.role defaults to ADMIN, and
+        # accessible_workspace_ids returns None (sees everything) for admins,
+        # so a default-constructed user would pass this test without the
+        # scoping ever being exercised.
+        user = User(
+            email="scoped@example.com",
+            name="Scoped",
+            password_hash=hash_password("whatever123"),
+            role=UserRole.SECURITY_ENGINEER,
+        )
         session.add(user)
         session.commit()
         session.refresh(user)
@@ -271,7 +289,7 @@ def test_group_excludes_findings_from_other_workspaces(client, engine):
         from app.models.models import WorkspaceMembership, WorkspaceRole
 
         session.add(
-            WorkspaceMembership(workspace_id=target.workspace_id, user_id=user.id, role=WorkspaceRole.MEMBER)
+            WorkspaceMembership(workspace_id=target.workspace_id, user_id=user.id, role=WorkspaceRole.SECURITY_ENGINEER)
         )
         session.commit()
         token = create_session_token(user.id)

@@ -1,4 +1,7 @@
 backend/venv/
+# Both spellings: `python -m venv .venv` is the more common one, and only
+# `venv/` being listed here is how a whole virtualenv once reached a PR.
+backend/.venv/
 backend/.env
 backend/.demo_credentials.json
 .demo_credentials.json

@@ -606,7 +606,13 @@ def list_finding_groups(
     grouped_query = query
     if ungrouped_tools:
         grouped_query = grouped_query.where(Finding.tool.not_in(ungrouped_tools))
-    rows = session.exec(
+    # `session.execute`, not SQLModel's `session.exec`: the filtered query
+    # starts life as `select(Finding)`, so SQLModel still treats it as a
+    # select-of-scalars and unwraps each result to its first column -- the
+    # aggregate row arrives as a bare tool string rather than a Row, and every
+    # attribute read off it raises. `execute` returns the labelled Row the
+    # aggregates in group_aggregate_columns() are named for.
+    rows = session.execute(
         grouped_query.with_only_columns(*group_aggregate_columns())
         .group_by(Finding.tool, Finding.rule_id)
         .limit(MAX_GROUPS)

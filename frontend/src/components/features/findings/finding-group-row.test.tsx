@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { FindingGroupRow, daysSince, formatAge, groupSubject } from "./finding-group-row";
 import type { Finding, FindingGroup } from "@/lib/api";
@@ -74,6 +74,14 @@ function makeMember(id: number): Finding {
   } as Finding;
 }
 
+// Reset between tests, not just between files: several tests here assert on
+// *whether* the members endpoint was called at all, and a spy carrying calls
+// from a previous test turns "never fetched" into a false failure.
+beforeEach(() => {
+  findings.mockReset();
+  bulkTriage.mockReset();
+});
+
 describe("groupSubject", () => {
   it("leads with the licence, not the identical `license:` prefix", () => {
     // The prefix is the same on every licence row; the licence is the part
@@ -110,8 +118,8 @@ describe("daysSince / formatAge", () => {
 describe("FindingGroupRow", () => {
   it("shows how many findings one decision covers", () => {
     render(<FindingGroupRow group={makeGroup()} />);
-    expect(screen.getByText("11")).toBeInTheDocument();
-    expect(screen.getByText("LGPL-3.0-or-later")).toBeInTheDocument();
+    expect(screen.getByText("11")).not.toBeNull();
+    expect(screen.getByText("LGPL-3.0-or-later")).not.toBeNull();
   });
 
   it("fetches members only when expanded, and only once", async () => {
@@ -122,13 +130,13 @@ describe("FindingGroupRow", () => {
 
     const row = screen.getByRole("button", { expanded: false });
     fireEvent.click(row);
-    await waitFor(() => expect(screen.getByText(/package-38/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/package-38/)).not.toBeNull());
     expect(findings).toHaveBeenCalledTimes(1);
 
     // Collapse and re-expand: navigation, not a reason to re-hit the API.
     fireEvent.click(screen.getByRole("button", { expanded: true }));
     fireEvent.click(screen.getByRole("button", { expanded: false }));
-    await waitFor(() => expect(screen.getByText(/package-38/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/package-38/)).not.toBeNull());
     expect(findings).toHaveBeenCalledTimes(1);
   });
 
@@ -148,7 +156,7 @@ describe("FindingGroupRow", () => {
     render(<FindingGroupRow group={makeGroup({ grouped: false, category: "Secrets", finding_count: 1 })} />);
     fireEvent.click(screen.getByRole("button", { expanded: false }));
 
-    await waitFor(() => expect(screen.getByText(/is one incident with its own clock/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/is one incident with its own clock/)).not.toBeNull());
     expect(findings).not.toHaveBeenCalled();
   });
 
@@ -159,7 +167,7 @@ describe("FindingGroupRow", () => {
     render(<FindingGroupRow group={makeGroup()} onTriaged={onTriaged} />);
 
     fireEvent.click(screen.getByRole("button", { expanded: false }));
-    await waitFor(() => expect(screen.getByText(/package-38/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/package-38/)).not.toBeNull());
 
     fireEvent.change(screen.getByLabelText(/Rationale, applied to all 2 findings/), {
       target: { value: "Build-time binary, not distributed" },
@@ -174,11 +182,11 @@ describe("FindingGroupRow", () => {
 
   it("surfaces a KEV count rather than a bare flag", () => {
     render(<FindingGroupRow group={makeGroup({ kev_count: 3 })} />);
-    expect(screen.getByText(/KEV/)).toHaveTextContent("×3");
+    expect(screen.getByText(/KEV/).textContent).toContain("×3");
   });
 
   it("says nothing about EPSS below the notable threshold", () => {
     render(<FindingGroupRow group={makeGroup({ max_epss: 0.02 })} />);
-    expect(screen.queryByText(/EPSS/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/EPSS/)).toBeNull();
   });
 });

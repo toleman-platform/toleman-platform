@@ -6,6 +6,8 @@
  */
 
 export * from "./findings-list";
+export * from "./findings-groups-list";
+export * from "./finding-group-row";
 export * from "./findings-filter-bar";
 export * from "./finding-row";
 export * from "./finding-detail-drawer";

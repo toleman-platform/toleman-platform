@@ -64,6 +64,7 @@ export const api = {
 
   // Findings & SLA
   findings: findings.findings,
+  findingGroups: findings.findingGroups,
   triage: findings.triage,
   bulkTriage: findings.bulkTriage,
   findingTools: findings.findingTools,

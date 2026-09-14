@@ -48,6 +48,17 @@ export function FindingsList({
   const visibleIds = useMemo(() => findings.map((f) => f.id), [findings]);
   const selection = useSelection(visibleIds);
 
+  // The risk score is severity x target criticality x 40, so one target at one
+  // criticality collapses it to a constant -- every row reading 320/1000, in
+  // the highest-value corner of the row. Rather than drop the column or keep
+  // showing a constant, it is hidden exactly when it has nothing to
+  // distinguish, and the finding's age takes the space instead. Scoped to the
+  // rows on screen because that is the comparison a reader is actually making.
+  const scoreVaries = useMemo(
+    () => new Set(findings.map((f) => f.priority_score)).size > 1,
+    [findings],
+  );
+
   async function bulkTriage(toState: string) {
     if (selection.count === 0) return;
     setSubmitting(true);
@@ -105,6 +116,7 @@ export function FindingsList({
             targetName={targetById.get(f.target_id)?.name}
             targetLabel={targetById.get(f.target_id)?.label}
             selectable
+            showScore={scoreVaries}
             selected={selection.isSelected(f.id)}
             onSelectChange={(checked) => selection.toggle(f.id, checked)}
             onInspect={(finding) => setInspectingFinding(finding)}

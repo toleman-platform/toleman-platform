@@ -16,8 +16,11 @@ describe("SeverityChip", () => {
     rerender(<SeverityChip severity="low" />);
     expect(screen.getByText("Low")).toBeTruthy();
 
-    rerender(<SeverityChip severity="info" />);
-    expect(screen.getByText("Info")).toBeTruthy();
+    // "informational", matching the real tier name lib/severity.ts and the
+    // backend both use (Finding.severity), not the shorter "info" this
+    // component used to hand-roll on its own.
+    rerender(<SeverityChip severity="informational" />);
+    expect(screen.getByText("Informational")).toBeTruthy();
   });
 
   it("renders count display when count is provided", () => {
@@ -65,5 +68,19 @@ describe("SeverityChip", () => {
   it("handles unknown severity fallback gracefully", () => {
     render(<SeverityChip severity="unranked" />);
     expect(screen.getByText("Unranked")).toBeTruthy();
+  });
+
+  // Regression for the dot variant carrying its own color vocabulary that
+  // disagreed with lib/severity's: Low used to get a private accent
+  // (chart-2) here while every other severity map treats Low the same
+  // neutral way it treats Informational. Both should render the identical
+  // neutral dot now that SeverityChip reads SEVERITY_DOT_COLOR instead of a
+  // hand-rolled copy of it.
+  it("colors the Low dot the same neutral tone as Informational", () => {
+    const { container: low } = render(<SeverityChip severity="Low" variant="dot" />);
+    const { container: info } = render(<SeverityChip severity="Informational" variant="dot" />);
+    expect(low.querySelector(".bg-muted-foreground")).toBeTruthy();
+    expect(info.querySelector(".bg-muted-foreground")).toBeTruthy();
+    expect(low.querySelector(".bg-chart-2")).toBeNull();
   });
 });

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { AlertTriangle, BrainCircuit, CheckCircle2, Key, MessageSquare, Send, Ticket } from "lucide-react";
+import { AlertTriangle, BrainCircuit, CheckCircle2, Eye, EyeOff, Key, MessageSquare, Send, Ticket } from "lucide-react";
 import { ConnectGithubCard } from "@/components/features/integrations";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
@@ -30,6 +30,59 @@ const GITHUB_TTL_OPTIONS: { value: string; label: string }[] = [
   { value: "2160", label: "90 days" },
   { value: "8760", label: "1 year" },
 ];
+
+// admin M13: every secret on this page was `type="password"` with no way
+// back to plain text. That correctly stops a shoulder-surfer or a screen
+// share from reading the value, but it also stops the admin who just pasted
+// it from checking what they actually typed before hitting Save -- the only
+// way to verify a masked paste was to already trust it, which is no
+// verification at all. Defaulting to masked and putting the toggle under the
+// admin's own explicit click (same shape as the sign-in field in
+// app/login/page.tsx, and the workspace API-key card) keeps the credential
+// off-screen by default while still letting them confirm it once, on
+// purpose, immediately before it leaves the browser. autoComplete stays a
+// hardcoded "off": every field this renders is a service secret, never the
+// admin's own login, so a password manager must never offer to remember it
+// as one (see settings/page.tsx's ProfileSection for the one place that
+// distinction runs the other way).
+function SecretInput({
+  id,
+  ariaLabel,
+  value,
+  onChange,
+  placeholder,
+}: {
+  id: string;
+  ariaLabel: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type={revealed ? "text" : "password"}
+        autoComplete="off"
+        spellCheck={false}
+        className="bg-secondary pr-10"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <button
+        type="button"
+        onClick={() => setRevealed((v) => !v)}
+        aria-label={revealed ? `Hide ${ariaLabel}` : `Reveal ${ariaLabel}`}
+        title={revealed ? `Hide ${ariaLabel}` : `Reveal ${ariaLabel}`}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+      >
+        {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
+  );
+}
 
 /**
  * Fields the operator can edit that also have a stored server value. Absent =
@@ -535,12 +588,9 @@ export function GlobalIntegrations() {
             <Label htmlFor="github-token" className="text-xs text-muted-foreground">
               Personal access token
             </Label>
-            <Input
+            <SecretInput
               id="github-token"
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              className="bg-secondary"
+              ariaLabel="GitHub token"
               placeholder={
                 githubTokenUnknown
                   ? "Enter a token to replace whatever is stored…"
@@ -549,8 +599,8 @@ export function GlobalIntegrations() {
                     : "ghp_… / github_pat_…"
               }
               value={githubToken}
-              onChange={(e) => {
-                setGithubToken(e.target.value);
+              onChange={(v) => {
+                setGithubToken(v);
                 setGithubSaved(false);
                 setGithubTestResult(null);
               }}
@@ -717,15 +767,12 @@ export function GlobalIntegrations() {
                   <Label htmlFor="anthropic-api-key" className="text-xs text-muted-foreground">
                     Anthropic API key
                   </Label>
-                  <Input
+                  <SecretInput
                     id="anthropic-api-key"
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="bg-secondary"
+                    ariaLabel="Anthropic API key"
                     placeholder={config?.anthropic_api_key_set ? "Replace key…" : "sk-ant-…"}
                     value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
+                    onChange={setApiKey}
                   />
                 </div>
               )}
@@ -748,15 +795,12 @@ export function GlobalIntegrations() {
                     <Label htmlFor="oc-api-key" className="text-xs text-muted-foreground">
                       API Key (optional: self-hosted backends like Ollama usually don&apos;t need one)
                     </Label>
-                    <Input
+                    <SecretInput
                       id="oc-api-key"
-                      type="password"
-                      autoComplete="off"
-                      spellCheck={false}
-                      className="bg-secondary"
+                      ariaLabel="OpenAI-compatible API key"
                       placeholder={config?.openai_compatible_api_key_set ? "Replace key…" : "Leave blank if not required"}
                       value={compatKey}
-                      onChange={(e) => setCompatKey(e.target.value)}
+                      onChange={setCompatKey}
                     />
                   </div>
                   <div className="flex flex-col gap-1">
@@ -848,16 +892,13 @@ export function GlobalIntegrations() {
                 <Label htmlFor="slack-webhook-url" className="text-xs text-muted-foreground">
                   Webhook URL
                 </Label>
-                <Input
+                <SecretInput
                   id="slack-webhook-url"
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="bg-secondary"
+                  ariaLabel="Slack webhook URL"
                   placeholder={config?.slack_webhook_url_set ? "Replace webhook URL…" : "https://hooks.slack.com/services/..."}
                   value={slackWebhookUrl}
-                  onChange={(e) => {
-                    setSlackWebhookUrl(e.target.value);
+                  onChange={(v) => {
+                    setSlackWebhookUrl(v);
                     setSlackSaved(false);
                     setSlackTestResult(null);
                   }}
@@ -928,16 +969,13 @@ export function GlobalIntegrations() {
                   <Label htmlFor="jira-api-token" className="text-xs text-muted-foreground">
                     API Token
                   </Label>
-                  <Input
+                  <SecretInput
                     id="jira-api-token"
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="bg-secondary"
+                    ariaLabel="Jira API token"
                     placeholder={config?.jira_api_token_set ? "Replace token…" : "API token or PAT"}
                     value={jiraApiToken}
-                    onChange={(e) => {
-                      setJiraApiToken(e.target.value);
+                    onChange={(v) => {
+                      setJiraApiToken(v);
                       setJiraSaved(false);
                       setJiraTestResult(null);
                     }}
@@ -1046,16 +1084,13 @@ export function GlobalIntegrations() {
                   <Label htmlFor="siem-webhook-url" className="text-xs text-muted-foreground">
                     Webhook URL
                   </Label>
-                  <Input
+                  <SecretInput
                     id="siem-webhook-url"
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="bg-secondary"
+                    ariaLabel="SIEM webhook URL"
                     placeholder={config?.siem_webhook_url_set ? "Replace webhook URL…" : "https://your-siem.example.com/ingest"}
                     value={siemWebhookUrl}
-                    onChange={(e) => {
-                      setSiemWebhookUrl(e.target.value);
+                    onChange={(v) => {
+                      setSiemWebhookUrl(v);
                       setSiemSaved(false);
                       setSiemTestResult(null);
                     }}

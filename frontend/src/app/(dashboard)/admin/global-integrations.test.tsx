@@ -166,4 +166,39 @@ describe("GlobalIntegrations secret fields", () => {
       expect(el!.getAttribute("spellcheck")).toBe("false");
     }
   });
+
+  // admin M13: masking alone leaves the admin no way to check what they
+  // actually pasted before saving it. The reveal toggle is the fix, so it
+  // has to actually flip the input's type, not just render an icon.
+  it("lets the admin reveal and re-hide the Anthropic API key on demand", async () => {
+    getConfig.mockResolvedValue(config());
+    render(<GlobalIntegrations />);
+
+    await screen.findByText("Slack");
+    const input = document.getElementById("anthropic-api-key") as HTMLInputElement;
+    expect(input.getAttribute("type")).toBe("password");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Anthropic API key" }));
+    expect(input.getAttribute("type")).toBe("text");
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide Anthropic API key" }));
+    expect(input.getAttribute("type")).toBe("password");
+  });
+
+  // Each field owns its own `revealed` state. Without this, revealing one
+  // secret to check it would also flash every other credential on the page
+  // -- the Jira token, the Slack webhook -- at whoever is looking over the
+  // admin's shoulder or watching their screen share, defeating the point.
+  it("keeps each secret field's reveal toggle independent of the others", async () => {
+    getConfig.mockResolvedValue(config());
+    render(<GlobalIntegrations />);
+
+    await screen.findByText("Slack");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal Anthropic API key" }));
+
+    const anthropicInput = document.getElementById("anthropic-api-key") as HTMLInputElement;
+    const jiraInput = document.getElementById("jira-api-token") as HTMLInputElement;
+    expect(anthropicInput.getAttribute("type")).toBe("text");
+    expect(jiraInput.getAttribute("type")).toBe("password");
+  });
 });

@@ -17,8 +17,6 @@
  *   2. A rejected request never clears previously good data. Showing stale
  *      rows next to an error banner is more useful than showing nothing, and
  *      the caller can still tell the difference.
- */
-
 /** Discrete lifecycle state. `idle` exists so a request can be deferred
  * (e.g. waiting on a workspace selection) without faking a loading spinner
  * for something that was never requested. */
@@ -96,12 +94,4 @@ export function asyncReducer<T>(state: AsyncState<T>, action: AsyncAction<T>): A
     default:
       return state;
   }
-}
-
-/** Normalises whatever a rejected promise carried into a real Error. Callers
- * throw strings, objects and Errors; the UI should not have to care. */
-export function toError(thrown: unknown): Error {
-  if (thrown instanceof Error) return thrown;
-  if (typeof thrown === "string") return new Error(thrown);
-  return new Error("Something went wrong");
 }

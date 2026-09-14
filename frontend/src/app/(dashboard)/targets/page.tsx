@@ -9,7 +9,7 @@ import { TargetsList } from "./targets-list";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
-import { settleOrNull } from "@/lib/settle";
+import { settleOrNull } from "@/std-lib";
 
 function firstValue(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;

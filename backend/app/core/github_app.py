@@ -208,6 +208,7 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
             "pull_requests": "write",
             "statuses": "write",
             "metadata": "read",
+            "issues": "read",
         },
         # (GH-03) Subscribe to pull_request so blocking mode is actually
         # automatic. This was `[]` with no hook_attributes, so the App
@@ -226,10 +227,15 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         #
         # push/installation_repositories/issue_comment added later, closing
         # three real gaps found while explaining this App's behavior in a
-        # support session (none needed a new permission scope, so no
-        # existing installation's owner has to re-approve anything -- unlike
-        # workflows:write above, only setup_on_update-covered changes need
-        # that):
+        # support session. Only push turned out to be a plain default_events
+        # entry (#475): issue_comment also needs "issues": "read" above, and
+        # installation_repositories is not declared here at all. A manifest only
+        # shapes Apps created from here on, so no existing installation's
+        # owner is prompted to re-approve anything either way -- but by the
+        # same token an App created before "issues": "read" was in this
+        # manifest cannot subscribe to issue_comment until its owner grants
+        # Issues read access on the App's own settings page (there is no API
+        # for it; see app_management_url below):
         #   - push: without it, nothing tells Toleman a PR merged. A
         #     target's own generated toleman-scan.yml (if TOLEMAN_API_URL/
         #     TOLEMAN_API_KEY are configured on it) already re-scans on push
@@ -240,14 +246,20 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         #   - installation_repositories: without it, adding a repo to an
         #     existing installation (via GitHub's own "Configure" screen,
         #     not through Toleman) creates no Target until someone remembers
-        #     the manual "Sync now" button (POST /api/github-app/sync).
+        #     the manual "Sync now" button (POST /api/github-app/sync). Not
+        #     listed in default_events below: GitHub sends it to every App
+        #     automatically and rejects a manifest that tries to subscribe
+        #     to it explicitly ("you cannot manually subscribe to this
+        #     event").
         #   - issue_comment: lets `@toleman ignore finding=<id> <reason>` on
         #     a PR create the same IgnoreStatus.REQUESTED row the "Request
         #     ignore" UI button does (app/api/pr_guardrail.py's
         #     request_ignore, refactored so both share
         #     pr_guardrail_executor.submit_ignore_request) -- still goes to
         #     the security team for approval either way, never
-        #     auto-approved from a comment.
+        #     auto-approved from a comment. Requires "issues": "read" above;
+        #     GitHub rejects the event without it since issue_comment is an
+        #     Issues-API webhook even when it fires on a PR thread.
         #
         # backend_url must be reachable *from GitHub*; see
         # settings.public_api_url. GitHub validates this URL when the
@@ -266,7 +278,7 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
         # a GitHub App's hook URL after creation, only its settings page by
         # hand (the same limitation update_webhook_secret in
         # app/api/github_app.py already documents for the webhook secret).
-        "default_events": ["pull_request", "push", "installation_repositories", "issue_comment"],
+        "default_events": ["pull_request", "push", "issue_comment"],
         "hook_attributes": {
             "url": f"{backend_url}/api/webhooks/github",
             "active": True,

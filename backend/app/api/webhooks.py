@@ -36,11 +36,16 @@ Four event types handled, each independent of the others:
   - issue_comment: `@toleman ignore finding=<id> <reason>` on a PR, the
     comment-driven equivalent of the "Request ignore" UI button.
 
-None of these needed a new App permission scope (see github_app.py's
-default_permissions comment), only a new entry in default_events -- but
-that only affects an App created from here on; an already-installed App's
-webhook event subscriptions are edited on its own GitHub settings page, not
-retroactively by this file changing.
+Of the three added after pull_request, only push was a plain default_events
+entry (#475). issue_comment also needed a new App permission scope,
+"issues": "read", because GitHub classes it as an Issues event even when it
+fires on a PR thread; installation_repositories is not a declared
+subscription at all, since GitHub delivers it to every App automatically and
+rejects a manifest that lists it explicitly. See github_app.py's default_permissions/default_events
+comment for both. Either way a manifest change only affects an App created
+from here on; an already-installed App's permissions and webhook event
+subscriptions are edited on its own GitHub settings page, not retroactively
+by this file changing.
 """
 import hashlib
 import hmac

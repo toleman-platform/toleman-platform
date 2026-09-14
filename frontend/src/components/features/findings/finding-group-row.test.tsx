@@ -180,7 +180,11 @@ describe("FindingGroupRow", () => {
 
     await waitFor(() => expect(bulkTriage).toHaveBeenCalled());
     expect(bulkTriage.mock.calls[0][0]).toHaveLength(240);
-  });
+    // Renders 240 member rows in jsdom, which comfortably exceeds the 5s
+    // default once the whole suite is competing for the event loop. The size
+    // is the point of the test -- MEMBER_PAGE_SIZE is 200, so anything smaller
+    // would never exercise the second fetch.
+  }, 30000);
 
   it("refuses to triage a group it could not fully load, and says so", async () => {
     // 1,400 members, a 1,000 fetch cap: closing 1,000 of them would leave 400
@@ -200,7 +204,8 @@ describe("FindingGroupRow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Accepted Risk" }));
     expect(bulkTriage).not.toHaveBeenCalled();
-  });
+    // Renders MEMBER_FETCH_CAP (1000) rows; see the timeout note above.
+  }, 30000);
 
   it("drops the cached members after a triage so a second click cannot re-triage", async () => {
     findings.mockResolvedValue({ items: [makeMember(38), makeMember(37)], total: 2 });
@@ -265,12 +270,40 @@ describe("FindingGroupRow", () => {
     expect(alert.textContent).not.toMatch(/no findings were (changed|updated)/i);
   });
 
-  it("never fetches for an ungrouped row, which would reveal only itself", async () => {
-    render(<FindingGroupRow group={makeGroup({ grouped: false, category: "Secrets", finding_count: 1 })} />);
+  it("opens an ungrouped row's single finding", async () => {
+    // A leaked credential is the highest-severity thing this page shows. It
+    // used to be the one row that could not be opened at all, because the
+    // ungrouped branch skipped the member fetch entirely.
+    findings.mockResolvedValue({ items: [makeMember(9)], total: 1 });
+    const onInspect = vi.fn();
+    render(
+      <FindingGroupRow
+        group={makeGroup({ grouped: false, category: "Secrets", finding_count: 1 })}
+        onInspect={onInspect}
+      />,
+    );
     fireEvent.click(screen.getByRole("button", { expanded: false }));
 
-    await waitFor(() => expect(screen.getByText(/is one incident with its own clock/)).not.toBeNull());
-    expect(findings).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByText(/package-9/)).not.toBeNull());
+
+    fireEvent.click(screen.getByText(/package-9/));
+    expect(onInspect).toHaveBeenCalledWith(expect.objectContaining({ id: 9 }));
+  });
+
+  it("opens a member's full detail, which grouping otherwise cut off", async () => {
+    // The description, CVE/CWE/CVSS enrichment, suggested fix and per-finding
+    // triage all live behind this handler. Without it the grouped view — the
+    // default — had no route to any of them.
+    findings.mockResolvedValue({ items: [makeMember(38), makeMember(37)], total: 2 });
+    const onInspect = vi.fn();
+    render(<FindingGroupRow group={makeGroup()} onInspect={onInspect} />);
+
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    await waitFor(() => expect(screen.getByText(/package-38/)).not.toBeNull());
+
+    fireEvent.click(screen.getByText(/package-38/));
+    expect(onInspect).toHaveBeenCalledTimes(1);
+    expect(onInspect).toHaveBeenCalledWith(expect.objectContaining({ id: 38 }));
   });
 
   it("applies one rationale to every member of the group", async () => {

@@ -136,6 +136,7 @@ export function FindingGroupRow({
   memberQuery,
   targets = [],
   onTriaged,
+  onInspect,
 }: {
   group: FindingGroup;
   /**
@@ -152,6 +153,18 @@ export function FindingGroupRow({
   memberQuery?: FindingsQuery;
   targets?: Target[];
   onTriaged?: () => void;
+  /**
+   * Open one member finding's full detail.
+   *
+   * Grouping collapsed the row down to what a *decision* needs, and in doing
+   * so it cut off the route to what a single finding needs: the description,
+   * the NVD/OSV enrichment (CVE, CWE, CVSS, fix versions), the suggested fix
+   * and Raise-PR action, per-finding triage, and the link into the repo at the
+   * offending line. All of that still exists in FindingDetailDrawer -- after
+   * the grouped view became the default, nothing on the page reached it any
+   * more without switching to `?view=flat`.
+   */
+  onInspect?: (finding: Finding) => void;
 }) {
   const [now] = useState(() => Date.now());
   const [expanded, setExpanded] = useState(false);
@@ -212,8 +225,13 @@ export function FindingGroupRow({
     setExpanded(next);
     // Members are fetched on first expand and then kept: re-collapsing and
     // re-expanding a row is a navigation gesture, not a reason to re-hit the
-    // API. `grouped` rows are the only ones with anything to reveal.
-    if (!next || members !== null || !group.grouped) return;
+    // API.
+    //
+    // Ungrouped rows fetch too, even though the answer is a single finding.
+    // They used to skip it and render only a sentence explaining why they are
+    // not collapsed -- which meant a leaked credential, the highest-severity
+    // thing this page shows, was the one row you could not open.
+    if (!next || members !== null) return;
     await loadMembers();
   }
 
@@ -295,13 +313,10 @@ export function FindingGroupRow({
 
       {expanded && (
         <div className="border-t border-border bg-secondary/30 px-3 py-2 pl-10">
-          {!group.grouped && (
-            <p className="text-xs text-muted-foreground">
-              Not grouped: one {group.category.toLowerCase()} finding is one incident with its own clock, so it
-              is never collapsed with others under the same rule.
-            </p>
-          )}
-
+          {/* Ungrouped categories (Secrets, Malicious Package) render their single
+              finding here with no explanation of why they are not collapsed --
+              that reasoning is a property of the code, not something the reader
+              needs on screen. See UNGROUPED_CATEGORIES in app/core/grouping.py. */}
           {loading && (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" /> Loading this group&apos;s findings…
@@ -313,21 +328,25 @@ export function FindingGroupRow({
             <>
               <ul className="flex flex-col">
                 {members.map((m) => (
-                  <li
-                    key={m.id}
-                    className="flex items-center gap-3 border-b border-border/60 py-1 font-mono text-[11px] text-muted-foreground last:border-b-0"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-foreground">{m.title}</span>
-                    <span className="shrink-0">#{m.id}</span>
-                    <span className="hidden shrink-0 sm:block">{m.file_path}</span>
+                  <li key={m.id} className="border-b border-border/60 last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => onInspect?.(m)}
+                      className="flex w-full items-center gap-3 py-1 text-left font-mono text-[11px] text-muted-foreground hover:bg-secondary/60"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-foreground underline decoration-dotted underline-offset-2">
+                        {m.title}
+                      </span>
+                      <span className="shrink-0">#{m.id}</span>
+                      <span className="hidden shrink-0 sm:block">{m.file_path}</span>
+                    </button>
                   </li>
                 ))}
               </ul>
 
               {truncated && (
                 <p className="mt-2 text-xs text-destructive">
-                  Showing {members.length} of {memberTotal}. Group triage is disabled above this size — narrow the
-                  filters, or triage from the ungrouped list.
+                  Showing {members.length} of {memberTotal}. Narrow the filters to triage this group.
                 </p>
               )}
 

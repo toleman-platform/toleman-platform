@@ -3,7 +3,8 @@ import { ChevronLeft, PowerOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { CriticalityChip } from "@/components/features/targets";
-import { FindingsList } from "@/components/features/findings";
+import { FindingsFilterBar, FindingsGroupsList, FindingsList } from "@/components/features/findings";
+import { FindingsCategoryTabs, type CategoryTab } from "@/components/findings-category-tabs";
 import { ScanButtons } from "./scan-buttons";
 import { TargetGroups } from "./target-groups";
 import { PipelineIntegration } from "./pipeline-integration";
@@ -18,8 +19,15 @@ import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
 import { TargetHistory } from "./target-history";
-import { settledOr } from "@/std-lib";
-import { pageSizeFromParams } from "@/lib/pagination";
+// Both settle helpers, deliberately: `settleOrNull` where `null` is a usable
+// sentinel on its own (the list and group fetches, each of which renders an
+// ErrorState when it is null), and `settledOr` where the fallback is an empty
+// collection that would otherwise be indistinguishable from a real result.
+// See std-lib/async.ts for why that distinction is load-bearing here.
+import { settledOr, settleOrNull } from "@/std-lib";
+import { ErrorState } from "@/components/ui/error-state";
+import { ReloadButton } from "@/components/reload-button";
+import { QUEUES, parseFindingsView, queueFilters } from "@/lib/findings-view";
 
 // Issue #197: the target detail page used to be one long scroll stacking
 // posture, findings and five separate config sections. The settings alone
@@ -40,17 +48,55 @@ export default async function TargetDetailPage({
   const targetId = Number(id);
   const tab = normalizeTab(sp.tab);
 
-  const page = Math.max(1, Number(Array.isArray(sp.page) ? sp.page[0] : sp.page) || 1);
-  const pageSize = pageSizeFromParams(sp.page_size);
+  // The same queue/sort/filter vocabulary /findings uses, read from the same
+  // parser (lib/findings-view.ts) so "Needs action" cannot come to mean one
+  // thing on that page and something slightly different on this tab.
+  const view = parseFindingsView(sp);
+  const { severity, tool, fixability, state, search, page, pageSize, pageSizeRaw, queue, queued, grouped, sort, sortRaw, new_since_days, newSinceRaw } = view;
 
-  const [target, findingsResult, scanSettled, targetSettled] = await Promise.all([
+  // This tab is always one target, so target_id is pinned here rather than
+  // read off the URL; everything else is the reader's.
+  const findingFilters = {
+    target_id: targetId,
+    severity,
+    tool,
+    fixability,
+    state,
+    search,
+    new_since_days,
+    category: queued.category,
+    exclude_category: queued.exclude_category,
+    resolved: queued.resolved,
+  };
+
+  const [
+    target,
+    findingsResult,
+    groupsResult,
+    scanSettled,
+    targetSettled,
+    queueCounts,
+    findingFacets,
+  ] = await Promise.all([
     api.target(targetId),
     // Real pagination. This used to fetch page_size: 500 and hand the whole
     // lot to FindingsList with pageSize = findings.length, which meant the
     // pager rendered "Showing 1-500 of 1137" while the rows-per-page
     // selector said 25; and on a target with 1137 findings it shipped 500
     // rows to the browser in one response.
-    api.findings({ target_id: targetId, page, page_size: pageSize }),
+    grouped
+      ? Promise.resolve(null)
+      : settleOrNull(
+          api.findings({
+            ...findingFilters,
+            sort: sort === "blast_radius" ? "exploitability" : sort,
+            page,
+            page_size: pageSize,
+          }),
+        ),
+    grouped
+      ? settleOrNull(api.findingGroups({ ...findingFilters, sort, page, page_size: pageSize }))
+      : Promise.resolve(null),
     // Both summaries still degrade to {} rather than failing the page, but
     // `settledOr` keeps the *reason* the map is empty. These two used to be
     // `settleOrNull(...).then((s) => s ?? {})`, which threw the failure away
@@ -62,11 +108,82 @@ export default async function TargetDetailPage({
     settledOr(api.scanSummary(), {}),
     // Overview counts must cover the whole target, not the fetched page.
     settledOr(api.targetsSummary(), {}),
+    // One count per queue, under the filters that are active now, so each tab
+    // count describes what clicking it would actually show.
+    Promise.all(
+      QUEUES.map((q) => {
+        const qf = queueFilters(q.id);
+        return api
+          .findings({
+            target_id: targetId,
+            severity,
+            tool,
+            fixability,
+            search,
+            new_since_days,
+            category: qf.category,
+            exclude_category: qf.exclude_category,
+            resolved: qf.resolved,
+            page_size: 1,
+          })
+          .then((r): number | null => r.total)
+          // `null`, not `0` — the same call #460 corrected on /findings, and
+          // these counts feed the same component. All four are independent
+          // requests, so when the findings API is down they fail together and
+          // the tab strip would read "Needs action 0 / Licence review 0 /
+          // Resolved 0 / All findings 0" directly above this tab's own
+          // "couldn't be loaded" error box. Zero is a measurement; a failed
+          // request has not made one. See CategoryTab.count.
+          .catch(() => null);
+      }),
+    ),
+    // Null on failure: FindingsFilterBar already renders its hardcoded
+    // dimensions (severity, fixability, state) without facets, and a tab that
+    // loses its tool filter is better than a tab that fails to render.
+    api.findingFacets({ target_id: targetId, ...queued }).catch(() => null),
   ]);
   const [scanSummary, scanSummaryFailed] = scanSettled;
   const [targetSummary, targetSummaryFailed] = targetSettled;
-  const findings = findingsResult.items;
+  const findings = findingsResult?.items ?? [];
   const scanEntry = scanSummary[String(targetId)];
+
+  function findingsHref(overrides: Record<string, string | undefined>): string {
+    const params = new URLSearchParams();
+    params.set("tab", "vulnerabilities");
+    severity.forEach((v) => params.append("severity", v));
+    tool.forEach((v) => params.append("tool", v));
+    fixability.forEach((v) => params.append("fixability", v));
+    state.forEach((v) => params.append("state", v));
+    if (search) params.set("search", search);
+    if (pageSizeRaw) params.set("page_size", pageSizeRaw);
+    if (newSinceRaw) params.set("new_since_days", newSinceRaw);
+    if (sortRaw) params.set("sort", sortRaw);
+    if (queue !== "action") params.set("queue", queue);
+    if (!grouped) params.set("view", "flat");
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined) params.delete(key);
+      else params.set(key, value);
+    }
+    // Changing queue rarely leaves the reader on a page that still exists.
+    params.delete("page");
+    return `/targets/${targetId}?${params.toString()}`;
+  }
+
+  // The tab badge used to read the flat list's `total`, which is null in the
+  // grouped view. Taken from the "All findings" queue count instead, so the
+  // number is the same whichever view the reader is in.
+  //
+  // `undefined` when that count failed, which makes TargetTabs omit the badge
+  // rather than render "Vulnerabilities (0)" for a target whose findings were
+  // never counted.
+  const openFindingsCount = queueCounts[QUEUES.findIndex((q) => q.id === "all")] ?? undefined;
+
+  const queueTabs: CategoryTab[] = QUEUES.map((q, i) => ({
+    id: q.id,
+    label: q.label,
+    count: queueCounts[i] ?? null,
+    href: findingsHref({ queue: q.id === "action" ? undefined : q.id, state: undefined }),
+  }));
 
   return (
     <div className="flex flex-col gap-6">
@@ -125,7 +242,7 @@ export default async function TargetDetailPage({
         <ScanButtons targetId={targetId} workspaceId={target.workspace_id} isActive={target.is_active !== false} />
       </div>
 
-      <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={findingsResult.total} />
+      <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={openFindingsCount} />
 
       {tab === "overview" && (
         <TargetOverview
@@ -139,16 +256,55 @@ export default async function TargetDetailPage({
 
       {tab === "vulnerabilities" && (
         // Reuses the shared findings components rather than forking them, so
-        // bulk triage, severity styling, SLA badges, enrichment and the
-        // density behaviour from #172 all come along unchanged. The target
+        // grouping, bulk triage, severity styling, SLA badges, enrichment and
+        // the density behaviour from #172 all come along unchanged. The target
         // column is redundant here, hence passing only this target.
-        <FindingsList
-          findings={findings}
-          total={findingsResult.total}
-          page={page}
-          pageSize={pageSize}
-          targets={[target]}
-        />
+        //
+        // This tab used to be a bare paginated list: no filters, no grouping,
+        // no sort. On a target with 1,137 findings that is a 46-page scroll
+        // with no way to narrow it -- the same thing that made /findings
+        // unusable before it was grouped.
+        <div className="flex flex-col gap-4">
+          <FindingsCategoryTabs tabs={queueTabs} active={queue} />
+          <FindingsFilterBar
+            targets={[target]}
+            groups={[]}
+            // Scoped to this target, so every option the bar offers is one
+            // that actually narrows this tab rather than the whole estate.
+            facets={findingFacets}
+            fallbackOptions={null}
+            resolved={queued.resolved}
+            grouped={grouped}
+            sort={!grouped && sort === "blast_radius" ? "exploitability" : sort}
+          />
+          {grouped && groupsResult === null && (
+            <ErrorState description="The findings list couldn't be loaded from the API." action={<ReloadButton />} />
+          )}
+          {grouped && groupsResult && (
+            <FindingsGroupsList
+              groups={groupsResult.items}
+              total={groupsResult.total}
+              totalFindings={groupsResult.total_findings}
+              truncated={groupsResult.truncated}
+              page={page}
+              pageSize={pageSize}
+              memberQuery={findingFilters}
+              targets={[target]}
+            />
+          )}
+          {!grouped && findingsResult === null && (
+            <ErrorState description="The findings list couldn't be loaded from the API." action={<ReloadButton />} />
+          )}
+          {!grouped && findingsResult && (
+            <FindingsList
+              findings={findings}
+              total={findingsResult.total}
+              page={page}
+              pageSize={pageSize}
+              targets={[target]}
+            />
+          )}
+        </div>
       )}
 
       {tab === "dependencies" && <TargetDependencies targetId={targetId} target={target} />}

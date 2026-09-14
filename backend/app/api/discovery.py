@@ -7,6 +7,7 @@ from app.api.deps import get_session
 from app.core.async_jobs import create_running_row
 from app.core.discovery_ingestion import upsert_endpoints  # noqa: F401, re-exported, see docstring below
 from app.core.staleness import mark_stale_if_needed
+from app.core import target_lifecycle
 from app.models.models import ApiEndpoint, DiscoveryRun, Target, User, WorkspaceRole
 from app.tasks.discovery_tasks import run_discovery as run_discovery_task
 
@@ -22,7 +23,9 @@ router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 
 def _get_target(target_id: int, session: Session) -> Target:
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) Soft-deleted targets 404; deactivation is checked at the
+    # dispatching route only, so already-discovered endpoints stay readable.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     return target
 
@@ -43,6 +46,13 @@ def run_discovery(
     "running" to get the same endpoints/new_count payload this used to
     return synchronously."""
     target = _get_target(target_id, session)
+    # (#273) API Discovery clones the repo and greps the checkout, so it is a
+    # scan by every definition that matters here (it starts work against a
+    # repository the operator switched off, and its output feeds Active API
+    # Scanning). Refused for the same reason POST /api/scans/run is.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
 
     run = create_running_row(
         session, DiscoveryRun(target_id=target_id, branch=target.default_branch, status="running")

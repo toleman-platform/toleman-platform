@@ -21,6 +21,7 @@ from app.core.github_app import (
     webhook_reachable,
 )
 from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, User, Workspace
+from app.core import target_lifecycle
 from app.tasks.sbom_tasks import queue_dependency_graph_sync
 from app.tasks.scan_tasks import queue_full_scan
 
@@ -261,7 +262,18 @@ def _sync_repos(session: Session) -> int:
     org/account, or a second App entirely) silently never saw that
     installation's repos at all."""
     installations = session.exec(select(GitHubInstallation)).all()
-    existing_urls = {t.repo_url for t in session.exec(select(Target)).all()}
+    # (#273) Soft-deleted targets are deliberately NOT part of the
+    # already-imported set. The dead row still holds that repo_url, so
+    # counting it would mean a repository someone deleted could never be
+    # re-imported: the sync would skip it forever while the operator saw
+    # nothing appear and no error explaining why. Excluding it lets the repo
+    # come back as a fresh target (new id, clean history) while the old row
+    # and its findings stay put for the audit trail. Deactivated targets DO
+    # count as existing -- they weren't removed, they're just switched off,
+    # and re-importing would create a confusing duplicate.
+    existing_urls = {
+        t.repo_url for t in session.exec(target_lifecycle.live_targets(select(Target))).all()
+    }
     created = 0
     new_targets: list[Target] = []
     for installation in installations:

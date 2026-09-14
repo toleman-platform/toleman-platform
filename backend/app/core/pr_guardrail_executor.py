@@ -45,6 +45,7 @@ from app.models.models import (
     Scan,
     Target,
 )
+from app.core import target_lifecycle
 from app.core.tool_usage import tools_for_surface
 from app.core.time import utcnow
 from app.scanners import parsers, runner
@@ -1666,6 +1667,22 @@ def set_commit_status(session: Session, target: Target, sha: str, state: str, de
     return ""
 
 
+def _discard_placeholder_pr_scan(session: Session, pr_scan_id: int | None) -> None:
+    """Drop the webhook path's pre-created "running" PRGuardrailScan row when
+    the scan turns out not to run at all.
+
+    Extracted (#273) because there are now two such early exits -- policy
+    (enforcement_mode="disabled") and lifecycle (deactivated/deleted) -- and
+    forgetting it in either one leaves the dashboard showing a PR scan stuck
+    RUNNING forever, which reads as a hung platform rather than as a skip."""
+    if pr_scan_id is None:
+        return
+    placeholder = session.get(PRGuardrailScan, pr_scan_id)
+    if placeholder:
+        session.delete(placeholder)
+        session.commit()
+
+
 def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, pr_scan_id: int | None = None) -> dict:
     """Diff-only scan: scan the PR's head branch, diff findings against the
     target's default-branch Open findings and API endpoints against the
@@ -1673,6 +1690,11 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
     PRGuardrailFinding rows, best-effort post a PR comment + commit status.
     Returns the same response shape regardless of caller (on-demand API
     route, webhook handler, or Celery task).
+
+    Two gates run before any work, both returning early with no clone, no
+    PRGuardrailScan row, no PR comment and no commit status. First target
+    lifecycle (#273): a deactivated or soft-deleted target isn't scanned at
+    all, returned as status="skipped" with a reason. Then:
 
     Enforcement mode (issue #62, app.core.enforcement.resolve_enforcement_mode)
     gates this at the very top: "disabled" means PR Guardrail doesn't run for
@@ -1689,20 +1711,50 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
     being created; None (the on-demand route's case, which already runs
     synchronously on the request thread with no such gap to close) keeps
     the original create-fresh behavior."""
+    # (#273) Target lifecycle is checked before enforcement mode, and before
+    # anything else: a deactivated or soft-deleted target gets no clone, no
+    # PRGuardrailScan row, no PR comment and no commit status, exactly like
+    # enforcement_mode="disabled" below. Checked here in the shared executor
+    # rather than only in the two entry points (the webhook handler and the
+    # on-demand route) so neither can be reached by a path that skipped it --
+    # the Celery task in particular re-loads the target by id, minutes after
+    # the webhook decided it was fine.
+    #
+    # Note the deliberate asymmetry with enforcement_mode="disabled": that
+    # one is a *policy* decision about PR gating, so it is reported as a
+    # distinct "disabled" status. This is the repo being switched off
+    # wholesale, and is reported as "skipped" with the reason, so a reader
+    # of the returned payload can tell "we chose not to gate PRs here" from
+    # "this repo is not being scanned at all".
+    lifecycle_refusal = target_lifecycle.scan_refusal_reason(target)
+    if lifecycle_refusal:
+        logger.info(
+            "PR guardrail: %s (target %s), skipping scan for PR #%s",
+            lifecycle_refusal, target.id, pr_number,
+        )
+        _discard_placeholder_pr_scan(session, pr_scan_id)
+        return {
+            "pr_scan_id": None,
+            "status": "skipped",
+            "skipped": lifecycle_refusal,
+            "new_findings_count": 0,
+            "highest_new_severity": None,
+            "new_endpoints_count": 0,
+            "new_findings": [],
+            "new_endpoints": [],
+            "enforcement_mode": None,
+        }
+
     enforcement_mode = resolve_enforcement_mode(session, target)
     if enforcement_mode == "disabled":
         logger.info(
             "PR guardrail: enforcement_mode=disabled for target %s, skipping scan for PR #%s",
             target.id, pr_number,
         )
-        if pr_scan_id is not None:
-            # "disabled" means no PRGuardrailScan row at all (see docstring
-            # above) -- must not leave the webhook path's placeholder
-            # stuck RUNNING forever.
-            placeholder = session.get(PRGuardrailScan, pr_scan_id)
-            if placeholder:
-                session.delete(placeholder)
-                session.commit()
+        # "disabled" means no PRGuardrailScan row at all (see docstring
+        # above) -- must not leave the webhook path's placeholder
+        # stuck RUNNING forever.
+        _discard_placeholder_pr_scan(session, pr_scan_id)
         return {
             "pr_scan_id": None,
             "status": "disabled",

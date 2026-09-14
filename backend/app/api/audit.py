@@ -73,6 +73,13 @@ def audit_log(
     range, event type, actor.
     """
     findings = {f.id: f for f in session.exec(select(Finding)).all()}
+    # (#273) Deliberately NOT filtered to live targets, unlike every list and
+    # aggregate elsewhere in the app. This is the audit trail: a scan that
+    # really happened against a repo that has since been deleted still
+    # happened, and rendering it as "scan on 47" once the target is gone
+    # would destroy the one thing the row exists to record. Soft delete is
+    # what makes keeping this possible -- a cascade would have taken the
+    # Scan rows with it.
     targets = {t.id: t for t in session.exec(select(Target)).all()}
     users = {u.id: u for u in session.exec(select(User)).all()}
 

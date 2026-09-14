@@ -58,6 +58,7 @@ from app.api.findings import (
     distinct_target_environments,
     distinct_target_owners,
 )
+from app.core import target_lifecycle
 from app.core.csv_export import safe_csv_writer
 from app.core.downloads import attachment_disposition
 from app.core.time import utcnow
@@ -368,7 +369,12 @@ def _resolve_targets(
         # which is what it did before #302.
         return [], org_label, "org-wide"
 
-    query = select(Target)
+    # (#273) Soft-deleted targets are excluded from every report. A
+    # compliance/audit report is a statement about the estate as it is,
+    # and a repo that was removed is not part of it; its findings remain
+    # answerable through the audit log, which is where "what did we
+    # delete" belongs.
+    query = target_lifecycle.live_targets(select(Target))
     if ws_ids:
         query = query.where(Target.workspace_id.in_(ws_ids))
     if filters.group_id is not None:
@@ -386,7 +392,7 @@ def _resolve_targets(
         return list(session.exec(query.order_by(Target.name)).all()), org_label, "org-wide"
 
     target = session.get(Target, filters.target_id)
-    if not target or (ws_ids is not None and target.workspace_id not in ws_ids):
+    if not target or target_lifecycle.is_deleted(target) or (ws_ids is not None and target.workspace_id not in ws_ids):
         # 404 rather than 403 to avoid confirming the target exists in a
         # workspace the caller can't see (matches findings.py's get_finding).
         raise HTTPException(status_code=404, detail="target not found")
@@ -608,6 +614,12 @@ def build_posture_report(
                         "started_at": s.started_at.isoformat() + "Z",
                         "completed_at": (s.completed_at.isoformat() + "Z") if s.completed_at else "",
                         "findings_count": s.findings_count,
+                        # (#273) Without this an auditor reads the last scan
+                        # date and concludes the target is covered. For a
+                        # deactivated target that date is frozen at whenever
+                        # scanning was switched off and nothing will ever
+                        # advance it.
+                        "scanning": "on" if target_lifecycle.is_active(target) else "OFF (deactivated)",
                     }
                 )
             if not all_scans:
@@ -631,6 +643,7 @@ def build_posture_report(
                         "started_at": "",
                         "completed_at": "",
                         "findings_count": 0,
+                        "scanning": "on" if target_lifecycle.is_active(target) else "OFF (deactivated)",
                     }
                 )
 
@@ -665,7 +678,16 @@ def build_posture_report(
     )
 
     target_rows = [
-        {"id": t.id, "name": t.name, "repo_url": t.repo_url, "label": t.label, "default_branch": t.default_branch}
+        {
+            "id": t.id,
+            "name": t.name,
+            "repo_url": t.repo_url,
+            "label": t.label,
+            "default_branch": t.default_branch,
+            # (#273) Listing a repo without saying its scanning is switched
+            # off is asserting coverage the report does not have.
+            "is_active": target_lifecycle.is_active(t),
+        }
         for t in targets
     ]
 
@@ -706,6 +728,10 @@ def build_posture_report(
         # the work; this second gate is what the renderers read, and having
         # three of the six rely on the flags alone was an invitation for a
         # future edit to leave rows in a section the manifest calls excluded.
+        # (#273) Counted once here rather than in each renderer: "3 of 20
+        # targets are not being scanned" is a headline fact about the
+        # estate, not a footnote.
+        "deactivated_target_count": sum(1 for t in target_rows if not t["is_active"]),
         "targets": target_rows if "targets" in included_set else [],
         "totals_by_severity_state": totals_rows if "totals" in included_set else [],
         "severity_state_rows": severity_state_rows if "severity_state" in included_set else [],
@@ -725,6 +751,11 @@ def render_csv(data: dict) -> str:
     writer.writerow(["Figures As Of", data["as_of"]])
     writer.writerow(["Scope", data["scope"]])
     writer.writerow(["Target Count", data["target_count"]])
+    # (#273) Sits in the header beside Target Count, not buried in the
+    # Targets table, because it qualifies every figure below it: a count
+    # of repos that are in scope but are not being scanned is the first
+    # thing that changes how the rest of this document should be read.
+    writer.writerow(["Deactivated Targets (not scanned)", data["deactivated_target_count"]])
     writer.writerow(["Filters Applied", data["filters_summary"]])
     writer.writerow(["Sections Included", data["sections_summary"]])
     if data["result_note"]:
@@ -766,9 +797,11 @@ def render_csv(data: dict) -> str:
         return False
 
     if open_section("targets"):
-        writer.writerow(["ID", "Name", "Repo URL", "Label", "Default Branch"])
+        writer.writerow(["ID", "Name", "Repo URL", "Label", "Default Branch", "Scanning"])
         for t in data["targets"]:
-            writer.writerow([t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"]])
+            writer.writerow(
+                [t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"], "on" if t["is_active"] else "OFF (deactivated)"]
+            )
 
     if open_section("totals"):
         writer.writerow(["Severity", "State", "Count"])
@@ -810,7 +843,17 @@ def render_csv(data: dict) -> str:
             )
 
     if open_section("scan_coverage"):
-        writer.writerow(["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings Count"])
+        # (#273) Scanning is appended after the existing columns rather than
+        # inserted next to Target, where it would read more naturally. This
+        # CSV is a download other people's tooling parses, and every reader
+        # indexes positionally -- csv has no column names to bind to.
+        # Inserting mid-table silently re-points every existing index by one
+        # (it broke this repo's own r[6] == findings_count assertion, which
+        # is exactly what a downstream spreadsheet would hit, without a test
+        # to catch it). Appending is the only backward-compatible addition.
+        writer.writerow(
+            ["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings Count", "Scanning"]
+        )
         for r in data["scan_rows"]:
             writer.writerow(
                 [
@@ -821,6 +864,7 @@ def render_csv(data: dict) -> str:
                     r["started_at"],
                     r["completed_at"],
                     r["findings_count"],
+                    r["scanning"],
                 ]
             )
 
@@ -911,8 +955,11 @@ def render_pdf(data: dict) -> bytes:
 
     add_section(
         "targets",
-        ["ID", "Name", "Repo URL", "Label", "Default Branch"],
-        [[t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"]] for t in data["targets"]],
+        ["ID", "Name", "Repo URL", "Label", "Default Branch", "Scanning"],
+        [
+            [t["id"], t["name"], t["repo_url"], t["label"], t["default_branch"], "on" if t["is_active"] else "OFF (deactivated)"]
+            for t in data["targets"]
+        ],
     )
 
     add_section(
@@ -948,9 +995,12 @@ def render_pdf(data: dict) -> bytes:
 
     add_section(
         "scan_coverage",
-        ["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings"],
+        ["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings", "Scanning"],
         [
-            [r["target"], r["tool"], r["branch"], r["status"], r["started_at"], r["completed_at"], r["findings_count"]]
+            [
+                r["target"], r["tool"], r["branch"], r["status"],
+                r["started_at"], r["completed_at"], r["findings_count"], r["scanning"],
+            ]
             for r in data["scan_rows"]
         ],
     )

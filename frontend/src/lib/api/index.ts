@@ -43,6 +43,10 @@ export const api = {
   target: targets.target,
   createTarget: targets.createTarget,
   updateTarget: targets.updateTarget,
+  // (#273) Lifecycle actions, not attributes -- see lib/api/targets.ts.
+  deactivateTarget: targets.deactivateTarget,
+  reactivateTarget: targets.reactivateTarget,
+  deleteTarget: targets.deleteTarget,
   saveCloneCredentials: targets.saveCloneCredentials,
   targetsSummary: targets.targetsSummary,
   targetGroups: targets.targetGroups,

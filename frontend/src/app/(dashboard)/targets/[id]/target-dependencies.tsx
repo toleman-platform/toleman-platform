@@ -22,12 +22,19 @@ function DependencySyncNudge({ target }: { target: Target }) {
     ok: `${target.dependency_component_count ?? 0} component${target.dependency_component_count === 1 ? "" : "s"} imported from the GitHub dependency graph`,
     unavailable: "GitHub could not provide a dependency graph for this repo. The inventory below may be incomplete; a private repo needs the graph enabled and a token with access.",
     failed: "The automatic dependency import failed. Import from GitHub on the SBOM page to retry.",
+    // (#273) Not a failure and not an empty repo: the import was never
+    // attempted because scanning is off for this target. Given its own
+    // status so the inventory below is read as "last known", not "current".
+    skipped: "The dependency import was skipped because this target is deactivated. The inventory below is whatever was last imported; reactivate the target to refresh it.",
   };
   const tone: Record<string, string> = {
     pending: "border-border text-muted-foreground",
     ok: "border-chart-5/40 text-chart-5",
     unavailable: "border-warning/40 text-warning",
     failed: "border-destructive/40 text-destructive",
+    // Amber, not red: a real gap in how current this inventory is, but a
+    // deliberate one that nobody needs to go fix.
+    skipped: "border-warning/40 text-warning",
   };
 
   // Fallbacks for a status this build does not know about: the backend can

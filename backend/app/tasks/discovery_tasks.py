@@ -8,6 +8,7 @@ from app.core.discovery_ingestion import upsert_endpoints
 from app.core.github import repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core.notifications import dispatch_notification
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.models.models import ApiEndpoint, DiscoveryRun, NotificationEventType, Target
 from app.scanners import runner
@@ -70,6 +71,23 @@ def run_discovery(self, target_id: int, run_id: int):
             session.add(run)
             session.commit()
             return {"error": "target not found", "run_id": run.id}
+
+        # (#273) Re-checked on the worker, not only at POST /api/discovery/
+        # {target_id}. The route's 409 closes the door at dispatch; this
+        # closes the window between dispatch and execution, which is where a
+        # deactivation lands if someone switches the target off while the
+        # task is queued. Identical reasoning to run_scan's and
+        # run_api_scan's own re-checks -- this path clones the repo too, so
+        # omitting it here would leave the one scan that got away.
+        refusal = target_lifecycle.scan_refusal_reason(target)
+        if refusal:
+            run.status = "failed"
+            run.error = refusal
+            run.completed_at = utcnow()
+            session.add(run)
+            session.commit()
+            logger.info("discovery refused for target %s: %s", target_id, refusal)
+            return {"error": refusal, "run_id": run.id}
 
         try:
             repo_path = runner.clone_repo(

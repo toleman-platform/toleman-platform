@@ -11,7 +11,23 @@ import { useActiveScans } from "@/hooks/features/use-active-scans";
 
 const TOOLS = SCAN_TOOLS;
 
-export function ScanButtons({ targetId, workspaceId }: { targetId: number; workspaceId: number }) {
+export function ScanButtons({
+  targetId,
+  workspaceId,
+  // (#273) Deactivated targets refuse every scan server-side. Same
+  // reasoning as the on_demand_scan gating below: a button that is
+  // clickable but always comes back refused is worse than one that says
+  // why it can't be used. Disabled rather than hidden, because unlike a
+  // workspace tool assignment this is reversible from this very page, and
+  // a reader who just deactivated the target should see the buttons they
+  // will get back. Defaults true so any caller that doesn't know about
+  // lifecycle keeps today's behaviour.
+  isActive = true,
+}: {
+  targetId: number;
+  workspaceId: number;
+  isActive?: boolean;
+}) {
   const router = useRouter();
   const [tool, setTool] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
@@ -117,7 +133,14 @@ export function ScanButtons({ targetId, workspaceId }: { targetId: number; works
           non-wrapping row squeezed the target header beside it (#197). */}
       <div className="flex flex-wrap justify-end gap-2">
         {enabledTools.map((t) => (
-          <Button key={t} size="sm" variant="outline" disabled={runningTools.has(t)} onClick={() => run(t)}>
+          <Button
+            key={t}
+            size="sm"
+            variant="outline"
+            disabled={!isActive || runningTools.has(t)}
+            title={isActive ? undefined : "This target is deactivated; scanning is off. Reactivate it in Settings."}
+            onClick={() => run(t)}
+          >
             {runningTools.has(t) ? "Running..." : `Run ${t}`}
           </Button>
         ))}

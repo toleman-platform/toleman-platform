@@ -74,6 +74,19 @@ class AuthEventType(str, Enum):
     ROLE_CHANGED = "role_changed"
     WORKSPACE_ROLE_CHANGED = "workspace_role_changed"
     WORKSPACE_ROLE_REMOVED = "workspace_role_removed"
+    # (#273) Target lifecycle. These aren't access-control events like the
+    # six above, but they belong in the same trail for the same reason:
+    # they're the destructive platform actions whose *absence* from a log
+    # would be the problem. "Who stopped scanning this repo, and when" and
+    # "who deleted the record of these findings" are exactly the questions a
+    # security tool has to be able to answer about itself, and AuthAuditLog
+    # is this codebase's only real audit *write* path (log_auth_event); the
+    # findings feed in app/api/audit.py is derived from FindingStateLog/Scan
+    # rows rather than written to directly, so there is nothing there to
+    # record "a target stopped existing" against.
+    TARGET_DEACTIVATED = "target_deactivated"
+    TARGET_REACTIVATED = "target_reactivated"
+    TARGET_DELETED = "target_deleted"
 
 
 class AuthAuditLog(SQLModel, table=True):
@@ -233,7 +246,11 @@ class Target(SQLModel, table=True):
     # private repo with no token, 403/404); it is NOT an empty inventory,
     # and must never render as clean. "ok" with a count of 0 is the only
     # thing that means "GitHub says this repo has no dependencies".
-    dependency_sync_status: Optional[str] = None   # pending / ok / unavailable / failed
+    # "skipped" (#273) is the import declining to run because the target is
+    # deactivated: not a failure, and distinct from "unavailable" (GitHub
+    # refused to answer) -- nothing here needs fixing, the inventory is just
+    # frozen at whatever was last imported.
+    dependency_sync_status: Optional[str] = None   # pending / ok / unavailable / failed / skipped
     dependency_sync_error: Optional[str] = None
     dependency_sync_at: Optional[datetime] = None
     dependency_component_count: Optional[int] = None
@@ -270,6 +287,37 @@ class Target(SQLModel, table=True):
     client_cert_ciphertext: str = ""
     client_key_ciphertext: str = ""
     clone_proxy_url: str = ""
+
+    # (#273) Lifecycle. Until this, a registered target was permanent: a
+    # decommissioned repo, a typo'd registration and a test target created
+    # while exploring the product all accumulated forever, and there was no
+    # delete endpoint at all (only DELETE /{id}/groups/{group_id}, which
+    # un-tags a target rather than removing it).
+    #
+    # Two *timestamps* rather than an is_active/is_deleted boolean pair
+    # beside them: a boolean plus a "when" column is two fields encoding one
+    # fact, and they drift the first time one write path forgets the other.
+    # NULL means "not in that state", and the column simultaneously answers
+    # when it entered it, which is what the audit trail actually needs.
+    # Callers should read these through app.core.target_lifecycle rather
+    # than testing the columns ad hoc -- there are a dozen scan-dispatch
+    # paths and roughly as many list/aggregate queries that have to agree
+    # on the same two predicates.
+    #
+    # deactivated_at: scanning stops (on-demand, CI push, PR guardrail,
+    # active API scan, scheduled baseline refresh, pipeline rollout), but
+    # the target stays visible, filterable and fully readable, and its
+    # findings keep counting. Reversible.
+    deactivated_at: Optional[datetime] = None
+    # deleted_at: soft delete. The target disappears from every list, every
+    # dashboard/score/report aggregate and every scan dispatch path, but no
+    # row is destroyed -- not the Target, not its Findings, Scans or
+    # PRGuardrailScans. This is a security tool: "someone deleted the record
+    # of a finding" is itself a fact that has to remain answerable, so the
+    # default cannot be a cascade that makes the question unanswerable. A
+    # hard delete stays available as a deliberate follow-up product call;
+    # it is not the thing a Delete button should do by default.
+    deleted_at: Optional[datetime] = None
 
 
 class Group(SQLModel, table=True):

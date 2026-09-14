@@ -9,6 +9,7 @@ from app.core.async_jobs import create_running_row
 from app.core.rate_limit import enforce_rate_limit
 from app.core.scan_health import SUSPECT
 from app.core.staleness import mark_stale_if_needed
+from app.core import target_lifecycle
 from app.models.models import Scan, Target, User
 from app.core.tool_usage import tools_for_surface
 from app.scanners import parsers
@@ -56,6 +57,11 @@ def scans_summary(
         return {}
 
     def scoped(query):
+        # (#273) The soft-delete filter is a subquery, not part of the
+        # workspace join, because that join only happens for non-admin
+        # callers -- an admin would otherwise still see a deleted target's
+        # scan cadence on the Scans page.
+        query = target_lifecycle.exclude_deleted_targets(query, Scan.target_id)
         if ws_ids is not None:
             return query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
         return query
@@ -176,6 +182,17 @@ def run_native_scan(
     target = session.get(Target, target_id)
     if not target:
         return {"error": "target not found"}
+    # (#273) A deactivated target refuses on-demand scans here, at the
+    # dispatch point, rather than relying on the Scan buttons not rendering.
+    # Reported in this endpoint's existing 200-with-{"error"} convention
+    # (see the unsupported-tool and workspace-disabled-tool refusals just
+    # below) rather than a 4xx, so the client handles one shape. A
+    # soft-deleted target comes back as plain "target not found" -- see
+    # target_lifecycle.scan_refusal_reason for why deletion isn't spelled
+    # out at product surfaces.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        return {"error": refusal}
     if tool not in PARSER_MAP:
         return {"error": f"unsupported tool: {tool}"}
     # (#232) The request always names a tool explicitly; there is no
@@ -226,7 +243,9 @@ def active_scans(
     if ws_ids is not None and not ws_ids:
         return {}
 
-    query = select(Scan).where(Scan.status == "running")
+    query = target_lifecycle.exclude_deleted_targets(
+        select(Scan).where(Scan.status == "running"), Scan.target_id
+    )
     if ws_ids is not None:
         query = query.join(Target, Target.id == Scan.target_id).where(Target.workspace_id.in_(ws_ids))
     running = session.exec(query).all()
@@ -278,7 +297,11 @@ def scan_history(
     which is itself operational information.
     """
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) A soft-deleted target 404s here like any other missing one; its
+    # Scan rows still exist (that's the point of the soft delete) but they
+    # are reachable through the audit log, not through a product page that
+    # is supposed to show the target as gone.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and target.workspace_id not in ws_ids:

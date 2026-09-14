@@ -9,6 +9,7 @@ from app.core.security_score import compute_security_score, resolve_target_ids_f
 from app.core.sla import compute_sla_status
 from app.core.tool_registry import vulnerability_tools
 from app.core.widgets import WIDGET_CATALOG, build_default_layout
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.models.models import DashboardLayout, Finding, FindingState, Target, User
 
@@ -16,7 +17,12 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 def _scoped_targets_query(ws_ids: list[int] | None):
-    query = select(Target)
+    # (#273) Every aggregate on this page derives from this query, so the
+    # soft-delete predicate belongs here rather than in each caller: a
+    # deleted target's findings must stop counting toward posture, stats and
+    # the security score the moment it's deleted. The rows survive for the
+    # audit trail; they just stop being part of "our posture".
+    query = target_lifecycle.live_targets(select(Target))
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
     return query
@@ -91,7 +97,12 @@ def summary(session: Session = Depends(get_session), user: User = Depends(curren
     if ws_ids is not None and not ws_ids:
         return {"total": 0, "open": 0, "mitigated": 0}
 
-    base = select(Finding).where(Finding.tool.in_(vulnerability_tools()))
+    # (#273) Subquery rather than a condition on the workspace join, which
+    # only exists for non-admin callers; an admin's totals must not keep
+    # counting a deleted target's findings.
+    base = target_lifecycle.exclude_deleted_targets(
+        select(Finding).where(Finding.tool.in_(vulnerability_tools())), Finding.target_id
+    )
     if ws_ids is not None:
         base = base.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
 
@@ -116,9 +127,12 @@ def sla_compliance(session: Session = Depends(get_session), user: User = Depends
     if ws_ids is not None and not ws_ids:
         return {"with_sla": 0, "in_violation": 0, "compliant": 0}
 
-    query = select(Finding).where(
-        Finding.state.in_([FindingState.OPEN, FindingState.REOPENED]),
-        Finding.tool.in_(vulnerability_tools()),
+    query = target_lifecycle.exclude_deleted_targets(
+        select(Finding).where(
+            Finding.state.in_([FindingState.OPEN, FindingState.REOPENED]),
+            Finding.tool.in_(vulnerability_tools()),
+        ),
+        Finding.target_id,
     )
     if ws_ids is not None:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))

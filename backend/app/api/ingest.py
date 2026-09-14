@@ -4,6 +4,7 @@ from sqlmodel import Session
 from app.api.deps import get_session, require_workspace
 from app.core.ingestion import ingest_findings
 from app.core.rate_limit import enforce_rate_limit
+from app.core import target_lifecycle
 from app.models.models import Scan, Target, Workspace
 from app.scanners.parsers import parse_sarif, sarif_health
 
@@ -38,6 +39,18 @@ def push_ingest(
     target = session.get(Target, target_id)
     if not target or target.workspace_id != workspace.id:
         return {"error": "target not found in this workspace"}
+
+    # (#273) The CI half of "stop scanning". This endpoint is how results
+    # from a repo's own GitHub Actions/GitLab CI job get back into Toleman,
+    # and that workflow file lives in the repository -- it keeps running and
+    # keeps pushing after someone deactivates the target here, because
+    # nothing in this database can stop it. Refusing the push is the only
+    # place that decision can actually be enforced; without it "deactivated"
+    # would mean "we stopped scanning, but findings still appear", which is
+    # the confusing half-state the issue is about.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        return {"error": refusal}
 
     parsed = parse_sarif(payload)
     scan = Scan(target_id=target.id, tool=tool, branch=branch, status="running")

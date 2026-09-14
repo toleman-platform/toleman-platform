@@ -2,16 +2,18 @@ import re
 import secrets
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
 from app.api.deps import get_session
+from app.core.auth_audit import log_auth_event
 from app.core.config import settings
 from app.core.crypto import encrypt_secret
 from app.core.enforcement import VALID_ENFORCEMENT_MODES, resolve_enforcement_mode_with_source
+from app.core import target_lifecycle
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
 from app.core.ai_repo_status import effective_is_ai_repo
@@ -22,6 +24,7 @@ from app.core.staleness import mark_stale_if_needed
 from app.core.tool_registry import vulnerability_tools
 from app.models.models import (
     WORKSPACE_ROLE_RANK,
+    AuthEventType,
     Finding,
     Group,
     PipelineIntegrationBatch,
@@ -187,7 +190,35 @@ def _with_groups(target: Target, groups_by_target: dict[int, list[dict]]) -> dic
         "is_ai_repo_effective": effective_is_ai_repo(target),
         "client_cert_set": client_cert_set,
         "client_key_set": client_key_set,
+        # (#273) Derived from deactivated_at rather than stored beside it, so
+        # the two can never disagree; `deactivated_at` rides along via
+        # model_dump() above for "deactivated 3 days ago" display. Same
+        # reasoning as is_ai_repo_effective: the server owns the precedence
+        # so no client re-derives it and gets it subtly wrong.
+        "is_active": target_lifecycle.is_active(target),
     }
+
+
+def _live_target(session: Session, target_id: int) -> Target | None:
+    """`session.get(Target, id)` plus #273's soft-delete predicate; None for
+    both "no such row" and "soft-deleted", which every route in this file
+    then turns into the same 404.
+
+    Collapsing the two cases is the point: a soft-deleted target has to be
+    indistinguishable from a never-existed one at every product surface, or
+    the 404-vs-410 difference becomes a side channel that says "this used to
+    exist here" to anyone probing ids. The audit log is where deletion is
+    answerable, and that is admin-gated.
+
+    Deliberately not pushed down into a session-level hook: the audit feed
+    (app/api/audit.py) and scan history still resolve deleted targets on
+    purpose, so that a historical row keeps rendering a repo name instead of
+    a bare id.
+    """
+    target = session.get(Target, target_id)
+    if target is None or target_lifecycle.is_deleted(target):
+        return None
+    return target
 
 
 @router.get("")
@@ -201,7 +232,13 @@ def list_targets(
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
-    query = select(Target)
+    # (#273) Soft-deleted targets are gone as far as the product is
+    # concerned; they stay in the table only so their findings/scans keep
+    # an owner the audit trail can name. Deactivated ones are NOT filtered
+    # here on purpose -- "still visible and filterable" is the whole
+    # difference between deactivate and delete, and the row renders with a
+    # Deactivated badge (see targets-list.tsx) rather than vanishing.
+    query = target_lifecycle.live_targets(select(Target))
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
     if group_id is not None:
@@ -240,7 +277,7 @@ def targets_summary(
     if ws_ids is not None and not ws_ids:
         return {}
 
-    target_query = select(Target)
+    target_query = target_lifecycle.live_targets(select(Target))
     if ws_ids is not None:
         target_query = target_query.where(Target.workspace_id.in_(ws_ids))
     targets = session.exec(target_query).all()
@@ -308,7 +345,7 @@ def create_target(
 
 @router.get("/{target_id}")
 def get_target(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
@@ -336,7 +373,7 @@ def update_target(
     session: Session = Depends(get_session),
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     for field, value in payload.model_dump(exclude_unset=True).items():
@@ -351,9 +388,172 @@ def update_target(
     return _with_groups(target, {})
 
 
+# ---------------------------------------------------------------------------
+# Lifecycle (#273): deactivate / reactivate / delete.
+#
+# Before this, a registered target was permanent. There was no DELETE for a
+# target at all -- only DELETE /{target_id}/groups/{group_id}, which un-tags
+# one -- and no flag to stop scanning short of removing it, which wasn't
+# possible either. A decommissioned repo, a typo'd registration and a test
+# target created while exploring the product all accumulated forever.
+#
+# The two verbs are deliberately different products, not one with a
+# parameter:
+#
+#   Deactivate  stop starting work against this repo. Findings, scans and
+#               PR history are retained and keep counting toward dashboards
+#               and scores; the target stays visible and filterable, badged
+#               as deactivated. Reversible, gated at DEVELOPER (the same bar
+#               as PATCH, which can already set enforcement_mode="disabled"
+#               and switch off the PR gate).
+#
+#   Delete      the target is gone from every list, aggregate and dispatch
+#               path. Implemented as a soft delete: not one row is
+#               destroyed. See app/core/target_lifecycle's module docstring
+#               for the cascade reasoning. Gated at SECURITY_ENGINEER, the
+#               bar this codebase already uses for writes that change what
+#               the platform records or enforces (sla_rules, fp_rules, tool
+#               assignments) rather than DEVELOPER's day-to-day config bar.
+#
+# Both write an AuthAuditLog row via log_auth_event, the same path every
+# other destructive platform action here uses (admin user delete, role
+# change, workspace-role removal). "Who switched scanning off for this repo,
+# and when" has to be answerable for the same reason the scan results do.
+# ---------------------------------------------------------------------------
+
+
+def _audit_target_event(
+    session: Session,
+    request: Request,
+    user: User,
+    event_type: AuthEventType,
+    target: Target,
+) -> None:
+    """One writer for all three lifecycle events so they can't drift on
+    detail formatting -- AuthAuditLog has no target_id column (it was built
+    for account events), so the target's identity lives in `detail` and has
+    to be written identically every time for the admin security log to be
+    greppable. repo_url is included, not just the display name: a name can
+    be edited before the delete, the clone URL is what actually identifies
+    the repository afterwards.
+
+    `target_email` is passed explicitly even though log_auth_event would
+    default it to `actor` anyway. The default exists for the self-service
+    events (login/logout/password), where "the user the event is about" and
+    "the user who did it" are genuinely the same person; that reasoning does
+    not transfer here, since these events are about a *repository* and
+    AuthAuditLog has no column for one. Setting it deliberately keeps every
+    row findable under the security log's email filter (which matches actor
+    OR target_email) and means this behaviour is a decision recorded here
+    rather than an accident of another function's default.
+    """
+    log_auth_event(
+        session,
+        event_type,
+        actor=user.email,
+        target_email=user.email,
+        detail=f"target #{target.id} {target.name} ({target.repo_url})",
+        ip_address=request.client.host if request.client else "unknown",
+    )
+
+
+@router.post("/{target_id}/deactivate")
+def deactivate_target(
+    target_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Stop scanning this target without losing anything.
+
+    Enforcement does not live here. Every dispatch path checks the flag
+    itself (POST /api/scans/run, the public API's trigger_scan, POST
+    /api/api-scan/{id}, POST /api/ingest/{id}, the PR Guardrail webhook and
+    on-demand route, the beat-scheduled full scan, the baseline catch-up,
+    and the pipeline rollout paths below) rather than trusting the UI to
+    hide a button -- a target-level "off" that only the frontend honours is
+    not off.
+    """
+    target = _get_target_scoped(target_id, session, user)
+    changed = target_lifecycle.deactivate(target)
+    if changed:
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+        # Only on a real transition, same guard as admin.update_role's
+        # `if old_role != user.role`: a no-op re-POST must not manufacture a
+        # second audit row saying it happened twice.
+        _audit_target_event(session, request, user, AuthEventType.TARGET_DEACTIVATED, target)
+    return _with_groups(target, _groups_by_target(session, [target.id]))
+
+
+@router.post("/{target_id}/reactivate")
+def reactivate_target(
+    target_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Resume scanning. Nothing is replayed: the next scheduled full scan,
+    push, or PR picks the target up normally. Scans that would have run
+    while it was deactivated are gone, which is the point of deactivating
+    -- silently backfilling them would make "off" mean "deferred"."""
+    target = _get_target_scoped(target_id, session, user)
+    changed = target_lifecycle.reactivate(target)
+    if changed:
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+        _audit_target_event(session, request, user, AuthEventType.TARGET_REACTIVATED, target)
+    return _with_groups(target, _groups_by_target(session, [target.id]))
+
+
+@router.delete("/{target_id}")
+def delete_target(
+    target_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.SECURITY_ENGINEER)),
+):
+    """Remove a target. Soft delete: every Finding, Scan and PRGuardrailScan
+    row survives, and so does the Target row itself -- it simply stops
+    existing everywhere the product looks (see target_lifecycle.live_targets
+    for the query-side half, and _live_target above for the read-side one).
+
+    The response says what was retained rather than reporting a bare
+    `{"ok": true}`. Someone clicking Delete on a repo with 1137 findings
+    should be told those findings still exist and where the record of them
+    lives; a delete that silently keeps data is worse than one that keeps it
+    and says so.
+    """
+    target = _get_target_scoped(target_id, session, user)
+    # Same count-over-subquery shape as scans.scan_history's `total`, so a
+    # target with 1137 findings doesn't ship 1137 rows to produce one number.
+    retained = select(Finding).where(Finding.target_id == target.id)
+    retained_findings = session.exec(select(func.count()).select_from(retained.subquery())).one()
+    changed = target_lifecycle.soft_delete(target)
+    if changed:
+        session.add(target)
+        session.commit()
+        session.refresh(target)
+        _audit_target_event(session, request, user, AuthEventType.TARGET_DELETED, target)
+    return {
+        "id": target.id,
+        "deleted_at": target.deleted_at,
+        # Stated explicitly so the UI can say it out loud (see the delete
+        # ConfirmDialog in targets/[id]/target-lifecycle.tsx) instead of the
+        # operator having to infer it from a docs page.
+        "retained_findings": retained_findings,
+        "retention": (
+            "Findings, scan history and PR Guardrail records for this target are retained "
+            "and remain visible in the audit log."
+        ),
+    }
+
+
 @router.get("/{target_id}/workspace-key")
 def get_workspace_key(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     # Issue #57: this returns the workspace's api_key, so an unscoped check
@@ -387,7 +587,7 @@ def regenerate_workspace_key(
     secret-rotation patterns in this codebase (e.g. session token_version
     bump on password change) leave a stale credential valid.
     """
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     workspace = session.get(Workspace, target.workspace_id)
@@ -403,7 +603,7 @@ def regenerate_workspace_key(
 def _get_target_scoped(target_id: int, session: Session, user: User) -> Target:
     """404-not-403 workspace scoping, same pattern used throughout this
     file and app/api/pr_guardrail.py."""
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
@@ -433,7 +633,7 @@ def save_clone_credentials(
     EXTRA_CLONE_HOSTS in app/core/config.py). Encrypted at rest the same way
     as GitHubToken (app.core.crypto); never echoed back - the response only
     reports whether each is set, same as GET/PUT /api/github-token."""
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
@@ -496,6 +696,14 @@ def integrate_pipeline(
     the redundancy on purpose (e.g. as a fallback in case the webhook path
     breaks later)."""
     target = _get_target_scoped(target_id, session, user)
+    # (#273) Pipeline integration opens a PR that wires this repo up to scan
+    # itself on every push. Doing that for a target whose scanning has been
+    # switched off would re-enable it through the back door, in a place
+    # nobody would think to look for it -- a workflow file committed to the
+    # repo, outliving any flag in this database.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     if not target.pipeline_integrated and target_has_pr_guardrail_coverage(session, target, BACKEND_URL) and not force:
         raise HTTPException(
             status_code=409,
@@ -578,7 +786,15 @@ def bulk_pipeline_integrate(
 
     ws_ids = accessible_workspace_ids(session, user)
     unique_ids = list(dict.fromkeys(payload.target_ids))
-    targets = session.exec(select(Target).where(Target.id.in_(unique_ids))).all()
+    # (#273) Deleted and deactivated targets drop out of the selection here
+    # rather than failing the whole batch: the caller sent a list of ids,
+    # possibly from a stale page, and one switched-off repo in it shouldn't
+    # cancel the rollout for the other forty. Same silent-drop shape this
+    # endpoint already uses for ids the caller can't see (see the loop
+    # below), and the 403 at the end still fires if nothing is left.
+    targets = session.exec(
+        target_lifecycle.scannable_targets(select(Target)).where(Target.id.in_(unique_ids))
+    ).all()
     targets_by_id = {t.id: t for t in targets}
 
     eligible_ids: list[int] = []
@@ -735,6 +951,13 @@ def mass_pipeline_rollout(
     """
     ws_ids = accessible_workspace_ids(session, user)
 
+    # (#273) Every scope below resolves through scannable_targets: this is
+    # the fleet-wide path, so it is the one place where a single missed
+    # predicate silently pipelines *every* deactivated repo in an org at
+    # once. Applied at the query rather than filtered out of `candidates`
+    # afterwards so a future fourth scope can't forget it.
+    scannable = target_lifecycle.scannable_targets(select(Target))
+
     if payload.scope == "workspace":
         if payload.workspace_id is None:
             raise HTTPException(status_code=400, detail="workspace_id is required for scope='workspace'")
@@ -743,7 +966,7 @@ def mass_pipeline_rollout(
         workspace = session.get(Workspace, payload.workspace_id)
         if not workspace:
             raise HTTPException(status_code=404, detail="workspace not found")
-        candidates = session.exec(select(Target).where(Target.workspace_id == payload.workspace_id)).all()
+        candidates = session.exec(scannable.where(Target.workspace_id == payload.workspace_id)).all()
         scope_label = f"Workspace: {workspace.name}"
     elif payload.scope == "group":
         if payload.group_id is None:
@@ -757,11 +980,11 @@ def mass_pipeline_rollout(
             select(TargetGroup.target_id).where(TargetGroup.group_id == payload.group_id)
         ).all()
         candidates = (
-            session.exec(select(Target).where(Target.id.in_(member_ids))).all() if member_ids else []
+            session.exec(scannable.where(Target.id.in_(member_ids))).all() if member_ids else []
         )
         scope_label = f"Group: {group.name}"
     else:  # "all", every target across every accessible workspace (or literally all, for an admin)
-        query = select(Target)
+        query = scannable
         if ws_ids is not None:
             candidates = session.exec(query.where(Target.workspace_id.in_(ws_ids))).all() if ws_ids else []
         else:
@@ -811,7 +1034,7 @@ def mass_pipeline_rollout(
 
 @router.get("/{target_id}/groups")
 def list_target_groups(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
@@ -827,7 +1050,7 @@ def assign_target_group(
     session: Session = Depends(get_session),
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     group = session.get(Group, group_id)
@@ -855,7 +1078,7 @@ def remove_target_group(
     session: Session = Depends(get_session),
     user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
 ):
-    target = session.get(Target, target_id)
+    target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
     link = session.exec(

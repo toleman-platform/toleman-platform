@@ -63,6 +63,7 @@ from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.sla import CLOSED_STATES, compute_sla_status
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.tool_registry import NON_VULNERABILITY_CATEGORIES, tool_category
 from app.models.models import (
@@ -210,25 +211,72 @@ def _sla_score(session: Session, open_default_branch: list[Finding]) -> dict:
     }
 
 
-def _coverage_score(session: Session, target_ids: list[int]) -> dict:
+def _coverage_score(session: Session, target_ids: list[int], targets_by_id: dict[int, Target]) -> dict:
+    """"What fraction of the estate has been scanned recently."
+
+    (#273) Deactivated targets are removed from BOTH sides of that fraction,
+    not just the numerator. They are unscannable by definition -- every
+    dispatch path refuses them -- so leaving them in the denominator means
+    the coverage component falls a little further every day for a target
+    nobody can do anything about, and the only way to recover the score is
+    to reactivate a repo you deliberately switched off. That is the exact
+    bug the deleted-target filter in compute_security_score was written to
+    avoid, one state along.
+
+    Deactivated targets are still reported in `deactivated_targets`, because
+    a coverage number that silently shrank its own denominator would be its
+    own kind of dishonest: a reader comparing "12 of 15" against a target
+    list of 20 needs to be able to see where the other five went.
+    """
     if not target_ids:
-        return {"score": 0.0, "weight": COVERAGE_WEIGHT, "scanned_targets": 0, "total_targets": 0, "window_days": COVERAGE_WINDOW_DAYS}
+        return {
+            "score": 0.0, "weight": COVERAGE_WEIGHT, "scanned_targets": 0, "total_targets": 0,
+            "deactivated_targets": 0, "window_days": COVERAGE_WINDOW_DAYS, "note": None,
+        }
+
+    # `.get()` with a "treat as scannable" fallback rather than indexing:
+    # every id here came from targets_by_id's own keys, so a miss shouldn't
+    # happen -- but this module's stated policy is to degrade on a data
+    # inconsistency rather than raise (see _finding_risk_weight), and
+    # dropping an unresolvable target would quietly shrink the denominator.
+    scannable_ids = [
+        tid for tid in target_ids
+        if tid not in targets_by_id or target_lifecycle.is_active(targets_by_id[tid])
+    ]
+    deactivated = len(target_ids) - len(scannable_ids)
+
+    if not scannable_ids:
+        # Every target in scope is deactivated. Scoring 0 would say "you
+        # scan nothing" about an estate that was switched off on purpose;
+        # neutral-100 matches _sla_score's own "nothing in scope" handling
+        # rather than inventing a third convention.
+        return {
+            "score": 100.0, "weight": COVERAGE_WEIGHT, "scanned_targets": 0, "total_targets": 0,
+            "deactivated_targets": deactivated, "window_days": COVERAGE_WINDOW_DAYS,
+            "note": "every target in scope is deactivated, treated as neutral 100",
+        }
 
     cutoff = utcnow() - timedelta(days=COVERAGE_WINDOW_DAYS)
     scanned_target_ids = set(
         session.exec(
-            select(Scan.target_id).where(Scan.target_id.in_(target_ids), Scan.started_at >= cutoff).distinct()
+            select(Scan.target_id).where(Scan.target_id.in_(scannable_ids), Scan.started_at >= cutoff).distinct()
         ).all()
     )
     scanned = len(scanned_target_ids)
-    total = len(target_ids)
+    total = len(scannable_ids)
     score = 100.0 * scanned / total
     return {
         "score": round(score, 1),
         "weight": COVERAGE_WEIGHT,
         "scanned_targets": scanned,
         "total_targets": total,
+        "deactivated_targets": deactivated,
         "window_days": COVERAGE_WINDOW_DAYS,
+        "note": (
+            f"{deactivated} deactivated target(s) excluded; they cannot be scanned"
+            if deactivated
+            else None
+        ),
     }
 
 
@@ -337,7 +385,18 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     a number."""
     targets_by_id: dict[int, Target] = {}
     if target_ids:
-        targets_by_id = {t.id: t for t in session.exec(select(Target).where(Target.id.in_(target_ids))).all()}
+        # (#273) Soft-deleted targets don't resolve, so they fall out of
+        # `target_ids` on the next line and every component below --
+        # findings, SLA, coverage, FP rate and trend all take the pruned
+        # list. This one predicate is what keeps a deleted repo from
+        # continuing to drag an org's score down (or, via the coverage
+        # component, from counting as an unscanned target forever).
+        targets_by_id = {
+            t.id: t
+            for t in session.exec(
+                target_lifecycle.live_targets(select(Target)).where(Target.id.in_(target_ids))
+            ).all()
+        }
         target_ids = list(targets_by_id.keys())  # drop any ids that didn't resolve
 
     open_default_branch = [f for f in _default_branch_findings(session, target_ids, targets_by_id) if f.state in OPEN_STATES]
@@ -345,7 +404,7 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     components = {
         "findings": _findings_score(open_default_branch, targets_by_id, _total_criticality(targets_by_id)),
         "sla": _sla_score(session, open_default_branch),
-        "coverage": _coverage_score(session, target_ids),
+        "coverage": _coverage_score(session, target_ids, targets_by_id),
         "fp_rate": _fp_rate_score(session, target_ids),
         "trend": _trend_score(session, target_ids, targets_by_id),
     }
@@ -390,19 +449,25 @@ def resolve_target_ids_for_scope(
 
     if target_id is not None:
         target = session.get(Target, target_id)
-        if not target or (ws_ids is not None and target.workspace_id not in ws_ids):
+        # (#273) A soft-deleted target 404s here like an inaccessible one:
+        # "score this specific repo" has no answer once the repo is gone.
+        if (
+            not target
+            or target_lifecycle.is_deleted(target)
+            or (ws_ids is not None and target.workspace_id not in ws_ids)
+        ):
             raise HTTPException(404, "Target not found")
         return [target_id]
 
     if group_id is not None:
-        query = select(Target.id).join(TargetGroup, TargetGroup.target_id == Target.id).where(
-            TargetGroup.group_id == group_id
-        )
+        query = target_lifecycle.live_targets(
+            select(Target.id).join(TargetGroup, TargetGroup.target_id == Target.id)
+        ).where(TargetGroup.group_id == group_id)
         if ws_ids is not None:
             query = query.where(Target.workspace_id.in_(ws_ids))
         return list(session.exec(query).all())
 
-    query = select(Target.id)
+    query = target_lifecycle.live_targets(select(Target.id))
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
     return list(session.exec(query).all())

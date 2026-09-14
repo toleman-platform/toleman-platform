@@ -24,6 +24,7 @@ from app.core.grouping import (
     severity_for_weight,
     severity_weight_case,
 )
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.tool_registry import UNKNOWN_TOOL_CATEGORY, all_categories, all_known_tools, tool_category, tools_in_category
 from app.core.triage import apply_triage
@@ -311,7 +312,14 @@ def _filtered_findings_query(
     if ws_ids is not None and not ws_ids:
         return None, False
 
-    query = select(Finding)
+    # (#273) Findings belonging to a soft-deleted target drop out of every
+    # list, count and facet built on this query. Expressed as a subquery,
+    # not as a condition on the Target join below, precisely because that
+    # join is conditional (`target_joined`): an admin caller never joins
+    # Target at all, and joining it here just for this predicate would
+    # collide with the two later `if not target_joined: join` branches --
+    # joining twice raises rather than silently duplicating rows.
+    query = target_lifecycle.exclude_deleted_targets(select(Finding), Finding.target_id)
     target_joined = ws_ids is not None
     if target_joined:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
@@ -832,7 +840,7 @@ def distinct_finding_tools(session: Session, user: User) -> list[str]:
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
-    query = select(Finding.tool).distinct()
+    query = target_lifecycle.exclude_deleted_targets(select(Finding.tool).distinct(), Finding.target_id)
     if ws_ids is not None:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     rows = session.exec(query).all()
@@ -920,7 +928,8 @@ def list_remediations(
     another tenant returns 404, not that tenant's remediation plan.
     """
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) A soft-deleted target 404s like a missing one.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and target.workspace_id not in ws_ids:
@@ -956,7 +965,11 @@ def _target_facet(session: Session, user: User, column) -> list[str]:
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
-    query = select(column).distinct().where(column.is_not(None), column != "")
+    # (#273) A deleted target's owner/environment must not linger in the
+    # filter dropdowns as a value that now matches nothing.
+    query = target_lifecycle.live_targets(
+        select(column).distinct().where(column.is_not(None), column != "")
+    )
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
     return sorted(r for r in session.exec(query).all() if r)

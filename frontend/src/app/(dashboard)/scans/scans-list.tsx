@@ -6,6 +6,7 @@ import { Target, ScanSummary, api } from "@/lib/api";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
 import { timeAgo } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CriticalityChip } from "@/components/features/targets";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -119,8 +120,30 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
 
   // tool === ALL_TOOLS_VALUE keeps the original "every known tool for this
   // target" behavior; a specific tool dispatches only that one.
-  async function runScansFor(ids: number[], tool: string) {
+  async function runScansFor(requestedIds: number[], tool: string) {
+    // (#273) Deactivated targets are dropped before dispatch rather than
+    // sent and refused. Each refusal would otherwise consume one of the
+    // ten requests this user gets per minute (see DISPATCH_SPACING_MS) and
+    // land in the summary as a generic "hit an error", which reads as a
+    // scan failure rather than as the deliberate state it is. Skipped
+    // targets are named in the message instead of silently disappearing.
+    const deactivated = requestedIds.filter(
+      (id) => targets.find((t) => t.id === id)?.is_active === false
+    );
+    const ids = requestedIds.filter((id) => !deactivated.includes(id));
+    const skippedNote =
+      deactivated.length > 0
+        ? ` · skipped ${deactivated.length} deactivated target${deactivated.length === 1 ? "" : "s"}`
+        : "";
+
     setScanMessage(null);
+    if (ids.length === 0) {
+      selection.clear();
+      setScanMessage(
+        `Nothing dispatched: every selected target is deactivated. Reactivate one from its target page to scan it.`
+      );
+      return;
+    }
     setDispatchState((prev) => {
       const next = { ...prev };
       for (const id of ids) next[id] = "dispatching";
@@ -154,8 +177,8 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
 
     setScanMessage(
       failed > 0
-        ? `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure); check Scan History.`
-        : `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Progress is shown on each row below.`
+        ? `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure); check Scan History.${skippedNote}`
+        : `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Progress is shown on each row below.${skippedNote}`
     );
     selection.clear();
     router.refresh();
@@ -283,11 +306,24 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium text-foreground">{t.name}</span>
+                      {/* (#273) This page exists to start scans, so a target
+                          that refuses every one of them has to say so here
+                          too -- the Targets list is not the only place
+                          somebody reaches a repo from. */}
+                      {t.is_active === false && (
+                        <Badge variant="warning" className="shrink-0 px-1.5 py-0 text-[10px]">
+                          Deactivated
+                        </Badge>
+                      )}
                       <CriticalityChip label={t.label} />
                     </div>
                     <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
                       {t.default_branch} ·{" "}
-                      {entry?.last_scan_at ? `last scan ${timeAgo(entry.last_scan_at)}` : "never scanned"}
+                      {t.is_active === false
+                        ? "scanning off"
+                        : entry?.last_scan_at
+                          ? `last scan ${timeAgo(entry.last_scan_at)}`
+                          : "never scanned"}
                       {entry && entry.tools.length > 0 ? ` · ${entry.tools.join(", ")}` : ""}
                     </div>
                     {/* (#229) The line above is reassuring by construction:
@@ -354,7 +390,16 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                       size="sm"
                       variant="outline"
                       className="h-8 text-xs"
-                      disabled={busy}
+                      // (#273) The server refuses this anyway; a button that
+                      // is clickable but always comes back refused is worse
+                      // than one that says why, same reasoning as
+                      // scan-buttons.tsx's on_demand_scan gating.
+                      disabled={busy || t.is_active === false}
+                      title={
+                        t.is_active === false
+                          ? "This target is deactivated; scanning is off. Reactivate it on the target page."
+                          : undefined
+                      }
                       onClick={() => requestScan([t.id], rowTool[t.id] ?? ALL_TOOLS_VALUE)}
                     >
                       {busy ? "Scanning..." : state === "dispatched" ? "Scan again" : "Scan"}

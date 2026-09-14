@@ -28,6 +28,7 @@ from app.core.pr_guardrail_executor import (
     update_finding_status_in_pr_comment,
 )
 from app.core.staleness import mark_stale_if_needed
+from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.triage import apply_triage
 from app.models.models import (
@@ -49,7 +50,11 @@ router = APIRouter(prefix="/api/pr-guardrail", tags=["pr-guardrail"])
 
 def _get_target(target_id: int, session: Session) -> Target:
     target = session.get(Target, target_id)
-    if not target:
+    # (#273) A soft-deleted target 404s like a missing one everywhere in the
+    # product; deactivation is NOT checked here, because this helper also
+    # serves read paths (a deactivated target's PR history stays readable).
+    # The scan-dispatching route below checks it explicitly.
+    if not target or target_lifecycle.is_deleted(target):
         raise HTTPException(status_code=404, detail="target not found")
     return target
 
@@ -166,7 +171,13 @@ def active_pr_scans(
     if ws_ids is not None and not ws_ids:
         return {}
 
-    query = select(PRGuardrailScan).where(PRGuardrailScan.status == PRGuardrailStatus.RUNNING)
+    # (#273) Subquery rather than part of the workspace join below, which
+    # only happens for non-admin callers; an admin must not keep seeing a
+    # deleted target's in-flight PR scans.
+    query = target_lifecycle.exclude_deleted_targets(
+        select(PRGuardrailScan).where(PRGuardrailScan.status == PRGuardrailStatus.RUNNING),
+        PRGuardrailScan.target_id,
+    )
     if ws_ids is not None:
         query = query.join(Target, Target.id == PRGuardrailScan.target_id).where(
             Target.workspace_id.in_(ws_ids)
@@ -199,6 +210,14 @@ def run_pr_guardrail_scan(
     """Diff-only scan, triggered on-demand. Runs synchronously (same pattern
     as POST /api/scans/run) for MVP simplicity."""
     target = _get_target(target_id, session)
+    # (#273) Refused here as a 409 with the real reason, rather than letting
+    # the executor's own gate return a status="skipped" body: this is a
+    # deliberate human action on one named target, and reporting it as a
+    # successful-looking response that happened to do nothing is the
+    # false-all-clear shape this codebase keeps refusing.
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
     try:
         return execute_pr_guardrail_scan(target, pr_number, session)
     except Exception as exc:
@@ -302,7 +321,10 @@ def pr_guardrail_log(
     if ws_ids is not None and not ws_ids:
         return {"scans": [], "stats": {"total": 0, "passed": 0, "blocked": 0, "overridden": 0, "error": 0, "running": 0}}
 
-    target_query = select(Target)
+    # (#273) Soft-deleted targets drop out of the org-wide PR Guardrail log
+    # along with their scans; the rows survive for the audit trail but stop
+    # feeding a product dashboard.
+    target_query = target_lifecycle.live_targets(select(Target))
     if ws_ids is not None:
         target_query = target_query.where(Target.workspace_id.in_(ws_ids))
     targets = session.exec(target_query).all()

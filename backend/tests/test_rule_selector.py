@@ -274,10 +274,17 @@ def test_findings_are_attributed_to_the_layer_that_produced_them(tmp_path):
     repo.mkdir()
     (repo / "app.py").write_text("x = 1\n")
 
+    # These check_id shapes are what Semgrep actually emits, taken from a
+    # real run, not from what the attribution code would find convenient.
+    # Semgrep dots the path of the config DIRECTORY, so the pruned file's
+    # own name never appears -- an earlier version of this test invented
+    # "python-registry-pruned.py.one", matched the code's assumption
+    # rather than reality, and passed while every registry finding was
+    # being misfiled as a custom one.
     results = {
         "results": [
             {"check_id": "app.scanners.rules.core.injection.toleman-sql-injection", "path": "app.py"},
-            {"check_id": "python-registry-pruned.py.one", "path": "app.py"},
+            {"check_id": "tmp.some-cache-dir.py.one", "path": "app.py"},
         ]
     }
 
@@ -297,7 +304,7 @@ def test_findings_are_attributed_to_the_layer_that_produced_them(tmp_path):
     assert [f["check_id"] for f in result.custom_findings] == [
         "app.scanners.rules.core.injection.toleman-sql-injection"
     ]
-    assert [f["check_id"] for f in result.registry_findings] == ["python-registry-pruned.py.one"]
+    assert [f["check_id"] for f in result.registry_findings] == ["tmp.some-cache-dir.py.one"]
     assert len(result.findings) == 2
 
 

@@ -528,26 +528,48 @@ def run_layered_scan(
         if pruned and pruned.rule_count:
             registry_configs.append(pruned)
 
-    registry_paths = {c.path for c in registry_configs}
-    config_args = [f"--config={custom_config_path}"] + [f"--config={p}" for p in sorted(registry_paths)]
+    config_args = [f"--config={custom_config_path}"] + [f"--config={c.path}" for c in registry_configs]
     proc = subprocess.run(
         ["semgrep", "scan", *config_args, "--disable-nosem", "--json", "--quiet", repo_path],
         capture_output=True, text=True,
     )
     results = _json.loads(proc.stdout or "{}").get("results", [])
 
-    # Attribution by config path: Semgrep prefixes a finding's check_id
-    # with the config it came from, but that prefix is a filesystem path
-    # here, so matching on the pruned files' basenames is what separates
-    # the layers. A finding that matches neither is ours by default --
-    # the custom pack is the one loaded from a directory of many files,
-    # so its ids vary, while the registry layer is exactly these
-    # consolidated files.
-    registry_markers = {os.path.splitext(os.path.basename(p))[0] for p in registry_paths}
+    # Attribution by rule id, not by anything in the check_id prefix.
+    #
+    # Semgrep derives a finding's check_id from the path of the config it
+    # loaded the rule from, dotted -- so a rule out of
+    # /tmp/cache/python-registry-pruned.yaml surfaces as
+    # `tmp.cache.<rule-id>`, keyed on the *directory*, with the filename
+    # nowhere in it. An earlier version of this matched the pruned files'
+    # basenames against check_id and therefore matched nothing: every
+    # finding fell through to the custom bucket, and the layers were
+    # silently merged. The rule ids are the one thing that survives
+    # consolidation unchanged, and this module wrote those files, so it
+    # knows them exactly.
+    registry_rule_ids = set()
+    for config in registry_configs:
+        try:
+            doc = yaml.safe_load(open(config.path))
+        except (OSError, yaml.YAMLError):
+            continue
+        for rule in (doc or {}).get("rules") or []:
+            if rule.get("id"):
+                registry_rule_ids.add(rule["id"])
+
+    def _from_registry(check_id: str) -> bool:
+        # Suffix match rather than splitting on the last dot: registry rule
+        # ids frequently contain dots themselves
+        # (`python.lang.security.audit.<name>`), so taking only the final
+        # segment would compare "name" against "python.lang.security.audit.name"
+        # and never match.
+        if check_id in registry_rule_ids:
+            return True
+        return any(check_id.endswith("." + rule_id) for rule_id in registry_rule_ids)
+
     custom_findings, registry_findings = [], []
     for r in results:
-        check_id = r.get("check_id", "")
-        if any(marker in check_id for marker in registry_markers):
+        if _from_registry(r.get("check_id", "")):
             registry_findings.append(r)
         else:
             custom_findings.append(r)

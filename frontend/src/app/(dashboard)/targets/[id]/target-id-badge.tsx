@@ -28,7 +28,7 @@ export function TargetIdBadge({ targetId }: { targetId: number }) {
       className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
     >
       ID {targetId}
-      {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+      {copied ? <Check className="h-3 w-3 text-chart-5" /> : <Copy className="h-3 w-3" />}
     </button>
   );
 }

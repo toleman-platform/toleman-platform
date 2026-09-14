@@ -3,14 +3,16 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Bug, ExternalLink, RefreshCw, ShieldAlert } from "lucide-react";
-import { api, ApiError, Finding, Target } from "@/lib/api";
+import { api, ApiError, type Finding, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { StatCard } from "@/components/ui/stat-card";
+import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { PageHeader } from "@/components/ui/page-header";
+import { AlertBanner } from "@/components/ui/alert-banner";
+import { SeverityChip } from "@/components/ui/severity-chip";
 import { TargetPicker } from "@/components/target-picker";
 
 // Issue #177/#181: malicious dependencies detected via OSV.dev. Hits are
@@ -18,12 +20,6 @@ import { TargetPicker } from "@/components/target-picker";
 // page is a focused view over the findings the SBOM-generation pipeline
 // already produces; the same rows the Findings list shows, just filtered
 // and re-assertable without regenerating an SBOM.
-
-function severityVariant(severity: string): "destructive" | "warning" | "outline" {
-  if (severity === "Critical") return "destructive";
-  if (severity === "High") return "warning";
-  return "outline";
-}
 
 export default function MaliciousPackagesPage() {
   const findingsQuery = useAsyncData<Finding[]>(() =>
@@ -106,21 +102,18 @@ export default function MaliciousPackagesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Malicious Packages</h1>
-        <p className="text-sm text-muted-foreground">
-          Dependencies flagged as malicious (not merely vulnerable) by OSV.dev&apos;s OpenSSF dataset. Detected
-          automatically during SBOM generation and re-checkable without regenerating an SBOM.
-        </p>
-      </div>
+      <PageHeader
+        title="Malicious Packages"
+        description="Malicious dependencies detected in target dependency graphs via OSV.dev's OpenSSF dataset."
+      />
 
       {(findingsQuery.error || targetsQuery.error) && (
-        <p className="text-sm text-destructive">
+        <AlertBanner tone="critical">
           {(findingsQuery.error ?? targetsQuery.error)?.message}
-        </p>
+        </AlertBanner>
       )}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <StatGrid columns={3}>
         <StatCard
           label="Malicious packages"
           value={findings.length}
@@ -144,7 +137,7 @@ export default function MaliciousPackagesPage() {
           icon={Bug}
           unknown={loading}
         />
-      </div>
+      </StatGrid>
 
       <div className="flex flex-col gap-3">
         <h2 className="text-sm font-medium text-foreground">Detected packages</h2>
@@ -168,9 +161,7 @@ export default function MaliciousPackagesPage() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium text-foreground">{f.title}</span>
-                      <Badge variant={severityVariant(f.severity)} className="shrink-0 text-[10px]">
-                        {f.severity}
-                      </Badge>
+                      <SeverityChip severity={f.severity} size="sm" />
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                       <span className="font-mono">{f.file_path}</span>

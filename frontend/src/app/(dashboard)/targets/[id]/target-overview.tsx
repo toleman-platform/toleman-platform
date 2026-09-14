@@ -1,10 +1,9 @@
 import { AlertTriangle, Boxes, GitBranch, ScanLine, ShieldCheck } from "lucide-react";
 import { ScanSummaryEntry, Target, TargetSummaryEntry } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { CriticalityChip } from "@/components/criticality-chip";
-import { GroupBadge } from "@/components/group-badge";
+import { CriticalityChip, GroupBadge } from "@/components/features/targets";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
-import { SEVERITY_COLOR } from "@/lib/severity";
+import { SeverityChip } from "@/components/ui/severity-chip";
 import { timeAgo } from "@/lib/utils";
 
 // Issue #197: current posture for one target, so a repo owner can answer
@@ -96,13 +95,12 @@ export function TargetOverview({
         ) : (
           <div className="flex flex-wrap gap-2">
             {bySeverity.map(({ severity, count }) => (
-              <Badge
+              <SeverityChip
                 key={severity}
-                variant="outline"
-                className={`px-2 py-0.5 text-xs font-medium ${SEVERITY_COLOR[severity] ?? ""}`}
-              >
-                {count} {severity}
-              </Badge>
+                severity={severity}
+                count={count}
+                size="sm"
+              />
             ))}
           </div>
         )}

@@ -19,14 +19,9 @@ import { useSelection } from "@/hooks/use-selection";
 import { DocGenStep, DocumentGeneratorPanel, WhatsIncludedCard } from "@/components/features/intelligence";
 import { PageHeader } from "@/components/ui/page-header";
 import { Globe } from "lucide-react";
+import { formatSince } from "@/lib/format/date";
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
-
-function formatSince(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return `since ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
-}
 
 export default function ApiDiscoveryPage() {
   const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);

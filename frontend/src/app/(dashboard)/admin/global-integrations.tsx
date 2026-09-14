@@ -10,6 +10,7 @@ import { AlertTriangle, BrainCircuit, CheckCircle2, Key, MessageSquare, Send, Ti
 import { ConnectGithubCard } from "@/components/features/integrations";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
+import { serverDate } from "@/lib/format/date";
 
 const PROVIDERS: { value: AiProvider; label: string }[] = [
   { value: "anthropic", label: "Anthropic (Claude)" },
@@ -385,7 +386,7 @@ export function GlobalIntegrations() {
               <CheckCircle2 className="h-4 w-4" />
               Configured
               {githubTokenView.expires_at
-                ? ` · auto-purges ${new Date(githubTokenView.expires_at).toLocaleString()}`
+                ? ` · auto-purges ${serverDate(githubTokenView.expires_at).toLocaleString()}`
                 : " · never expires"}
             </div>
           )}

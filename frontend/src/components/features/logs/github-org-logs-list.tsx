@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination } from "@/components/activity-pagination";
+import { serverDate } from "@/lib/format/date";
 
 export function GithubOrgLogsList({
   events,
@@ -34,7 +35,7 @@ export function GithubOrgLogsList({
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline">{e.target}</Badge>
-                <span className="text-xs text-muted-foreground">{e.date ? new Date(e.date).toLocaleString() : ""}</span>
+                <span className="text-xs text-muted-foreground">{e.date ? serverDate(e.date).toLocaleString() : ""}</span>
               </div>
             </CardContent>
           </Card>

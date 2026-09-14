@@ -34,6 +34,7 @@ import {
 } from "@/components/features/intelligence";
 import { cn } from "@/lib/utils";
 import { Package, PackageSearch } from "lucide-react";
+import { formatSince } from "@/lib/format/date";
 
 const SBOM_FORMATS: DocGenOption[] = [
   { value: "cyclonedx-json", label: "CycloneDX JSON" },
@@ -50,12 +51,6 @@ const SBOM_FORMAT_EXT: Record<SbomExportFormat, string> = {
 };
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
-
-function formatSince(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return `since ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
-}
 
 type Tab = "components" | "vulnerabilities" | "aibom";
 

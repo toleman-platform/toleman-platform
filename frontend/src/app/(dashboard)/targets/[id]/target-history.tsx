@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ScanHealthBadge } from "@/components/features/scans";
 import { History } from "lucide-react";
+import { parseServerTimestamp } from "@/lib/format/date";
 
 function truncate(str: string, maxLen: number): string {
   return str.length > maxLen ? str.slice(0, maxLen) + "…" : str;
@@ -13,7 +14,10 @@ function truncate(str: string, maxLen: number): string {
 
 function duration(entry: ScanHistoryEntry): string {
   if (!entry.completed_at) return "—";
-  const ms = new Date(entry.completed_at).getTime() - new Date(entry.started_at).getTime();
+  // Both sides shift by the same offset, so this difference was already
+  // correct -- routed through the helper anyway so no timestamp in this
+  // file is parsed two different ways.
+  const ms = parseServerTimestamp(entry.completed_at) - parseServerTimestamp(entry.started_at);
   if (ms < 1000) return "<1s";
   const seconds = Math.round(ms / 1000);
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;

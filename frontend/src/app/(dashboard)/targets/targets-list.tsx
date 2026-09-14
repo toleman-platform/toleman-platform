@@ -28,6 +28,7 @@ import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pa
 import type { TargetSort } from "./targets-filter-bar";
 import { PowerOff, Rocket, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { parseServerTimestamp, serverDate } from "@/lib/format/date";
 import { TargetRowActions } from "./target-row-actions";
 
 function paginateSlice<T>(items: T[], page: number, pageSize: number): { items: T[]; clampedPage: number } {
@@ -160,11 +161,11 @@ function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
       </span>
     );
   }
-  const ageDays = (now - new Date(lastScanAt).getTime()) / 86_400_000;
+  const ageDays = (now - parseServerTimestamp(lastScanAt)) / 86_400_000;
   return (
     <span
       className={ageDays > 30 ? "text-chart-3" : undefined}
-      title={`Last scanned ${new Date(lastScanAt).toLocaleString()}`}
+      title={`Last scanned ${serverDate(lastScanAt).toLocaleString()}`}
     >
       scanned {timeAgo(lastScanAt)}
     </span>
@@ -304,7 +305,7 @@ export function TargetsList({
       if (t.is_active === false) deactivated++;
       const at = scanSummary[String(t.id)]?.last_scan_at;
       if (!at) unscanned++;
-      else if ((now - new Date(at).getTime()) / 86_400_000 > 30) stale++;
+      else if ((now - parseServerTimestamp(at)) / 86_400_000 > 30) stale++;
     }
     return { all: base.length, attention, unscanned, stale, deactivated };
   }, [targets, search, criticality, targetSummary, scanSummary, now]);
@@ -324,7 +325,7 @@ export function TargetsList({
       if (quick === "unscanned" && scanSummary[String(t.id)]?.last_scan_at) return false;
       if (quick === "stale") {
         const at = scanSummary[String(t.id)]?.last_scan_at;
-        if (!at || (now - new Date(at).getTime()) / 86_400_000 <= 30) return false;
+        if (!at || (now - parseServerTimestamp(at)) / 86_400_000 <= 30) return false;
       }
       return true;
     });
@@ -337,7 +338,7 @@ export function TargetsList({
     const highOf = (t: Target) => targetSummary[String(t.id)]?.high ?? 0;
     const scannedAt = (t: Target) => {
       const at = scanSummary[String(t.id)]?.last_scan_at;
-      return at ? new Date(at).getTime() : 0;
+      return at ? parseServerTimestamp(at) : 0;
     };
 
     const byName = (a: Target, b: Target) => a.name.localeCompare(b.name);

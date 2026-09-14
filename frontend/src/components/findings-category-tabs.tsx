@@ -19,9 +19,16 @@ import { cn } from "@/lib/utils";
 export type CategoryTab = {
   id: string; // "" for the "All" tab
   label: string;
-  // null when the count could not be fetched at all -- the tab renders as a
-  // bare label rather than as "0", which next to a non-empty list would be
-  // a contradiction rather than a degraded state.
+  /**
+   * `null` when the count could not be fetched at all.
+   *
+   * Nullable rather than defaulting to 0, because 0 is a claim. With the
+   * findings API down, every queue count fell to `.catch(() => 0)` and the
+   * page rendered `Needs action 0 · Licence review 0 · Resolved 0 ·
+   * All findings 0` directly above its own "couldn't be loaded" error box:
+   * a careless reader takes away "we're clean", a careful one takes away
+   * "the UI contradicts itself". A tab with no number says neither.
+   */
   count: number | null;
   href: string;
 };
@@ -42,9 +49,18 @@ export function FindingsCategoryTabs({ tabs, active }: { tabs: CategoryTab[]; ac
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground",
             )}
+            // JSX strips the newline between the label and the count below, so
+            // without this the link's accessible name computes to
+            // "Needs action12" / "Licence review148". Same explicit-aria-label
+            // fix already used on the dashboard's severity chip links.
+            aria-label={tab.count === null ? `${tab.label}, count unavailable` : `${tab.label}, ${tab.count}`}
           >
             {tab.label}
-            {tab.count !== null && <span className="ml-1.5 text-xs text-muted-foreground">{tab.count}</span>}
+            <span className="ml-1.5 text-xs text-muted-foreground" aria-hidden="true">
+              {/* Em dash, the codebase's unknown glyph (DESIGN_SYSTEM.md §18). A bare
+                  label would be ambiguous with "this build has no counts at all". */}
+              {tab.count === null ? "—" : tab.count}
+            </span>
           </Link>
         ))}
       </div>

@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
 import { PageHeader } from "@/components/ui/page-header";
-import { settleOrNull } from "@/std-lib";
+import { settleOrNull, settledOr } from "@/std-lib";
 
 function firstValue(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
@@ -27,14 +27,20 @@ export default async function TargetsPage({
 
   // Issue #174: scan history + open-finding counts alongside the inventory,
   // so a Repo Sync card can say which repos actually need attention instead
-  // of just naming them. Both summaries degrade to {} on failure, a card
-  // then renders without its metadata line rather than failing the page.
-  const [targetsResult, githubStatus, groupsList, scanSummaryData, targetSummaryData, me] = await Promise.all([
+  // of just naming them. Both summaries still degrade to {} on failure rather
+  // than failing the page -- but via `settledOr`, which keeps the failure bit
+  // alive past this line. `.catch(() => ({}))` did not: with an empty scan
+  // summary every row rendered an amber "never scanned" whose tooltip read
+  // "This repository has never been scanned", and with an empty target
+  // summary the "Needs attention" quick filter counted 0 while the default
+  // "most findings" sort silently collapsed to alphabetical. See
+  // targets-list.tsx for what each boolean now suppresses.
+  const [targetsResult, githubStatus, groupsList, scanSettled, targetSettled, me] = await Promise.all([
     settleOrNull(api.targets({ group_id })),
     api.githubAppStatus().catch(() => ({ app_configured: false, app_slug: null, installed: false, account_login: null })),
     api.groups().catch(() => []),
-    api.scanSummary().catch(() => ({})),
-    api.targetsSummary().catch(() => ({})),
+    settledOr(api.scanSummary(), {}),
+    settledOr(api.targetsSummary(), {}),
     // (#356) The add-target form's empty-workspace state differs by role:
     // GET /api/workspaces is scoped by accessible_workspace_ids, so an empty
     // list means "none exist" to an admin and "you're a member of none" to
@@ -50,6 +56,8 @@ export default async function TargetsPage({
   ]);
   const targetsFailed = targetsResult === null;
   const targetsList = targetsResult ?? [];
+  const [scanSummaryData, scanSummaryFailed] = scanSettled;
+  const [targetSummaryData, targetSummaryFailed] = targetSettled;
   const isAdmin = me === null ? null : me.role === "admin";
 
   return (
@@ -84,7 +92,13 @@ export default async function TargetsPage({
           <ErrorState description="The target list couldn't be loaded from the API." action={<ReloadButton />} />
         )}
         {!targetsFailed && targetsList.length > 0 && (
-          <TargetsList targets={targetsList} scanSummary={scanSummaryData} targetSummary={targetSummaryData} />
+          <TargetsList
+            targets={targetsList}
+            scanSummary={scanSummaryData}
+            targetSummary={targetSummaryData}
+            scanSummaryFailed={scanSummaryFailed}
+            targetSummaryFailed={targetSummaryFailed}
+          />
         )}
         {!targetsFailed && targetsList.length === 0 && (
           <EmptyState

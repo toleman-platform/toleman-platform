@@ -22,6 +22,7 @@ import { Globe } from "lucide-react";
 import { formatSince } from "@/lib/format/date";
 
 const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
+const EXCLUDED_BADGE_COLOR = "border-muted-foreground/30 bg-muted text-muted-foreground px-2 py-0.5 text-xs font-bold uppercase tracking-wide";
 
 export default function ApiDiscoveryPage() {
   const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
@@ -76,7 +77,28 @@ export default function ApiDiscoveryPage() {
     { enabled: targetId !== null, deps: [targetId] },
   );
   const endpoints = persisted?.endpoints ?? null;
-  const endpointIds = useMemo(() => (endpoints ?? []).map((e) => e.id), [endpoints]);
+  // Excluded endpoints are deliberately not selectable: the backend refuses
+  // to scan them even when they are named explicitly (#469), so offering a
+  // checkbox would let someone tick a row and watch nothing happen.
+  const endpointIds = useMemo(
+    () => (endpoints ?? []).filter((e) => !e.excluded).map((e) => e.id),
+    [endpoints],
+  );
+  const [scopeBusyId, setScopeBusyId] = useState<number | null>(null);
+
+  async function toggleScope(endpoint: { id: number; excluded: boolean }) {
+    if (targetId === null) return;
+    setScopeBusyId(endpoint.id);
+    setError(null);
+    try {
+      await api.setEndpointScope(targetId, endpoint.id, !endpoint.excluded);
+      await reloadPersisted();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "could not change this endpoint's scope");
+    } finally {
+      setScopeBusyId(null);
+    }
+  }
   const selection = useSelection(endpointIds);
   const scanSummary = lastRun && lastRun.targetId === targetId ? lastRun : null;
   // A scan just run in this session wins over the persisted "latest scan";
@@ -282,19 +304,42 @@ export default function ApiDiscoveryPage() {
                     aria-label={`Select ${e.method} ${e.route}`}
                     className="h-4 w-4 shrink-0 accent-primary"
                     checked={selection.isSelected(e.id)}
+                    disabled={e.excluded}
                     onChange={(ev) => selection.toggle(e.id, ev.target.checked)}
                   />
                   <Badge variant="outline">{e.method}</Badge>
-                  <span className="font-mono text-sm text-foreground">{e.route}</span>
+                  <span className={`font-mono text-sm ${e.excluded ? "text-muted-foreground line-through" : "text-foreground"}`}>
+                    {e.route}
+                  </span>
+                  {e.excluded && (
+                    <Badge variant="outline" className={EXCLUDED_BADGE_COLOR} title={e.exclusion_reason ?? undefined}>
+                      Out of scope
+                    </Badge>
+                  )}
                   {scanSummary && e.is_new && (
                     <Badge variant="outline" className={`px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${NEW_BADGE_COLOR}`}>
                       New
                     </Badge>
                   )}
                 </div>
-                <span className="text-xs text-muted-foreground">
-                  {e.framework} · {e.file}:{e.line} · {formatSince(e.first_seen)}
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-muted-foreground">
+                    {e.framework} · {e.file}:{e.line} · {formatSince(e.first_seen)}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={scopeBusyId === e.id}
+                    onClick={() => toggleScope(e)}
+                    title={
+                      e.excluded
+                        ? "Allow active scans to probe this endpoint again"
+                        : "Never probe this endpoint in an active scan"
+                    }
+                  >
+                    {e.excluded ? "Bring into scope" : "Exclude"}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ))}

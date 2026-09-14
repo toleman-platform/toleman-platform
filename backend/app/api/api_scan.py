@@ -79,10 +79,23 @@ def trigger_api_scan(
             detail="Active API scanning (nuclei) is disabled for this workspace; enable it in Tool Marketplace",
         )
     try:
-        urls, endpoints = build_scan_urls(session, target, payload.endpoint_ids)
+        scope = build_scan_urls(session, target, payload.endpoint_ids)
+        urls, endpoints = scope.urls, scope.endpoints
     except ApiScanConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not urls:
+        # Distinguish "nothing discovered" from "everything discovered is
+        # out of scope". They look identical from a zero-URL list and lead
+        # an operator to completely different next actions: run discovery,
+        # versus review the exclusions they themselves set.
+        if scope.skipped:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"no scannable endpoints: all {len(scope.skipped)} discovered "
+                    "endpoint(s) are out of scope for this scan"
+                ),
+            )
         raise HTTPException(
             status_code=400,
             detail="no scannable endpoints; run API Discovery first, or check the endpoint selection",
@@ -96,7 +109,18 @@ def trigger_api_scan(
 
     return JSONResponse(
         status_code=202,
-        content={"scan_id": scan.id, "target_id": target_id, "status": scan.status, "endpoint_count": len(endpoints)},
+        content={
+            "scan_id": scan.id,
+            "target_id": target_id,
+            "status": scan.status,
+            "endpoint_count": len(endpoints),
+            # Surfaced so the UI can say what was left alone and why,
+            # rather than showing a smaller number with no explanation.
+            "skipped": [
+                {"endpoint_id": s.endpoint.id, "method": s.endpoint.method, "route": s.endpoint.route, "reason": s.reason}
+                for s in scope.skipped
+            ],
+        },
     )
 
 

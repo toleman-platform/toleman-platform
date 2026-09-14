@@ -149,7 +149,20 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
             return {"error": refusal, "scan_id": scan.id}
 
         try:
-            urls, endpoints = build_scan_urls(session, target, endpoint_ids)
+            scope = build_scan_urls(session, target, endpoint_ids)
+            urls, endpoints = scope.urls, scope.endpoints
+            if scope.skipped:
+                # Logged, not swallowed: an operator watching a scan shrink
+                # needs to be able to tell a working scope rule from a
+                # discovery run that found nothing.
+                for skip in scope.skipped:
+                    logger.info(
+                        "api scan skipping %s %s for target %s: %s",
+                        skip.endpoint.method,
+                        skip.endpoint.route,
+                        target_id,
+                        skip.reason,
+                    )
             if not urls:
                 error = "no scannable endpoints (check api_base_url and that endpoints are discovered)"
                 scan.status = "failed"

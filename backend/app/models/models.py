@@ -806,6 +806,14 @@ class ApiEndpoint(SQLModel, table=True):
     line: int | None = None
     first_seen: datetime = Field(default_factory=utcnow)
     last_seen: datetime = Field(default_factory=utcnow)
+    # Operator-declared scope for ACTIVE scanning (#469). An excluded
+    # endpoint is never sent to nuclei, not even when a caller names it
+    # explicitly in endpoint_ids -- it is a standing "do not touch this",
+    # typically because hitting it does something destructive or expensive
+    # that no scanner should trigger. Discovery keeps re-seeing and
+    # re-upserting the endpoint; only its scannability changes.
+    excluded: bool = Field(default=False, index=True)
+    exclusion_reason: Optional[str] = None
 
 
 class DiscoveryRun(SQLModel, table=True):

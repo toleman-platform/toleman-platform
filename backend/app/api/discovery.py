@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.auth import require_workspace_role
@@ -135,7 +136,59 @@ def list_discovered_endpoints(target_id: int, session: Session = Depends(get_ses
                 "is_new": False,
                 "first_seen": e.first_seen,
                 "last_seen": e.last_seen,
+                "excluded": e.excluded,
+                "exclusion_reason": e.exclusion_reason,
             }
             for e in endpoints
         ],
+    }
+
+
+class UpdateEndpointScopeRequest(BaseModel):
+    excluded: bool
+    # Free text, not an enum: the useful reasons ("wipes the staging
+    # tenant", "bills per call", "owned by another team") are not a set
+    # anyone can enumerate ahead of time, and an enum would push every real
+    # answer into "other".
+    reason: str | None = None
+
+
+@router.patch("/{target_id}/endpoints/{endpoint_id}")
+def set_endpoint_scope(
+    target_id: int,
+    endpoint_id: int,
+    payload: UpdateEndpointScopeRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+):
+    """Mark a discovered endpoint in or out of scope for active scanning
+    (#469).
+
+    DEVELOPER rather than a read-level role, and the same bar as
+    triggering the scan itself: this decides whether real traffic is ever
+    sent at a real route, so it is not a display preference.
+
+    The endpoint must belong to this target, by id AND by the target's
+    current default branch, for the same reason build_scan_urls checks it:
+    an id from another target must never be reachable by guessing.
+    """
+    target = _get_target(target_id, session)
+    endpoint = session.get(ApiEndpoint, endpoint_id)
+    if not endpoint or endpoint.target_id != target_id or endpoint.branch != target.default_branch:
+        raise HTTPException(status_code=404, detail="endpoint not found for this target")
+
+    endpoint.excluded = payload.excluded
+    # Cleared when an endpoint comes back into scope, so a stale reason
+    # from a previous exclusion cannot be read as the current state.
+    endpoint.exclusion_reason = payload.reason if payload.excluded else None
+    session.add(endpoint)
+    session.commit()
+    session.refresh(endpoint)
+
+    return {
+        "id": endpoint.id,
+        "method": endpoint.method,
+        "route": endpoint.route,
+        "excluded": endpoint.excluded,
+        "exclusion_reason": endpoint.exclusion_reason,
     }

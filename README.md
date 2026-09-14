@@ -185,20 +185,42 @@ Optional, async/scheduled scans via Celery:
 celery -A app.tasks.celery_app worker -Q scans --loglevel=info
 ```
 
-Bootstrap a workspace (creates an Org + Workspace + API key for CI push auth):
+Create a workspace (an Org + Workspace + API key for CI push auth). The
+supported way is the **Workspaces** page in the UI: "New workspace", give it
+a name. Every page that needs a workspace (adding a target, groups, policies,
+SLA rules) picks from that list, so nothing ever asks you to type a database
+id.
+
+The same thing from a shell, for a headless dev box. These routes authenticate
+with the session cookie login sets (`app/core/security.py`), not an
+`Authorization` header, so log in to a cookie jar first; a bare curl gets a
+401. `jq` is only used to pluck an id out of each response:
 
 ```bash
-curl -X POST "http://localhost:8000/api/workspaces/bootstrap?org_name=myorg&workspace_name=default"
+curl -s -c cookies.txt -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "admin@toleman.local", "password": "changeme123"}'   # ADMIN_EMAIL/ADMIN_PASSWORD from .env
+
+WS_ID=$(curl -s -b cookies.txt -X POST http://localhost:8000/api/workspaces \
+  -H "Content-Type: application/json" -d '{"name": "default"}' | jq -r .id)
 ```
 
-Register a target and trigger a native scan:
+`POST /api/workspaces/bootstrap` still exists and still works, but it is a
+dev-only query-parameter helper kept for old scripts; prefer the route above.
+
+Both are admin-only (issue #56).
+
+Register a target and trigger a native scan. `$WS_ID` comes from the call
+above rather than a guessed `1`; a `workspace_id` with no row behind it is a
+404 (issue #356):
 
 ```bash
-curl -X POST http://localhost:8000/api/targets -H "Content-Type: application/json" -d '{
-  "workspace_id": 1, "name": "myrepo", "repo_url": "https://github.com/org/repo.git",
-  "default_branch": "main", "label": "Dev", "criticality_weight": 2
-}'
-curl -X POST "http://localhost:8000/api/scans/run?target_id=1&tool=semgrep"
+TARGET_ID=$(curl -s -b cookies.txt -X POST http://localhost:8000/api/targets \
+  -H "Content-Type: application/json" \
+  -d "{\"workspace_id\": $WS_ID, \"name\": \"myrepo\", \"repo_url\": \"https://github.com/org/repo\",
+       \"default_branch\": \"main\", \"label\": \"Dev\", \"criticality_weight\": 2}" | jq -r .id)
+
+curl -s -b cookies.txt -X POST "http://localhost:8000/api/scans/run?target_id=$TARGET_ID&tool=semgrep"
 ```
 
 Private repos are cloned using whatever git credential helper is already configured locally (e.g. `gh auth setup-git`); set `GITHUB_TOKEN` in `.env` as an alternative.

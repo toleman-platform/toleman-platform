@@ -29,15 +29,28 @@ export default async function TargetsPage({
   // so a Repo Sync card can say which repos actually need attention instead
   // of just naming them. Both summaries degrade to {} on failure, a card
   // then renders without its metadata line rather than failing the page.
-  const [targetsResult, githubStatus, groupsList, scanSummaryData, targetSummaryData] = await Promise.all([
+  const [targetsResult, githubStatus, groupsList, scanSummaryData, targetSummaryData, me] = await Promise.all([
     settleOrNull(api.targets({ group_id })),
     api.githubAppStatus().catch(() => ({ app_configured: false, app_slug: null, installed: false, account_login: null })),
     api.groups().catch(() => []),
     api.scanSummary().catch(() => ({})),
     api.targetsSummary().catch(() => ({})),
+    // (#356) The add-target form's empty-workspace state differs by role:
+    // GET /api/workspaces is scoped by accessible_workspace_ids, so an empty
+    // list means "none exist" to an admin and "you're a member of none" to
+    // everyone else, and only an admin can act on it (create_workspace is
+    // admin-gated). Resolved here, in the render that already round-trips to
+    // the API five times, rather than by the form fetching /api/auth/me for
+    // itself: a client-side fetch would race the workspace list and flash a
+    // membership claim at the one person who could actually fix the
+    // situation. settleOrNull, not .catch(() => ...), because "couldn't
+    // determine the role" has to stay distinct from "not an admin" -- see
+    // NewTargetForm's isAdmin prop.
+    settleOrNull(api.me()),
   ]);
   const targetsFailed = targetsResult === null;
   const targetsList = targetsResult ?? [];
+  const isAdmin = me === null ? null : me.role === "admin";
 
   return (
     <div className="flex flex-col gap-6">
@@ -88,7 +101,8 @@ export default async function TargetsPage({
         )}
       </div>
 
-      <AddTargetToggle defaultOpen={!githubStatus.installed && targetsList.length === 0} />
+      <AddTargetToggle defaultOpen={!githubStatus.installed && targetsList.length === 0} isAdmin={isAdmin} />
+
     </div>
   );
 }

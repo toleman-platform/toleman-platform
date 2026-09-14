@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
 from app.api.deps import get_session
 from app.core.enforcement import VALID_ENFORCEMENT_MODES
-from app.models.models import Group, TargetGroup, User, WorkspaceRole
+from app.models.models import Group, TargetGroup, User, Workspace, WorkspaceRole
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
 
@@ -74,6 +74,15 @@ def create_group(
     # require_workspace_role's name-binding can't see it; check explicitly
     # (same reason POST /api/targets does, see targets.py's create_target).
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
+    # (#356) Same unguarded-FK shape create_target had, and the same fix:
+    # for a global admin the role check above returns without touching the
+    # database, so a workspace_id with no row reaches commit() and raises
+    # IntegrityError, which escapes CORSMiddleware and reaches the browser
+    # as a bogus CORS error rather than a 4xx. See the long comment in
+    # targets.py's create_target for why that misdiagnosis is so costly.
+    # Ordered after the role check for the same no-probing reason.
+    if not session.get(Workspace, payload.workspace_id):
+        raise HTTPException(status_code=404, detail="workspace not found")
     group = Group(workspace_id=payload.workspace_id, name=payload.name, color=payload.color)
     session.add(group)
     session.commit()

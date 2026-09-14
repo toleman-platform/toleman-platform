@@ -5,7 +5,7 @@ import {
   api,
   type Target,
   type SbomExportFormat,
-  type Finding,
+  type FindingGroupListResult,
   type OrgSbomComponent,
   type OrgSbomResult,
 } from "@/lib/api";
@@ -22,7 +22,7 @@ import { ActivityPagination } from "@/components/activity-pagination";
 import { pageSizeFromParams } from "@/lib/pagination";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FindingsList } from "@/components/features/findings";
+import { FindingsGroupsList } from "@/components/features/findings";
 import { PageHeader } from "@/components/ui/page-header";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import {
@@ -190,17 +190,46 @@ export default function SbomPage() {
   const sbomPage = Math.min(sbomPageRaw, sbomTotalPages);
   const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
 
-  // Trivy's existing CVE scan already produces real Finding rows with
-  // tool="trivy" and a populated cve_id, OSS/dependency vulnerabilities
-  // aren't a new concept, so we filter the existing findings API rather than
-  // standing up a parallel endpoint.
-  const { data: ossFindings, isInitialLoading: ossLoading } = useAsyncData<Finding[]>(
+  // OSS/dependency vulnerabilities aren't a new concept -- they are ordinary
+  // findings -- so this filters the existing findings API rather than standing
+  // up a parallel endpoint.
+  //
+  // Scoped by `category: "SCA"` rather than the old `tool: "trivy"` plus a
+  // client-side `!!f.cve_id` filter. Category is derived from the tool by
+  // app.core.tool_registry, so a second SCA scanner appears here the day it is
+  // integrated instead of silently going missing, and trivy's own non-SCA
+  // output (trivy-config is IaC, trivy-license is License) stops being pulled
+  // in and then filtered back out by hand.
+  //
+  // Grouped, and really paginated. This previously requested page_size: 500
+  // and handed the lot to FindingsList with `pageSize={Math.max(ossTotal, 1)}`,
+  // so the pager rendered a single page covering everything while shipping up
+  // to 500 rows in one response -- the same defect that was fixed on the
+  // target detail page.
+  const ossPageSize = pageSizeFromParams(searchParams.get("page_size") ?? undefined);
+  const ossPageRaw = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const { data: ossGroups, isInitialLoading: ossLoading } = useAsyncData<FindingGroupListResult>(
     () =>
-      api.findings({ target_id: targetId!, tool: "trivy", page_size: 500 })
-        .then((res) => res.items.filter((f) => !!f.cve_id)),
-    { enabled: targetId !== null && targetId !== ALL_TARGETS, deps: [targetId] },
+      api.findingGroups({
+        target_id: targetId!,
+        category: "SCA",
+        page: ossPageRaw,
+        page_size: ossPageSize,
+      }),
+    {
+      enabled: targetId !== null && targetId !== ALL_TARGETS,
+      deps: [targetId, ossPageRaw, ossPageSize],
+    },
   );
-  const ossTotal = ossFindings?.length ?? 0;
+  // The Components table above and this tab both read the shared `page` param
+  // (ActivityPagination writes it), and only one tab renders at a time. Paging
+  // through Components and then switching here would otherwise ask for a page
+  // this result set does not have and render an empty list that looks like
+  // "no vulnerabilities". Clamped so an out-of-range page shows the first one.
+  const ossTotalGroups = ossGroups?.total ?? 0;
+  const ossTotalPages = Math.max(1, Math.ceil(ossTotalGroups / ossPageSize));
+  const ossPage = Math.min(ossPageRaw, ossTotalPages);
+  const ossTotal = ossGroups?.total_findings ?? 0;
 
   async function run() {
     if (targetId === null) return;
@@ -522,7 +551,7 @@ export default function SbomPage() {
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              OSS Vulnerabilities{ossFindings ? ` (${ossTotal})` : ""}
+              OSS Vulnerabilities{ossGroups ? ` (${ossTotal})` : ""}
             </button>
             {/* Issue #190: models and datasets, the part a package SBOM is
                 blind to. Populated by the same generation run. */}
@@ -599,12 +628,21 @@ export default function SbomPage() {
           {tab === "vulnerabilities" && (
             <>
               {ossLoading && <SkeletonList count={3} />}
-              {!ossLoading && ossFindings && (
-                <FindingsList
-                  findings={ossFindings}
-                  total={ossTotal}
-                  page={1}
-                  pageSize={Math.max(ossTotal, 1)}
+              {!ossLoading && ossGroups && (
+                // The same grouped list the Findings page and the target's
+                // Vulnerabilities tab use, so one CVE across several manifests
+                // is one row, expanding to its occurrences and through to the
+                // full detail drawer -- CVE/CWE/CVSS, fix versions, suggested
+                // fix and per-finding triage. This tab was the last surface
+                // still rendering the flat one-row-per-detection list.
+                <FindingsGroupsList
+                  groups={ossGroups.items}
+                  total={ossGroups.total}
+                  totalFindings={ossGroups.total_findings}
+                  truncated={ossGroups.truncated}
+                  page={ossPage}
+                  pageSize={ossPageSize}
+                  memberQuery={{ target_id: targetId!, category: "SCA" }}
                   targets={currentTarget ? [currentTarget] : targets}
                 />
               )}

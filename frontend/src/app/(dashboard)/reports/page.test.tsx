@@ -82,15 +82,24 @@ describe("Reports page targets fetch", () => {
 
   it("offers a retry that re-issues the targets request rather than a full page reload", async () => {
     resolveDecorativeFacets();
+    // `mockRejectedValueOnce` then a PERSISTENT resolve, not a second
+    // `...Once`: exactly two queued responses is a bet on the fetcher being
+    // invoked exactly twice, and the mount effect can consume both before the
+    // retry is ever clicked -- the retry then hits an unmocked third call and
+    // the count never settles on 2, so waitFor spins to its timeout. What the
+    // test is actually about is that Retry re-issues the request rather than
+    // reloading the page, so assert that: the call count grew, and the
+    // failure banner cleared.
     targets.mockRejectedValueOnce(new Error("network error"));
-    targets.mockResolvedValueOnce([{ id: 1, name: "acme/repo", default_branch: "main" }]);
+    targets.mockResolvedValue([{ id: 1, name: "acme/repo", default_branch: "main" }]);
 
     render(<ReportsPage />);
     await screen.findByRole("alert");
+    const callsBeforeRetry = targets.mock.calls.length;
 
     fireEvent.click(screen.getByRole("button", { name: /Retry/i }));
 
-    await waitFor(() => expect(targets).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(targets.mock.calls.length).toBeGreaterThan(callsBeforeRetry));
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
   });
 });

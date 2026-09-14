@@ -36,7 +36,7 @@ export default async function TargetsPage({
   // summary the "Needs attention" quick filter counted 0 while the default
   // "most findings" sort silently collapsed to alphabetical. See
   // targets-list.tsx for what each boolean now suppresses.
-  const [targetsResult, githubStatus, groupsList, scanSettled, targetSettled, me] = await Promise.all([
+  const [targetsResult, [githubStatus, githubStatusFailed], [groupsList, groupsFailed], scanSettled, targetSettled, me] = await Promise.all([
     settleOrNull(api.targets({ group_id })),
     // settledOr, not `.catch(() => ({ installed: false }))`: that fallback is
     // not a neutral default, it is a factual claim that the GitHub App is not
@@ -45,10 +45,14 @@ export default async function TargetsPage({
     // (`defaultOpen`), inviting them to re-do setup that was never broken.
     // Unknown has to read as unknown.
     settledOr(api.githubAppStatus(), {
+      apps: [],
       app_configured: false,
       app_slug: null,
       installed: false,
       account_login: null,
+      webhook_secret_set: false,
+      webhook_reachable: false,
+      public_api_url: "",
     }),
     // Same class as the GitHub status above and the actor list on the audit
     // log: an empty group list and a group list that could not be fetched

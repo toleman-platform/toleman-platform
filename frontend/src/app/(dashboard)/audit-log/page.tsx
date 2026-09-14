@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 import { AuditLogFilterBar, AuditLogList } from "@/components/features/logs";
 import { PageHeader } from "@/components/ui/page-header";
+import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { settleOrNull, settledOr } from "@/std-lib";
 // Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.

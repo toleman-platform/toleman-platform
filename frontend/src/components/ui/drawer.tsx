@@ -101,7 +101,12 @@ export function useFocusTrap({
     const toFocus = initialFocusRef?.current ?? getFocusableElements(container)[0] ?? container;
     toFocus.focus();
 
-    function onKeyDown(e: KeyboardEvent) {
+    // An arrow const, not a hoisted `function` declaration: TypeScript will
+    // not carry the `if (!container) return` narrowing above into a hoisted
+    // declaration, because such a function could in principle be called
+    // before the guard runs. As a const initialised after the guard, it keeps
+    // the narrowing and `container` stays HTMLElement throughout.
+    const onKeyDown = (e: KeyboardEvent) => {
       const isTopmost = layerStack[layerStack.length - 1] === token;
       if (!isTopmost) return;
 
@@ -132,7 +137,7 @@ export function useFocusTrap({
           first.focus();
         }
       }
-    }
+    };
 
     document.addEventListener("keydown", onKeyDown);
     return () => {

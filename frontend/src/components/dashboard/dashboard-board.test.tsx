@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { DashboardBoard } from "./dashboard-board";
-import type { LayoutWidget, WidgetCatalogEntry, WidgetDataResponse } from "@/lib/api";
+import type { LayoutWidget, WidgetCatalogEntry } from "@/lib/api";
 
 const saveDashboardLayout = vi.fn();
 const dashboardWidgetData = vi.fn();

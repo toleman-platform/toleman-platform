@@ -87,6 +87,12 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
 async function openDetailDialog(finding: Finding = makeFinding()) {
   render(<FindingRow finding={finding} />);
   const trigger = screen.getByTitle("View vulnerability details and suggested fix");
+  // Focus the trigger before clicking. A real browser focuses a button on
+  // mousedown, which is what makes "restore focus to whatever opened me"
+  // work; jsdom's fireEvent.click dispatches the event without moving focus,
+  // so the trap would capture document.body as previouslyFocused and the
+  // restore assertion would fail against a correct component.
+  (trigger as HTMLElement).focus();
   fireEvent.click(trigger);
   await waitFor(() => expect(screen.getByText(/Upgrade the dependency/)).not.toBeNull());
   return trigger;

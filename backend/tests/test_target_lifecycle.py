@@ -1335,34 +1335,60 @@ class TestDeactivationIsVisibleInAggregates:
 
 
 class TestWorkspaceScopingOnTheNewEndpoints:
-    """#57's read-path scoping applies to the write paths added here too: a
+    """#32's write-path gating applies to the write paths added here too: a
     non-admin must not be able to deactivate or delete a target in a
-    workspace they hold no membership in, and must not learn it exists."""
+    workspace they hold no membership in.
+
+    The refusal is a 403, from the require_workspace_role dependency, which
+    runs before the handler body and so before _get_target_scoped's
+    404-not-403 branch ever gets a chance to. That is deliberate and matches
+    every other workspace-scoped write on a target -- see
+    test_workspace_roles.py's test_developer_cannot_update_target_in_other_workspace,
+    which asserts 403 for PATCH /api/targets/{id} in exactly this setup.
+
+    An earlier draft of these two tests asserted 404 on the grounds that the
+    existence of another tenant's target is itself information. That is a
+    fair criticism of the 403, but it is a criticism of the whole
+    enforce_workspace_role convention, not of these endpoints: PATCH, POST
+    /api/sbom/{id} and the rest already answer 403 for the same id, so
+    making DELETE alone answer 404 closes no side channel and only makes the
+    two verbs disagree about the same target. Narrowing that oracle is a
+    repo-wide change to enforce_workspace_role, not something to smuggle in
+    here; the 404 path in _get_target_scoped stays live for the case it was
+    written for, a *soft-deleted* target, covered by
+    TestDeletedTargetsDisappear above.
+
+    What matters for security -- that the write is refused and leaves no
+    trace -- is asserted below and is unchanged either way.
+    """
 
     def _foreign_target(self, engine):
         mine = _workspace(engine)
         theirs = _workspace(engine)
         return mine, _target(engine, theirs, name="not-mine")
 
-    def test_deactivate_404s_across_the_workspace_boundary(self, client, engine):
+    def test_deactivate_is_refused_across_the_workspace_boundary(self, client, engine):
         mine, foreign = self._foreign_target(engine)
         _login(
             client, engine, role=UserRole.USER, workspace_id=mine,
             workspace_role=WorkspaceRole.SECURITY_ENGINEER, email="sec@example.com",
         )
         res = client.post(f"/api/targets/{foreign}/deactivate")
-        # 404, not 403: the existence of another tenant's target is itself
-        # information (the convention the rest of this file already uses).
-        assert res.status_code == 404
+        # 403 from require_workspace_role: holding security_engineer in one
+        # workspace grants nothing in another. See the class docstring for
+        # why this is 403 and not 404.
+        assert res.status_code == 403
+        # The assertion that actually matters: the refusal is real, not just
+        # a status code on a request that mutated the row anyway.
         assert _reload(engine, foreign).deactivated_at is None
 
-    def test_delete_404s_across_the_workspace_boundary(self, client, engine):
+    def test_delete_is_refused_across_the_workspace_boundary(self, client, engine):
         mine, foreign = self._foreign_target(engine)
         _login(
             client, engine, role=UserRole.USER, workspace_id=mine,
             workspace_role=WorkspaceRole.SECURITY_ENGINEER, email="sec@example.com",
         )
-        assert client.delete(f"/api/targets/{foreign}").status_code == 404
+        assert client.delete(f"/api/targets/{foreign}").status_code == 403
         assert _reload(engine, foreign).deleted_at is None
 
     def test_no_audit_row_is_written_for_a_refused_action(self, client, engine):

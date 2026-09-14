@@ -285,14 +285,24 @@ def render_csv(data: dict) -> str:
     writer.writerow([])
 
     writer.writerow(["Scan History / Coverage (latest run per tool)"])
+    # (#273) Scanning is appended after the existing columns rather than
+    # inserted next to Target, where it reads more naturally. This CSV is a
+    # download other people's tooling parses, and every reader of it indexes
+    # positionally -- csv has no column names to bind to. Inserting a column
+    # mid-table silently re-points every existing index by one (it broke
+    # test_reports.py's own r[6] == findings_count, which is exactly the
+    # failure mode a spreadsheet or script downstream would hit, only
+    # without a test to catch it). Appending is the only addition that is
+    # backward compatible, so new columns go on the end here and in the
+    # Targets table above.
     writer.writerow(
-        ["Target", "Scanning", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings Count"]
+        ["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings Count", "Scanning"]
     )
     for r in data["scan_rows"]:
         writer.writerow(
             [
-                r["target"], r["scanning"], r["tool"], r["branch"], r["status"],
-                r["started_at"], r["completed_at"], r["findings_count"],
+                r["target"], r["tool"], r["branch"], r["status"],
+                r["started_at"], r["completed_at"], r["findings_count"], r["scanning"],
             ]
         )
     writer.writerow([])
@@ -401,11 +411,17 @@ def render_pdf(data: dict) -> bytes:
 
     add_table(
         "Scan History / Coverage (latest run per tool)",
-        ["Target", "Scanning", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings"],
+        # Same column order as render_csv's version of this table. Nobody
+        # parses a PDF positionally, so this one could have kept Scanning
+        # beside Target -- but the two renderings are read side by side when
+        # an auditor cross-checks the attachment against the spreadsheet,
+        # and a table whose columns move between formats is worse than one
+        # whose newest column is last in both.
+        ["Target", "Tool", "Branch", "Status", "Started At", "Completed At", "Findings", "Scanning"],
         [
             [
-                r["target"], r["scanning"], r["tool"], r["branch"], r["status"],
-                r["started_at"], r["completed_at"], r["findings_count"],
+                r["target"], r["tool"], r["branch"], r["status"],
+                r["started_at"], r["completed_at"], r["findings_count"], r["scanning"],
             ]
             for r in data["scan_rows"]
         ],

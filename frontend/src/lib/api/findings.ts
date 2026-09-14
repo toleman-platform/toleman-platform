@@ -6,6 +6,8 @@ import type {
   FindingEnrichment,
   CategoryFacetsQuery,
   CategoryFacet,
+  FindingGroupsQuery,
+  FindingGroupListResult,
   FindingSuggestFix,
   RaiseFixPrResult,
   SlaRule,
@@ -24,12 +26,42 @@ export function findings(query: FindingsQuery = {}): Promise<FindingListResult> 
   appendMulti(params, "severity", query.severity);
   appendMulti(params, "tool", query.tool);
   if (query.category) params.set("category", query.category);
+  appendMulti(params, "exclude_category", query.exclude_category);
   appendMulti(params, "fixability", query.fixability);
   if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
   if (query.search) params.set("search", query.search);
+  appendMulti(params, "rule_id", query.rule_id);
+  if (query.new_since_days) params.set("new_since_days", String(query.new_since_days));
+  if (query.sort) params.set("sort", query.sort);
   if (query.page) params.set("page", String(query.page));
   if (query.page_size) params.set("page_size", String(query.page_size));
   return jsonFetch<FindingListResult>(`/api/findings?${params.toString()}`);
+}
+
+/**
+ * Retrieves the findings list collapsed into one row per decision.
+ *
+ * Takes the same filters as `findings()` so switching between the flat and
+ * grouped views changes how many rows the same findings are drawn as, never
+ * which findings are in scope.
+ */
+export function findingGroups(query: FindingGroupsQuery = {}): Promise<FindingGroupListResult> {
+  const params = new URLSearchParams();
+  appendMulti(params, "target_id", query.target_id);
+  if (query.group_id) params.set("group_id", String(query.group_id));
+  appendMulti(params, "state", query.state);
+  appendMulti(params, "severity", query.severity);
+  appendMulti(params, "tool", query.tool);
+  if (query.category) params.set("category", query.category);
+  appendMulti(params, "exclude_category", query.exclude_category);
+  appendMulti(params, "fixability", query.fixability);
+  if (query.resolved !== undefined) params.set("resolved", String(query.resolved));
+  if (query.search) params.set("search", query.search);
+  if (query.new_since_days) params.set("new_since_days", String(query.new_since_days));
+  if (query.sort) params.set("sort", query.sort);
+  if (query.page) params.set("page", String(query.page));
+  if (query.page_size) params.set("page_size", String(query.page_size));
+  return jsonFetch<FindingGroupListResult>(`/api/findings/groups?${params.toString()}`);
 }
 
 /**

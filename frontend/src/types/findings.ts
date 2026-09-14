@@ -48,6 +48,16 @@ export type FindingListResult = {
 };
 
 /**
+ * How a findings list is ordered. `exploitability` (priority score first) is
+ * the default and is what the list has always done, so adding the control
+ * does not reorder anyone's existing view. `blast_radius` is grouped-only:
+ * "how many findings does this one decision close" has no meaning on a row
+ * that is a single detection.
+ */
+export type FindingSort = "exploitability" | "severity" | "age" | "recent";
+export type FindingGroupSort = FindingSort | "blast_radius";
+
+/**
  * Filter query parameters for the /api/findings endpoint.
  */
 export type FindingsQuery = {
@@ -57,11 +67,67 @@ export type FindingsQuery = {
   severity?: string | string[];
   tool?: string | string[];
   category?: string;
+  /** Categories to leave out. What the "Needs action" queue is built on. */
+  exclude_category?: string[];
   fixability?: string | string[];
   resolved?: boolean;
   search?: string;
+  /** Both halves of a group key, for expanding one grouped row into its members. */
+  rule_id?: string | string[];
+  /** Only findings first seen within this many days. Values below 1 are clamped to 1. */
+  new_since_days?: number;
+  sort?: FindingSort;
   page?: number;
   page_size?: number;
+};
+
+/**
+ * Query parameters for the grouped findings list. Identical filters to
+ * FindingsQuery, minus the ones that only make sense on a single detection
+ * (`rule_id` selects a group's members, so it cannot also select groups).
+ */
+export type FindingGroupsQuery = Omit<FindingsQuery, "rule_id" | "sort"> & {
+  sort?: FindingGroupSort;
+};
+
+/**
+ * One decision, standing for every finding it would close.
+ *
+ * Identity is `(tool, rule_id)` — see backend/app/core/grouping.py for why
+ * that key rather than a package name parsed out of a title. `grouped` is
+ * false for categories deliberately never collapsed (Secrets, Malicious
+ * Package), where the row is a single finding and offering an expander
+ * would reveal only itself.
+ */
+export type FindingGroup = {
+  tool: string;
+  rule_id: string;
+  category: string;
+  title: string;
+  severity: string;
+  grouped: boolean;
+  finding_count: number;
+  target_count: number;
+  file_count: number;
+  max_priority_score: number;
+  oldest_first_seen: string;
+  newest_last_seen: string;
+  max_epss: Nullable<number>;
+  kev_count: number;
+  /** The member the row's SLA and fixability are read off: worst severity, then oldest. */
+  representative_id: number;
+  representative_file_path: string;
+  representative_target_id: number;
+  sla_days: Nullable<number>;
+  sla_violated: boolean;
+  fixability: "fixable" | "no_known_fix" | "unknown";
+};
+
+export type FindingGroupListResult = {
+  items: FindingGroup[];
+  total: number;
+  /** The count the flat list would have shown, so the UI can say "14 groups / 150 findings". */
+  total_findings: number;
 };
 
 /**

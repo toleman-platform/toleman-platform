@@ -62,6 +62,31 @@ function RiskScore({ score }: { score: number }) {
   );
 }
 
+/**
+ * How long this finding has been open, shown where the risk score sits when
+ * the score has no variance to report.
+ *
+ * The clock is read once at mount rather than during render, for the same
+ * reason SlaBadge does it below: age is day-granular, so re-reading it changes
+ * nothing a reader can see, and a render that depends on the current time is
+ * impure -- two renders of the same finding could disagree.
+ */
+function FirstSeenAge({ finding }: { finding: Finding }) {
+  const [now] = useState(() => Date.now());
+  const days = Math.max(0, Math.floor((now - new Date(finding.first_seen).getTime()) / (24 * 60 * 60 * 1000)));
+  return (
+    <div className="flex flex-col items-end">
+      <span
+        className="font-mono text-sm font-bold tabular-nums text-foreground"
+        title={`First seen ${new Date(finding.first_seen).toLocaleDateString()}`}
+      >
+        {days}d
+      </span>
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Open for</span>
+    </div>
+  );
+}
+
 const TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
 // Issue #70: SLA countdown/violation badge. sla_days is null when no
@@ -489,6 +514,7 @@ export function FindingRow({
   selected = false,
   onSelectChange,
   onInspect,
+  showScore = true,
 }: {
   finding: Finding;
   repoUrl?: string;
@@ -503,6 +529,19 @@ export function FindingRow({
   selected?: boolean;
   onSelectChange?: (checked: boolean) => void;
   onInspect?: (finding: Finding) => void;
+  /**
+   * Whether the risk score column carries information here.
+   *
+   * The score is severity x target criticality x 40 (see RISK_SCORE_EXPLANATION
+   * below), so on a single target at one criticality every finding of the same
+   * severity scores identically -- an external review saw 320/1000 on every
+   * visible row and concluded the column was decorative. It was not, but a
+   * column that reads the same on every row teaches people to stop looking at
+   * it, and takes the highest-value corner of the row to do it. The list
+   * decides (see findings-list.tsx) and hides it when it has no variance to
+   * show; the score is still on the finding, and still what the list sorts by.
+   */
+  showScore?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -645,7 +684,11 @@ export function FindingRow({
               </button>
             )}
             <div className="flex flex-col items-end gap-1">
-              <RiskScore score={finding.priority_score} />
+              {showScore ? (
+                <RiskScore score={finding.priority_score} />
+              ) : (
+                <FirstSeenAge finding={finding} />
+              )}
               <div className={`text-xs ${STATE_COLOR[finding.state] || "text-muted-foreground"}`}>{finding.state}</div>
             </div>
           </div>

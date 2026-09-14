@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Literal
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,6 +15,15 @@ from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
 from app.core.remediation import group_remediations
+from app.core.grouping import (
+    DEFAULT_SORT,
+    SORT_KEYS,
+    UNGROUPED_CATEGORIES,
+    group_aggregate_columns,
+    representative_finding,
+    severity_for_weight,
+    severity_weight_case,
+)
 from app.core.time import utcnow
 from app.core.tool_registry import UNKNOWN_TOOL_CATEGORY, all_categories, all_known_tools, tool_category, tools_in_category
 from app.core.triage import apply_triage
@@ -32,6 +41,7 @@ from app.models.models import (
     NotificationEventType,
     OPEN_FINDING_STATES,
     RESOLVED_FINDING_STATES,
+    SEVERITY_WEIGHT,
     Severity,
     Target,
     TargetGroup,
@@ -227,6 +237,8 @@ def _filtered_findings_query(
     environment: str | None,
     owner: str | None,
     search: str | None,
+    rule_id: list[str] | None = None,
+    new_since_days: int | None = None,
 ):
     """Every list_findings filter except `category` (deliberately excluded:
     the category-counts facet below needs the SAME filters applied for its
@@ -287,6 +299,19 @@ def _filtered_findings_query(
         query = query.where(Finding.severity.in_(severity))
     if tool:
         query = query.where(Finding.tool.in_(tool))
+    if rule_id:
+        # How a grouped row expands: the group key is (tool, rule_id), so
+        # asking for its members is the same list endpoint with both pinned.
+        # Deliberately not a new "members" endpoint -- every filter, sort and
+        # permission check already applies here, and a parallel endpoint is a
+        # second place for them to drift.
+        query = query.where(Finding.rule_id.in_(rule_id))
+    if new_since_days is not None:
+        # "What landed since I last looked", the question first_seen was
+        # always able to answer and nothing in the UI ever asked. Bounded
+        # below at 1 so `?new_since_days=0` cannot mean "nothing ever".
+        cutoff = utcnow() - timedelta(days=max(1, new_since_days))
+        query = query.where(Finding.first_seen >= cutoff)
     if environment is not None or owner is not None:
         # (#251) Filter findings by the owning target's metadata. Needs the
         # Target join, which only happens above when ws_ids is not None (an
@@ -347,6 +372,56 @@ def _filtered_findings_query(
     return query, target_joined
 
 
+
+def _apply_category(query, category: str | None, exclude_category: list[str] | None = None):
+    """Narrow a findings query to one derived category.
+
+    `category` is not a stored column -- it is `tool_category(Finding.tool)`
+    (see app.core.tool_registry), so filtering is the reverse lookup at SQL
+    level. "Other" is every tool the registry does not recognise (notably a
+    CI pipeline's free-form `tool` on POST /api/ingest/{target_id}), which is
+    why it is a NOT IN rather than an IN.
+
+    `exclude_category` is what the "Needs action" queue is built on: a
+    copyleft licence on a transitive build binary is a quarterly policy call,
+    not an incident, and letting 148 of them share a queue with one leaked
+    credential is what buried the credential on page six. Expressed as its own
+    parameter rather than "every category except X" so the caller states the
+    exclusion it means and new categories land in the queue by default.
+
+    Extracted so the flat list and the grouped list cannot disagree about
+    what a category means.
+    """
+    for excluded in exclude_category or []:
+        if excluded == UNKNOWN_TOOL_CATEGORY:
+            query = query.where(Finding.tool.in_(all_known_tools()))
+        else:
+            query = query.where(Finding.tool.not_in(tools_in_category(excluded)))
+    if category is None:
+        return query
+    if category == UNKNOWN_TOOL_CATEGORY:
+        return query.where(Finding.tool.not_in(all_known_tools()))
+    return query.where(Finding.tool.in_(tools_in_category(category)))
+
+
+def _sort_findings(query, sort: str):
+    """Ordering for the flat list.
+
+    `exploitability` is the default and is the ordering this endpoint has
+    always used, so adding the parameter does not reorder anyone's existing
+    view. Every branch ends in a deterministic tiebreak on id: without one,
+    two findings with equal scores can swap places between page 1 and page 2
+    and a row is silently skipped.
+    """
+    if sort == "severity":
+        return query.order_by(severity_weight_case().desc(), Finding.priority_score.desc(), Finding.id.desc())
+    if sort == "age":
+        return query.order_by(Finding.first_seen.asc(), Finding.id.asc())
+    if sort == "recent":
+        return query.order_by(Finding.first_seen.desc(), Finding.id.desc())
+    return query.order_by(Finding.priority_score.desc(), Finding.id.desc())
+
+
 @router.get("")
 def list_findings(
     # Multi-select filters (the Findings page's filter bar lets more than
@@ -364,10 +439,15 @@ def list_findings(
     severity: list[Severity] | None = Query(default=None),
     tool: list[str] | None = Query(default=None),
     category: str | None = None,
+    exclude_category: list[str] | None = Query(default=None),
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
     environment: str | None = None,
     owner: str | None = None,
     search: str | None = None,
+    # Expanding a grouped row: same list, both halves of the group key pinned.
+    rule_id: list[str] | None = Query(default=None),
+    new_since_days: int | None = None,
+    sort: Literal["exploitability", "severity", "age", "recent"] = DEFAULT_SORT,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
@@ -376,33 +456,250 @@ def list_findings(
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
         severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
+        rule_id=rule_id, new_since_days=new_since_days,
     )
     if query is None:
         # Issue #57: caller has zero workspace memberships -- an empty page,
         # not every workspace's data and not an error.
         return FindingListResponse(items=[], total=0)
 
-    if category is not None:
-        # category is purely derived from tool (app.core.tool_registry.
-        # tool_category), so filtering is just the reverse lookup at the SQL
-        # level; "Other" is every tool tool_category() doesn't recognize
-        # (notably including a CI pipeline's free-form `tool` on POST
-        # /api/ingest/{target_id}), so it's a NOT IN rather than an IN.
-        if category == UNKNOWN_TOOL_CATEGORY:
-            query = query.where(Finding.tool.not_in(all_known_tools()))
-        else:
-            query = query.where(Finding.tool.in_(tools_in_category(category)))
+    query = _apply_category(query, category, exclude_category)
 
     total = session.exec(select(func.count()).select_from(query.subquery())).one()
 
     page = max(page, 1)
     page_size = max(min(page_size, 500), 1)
-    query = query.order_by(Finding.priority_score.desc()).offset((page - 1) * page_size).limit(page_size)
+    query = _sort_findings(query, sort).offset((page - 1) * page_size).limit(page_size)
     items = session.exec(query).all()
     fixmap = _fixability_map(session, items)
     return FindingListResponse(
         items=[_to_finding_out(session, f, fixability=fixmap.get(f.id)) for f in items],
         total=total,
+    )
+
+
+
+class FindingGroupOut(BaseModel):
+    """One decision, standing for every finding that decision closes.
+
+    The identity is `(tool, rule_id)` -- see app.core.grouping for why that
+    key and not a package name parsed out of a title. `grouped` is False for
+    a finding in an ungrouped category (Secrets, Malicious Package), where
+    the row is a single finding rather than a collapsed set; the UI reads it
+    to decide whether an expander belongs on the row at all.
+    """
+    tool: str
+    rule_id: str
+    category: str
+    title: str
+    severity: str
+    grouped: bool
+    finding_count: int
+    target_count: int
+    file_count: int
+    max_priority_score: int
+    oldest_first_seen: datetime
+    newest_last_seen: datetime
+    max_epss: float | None = None
+    kev_count: int = 0
+    # Read off the single member most at risk (worst severity, then oldest),
+    # never synthesised across members -- see grouping.representative_finding.
+    representative_id: int
+    representative_file_path: str
+    representative_target_id: int
+    sla_days: int | None = None
+    sla_violated: bool = False
+    fixability: str = UNKNOWN
+
+
+class FindingGroupListResponse(BaseModel):
+    items: list[FindingGroupOut]
+    total: int
+    # Findings behind the groups on this page plus every other page, i.e. the
+    # number the flat list would have shown. The UI states both ("14 groups /
+    # 150 findings"); a grouped count alone reads as findings having vanished.
+    total_findings: int
+
+
+# A grouped page never loads more than this many group rows before sorting.
+# Group cardinality is far below finding cardinality (150 findings collapsed
+# to 14 groups on this repo's own scan), so this is a guard against a
+# pathological result set, not an expected limit.
+MAX_GROUPS = 2000
+
+
+def _ungrouped_tools() -> set[str]:
+    """Tools whose findings are never collapsed. See grouping.UNGROUPED_CATEGORIES."""
+    tools: set[str] = set()
+    for category in UNGROUPED_CATEGORIES:
+        tools.update(tools_in_category(category))
+    return tools
+
+
+def _sort_groups(items: list[FindingGroupOut], sort: str) -> list[FindingGroupOut]:
+    """Order group rows.
+
+    Sorted in Python rather than SQL because the grouped and the deliberately
+    ungrouped halves are two different queries (a Secrets finding must not be
+    merged with its rule-mates), and ordering them separately would interleave
+    them wrongly. Every key ends on rule_id so the order is total: without it,
+    equal-scoring groups can reorder between two requests for the same page.
+    """
+    if sort == "severity":
+        key = lambda g: (SEVERITY_WEIGHT_BY_NAME.get(g.severity, 0), g.finding_count, g.rule_id)  # noqa: E731
+        return sorted(items, key=key, reverse=True)
+    if sort == "blast_radius":
+        return sorted(items, key=lambda g: (g.finding_count, g.max_priority_score, g.rule_id), reverse=True)
+    if sort == "age":
+        return sorted(items, key=lambda g: (g.oldest_first_seen, g.rule_id))
+    if sort == "recent":
+        return sorted(items, key=lambda g: (g.newest_last_seen, g.rule_id), reverse=True)
+    return sorted(items, key=lambda g: (g.max_priority_score, g.finding_count, g.rule_id), reverse=True)
+
+
+SEVERITY_WEIGHT_BY_NAME = {
+    getattr(severity, "value", severity): weight for severity, weight in SEVERITY_WEIGHT.items()
+}
+
+
+@router.get("/groups")
+def list_finding_groups(
+    target_id: list[int] | None = Query(default=None),
+    group_id: int | None = None,
+    branch: str | None = None,
+    state: list[FindingState] | None = Query(default=None),
+    resolved: bool | None = None,
+    severity: list[Severity] | None = Query(default=None),
+    tool: list[str] | None = Query(default=None),
+    category: str | None = None,
+    exclude_category: list[str] | None = Query(default=None),
+    fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
+    environment: str | None = None,
+    owner: str | None = None,
+    search: str | None = None,
+    new_since_days: int | None = None,
+    sort: Literal["exploitability", "severity", "blast_radius", "age", "recent"] = DEFAULT_SORT,
+    page: int = 1,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> FindingGroupListResponse:
+    """The findings list with one row per decision instead of per detection.
+
+    Takes exactly the filter set `GET /api/findings` takes, so a filter means
+    the same thing in both views and switching between them cannot change
+    which findings are in scope -- only how many rows they are drawn as.
+    """
+    query, _ = _filtered_findings_query(
+        session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
+        severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
+        new_since_days=new_since_days,
+    )
+    if query is None:
+        return FindingGroupListResponse(items=[], total=0, total_findings=0)
+    query = _apply_category(query, category, exclude_category)
+
+    ungrouped_tools = _ungrouped_tools()
+    items: list[FindingGroupOut] = []
+
+    # --- the collapsible majority ---------------------------------------
+    grouped_query = query
+    if ungrouped_tools:
+        grouped_query = grouped_query.where(Finding.tool.not_in(ungrouped_tools))
+    # `session.execute`, not SQLModel's `session.exec`: the filtered query
+    # starts life as `select(Finding)`, so SQLModel still treats it as a
+    # select-of-scalars and unwraps each result to its first column -- the
+    # aggregate row arrives as a bare tool string rather than a Row, and every
+    # attribute read off it raises. `execute` returns the labelled Row the
+    # aggregates in group_aggregate_columns() are named for.
+    rows = session.execute(
+        grouped_query.with_only_columns(*group_aggregate_columns())
+        .group_by(Finding.tool, Finding.rule_id)
+        .limit(MAX_GROUPS)
+    ).all()
+
+    for row in rows:
+        # Scoped to `grouped_query`, never a bare select over the table: that
+        # query already carries the caller's workspace restriction and every
+        # active filter. A representative picked outside it could be a finding
+        # the caller is not entitled to see, and its title, file path and SLA
+        # are all rendered on the row.
+        rep = representative_finding(
+            session, grouped_query.where(Finding.tool == row.tool, Finding.rule_id == row.rule_id)
+        )
+        if rep is None:
+            continue
+        sla_days, sla_violated = compute_sla_status(session, rep)
+        items.append(
+            FindingGroupOut(
+                tool=row.tool,
+                rule_id=row.rule_id,
+                category=tool_category(row.tool),
+                title=rep.title,
+                severity=severity_for_weight(row.severity_weight or 0),
+                grouped=True,
+                finding_count=row.finding_count,
+                target_count=row.target_count,
+                file_count=row.file_count,
+                max_priority_score=row.max_priority_score or 0,
+                oldest_first_seen=row.oldest_first_seen,
+                newest_last_seen=row.newest_last_seen,
+                max_epss=row.max_epss or None,
+                kev_count=int(row.kev_count or 0),
+                representative_id=rep.id,
+                representative_file_path=rep.file_path,
+                representative_target_id=rep.target_id,
+                sla_days=sla_days,
+                sla_violated=sla_violated,
+                fixability=fixability_for_finding(session, rep),
+            )
+        )
+
+    # --- the deliberately ungrouped ---------------------------------------
+    # One leaked credential is one incident, not an instance of a gitleaks
+    # rule; collapsing two of them would hide one behind the other's triage
+    # decision. These are emitted as single-member groups so the page can
+    # render one list, with `grouped=False` telling the row not to offer an
+    # expander that would reveal only itself.
+    if ungrouped_tools:
+        singles = session.exec(query.where(Finding.tool.in_(ungrouped_tools)).limit(MAX_GROUPS)).all()
+        fixmap = _fixability_map(session, list(singles))
+        for finding in singles:
+            sla_days, sla_violated = compute_sla_status(session, finding)
+            items.append(
+                FindingGroupOut(
+                    tool=finding.tool,
+                    rule_id=finding.rule_id,
+                    category=tool_category(finding.tool),
+                    title=finding.title,
+                    severity=getattr(finding.severity, "value", finding.severity),
+                    grouped=False,
+                    finding_count=1,
+                    target_count=1,
+                    file_count=1,
+                    max_priority_score=finding.priority_score,
+                    oldest_first_seen=finding.first_seen,
+                    newest_last_seen=finding.last_seen,
+                    max_epss=finding.epss_score,
+                    kev_count=1 if finding.kev_listed else 0,
+                    representative_id=finding.id,
+                    representative_file_path=finding.file_path,
+                    representative_target_id=finding.target_id,
+                    sla_days=sla_days,
+                    sla_violated=sla_violated,
+                    fixability=fixmap.get(finding.id, UNKNOWN),
+                )
+            )
+
+    total_findings = sum(g.finding_count for g in items)
+    items = _sort_groups(items, sort)
+    page = max(page, 1)
+    page_size = max(min(page_size, 500), 1)
+    start = (page - 1) * page_size
+    return FindingGroupListResponse(
+        items=items[start : start + page_size],
+        total=len(items),
+        total_findings=total_findings,
     )
 
 

@@ -138,6 +138,7 @@ export const api = {
   // Security & SBOM
   aibom: security.aibom,
   getDiscoveredEndpoints: security.getDiscoveredEndpoints,
+  setEndpointScope: security.setEndpointScope,
   runDiscovery: security.runDiscovery,
   getDiscoveryRun: security.getDiscoveryRun,
   runApiScan: security.runApiScan,

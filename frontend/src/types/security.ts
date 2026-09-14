@@ -111,6 +111,9 @@ export type Endpoint = {
   is_new: boolean;
   first_seen: string;
   last_seen: string;
+  /** Operator-declared out of scope: never sent to an active scan (#469). */
+  excluded: boolean;
+  exclusion_reason: string | null;
 };
 
 /**

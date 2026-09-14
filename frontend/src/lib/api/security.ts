@@ -40,6 +40,23 @@ export function getDiscoveredEndpoints(
 }
 
 /**
+ * Mark a discovered endpoint in or out of scope for active scanning (#469).
+ * An excluded endpoint is never probed, including when it is part of an
+ * explicit selection.
+ */
+export function setEndpointScope(
+  targetId: number,
+  endpointId: number,
+  excluded: boolean,
+  reason?: string,
+): Promise<{ id: number; method: string; route: string; excluded: boolean; exclusion_reason: string | null }> {
+  return jsonFetch(`/api/discovery/${targetId}/endpoints/${endpointId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ excluded, reason: reason ?? null }),
+  });
+}
+
+/**
  * Dispatches an asynchronous endpoint discovery task.
  */
 export function runDiscovery(

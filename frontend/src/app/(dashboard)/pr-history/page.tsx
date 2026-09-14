@@ -9,7 +9,7 @@ import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
-import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
+import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { PrScanAction, PrGuardrailLog } from "@/components/features/scans";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";

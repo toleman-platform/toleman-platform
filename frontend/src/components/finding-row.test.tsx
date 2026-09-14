@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { FindingRow } from "./finding-row";
+import { FindingRow } from "@/components/features/findings";
 import type { Finding } from "@/lib/api";
 
 // FindingRow calls useRouter for its triage navigation. Mocked locally rather

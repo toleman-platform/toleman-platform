@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/brand-mark";
 import { IGNORE_STATUS_COLOR } from "@/lib/severity";
-import { LINK_IGNORE_REASON } from "@/components/pr-guardrail-log";
+import { LINK_IGNORE_REASON } from "@/components/features/scans";
 import { safeHref } from "@/lib/utils";
 
 // A "request ignore" link posted in a PR Guardrail comment used to point at

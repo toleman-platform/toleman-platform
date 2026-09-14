@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
-import { CriticalityChip } from "@/components/criticality-chip";
+import { CriticalityChip } from "@/components/features/targets";
 
 // Issue #117: the risk/priority score was a bare number (360, 320, 240...)
 // with no explanation of what it meant. Mirrors the real formula in

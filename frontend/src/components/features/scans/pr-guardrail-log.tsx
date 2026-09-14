@@ -14,7 +14,7 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { IGNORE_STATUS_COLOR, SEVERITY_COLOR } from "@/lib/severity";
-import { ALL_TARGETS } from "@/components/target-picker";
+import { ALL_TARGETS } from "@/components/features/targets";
 
 function isSessionError(e: unknown): boolean {
   return e instanceof ApiError && e.status === 401;

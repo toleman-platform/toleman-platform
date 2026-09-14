@@ -13,7 +13,7 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { SeverityChip } from "@/components/ui/severity-chip";
-import { TargetPicker } from "@/components/target-picker";
+import { TargetPicker } from "@/components/features/targets";
 
 // Issue #177/#181: malicious dependencies detected via OSV.dev. Hits are
 // persisted as ordinary Critical `Finding` rows (tool="osv-malware"), so this

@@ -1,5 +1,0 @@
-/**
- * @deprecated Moved to `@/components/features/logs/github-org-logs-filter-bar`.
- * Backward-compatible re-export preserved for existing call sites.
- */
-export * from "./features/logs/github-org-logs-filter-bar";

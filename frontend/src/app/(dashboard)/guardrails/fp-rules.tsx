@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Ban, Building2, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 
 // Issue #76: false-positive learning engine; rules here are learned
@@ -36,22 +37,46 @@ export function FpRules() {
   // empty picker reads as "this deployment has no workspaces".
   const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
 
-  async function mutate(action: () => Promise<unknown>, failureMessage: string) {
-    if (!workspaceId) return;
+  // Returns whether the mutation actually landed, so a caller holding a
+  // confirmation dialog open can keep it open on failure rather than closing
+  // it over an unchanged row, which reads as success.
+  async function mutate(action: () => Promise<unknown>, failureMessage: string): Promise<boolean> {
+    if (!workspaceId) return false;
     setMutationError(null);
     try {
       await action();
       refetch();
+      return true;
     } catch (e) {
       setMutationError(e instanceof Error ? e.message : failureMessage);
+      return false;
     }
   }
 
 
   const toggleActive = (rule: FalsePositiveRule) =>
     mutate(() => api.setFpRuleActive(rule.id, !rule.active), "failed to update rule");
-  const widen = (rule: FalsePositiveRule) => mutate(() => api.widenFpRule(rule.id), "failed to widen rule");
-  const remove = (rule: FalsePositiveRule) => mutate(() => api.deleteFpRule(rule.id), "failed to delete rule");
+
+  // Widen and delete both change what is auto-suppressed across the whole
+  // workspace and neither can be undone from this page: widening discards the
+  // rule's file scope (there is no "narrow it back" action), and delete is
+  // permanent. Both used to fire on a single click.
+  const [pending, setPending] = useState<{ rule: FalsePositiveRule; action: "widen" | "delete" } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function confirmPending() {
+    if (!pending) return;
+    setBusy(true);
+    try {
+      const ok =
+        pending.action === "widen"
+          ? await mutate(() => api.widenFpRule(pending.rule.id), "failed to widen rule")
+          : await mutate(() => api.deleteFpRule(pending.rule.id), "failed to delete rule");
+      if (ok) setPending(null);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -153,7 +178,7 @@ export function FpRules() {
                           variant="ghost"
                           size="sm"
                           className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                          onClick={() => widen(r)}
+                          onClick={() => setPending({ rule: r, action: "widen" })}
                           aria-label={`Widen rule ${r.rule_id} to match any file`}
                         >
                           Widen to any file
@@ -173,7 +198,7 @@ export function FpRules() {
                         variant="ghost"
                         size="icon"
                         className="shrink-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => remove(r)}
+                        onClick={() => setPending({ rule: r, action: "delete" })}
                         aria-label={`Delete rule ${r.rule_id}`}
                         title="Delete permanently"
                       >
@@ -185,6 +210,46 @@ export function FpRules() {
               )}
             </div>
           )}
+
+          {/* Widen is the subtle one: it is not a delete, but it broadens
+              automatic suppression from one filename to every file in the
+              workspace for that rule + tool. How many findings that newly
+              suppresses is not something this page can know, so the dialog
+              states the new match scope exactly rather than guessing a count. */}
+          <ConfirmDialog
+            open={pending !== null}
+            title={
+              pending?.action === "widen" ? "Widen this rule to every file?" : "Delete this false-positive rule?"
+            }
+            description={
+              pending?.action === "widen" ? (
+                <>
+                  <strong>{pending.rule.rule_id}</strong> ({pending.rule.tool}) currently auto-suppresses only findings
+                  in files named <strong>{pending.rule.file_path_pattern}</strong>. Widening makes it suppress that
+                  rule in <strong>every file in this workspace</strong>, on every future scan, including repos it has
+                  never matched. There is no narrow-it-back action &mdash; you would have to delete the rule and
+                  re-triage a finding to relearn it.
+                </>
+              ) : (
+                <>
+                  <strong>{pending?.rule.rule_id}</strong> ({pending?.rule.tool}) is removed permanently. Findings it
+                  was suppressing will start appearing in scan results again. To stop auto-suppressing without losing
+                  the rule, expire it instead.
+                  {pending ? (
+                    <span className="mt-2 block">
+                      It has matched {pending.rule.match_count} finding{pending.rule.match_count === 1 ? "" : "s"} so
+                      far.
+                    </span>
+                  ) : null}
+                </>
+              )
+            }
+            confirmLabel={pending?.action === "widen" ? "Widen rule" : "Delete rule"}
+            tone="destructive"
+            loading={busy}
+            onConfirm={confirmPending}
+            onCancel={() => setPending(null)}
+          />
         </CardContent>
       </Card>
     </div>

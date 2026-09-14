@@ -18,7 +18,7 @@ import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
 import { TargetHistory } from "./target-history";
-import { settleOrNull } from "@/std-lib";
+import { settledOr } from "@/std-lib";
 import { pageSizeFromParams } from "@/lib/pagination";
 
 // Issue #197: the target detail page used to be one long scroll stacking
@@ -43,7 +43,7 @@ export default async function TargetDetailPage({
   const page = Math.max(1, Number(Array.isArray(sp.page) ? sp.page[0] : sp.page) || 1);
   const pageSize = pageSizeFromParams(sp.page_size);
 
-  const [target, findingsResult, scanSummary, targetSummary] = await Promise.all([
+  const [target, findingsResult, scanSettled, targetSettled] = await Promise.all([
     api.target(targetId),
     // Real pagination. This used to fetch page_size: 500 and hand the whole
     // lot to FindingsList with pageSize = findings.length, which meant the
@@ -51,12 +51,20 @@ export default async function TargetDetailPage({
     // selector said 25; and on a target with 1137 findings it shipped 500
     // rows to the browser in one response.
     api.findings({ target_id: targetId, page, page_size: pageSize }),
-    // Degrades to {} rather than failing the page; the overview then shows
-    // "Never" for last scan, which is honest about not knowing.
-    settleOrNull(api.scanSummary()).then((s) => s ?? {}),
+    // Both summaries still degrade to {} rather than failing the page, but
+    // `settledOr` keeps the *reason* the map is empty. These two used to be
+    // `settleOrNull(...).then((s) => s ?? {})`, which threw the failure away
+    // one line after producing it — and the overview then combined a
+    // succeeding scan summary with a failing target summary into a green `0`
+    // under the words "scanned, nothing open", on a repository that may have
+    // hundreds of open findings. See target-overview.tsx for what each
+    // boolean now suppresses.
+    settledOr(api.scanSummary(), {}),
     // Overview counts must cover the whole target, not the fetched page.
-    settleOrNull(api.targetsSummary()).then((s) => s ?? {}),
+    settledOr(api.targetsSummary(), {}),
   ]);
+  const [scanSummary, scanSummaryFailed] = scanSettled;
+  const [targetSummary, targetSummaryFailed] = targetSettled;
   const findings = findingsResult.items;
   const scanEntry = scanSummary[String(targetId)];
 
@@ -120,7 +128,13 @@ export default async function TargetDetailPage({
       <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={findingsResult.total} />
 
       {tab === "overview" && (
-        <TargetOverview target={target} summaryEntry={targetSummary[String(targetId)]} scanEntry={scanEntry} />
+        <TargetOverview
+          target={target}
+          summaryEntry={targetSummary[String(targetId)]}
+          scanEntry={scanEntry}
+          summaryFailed={targetSummaryFailed}
+          scanSummaryFailed={scanSummaryFailed}
+        />
       )}
 
       {tab === "vulnerabilities" && (

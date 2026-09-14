@@ -169,8 +169,13 @@ export default async function FindingsPage({
             resolved: qf.resolved,
             page_size: 1,
           })
-          .then((r) => r.total)
-          .catch(() => 0);
+          .then((r): number | null => r.total)
+          // `null`, not `0`. These four counts are independent requests, so
+          // when the findings API is down all four fail together and the page
+          // used to render "Needs action 0 / Licence review 0 / Resolved 0 /
+          // All findings 0" directly above its own "couldn't be loaded" error
+          // box. Zero is a measurement; a failed request has not made one.
+          .catch(() => null);
       }),
     ),
   ]);
@@ -237,7 +242,7 @@ export default async function FindingsPage({
   const queueTabs: CategoryTab[] = QUEUES.map((q, i) => ({
     id: q.id,
     label: q.label,
-    count: queueCounts[i] ?? 0,
+    count: queueCounts[i],
     href: hrefWith({
       queue: q.id === "action" ? undefined : q.id,
       // State options differ between open and resolved views, so a state
@@ -278,9 +283,19 @@ export default async function FindingsPage({
       <PageHeader
         title="Findings"
         description={
-          grouped && groupsResult
-            ? `${decisions} ${decisions === 1 ? "decision" : "decisions"} across ${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"}`
-            : `${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"} across all targets`
+          // The `failed` arm is the whole fix for this line. Both branches
+          // below bottom out in `?? 0`, so a failed list request rendered the
+          // headline "0 findings across all targets" -- the single largest,
+          // most quotable claim on the page -- immediately above the error box
+          // saying the list could not be loaded. A reader skimming takes away
+          // "we're clean"; a reader paying attention takes away "this UI
+          // contradicts itself". Neither is recoverable by adding an error
+          // state elsewhere: the number itself has to stop being asserted.
+          failed
+            ? "Finding count unavailable"
+            : grouped && groupsResult
+              ? `${decisions} ${decisions === 1 ? "decision" : "decisions"} across ${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"}`
+              : `${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"} across all targets`
         }
       />
 

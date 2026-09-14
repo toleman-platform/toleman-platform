@@ -13,6 +13,7 @@ import {
   toError,
   sleep,
   settleOrNull,
+  settledOr,
   unique,
   uniqueBy,
   paginateSlice,
@@ -217,6 +218,44 @@ describe("async utilities", () => {
   it("settleOrNull returns null on rejection", async () => {
     const res = await settleOrNull(Promise.reject(new Error("Failed")));
     expect(res).toBeNull();
+  });
+
+  it("settledOr reports a resolved value as not-failed", async () => {
+    // Explicit T: inferring it from the resolved value alone would make the
+    // fallback have to match that exact literal shape. The real call sites
+    // pass a summary map whose fallback is the empty map, which is the shape
+    // being modelled here.
+    const [value, failed] = await settledOr<Record<string, { open: number }>>(
+      Promise.resolve({ "1": { open: 3 } }),
+      {},
+    );
+    expect(value).toEqual({ "1": { open: 3 } });
+    expect(failed).toBe(false);
+  });
+
+  it("settledOr reports the fallback as failed", async () => {
+    const [value, failed] = await settledOr(Promise.reject(new Error("boom")), {});
+    expect(value).toEqual({});
+    expect(failed).toBe(true);
+  });
+
+  it("settledOr distinguishes an empty success from a failure", async () => {
+    // The entire reason this exists. `.catch(() => ({}))` collapses these two
+    // into the same value, and every caller downstream then renders "nothing
+    // has ever been scanned" / "0 open findings" for an outage.
+    const [emptyValue, emptyFailed] = await settledOr(Promise.resolve({}), {});
+    const [failedValue, reallyFailed] = await settledOr(Promise.reject(new Error("down")), {});
+
+    expect(emptyValue).toEqual(failedValue); // indistinguishable by value...
+    expect(emptyFailed).toBe(false); // ...and distinguishable only by the flag
+    expect(reallyFailed).toBe(true);
+  });
+
+  it("settledOr does not swallow a non-Error rejection", async () => {
+    // A thrown string, a rejected fetch with a plain object -- all of them
+    // still have to register as a failure rather than as a quiet empty.
+    const [, failed] = await settledOr(Promise.reject("string rejection"), []);
+    expect(failed).toBe(true);
   });
 });
 

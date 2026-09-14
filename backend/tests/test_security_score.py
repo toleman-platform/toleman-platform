@@ -189,6 +189,54 @@ def test_no_targets_yields_zero_score(engine):
     assert result["target_count"] == 0
 
 
+def test_findings_score_never_bottoms_out(engine):
+    """The findings component must keep discriminating past the old zero point.
+
+    It used a linear ramp that reached 0 at an average of 20 weighted severity
+    points -- four Criticals on a single Prod repo -- after which a repo with
+    four critical findings and one with four hundred scored identically, and a
+    team fixing findings saw the number not move at all until they were most of
+    the way through. The saturating curve is steep early and still separates a
+    bad estate from a catastrophic one.
+    """
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+
+    for _ in range(4):
+        _make_finding(engine, target_id, severity=Severity.CRITICAL)
+    with Session(engine) as session:
+        four = compute_security_score(session, [target_id])["components"]["findings"]["score"]
+
+    for _ in range(20):
+        _make_finding(engine, target_id, severity=Severity.CRITICAL)
+    with Session(engine) as session:
+        twenty_four = compute_security_score(session, [target_id])["components"]["findings"]["score"]
+
+    assert four > 0.0, "four Criticals must not zero the component"
+    assert twenty_four > 0.0, "the curve must never reach zero"
+    assert twenty_four < four, "more findings must still score worse"
+
+
+def test_findings_score_is_steep_where_it_matters(engine):
+    """The first few findings should move the number meaningfully.
+
+    A saturating curve that is too gentle early would be as useless as a linear
+    one that flattens late: a clean repo and a repo with a Critical open must
+    not look alike.
+    """
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+
+    with Session(engine) as session:
+        clean = compute_security_score(session, [target_id])["components"]["findings"]["score"]
+    _make_finding(engine, target_id, severity=Severity.CRITICAL)
+    with Session(engine) as session:
+        one_critical = compute_security_score(session, [target_id])["components"]["findings"]["score"]
+
+    assert clean == 100.0
+    assert one_critical < 80.0, "a Critical must visibly cost score"
+
+
 def test_clean_target_no_findings_scores_high(engine):
     """No findings, one recent scan, no SLA rules configured anywhere ->
     findings=100 (no open findings), sla=100 (neutral, none tracked),
@@ -213,8 +261,14 @@ def test_clean_target_no_findings_scores_high(engine):
 
 def test_findings_component_hand_calculated(engine):
     """One target, one open Critical (weight 5) + one open High (weight 4)
-    default-branch finding -> weighted_sum=9, target_count=1,
-    avg_per_target=9. score = 100 - (9/20)*100 = 55.0 exactly."""
+    default-branch finding -> weighted_sum=9, target_count=1, avg_per_target=9.
+    score = 100 * 10/(9 + 10) = 52.6 to one decimal place.
+
+    The arithmetic changed with the curve (FINDINGS_SCORE_HALF_LIFE replacing a
+    linear ramp to zero); what this test is actually pinning down is the
+    weighting that feeds it -- weighted_severity_sum and open_findings -- which
+    is unchanged.
+    """
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
     _make_finding(engine, target_id, severity=Severity.CRITICAL)
@@ -226,14 +280,14 @@ def test_findings_component_hand_calculated(engine):
     f = result["components"]["findings"]
     assert f["weighted_severity_sum"] == 9
     assert f["open_findings"] == 2
-    assert f["score"] == 55.0
+    assert f["score"] == 52.6
 
 
 def test_findings_component_weights_by_target_criticality(engine):
     """One Prod target (criticality_weight=5) with an open Critical, one Dev
     target (criticality_weight=1) with an open Critical: weighted_sum =
     5*5 + 5*1 = 30, total_criticality = 5+1 = 6, avg_per_target = 5.0 ->
-    score = 100 - (5/20)*100 = 75.0. The same two findings at uniform
+    score = 100 * 10/(5 + 10) = 66.7. The same two findings at uniform
     criticality (1 each) would instead average 5.0 too by coincidence here,
     so also assert the raw weighted_sum reflects the 5x multiplier -- that's
     the part a plain target-count average couldn't show."""
@@ -249,7 +303,7 @@ def test_findings_component_weights_by_target_criticality(engine):
     f = result["components"]["findings"]
     assert f["weighted_severity_sum"] == 30.0
     assert f["avg_weighted_severity_per_target"] == 5.0
-    assert f["score"] == 75.0
+    assert f["score"] == 66.7
 
 
 def test_findings_component_same_criticality_everywhere_is_unaffected(engine):
@@ -267,7 +321,7 @@ def test_findings_component_same_criticality_everywhere_is_unaffected(engine):
 
     f = result["components"]["findings"]
     assert f["weighted_severity_sum"] == 9
-    assert f["score"] == 55.0
+    assert f["score"] == 52.6
 
 
 def test_findings_component_discounts_license_findings(engine):

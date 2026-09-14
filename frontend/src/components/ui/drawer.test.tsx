@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Drawer } from "./drawer";
@@ -68,8 +69,86 @@ describe("Drawer", () => {
         Content
       </Drawer>
     );
-    fireEvent.keyDown(window, { key: "Escape" });
+    // Dispatched on `document`, not `window`: a real keydown bubbles
+    // element -> document -> window, and the shared trap (see useFocusTrap
+    // in drawer.tsx) listens on `document` specifically so it can stop the
+    // event there, before it would otherwise reach a `window` listener like
+    // BulkActionBar's Escape-clears-selection shortcut.
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not let Escape reach a window listener behind it", () => {
+    // core M4: this is the regression BulkActionBar hit -- its own Escape
+    // shortcut lives on `window`, and used to fire alongside the drawer's,
+    // clearing state behind the drawer on the same keypress that dismissed
+    // it. A `window` listener here stands in for that shortcut without
+    // reaching into bulk-action-bar.tsx (out of scope for this change).
+    const onClose = vi.fn();
+    const windowListener = vi.fn();
+    window.addEventListener("keydown", windowListener);
+    render(
+      <Drawer open={true} onClose={onClose}>
+        Content
+      </Drawer>
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    window.removeEventListener("keydown", windowListener);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(windowListener).not.toHaveBeenCalled();
+  });
+
+  it("moves focus into the drawer on open and restores it on close", () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button onClick={() => setOpen(true)}>Open drawer</button>
+          <Drawer open={open} onClose={() => setOpen(false)} title="Details">
+            <button>Inside drawer</button>
+          </Drawer>
+        </>
+      );
+    }
+    render(<Harness />);
+
+    const trigger = screen.getByRole("button", { name: "Open drawer" });
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    fireEvent.click(trigger);
+    // First focusable element inside the drawer is its own close button.
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close drawer" }));
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("traps Tab focus cycling inside the drawer", () => {
+    render(
+      <Drawer
+        open={true}
+        onClose={vi.fn()}
+        title="Details"
+        footer={<Button>Last action</Button>}
+      >
+        Content
+      </Drawer>
+    );
+
+    const closeBtn = screen.getByRole("button", { name: "Close drawer" });
+    const lastBtn = screen.getByRole("button", { name: "Last action" });
+
+    // Close button is first-focused on open; Shift+Tab from there should
+    // wrap to the last focusable control rather than leaving the drawer.
+    expect(document.activeElement).toBe(closeBtn);
+    fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(lastBtn);
+
+    // Tab from the last control wraps back to the first.
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(document.activeElement).toBe(closeBtn);
   });
 
   it("calls onClose on backdrop click, but not on drawer body click", () => {

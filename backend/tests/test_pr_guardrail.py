@@ -197,6 +197,35 @@ def test_render_comment_escapes_a_path_that_would_break_out_of_the_link():
     ) in body
 
 
+def test_render_comment_survives_a_backtick_in_a_filename():
+    """A single-backtick code span ends at the first backtick inside it, which
+    on a PR-controlled filename leaves whatever follows as live markup -- here
+    a link to the attacker's domain, posted under this app's identity."""
+    hostile = "src/x`](https://evil.example.com)z.py"
+    findings = [_pr_finding(42, "High", file_path=hostile, line_start=1)]
+    body = render_comment(
+        findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9,
+        repo_slug="acme/repo", head_sha="deadbeef",
+    )
+
+    # Fenced with two backticks, so the one in the name cannot close it.
+    assert "``src/x`](https://evil.example.com)z.py:1``" in body
+    assert "](https://evil.example.com)z" not in body.replace(
+        "``src/x`](https://evil.example.com)z.py:1``", ""
+    )
+
+
+def test_render_comment_flattens_a_newline_in_a_filename():
+    """A newline in a cell ends the table row, putting the rest of the name
+    outside the table. Shown as a visible escape rather than dropped, so the
+    label still says what the file is called."""
+    findings = [_pr_finding(42, "High", file_path="src/a\nb.py", line_start=1)]
+    body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
+
+    assert "`src/a\\nb.py:1`" in body
+    assert len([line for line in body.splitlines() if "b.py" in line]) == 1
+
+
 def test_render_comment_escapes_a_pipe_that_would_split_the_table_row():
     """The location is a GFM table cell: an unescaped "|" in a filename opens
     an extra column and shifts every cell after it one place left, so the

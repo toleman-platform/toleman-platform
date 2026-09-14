@@ -225,6 +225,20 @@ describe("expanding a PR into its findings", () => {
     expect(screen.getByLabelText("Show findings for PR #1")).toBeTruthy();
   });
 
+  it("shows an open PR's existing scan verdict, not only a scan button", async () => {
+    // The verdict used to be the alternative to the scan button, so an open PR
+    // the guardrail had already blocked displayed no verdict at all -- and
+    // with the list opening on Open, that was every row a reviewer saw.
+    prsByState({
+      open: [pr({ number: 1, scan_status: "blocked", latest_scan_id: 55, new_findings_count: 1 })],
+    });
+
+    render(<PrHistoryPage />);
+
+    await screen.findByText("blocked");
+    expect(screen.getByText(/Scan This PR/i)).toBeTruthy();
+  });
+
   it("offers no expander on a PR that was never scanned", async () => {
     prsByState({ open: [pr({ number: 1 })] });
 

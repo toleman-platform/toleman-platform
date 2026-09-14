@@ -157,10 +157,15 @@ function PrRow({
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <StatusBadge status={prStateBadgeStatus(pr.state)} label={pr.state} />
-            {pr.state === "open" && targetId !== null ? (
+            {/* The scan verdict is shown on every row, open ones included.
+                It used to be the *alternative* to PrScanAction, which shows
+                only a scan started from that button in this session -- so an
+                open PR that the guardrail had already scanned and blocked
+                displayed no verdict at all. With the list now opening on Open
+                (see PR_STATE_FILTERS), that was every row a reviewer saw. */}
+            <StatusBadge status={scanBadgeStatus(pr.scan_status)} label={pr.scan_status} />
+            {pr.state === "open" && targetId !== null && (
               <PrScanAction targetId={targetId} prNumber={pr.number} />
-            ) : (
-              <StatusBadge status={scanBadgeStatus(pr.scan_status)} label={pr.scan_status} />
             )}
           </div>
         </div>

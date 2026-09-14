@@ -28,15 +28,21 @@ def test_app_subscribes_to_pull_request_events():
     assert "pull_request" in events
 
 
-def test_app_also_subscribes_to_push_installation_repos_and_issue_comment():
+def test_app_also_subscribes_to_push_and_issue_comment():
     """(#385's webhook UX work) push re-scans a target's default branch on
-    merge, installation_repositories auto-syncs Targets when repo access
-    changes on an existing installation, issue_comment carries the
-    `@toleman ignore finding=<id> <reason>` command. None needed a new
-    permission scope -- see build_manifest's own comment -- so this is a
-    default_events-only change."""
+    merge, issue_comment carries the `@toleman ignore finding=<id> <reason>`
+    command."""
     events = _manifest()["default_events"]
-    assert set(events) == {"pull_request", "push", "installation_repositories", "issue_comment"}
+    assert set(events) == {"pull_request", "push", "issue_comment"}
+
+
+def test_installation_repositories_is_not_a_declared_event():
+    """(#475) GitHub delivers installation_repositories to every App
+    automatically and rejects a manifest that subscribes to it explicitly
+    ("Default events unsupported: installation_repositories"). Listing it
+    here used to fail App creation outright."""
+    events = _manifest()["default_events"]
+    assert "installation_repositories" not in events
 
 
 def test_hook_attributes_point_at_the_real_webhook_route():
@@ -74,6 +80,9 @@ def test_permissions_still_cover_what_pr_guardrail_needs():
     assert perms["contents"] == "write"
     # Required separately by GitHub for any write under .github/workflows/.
     assert perms["workflows"] == "write"
+    # (#475) issue_comment is an Issues-API webhook even on a PR thread;
+    # GitHub rejects the event subscription without this.
+    assert perms["issues"] == "read"
 
 
 def test_manifest_data_flags_an_unreachable_webhook_host(monkeypatch):

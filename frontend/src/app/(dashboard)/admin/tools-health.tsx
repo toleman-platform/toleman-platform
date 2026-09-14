@@ -7,15 +7,19 @@ import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { AsyncContent } from "@/components/ui/async-content";
-import { Loader2, XCircle } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 type Health = { tool: string; installed: boolean; version: string | null; response_ms: number | null };
 
-// Mirrors VERSION_COMMANDS in backend/app/api/tools/health.py. Used for the
-// loading state so each tool's name (and a "checking" state) show immediately
-// instead of anonymous skeletons until the sequential --version probes return
-// (#326). Once the response lands, cards render for TOOLS union'd with
-// whatever the backend actually reported (see allTools below).
+// Used only for the loading state, so each tool's name (and a "checking"
+// spinner) shows immediately instead of an anonymous skeleton until the
+// --version probes return (#326). This is deliberately NOT the full tool
+// list any more: backend/app/api/tools/health.py's VERSION_COMMANDS is now
+// derived from the registry (16 tools and growing), and hardcoding that
+// list here a second time is exactly the drift #75/#326 already burned us
+// on once. Whatever the backend actually reports (allTools below) is the
+// real source of truth; this is just a friendlier spinner for the four
+// tools most likely to be waited on.
 const TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"] as const;
 
 export function ToolsHealth() {
@@ -67,6 +71,16 @@ export function ToolsHealth() {
             {allTools.map((tool) => {
               const h = byTool.get(tool);
               if (!h) {
+                // A tool with no entry in the response is unmeasured, not
+                // failing -- the backend never ran a check for it (a stale
+                // registry/frontend version mismatch, most plausibly). Per
+                // AGENTS.md's "never render confident 0 for unmeasured
+                // data": StatusBadge's own "unknown" variant (muted, not
+                // destructive) is the honest rendering here, the same
+                // primitive already used to draw the completed/failed
+                // badges below. Reusing it, rather than hand-rolling a red
+                // Badge, is what used to make this indistinguishable from
+                // a real failure at a glance.
                 return (
                   <Card key={tool} className="border-border bg-card">
                     <CardContent className="flex items-center justify-between px-4 py-3">
@@ -74,9 +88,7 @@ export function ToolsHealth() {
                         <div className="font-medium capitalize text-foreground">{tool}</div>
                         <div className="mt-1 text-xs text-muted-foreground">—</div>
                       </div>
-                      <Badge variant="outline" className="border-destructive/20 bg-destructive/10 text-destructive">
-                        <XCircle className="h-3 w-3" /> not checked
-                      </Badge>
+                      <StatusBadge status="unknown" label="not checked" />
                     </CardContent>
                   </Card>
                 );

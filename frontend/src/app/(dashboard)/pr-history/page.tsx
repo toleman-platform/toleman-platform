@@ -68,11 +68,42 @@ function prStateBadgeStatus(state: PullRequestState) {
   return state === "merged" ? "completed" : "blocked";
 }
 
+// admin M9: this used to fold "blocked", "error", "overridden" and "not
+// scanned" all down into just two buckets ("failed" or the "queued" catch-all
+// default), so four states a reviewer needs to tell apart at a glance --
+// "the guardrail rejected this diff", "a tool crashed before it could judge
+// anything", "a human manually cleared a rejection", and "nothing has ever
+// scanned this PR" -- rendered as two indistinguishable badges. StatusBadge
+// (components/ui/status-badge.tsx) already has a dedicated icon+label for
+// every one of these; the bug was this function throwing that distinction
+// away before the badge ever saw it, not a missing badge variant.
+//
+// "blocked" and "error" now route to StatusBadge's own "blocked" (Ban icon)
+// vs "failed" (AlertOctagon) variants instead of collapsing onto one --
+// a guardrail-rejected diff and a scan that never finished are different
+// problems with different remedies, and looked identical before this.
+//
+// "overridden" was falling into the untouched default, which is "queued" --
+// amber, Clock icon -- so a PR a security engineer had explicitly reviewed
+// and cleared displayed as though a scan were still pending on it. Routed to
+// "completed" (chart-5, CheckCircle2): the guardrail's own verdict is no
+// longer what's blocking this PR, whatever it originally found.
+//
+// "not scanned" was the same default-bucket problem from the other
+// direction: AGENTS.md #1.4 draws a hard line between "0 Critical" (measured,
+// found nothing) and "-- Never scanned" (unknown posture) precisely because
+// the two must never share a rendering, and "queued" -- which promises a scan
+// is coming -- was a confident claim about something no scan has ever
+// touched. "unknown" (HelpCircle, neutral) says only that nothing is known,
+// which is the one honest thing to say about a PR with no scan history.
 function scanBadgeStatus(scanStatus: string) {
-  if (scanStatus === "passed") return "completed";
-  if (scanStatus === "blocked" || scanStatus === "error") return "failed";
+  if (scanStatus === "passed") return "passed";
+  if (scanStatus === "blocked") return "blocked";
+  if (scanStatus === "error") return "failed";
   if (scanStatus === "running") return "running";
-  return "queued";
+  if (scanStatus === "overridden") return "completed";
+  if (scanStatus === "not scanned") return "unknown";
+  return "unknown";
 }
 
 /**

@@ -249,3 +249,61 @@ describe("expanding a PR into its findings", () => {
     await waitFor(() => expect(getPrGuardrailFindings).not.toHaveBeenCalled());
   });
 });
+
+// admin M9: scanBadgeStatus used to route "blocked"/"error" into one shared
+// "failed" bucket and everything else (including "overridden" and "not
+// scanned", two states with opposite meanings) into the untouched "queued"
+// default -- so StatusBadge's own distinct icon+color variants for these
+// never got used. The label text was already correct (it has always been the
+// raw scan_status string, passed straight through as `label`); what these pin
+// is the badge's own visual variant, which was the actual bug.
+describe("scan verdict badge distinguishes states StatusBadge already models", () => {
+  it("reads a never-scanned PR as unknown posture, not as queued for a scan that isn't coming", async () => {
+    prsByState({ open: [pr({ number: 1, scan_status: "not scanned" })] });
+
+    render(<PrHistoryPage />);
+    const label = await screen.findByText("not scanned");
+
+    // StatusBadge's "unknown" variant (neutral, HelpCircle) -- not "queued"
+    // (amber, Clock), which promises a scan is on its way when none is.
+    expect(label.parentElement?.className).toContain("text-muted-foreground");
+    expect(label.parentElement?.className).not.toContain("chart-3");
+  });
+
+  it("reads an overridden PR as resolved, not as still queued", async () => {
+    prsByState({
+      open: [pr({ number: 1, scan_status: "overridden", latest_scan_id: 55 })],
+    });
+
+    render(<PrHistoryPage />);
+    const label = await screen.findByText("overridden");
+
+    // A security engineer already reviewed and cleared this PR; it is not
+    // waiting on anything the amber "queued" treatment would imply.
+    expect(label.parentElement?.className).toContain("chart-5");
+    expect(label.parentElement?.className).not.toContain("chart-3");
+  });
+
+  it("gives a guardrail block and a tool failure visually distinct badges", async () => {
+    // Both are bad news (destructive), but a diff the guardrail rejected and
+    // a scan that crashed before judging anything are different problems --
+    // before this fix both fell into the same "failed" bucket and rendered
+    // with the identical icon.
+    prsByState({
+      open: [
+        pr({ number: 1, title: "blocked pr", scan_status: "blocked", latest_scan_id: 55 }),
+        pr({ number: 2, title: "errored pr", scan_status: "error", latest_scan_id: 56 }),
+      ],
+    });
+
+    render(<PrHistoryPage />);
+    const blockedLabel = await screen.findByText("blocked");
+    const errorLabel = await screen.findByText("error");
+
+    const blockedIcon = blockedLabel.parentElement?.querySelector("svg");
+    const errorIcon = errorLabel.parentElement?.querySelector("svg");
+    expect(blockedIcon).not.toBeNull();
+    expect(errorIcon).not.toBeNull();
+    expect(blockedIcon?.getAttribute("class")).not.toBe(errorIcon?.getAttribute("class"));
+  });
+});

@@ -1718,18 +1718,47 @@ def _execute(tool: str, cmd: list[str], repo_path: Path, run: ScanRunContext) ->
     env = run.env
     cmd = _isolation_flags(tool, cmd, run)
 
-    if tool == "modelscan":
-        return _run_modelscan(cmd, run, env=env)
+    # (#385) This `try` covers exactly the four places in this module where a
+    # scanner binary is spawned -- the three per-tool helpers and the generic
+    # subprocess below -- and nothing after them. The health block further
+    # down stays outside it deliberately: everything this function records
+    # into `run.health` (#229) belongs to a tool that *did* run, and pulling
+    # any of it inside a handler for "the binary is absent" would give it a
+    # second home. One try, one exit, health in one place.
+    try:
+        if tool == "modelscan":
+            return _run_modelscan(cmd, run, env=env)
 
-    if tool == "gitleaks":
-        return _run_gitleaks(cmd, cwd, run, env=env)
+        if tool == "gitleaks":
+            return _run_gitleaks(cmd, cwd, run, env=env)
 
-    if tool == "noseyparker":
-        return _run_noseyparker(cmd, cwd, run, env=env)
+        if tool == "noseyparker":
+            return _run_noseyparker(cmd, cwd, run, env=env)
 
-    # cmd is the caller's fixed per-tool argv (see the scanner command
-    # builders above), no shell.
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+        # cmd is the caller's fixed per-tool argv (see the scanner command
+        # builders above), no shell.
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+    except FileNotFoundError as exc:
+        # The binary is not on PATH. Distinct from every other failure in
+        # this module: nothing crashed, nothing was misconfigured in the
+        # scan itself, the tool simply is not installed on this deployment
+        # (noseyparker, for one, is deliberately not bundled in
+        # backend/Dockerfile -- see #385). Raised as a ToolExecutionError so
+        # it still routes to tools_failed and still renders as "not fully
+        # scanned"; a missing scanner is a real coverage gap and must never
+        # be quietly folded into a clean pass. The message is what changes:
+        # an operator reading "is not installed on this deployment" knows
+        # what to do, where "exited 127" or a raw FileNotFoundError told them
+        # their scanner was broken.
+        #
+        # Not a health.degrade: this run produced no report at all, so there
+        # is no result to qualify. Degrading is for a tool that came back
+        # with something that cannot be fully trusted.
+        raise ToolExecutionError(
+            f"{tool} is not installed on this deployment; install it "
+            f"(see Tool Marketplace for the install command) or turn it off "
+            f"for this workspace's scan surfaces"
+        ) from exc
 
     # (#253) Check this BEFORE falling through to the empty-stdout defaults
     # below. A tool that dies writes nothing to stdout, and "nothing on

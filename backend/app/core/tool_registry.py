@@ -273,6 +273,32 @@ BUNDLED_TOOLS = frozenset(
 )
 
 
+# Tools that are real TOOL_COMMANDS entries, so Toleman can execute them, but
+# that must not be *assigned* to a workspace's scan surfaces unless an
+# operator turns them on deliberately.
+#
+# noseyparker (#255) is here for two independent reasons, either of which
+# would be enough on its own:
+#
+#   * Its own registry entry above says it: "The cost is real and is why this
+#     is opt-in rather than default" -- on a clean checkout of this repo it
+#     reports 26 findings to gitleaks' 0, almost all test fixtures and
+#     migration passwords. `integrated` never encoded that, so the stated
+#     intent and the actual default disagreed from the day it was added.
+#   * backend/Dockerfile deliberately does not bundle the binary (#385:
+#     upstream publishes no checksums file, and this project will not pin a
+#     hash it computed itself from a single download). So on the image this
+#     project actually ships, defaulting it on assigns a tool that cannot
+#     run, and every PR Guardrail comment carries a permanent
+#     "noseyparker failed to run; this PR was not fully scanned" -- an
+#     unactionable warning on every pull request, which is how a real
+#     tools_failed warning stops being read.
+#
+# Enabling it stays one checkbox away in Tool Marketplace, for an operator
+# who has installed it and wants the extra recall.
+OPT_IN_TOOLS = frozenset({"noseyparker"})
+
+
 def default_usage_for(tool: str) -> dict:
     """Built-in usage-surface defaults for a tool with no saved
     WorkspaceToolConfig row (issue #75). Mirrors WorkspaceToolConfig's own
@@ -281,6 +307,10 @@ def default_usage_for(tool: str) -> dict:
     no real TOOL_COMMANDS entry; there is nothing to "run" for it yet, so
     defaulting it to enabled would be a silent no-op that misleads an admin
     into thinking it's active.
+
+    A tool in OPT_IN_TOOLS above is forced off the same way, for the
+    mirror-image reason: it can genuinely run, but only where an operator has
+    chosen it and (for noseyparker) installed it.
 
     (#232) api_scan defaults False for every tool except nuclei, which is
     the mirror-image special case: nuclei is genuinely not a TOOL_COMMANDS
@@ -297,7 +327,7 @@ def default_usage_for(tool: str) -> dict:
     routing through runnable_tools(), since nuclei structurally can't pass
     that check.
     """
-    integrated = tool in TOOL_COMMANDS
+    integrated = tool in TOOL_COMMANDS and tool not in OPT_IN_TOOLS
     return {
         "on_demand_scan": integrated,
         "ci_pipeline": integrated,

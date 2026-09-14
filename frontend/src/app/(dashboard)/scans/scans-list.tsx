@@ -16,6 +16,7 @@ import { ScanProgress, ScanHealthBadge } from "@/components/features/scans";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { ReloadButton } from "@/components/reload-button";
 import { SelectAllVisible } from "@/components/ui/list-row";
 import { useSelection } from "@/hooks/use-selection";
@@ -52,6 +53,23 @@ const ALL_TOOLS_VALUE = "";
 // claimed the scan was finished while the worker had not yet started it.
 type DispatchState = "idle" | "dispatching" | "dispatched" | "error";
 
+// (core H5) The summary line for a bulk dispatch used to be one string
+// rendered as plain muted text -- indistinguishable, visually and to
+// assistive tech, from "3 targets included" a few lines above it. A run
+// where half the batch 429'd needs to look and sound different from one
+// where all of it worked, the same distinction `AlertBanner` already makes
+// for every other write action in this codebase (see
+// finding-detail-drawer.tsx's State Updated / Triage Failed pair). Three
+// tones, not two: a batch that failed outright reads as a hard stop
+// (`critical`), one that partially failed still delivered real work and
+// needs the reader to go check which targets did not (`warning`, matching
+// PartialFailureBanner's own choice of tone for "some of this did not load"),
+// and "nothing to do, every target was deactivated" is neither -- it is the
+// dispatch working exactly as designed against a selection with nothing
+// scannable in it (`info`).
+type DispatchTone = "info" | "warning" | "critical" | "positive";
+type DispatchOutcome = { tone: DispatchTone; title: string; message: string };
+
 function lastScannedBucket(lastScanAt: string | null): string {
   if (!lastScanAt) return "never";
   const ageMs = Date.now() - parseServerTimestamp(lastScanAt);
@@ -85,7 +103,7 @@ export function ScansList({
   const searchParams = useSearchParams();
   const [dispatchState, setDispatchState] = useState<Record<number, DispatchState>>({});
   const { activeScans, isTargetScanning, refresh: refreshActiveScans } = useActiveScans();
-  const [scanMessage, setScanMessage] = useState<string | null>(null);
+  const [scanOutcome, setScanOutcome] = useState<DispatchOutcome | null>(null);
   const [confirmIds, setConfirmIds] = useState<number[] | null>(null);
   const [confirmTool, setConfirmTool] = useState<string>(ALL_TOOLS_VALUE);
   const [confirming, setConfirming] = useState(false);
@@ -159,12 +177,14 @@ export function ScansList({
         ? ` · skipped ${deactivated.length} deactivated target${deactivated.length === 1 ? "" : "s"}`
         : "";
 
-    setScanMessage(null);
+    setScanOutcome(null);
     if (ids.length === 0) {
       selection.clear();
-      setScanMessage(
-        `Nothing dispatched: every selected target is deactivated. Reactivate one from its target page to scan it.`
-      );
+      setScanOutcome({
+        tone: "info",
+        title: "Nothing dispatched",
+        message: "Every selected target is deactivated. Reactivate one from its target page to scan it.",
+      });
       return;
     }
     setDispatchState((prev) => {
@@ -198,10 +218,30 @@ export function ScansList({
       refreshActiveScans();
     }
 
-    setScanMessage(
-      failed > 0
-        ? `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure); check Scan History.${skippedNote}`
-        : `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Progress is shown on each row below.${skippedNote}`
+    // (core H5) `failed` counts targets, not tool dispatches, so "every
+    // target failed" and "some did" are distinguishable here without
+    // re-deriving anything: a batch that produced zero successful dispatches
+    // is a hard failure (`critical`), one that produced some is a partial
+    // failure a reader still has to act on (`warning`), and one with no
+    // failures at all is the plain confirmation (`positive`).
+    setScanOutcome(
+      failed === 0
+        ? {
+            tone: "positive",
+            title: "Scans dispatched",
+            message: `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} across ${ids.length} target${ids.length === 1 ? "" : "s"}. Progress is shown on each row below.${skippedNote}`,
+          }
+        : dispatched === 0
+          ? {
+              tone: "critical",
+              title: "Scan dispatch failed",
+              message: `${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure); nothing was dispatched. Check Scan History.${skippedNote}`,
+            }
+          : {
+              tone: "warning",
+              title: "Some scans could not be dispatched",
+              message: `Dispatched ${dispatched} scan${dispatched === 1 ? "" : "s"} · ${failed} target${failed === 1 ? "" : "s"} hit an error (rate limit or scan failure); check Scan History.${skippedNote}`,
+            }
     );
     selection.clear();
     router.refresh();
@@ -298,7 +338,21 @@ export function ScansList({
         )}
       </BulkActionBar>
 
-      {scanMessage && <p className="text-xs text-muted-foreground">{scanMessage}</p>}
+      {/* (core H5) Plain muted text here used to make a batch that half-
+          failed to dispatch read exactly like a batch that fully succeeded --
+          same weight, same color, same silence to a screen reader. AlertBanner
+          carries the same tone/icon language every other write-outcome banner
+          in this codebase uses (see finding-detail-drawer.tsx's State
+          Updated / Triage Failed), and `role="alert"` makes it a live region
+          on its own; the explicit `aria-live`/`aria-atomic` below just say so
+          out loud rather than leaning on an implicit default, matching how
+          ScanProgress already double-declares `role="status"` +
+          `aria-live="polite"`. */}
+      {scanOutcome && (
+        <AlertBanner tone={scanOutcome.tone} title={scanOutcome.title} aria-live="assertive" aria-atomic="true">
+          {scanOutcome.message}
+        </AlertBanner>
+      )}
 
       {filtered.length === 0 ? (
         <EmptyState

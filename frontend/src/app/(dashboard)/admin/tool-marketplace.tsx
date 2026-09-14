@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { api, ToolAssignment, ToolRegistryEntry } from "@/lib/api";
+import { api, ToolAssignment, ToolRegistryEntry, workspaceDisplayName } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
@@ -124,9 +124,15 @@ export function ToolMarketplace() {
             value={workspaceId ?? ""}
             onChange={(e) => setWorkspaceId(Number(e.target.value))}
           >
+            {/* Bare `w.name` collided whenever two workspaces shared a name
+                (e.g. two orgs both called "default") -- the option list showed
+                two identical strings with no way to tell which one would
+                actually receive the usage-assignment toggles below.
+                `workspaceDisplayName` appends `(#id)` only to the duplicates,
+                matching the other workspace pickers on this platform. */}
             {workspaces?.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.name}
+                {workspaceDisplayName(w, workspaces ?? [])}
               </option>
             ))}
           </select>

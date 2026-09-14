@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ToolMarketplace } from "./tool-marketplace";
 import type { ToolRegistryEntry } from "@/lib/api";

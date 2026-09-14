@@ -74,12 +74,12 @@ function RiskScore({ score }: { score: number }) {
  */
 function FirstSeenAge({ finding }: { finding: Finding }) {
   const [now] = useState(() => Date.now());
-  const days = Math.max(0, Math.floor((now - new Date(finding.first_seen).getTime()) / (24 * 60 * 60 * 1000)));
+  const days = Math.max(0, Math.floor((now - parseServerTimestamp(finding.first_seen)) / (24 * 60 * 60 * 1000)));
   return (
     <div className="flex flex-col items-end">
       <span
         className="font-mono text-sm font-bold tabular-nums text-foreground"
-        title={`First seen ${new Date(finding.first_seen).toLocaleDateString()}`}
+        title={`First seen ${serverDate(finding.first_seen).toLocaleDateString()}`}
       >
         {days}d
       </span>

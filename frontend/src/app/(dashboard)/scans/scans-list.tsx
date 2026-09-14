@@ -138,7 +138,7 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
 
     setScanMessage(null);
     if (ids.length === 0) {
-      setSelected(new Set());
+      selection.clear();
       setScanMessage(
         `Nothing dispatched: every selected target is deactivated. Reactivate one from its target page to scan it.`
       );

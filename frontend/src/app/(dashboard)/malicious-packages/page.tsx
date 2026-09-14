@@ -7,6 +7,7 @@ import { api, ApiError, type Finding, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Building2, Check, Pencil, Plus, X } from "lucide-react";
 import { api, workspaceDisplayName } from "@/lib/api";
-import { useWorkspacePicker } from "@/hooks/use-workspace-picker";
+import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";

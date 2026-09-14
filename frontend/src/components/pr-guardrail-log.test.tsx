@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { PrGuardrailLog } from "./pr-guardrail-log";
+import { PrGuardrailLog } from "@/components/features/scans";
 import type { PrGuardrailLogEntry } from "@/lib/api";
 
 // The log fetches its own rows; only that boundary is mocked, so the scope

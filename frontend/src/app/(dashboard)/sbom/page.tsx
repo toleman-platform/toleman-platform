@@ -15,7 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
+import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { useSearchParams } from "next/navigation";
 import { AiBomPanel } from "@/components/features/intelligence";
 import { ActivityPagination } from "@/components/activity-pagination";

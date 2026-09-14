@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
-import { EnforcementModeSelect } from "@/components/enforcement-mode-select";
+import { EnforcementModeSelect } from "@/components/features/targets";
 import { Building2, FolderTree, Tag, Trash2 } from "lucide-react";
 
 const SWATCHES = [

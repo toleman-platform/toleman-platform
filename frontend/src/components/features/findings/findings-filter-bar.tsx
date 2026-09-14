@@ -6,7 +6,7 @@ import { Group, Target } from "@/lib/api";
 import { SEVERITY_ORDER } from "@/lib/severity";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { GroupFilter } from "@/components/group-filter";
+import { GroupFilter } from "@/components/features/targets";
 import { MultiSelectFilter } from "@/components/multi-select-filter";
 
 // Open-view and Resolved-view offer different states to filter within

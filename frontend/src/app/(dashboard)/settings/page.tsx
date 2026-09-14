@@ -18,7 +18,7 @@ import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { TargetPicker } from "@/components/target-picker";
+import { TargetPicker } from "@/components/features/targets";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";

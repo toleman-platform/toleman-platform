@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { TargetPicker, ALL_TARGETS } from "@/components/target-picker";
+import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import {

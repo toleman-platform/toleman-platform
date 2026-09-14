@@ -83,11 +83,31 @@ from app.models.models import (
 
 # How many "average weighted-severity points per in-scope target" it takes
 # to walk the findings component all the way down to 0. E.g. an average of
-# one Critical (weight 5) + one High (weight 4) open finding per target
-# (9 points) leaves ~55/100; an average of 4 Criticals (20 points) bottoms
-# out at 0. Chosen so a handful of untriaged Criticals per repo visibly
-# tanks the score without a single Low finding anywhere zeroing it out.
-SEVERITY_POINTS_TO_ZERO = 20.0
+# Half-life of the findings score, in weighted severity points per unit of
+# target criticality. At this much average weighted severity the component
+# scores 50; at twice it, 33; at four times, 20. It never reaches 0.
+#
+# This replaced a linear ramp (`100 - avg/20 * 100`) that hit zero at an
+# average of 20 points. That looked reasonable and behaved badly: on a single
+# Prod repo one Medium cost ~15 points of this component and about 5 of the
+# composite, and FOUR Criticals took it to exactly 0 -- after which a repo with
+# four critical findings and a repo with four hundred scored identically. All
+# the resolution was spent between 0 and 10 findings and there was none left
+# for the range where an estate actually lives.
+#
+# A saturating curve keeps discriminating everywhere. `100 * k / (avg + k)` is
+# steep where it should be (the first few findings move the number a lot) and
+# still separates 50 findings from 500, which is the comparison a security team
+# makes when deciding where to spend a quarter. It also cannot bottom out, so
+# the score never stops responding to work done -- a team fixing findings on a
+# zeroed repo previously saw no movement at all until they were most of the way
+# through, which is the opposite of what a posture score is for.
+#
+# Tuning: 10.0 puts a single Critical on a single Prod repo (5 weight x 5
+# criticality / 5 criticality = 5 points) at ~67, one Medium at ~77, and ten
+# Criticals at ~17. Raising it makes the score more forgiving, lowering it more
+# punitive; nothing else in the module depends on the constant's value.
+FINDINGS_SCORE_HALF_LIFE = 10.0
 
 # Per-category multiplier on a finding's contribution to findings_score/
 # trend_score: severity already says how bad a finding is *within* its
@@ -166,7 +186,7 @@ def _total_criticality(targets_by_id: dict[int, Target]) -> float:
 def _findings_score(open_default_branch: list[Finding], targets_by_id: dict[int, Target], total_criticality: float) -> dict:
     weighted_sum = sum(_finding_risk_weight(f, targets_by_id.get(f.target_id)) for f in open_default_branch)
     avg_per_target = weighted_sum / max(1, total_criticality)
-    score = max(0.0, 100.0 - (avg_per_target / SEVERITY_POINTS_TO_ZERO) * 100.0)
+    score = 100.0 * FINDINGS_SCORE_HALF_LIFE / (avg_per_target + FINDINGS_SCORE_HALF_LIFE)
     return {
         "score": round(score, 1),
         "weight": FINDINGS_WEIGHT,

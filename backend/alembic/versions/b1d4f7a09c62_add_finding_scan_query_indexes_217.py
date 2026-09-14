@@ -135,7 +135,9 @@ queries in #437. The orphaned `discoveredendpoint` table is #438.
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.schema import CreateIndex
 
 # revision identifiers, used by Alembic.
 revision: str = "b1d4f7a09c62"
@@ -156,21 +158,43 @@ INDEXES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _index(name: str, table: str, column: str, *, concurrently: bool) -> sa.Index:
+    """Build the index as a SQLAlchemy construct rather than a SQL string.
+
+    This started life as an f-string into ``op.execute``, which Toleman's own
+    PR Guardrail flagged (semgrep ``sqlalchemy-execute-raw-query``, High, plus
+    ``formatted-sql-query``). It was not exploitable -- every value came from
+    the ``INDEXES`` literal above and no caller can reach it -- but "the
+    inputs happen to be constants" is a property of today's code, not a
+    property of the statement, and it quietly stops holding the first time
+    someone makes that tuple dynamic. Identifiers cannot be bound as
+    parameters, so the answer is not a prepared statement; it is to stop
+    assembling SQL text by hand and let the dialect render and quote the DDL.
+
+    Dogfooding note: this is the platform's own scanner reporting on the
+    platform's own migration, so suppressing it as a false positive was the
+    one option that would have been worth less than fixing it.
+    """
+    # NullType: the column's real type is irrelevant here and is never
+    # emitted. CREATE INDEX names a column, it does not declare one.
+    target = sa.Table(table, sa.MetaData(), sa.Column(column))
+    dialect_kw = {"postgresql_concurrently": True} if concurrently else {}
+    return sa.Index(name, target.c[column], **dialect_kw)
+
+
 def upgrade() -> None:
     is_postgres = op.get_bind().dialect.name == "postgresql"
 
     if not is_postgres:
         for name, table, column in INDEXES:
-            op.execute(f'CREATE INDEX IF NOT EXISTS {name} ON "{table}" ("{column}")')
+            op.execute(CreateIndex(_index(name, table, column, concurrently=False), if_not_exists=True))
         return
 
     # CONCURRENTLY is illegal inside a transaction; autocommit_block drops
     # out of the migration's transaction for the duration.
     with op.get_context().autocommit_block():
         for name, table, column in INDEXES:
-            op.execute(
-                f'CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON "{table}" ("{column}")'
-            )
+            op.execute(CreateIndex(_index(name, table, column, concurrently=True), if_not_exists=True))
 
 
 def downgrade() -> None:

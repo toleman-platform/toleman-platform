@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { ExternalLink, GitPullRequest, Info, X } from "lucide-react";
@@ -27,6 +27,7 @@ import { AlertBanner } from "@/components/ui/alert-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useFocusTrap } from "@/components/ui/drawer";
 // Direct path, not the `@/hooks` barrel: that barrel re-exports
 // hooks/features, which imports back into @/components/features, and this is
 // a components/features module.
@@ -595,14 +596,15 @@ function SuggestedFixSection({ finding }: { finding: Finding }) {
 // enrichment, and the suggested fix -- lives in one obviously-interactive
 // popup instead.
 function FindingDetailDialog({ finding, open, onClose }: { finding: Finding; open: boolean; onClose: () => void }) {
-  useEffect(() => {
-    if (!open) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // core M3: this had the same problems as ConfirmDialog -- an
+  // uncoordinated `document` Escape listener (see the layerStack comment on
+  // useFocusTrap in drawer.tsx for why that's a problem once anything else
+  // is listening for Escape too) and no focus trap at all, so Tab from the
+  // last control here (the suggested-fix section) walked focus onto
+  // whatever finding row happened to be underneath in the DOM.
+  useFocusTrap({ active: open, onEscape: onClose, containerRef });
 
   if (!open || typeof document === "undefined") return null;
 
@@ -614,6 +616,7 @@ function FindingDetailDialog({ finding, open, onClose }: { finding: Finding; ope
       }}
     >
       <div
+        ref={containerRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="finding-detail-dialog-title"

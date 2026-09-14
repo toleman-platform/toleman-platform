@@ -8,7 +8,10 @@ logic instead of two copies drifting apart.
 """
 import logging
 import re
+import subprocess
 from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from sqlmodel import Session, select
@@ -528,6 +531,98 @@ def _finding_ignore_link(pr_scan_id: int, finding_id: int) -> str:
     return f"{FRONTEND_URL}/ignore-request/{pr_scan_id}/{finding_id}"
 
 
+def _scanned_commit(repo_path: Path | str, reported_head_sha: str) -> str:
+    """The commit the clone actually landed on.
+
+    runner.clone_repo clones the PR's head *branch* (`--depth 1 --branch ...`),
+    not the SHA the GitHub API reported a moment earlier, and a PR being
+    actively pushed to can advance in between. The scan then examines one
+    commit while the PR comment's source links point at another, where the
+    same line number is a different line. The commit status is deliberately
+    left on the API-reported SHA -- that is the ref GitHub keys a check to, and
+    a status posted against a commit GitHub did not ask about is not shown at
+    all -- so only the links move.
+
+    Falls back to the reported SHA on any failure: a link to a slightly older
+    commit is worth far more than no link.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=15, check=True,
+        )
+        return result.stdout.strip() or reported_head_sha
+    except Exception:
+        logger.warning(
+            "pr guardrail: could not resolve the cloned HEAD; linking findings to the "
+            "PR's reported head sha instead", exc_info=True,
+        )
+        return reported_head_sha
+
+
+def _code_span(text: str) -> str:
+    """`text` as a Markdown code span in a GFM table cell, proof against
+    whatever the text happens to contain.
+
+    Every caller of this passes a filename, and filenames on a PR branch are
+    written by whoever opened the PR. Three things in one would otherwise
+    escape the span and become markup in a comment posted under this app's own
+    identity:
+
+    * A backtick ends a single-backtick span early, so a name like
+      ``x`](https://evil.example.com)`` leaves a real link behind. CommonMark
+      closes a span on a backtick run of exactly the opening length, so the
+      fence is one longer than the longest run inside the text; a leading or
+      trailing backtick additionally needs the padding space CommonMark strips
+      back off.
+    * A newline ends the table row, putting the rest of the filename outside
+      the table entirely. Rendered as a visible \\n rather than dropped, so the
+      label still says what the file is actually called.
+    * A pipe splits the row into an extra column, shifting every cell after it
+      one place left. GFM honours a backslash escape here even inside a code
+      span, which is the only reason a pipe can be shown at all.
+    """
+    flat = text.replace("\r", "\\r").replace("\n", "\\n").replace("|", "\\|")
+    longest_run = max((len(run) for run in re.findall(r"`+", flat)), default=0)
+    fence = "`" * (longest_run + 1)
+    pad = " " if flat.startswith("`") or flat.endswith("`") else ""
+    return f"{fence}{pad}{flat}{pad}{fence}"
+
+
+def _source_link(repo_slug: str | None, head_sha: str | None, file_path: str, line_start: int | None) -> str:
+    """The `path:line` location cell, as a link straight to that line of that
+    file on GitHub when we know which commit was scanned.
+
+    A reviewer reading a finding's location has to get to the code before they
+    can judge it, and a bare `app/api/github.py:58` made them go find it by
+    hand in the Files tab. Pinned to the scanned commit's SHA rather than the
+    branch name: the comment is a record of what a specific commit contained,
+    and a branch link would silently re-point at later commits where the line
+    numbers no longer mean anything.
+
+    repo_slug/head_sha are optional for the same reason every other addition
+    to this comment is (see render_comment's docstring): a caller that doesn't
+    have them renders exactly the plain code span this used to.
+
+    Anyone who can open a PR controls the filenames in it, so the path is
+    treated as hostile in both places it lands: percent-encoded in the link
+    target ("/" left alone so the URL keeps its path structure), and rendered
+    through _code_span in the label. See each for what they are defending
+    against.
+    """
+    loc = file_path
+    if line_start:
+        loc += f":{line_start}"
+    label = _code_span(loc)
+    if not repo_slug or not head_sha or not file_path:
+        return label
+    quoted_path = quote(file_path.lstrip("/"), safe="/")
+    url = f"https://github.com/{repo_slug}/blob/{head_sha}/{quoted_path}"
+    if line_start:
+        url += f"#L{line_start}"
+    return f"[{label}]({url})"
+
+
 def _approved_action_cell(ref_link: str) -> str:
     return f"[view]({ref_link}) &middot; ✅ approved to ignore"
 
@@ -536,7 +631,13 @@ def _pending_action_cell(ref_link: str, ignore_link: str) -> str:
     return f"[view]({ref_link}) &middot; [request ignore]({ignore_link})"
 
 
-def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_id: int) -> str:
+def _findings_table(
+    findings: list[PRGuardrailFinding],
+    target_id: int,
+    pr_scan_id: int,
+    repo_slug: str | None = None,
+    head_sha: str | None = None,
+) -> str:
     """GFM table (Severity | Rule | Title | Location | Links) for one
     severity group's findings, replaces the old flat prose-bullet list."""
     lines = [
@@ -544,9 +645,7 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
         "|---|---|---|---|---|",
     ]
     for f in findings:
-        loc = f.file_path
-        if f.line_start:
-            loc += f":{f.line_start}"
+        loc = _source_link(repo_slug, head_sha, f.file_path, f.line_start)
         ref_link = _finding_ref_link(target_id, pr_scan_id, f.id)
         if f.ignore_status == IgnoreStatus.APPROVED:
             # #401: this row's ignore_status can arrive already "approved"
@@ -556,7 +655,7 @@ def _findings_table(findings: list[PRGuardrailFinding], target_id: int, pr_scan_
             action = _approved_action_cell(ref_link)
         else:
             action = _pending_action_cell(ref_link, _finding_ignore_link(pr_scan_id, f.id))
-        lines.append(f"| {f.severity} | `{f.rule_id}` | {f.title} | `{loc}` | {action} |")
+        lines.append(f"| {f.severity} | `{f.rule_id}` | {f.title} | {loc} | {action} |")
     return "\n".join(lines)
 
 
@@ -602,6 +701,8 @@ def render_comment(
     scanned_at: datetime | None = None,
     blast_radius_files: int = 0,
     diff_attributed: bool | None = None,
+    repo_slug: str | None = None,
+    head_sha: str | None = None,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
     predating the multi-tool guardrail (GH-01); None means "don't render a
@@ -641,7 +742,13 @@ def render_comment(
     headline may claim this PR introduced them. False: the PR's diff could
     not be read, so they are net-new-against-the-baseline only and that gap
     is called out. None (default): a caller predating this filter, rendered
-    exactly as before."""
+    exactly as before.
+
+    `repo_slug`/`head_sha` are what turn each finding's `path:line` location
+    into a link to that exact line on GitHub (see _source_link). Both None
+    (the default) renders the plain code span this comment used to carry, so
+    a caller that does not know which commit was scanned still produces a
+    valid comment rather than a link pointing at the wrong revision."""
     lines = [COMMENT_MARKER, "**Toleman PR Guardrail**", "", _severity_badge(status), ""]
 
     if baseline_missing:
@@ -760,7 +867,7 @@ def render_comment(
             lines.append(f"<details{open_attr}>")
             lines.append(f"<summary><strong>{sev}</strong> ({len(sev_findings)})</summary>")
             lines.append("")
-            lines.append(_findings_table(sev_findings, target_id, pr_scan_id))
+            lines.append(_findings_table(sev_findings, target_id, pr_scan_id, repo_slug, head_sha))
             lines.append("")
             lines.append("</details>")
             lines.append("")
@@ -772,7 +879,8 @@ def render_comment(
         lines.append("| Method | Route | Location |")
         lines.append("|---|---|---|")
         for e in new_endpoints[:MAX_NEW_ENDPOINTS_IN_RESPONSE]:
-            lines.append(f"| `{e['method']}` | `{e['route']}` | `{e['file']}:{e.get('line', '?')}` |")
+            endpoint_loc = _source_link(repo_slug, head_sha, e.get("file", ""), e.get("line"))
+            lines.append(f"| `{e['method']}` | `{e['route']}` | {endpoint_loc} |")
         if len(new_endpoints) > MAX_NEW_ENDPOINTS_IN_RESPONSE:
             lines.append("")
             lines.append(f"_...and {len(new_endpoints) - MAX_NEW_ENDPOINTS_IN_RESPONSE} more_")
@@ -1384,6 +1492,11 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             baseline_missing=baseline_missing,
             blast_radius_files=pr_scan.blast_radius_files,
             diff_attributed=not attribution_unavailable,
+            # Every finding's location links to that line of that file at the
+            # commit this scan actually read, which is not necessarily the SHA
+            # the PR API reported (see _scanned_commit and _source_link).
+            repo_slug=slug,
+            head_sha=_scanned_commit(repo_path, head_sha),
             # (#271) completed_at is set just above this call; falling back
             # to now() keeps the footer honest rather than omitting it if
             # that ordering ever changes.

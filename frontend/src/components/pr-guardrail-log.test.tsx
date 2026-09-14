@@ -1,14 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { PrGuardrailLog } from "@/components/features/scans";
-import type { PrGuardrailLogEntry } from "@/lib/api";
+import type { PrGuardrailFinding, PrGuardrailLogEntry } from "@/lib/api";
 
 // The log fetches its own rows; only that boundary is mocked, so the scope
 // line under test is the real one the page renders.
-const { getPrGuardrailLog } = vi.hoisted(() => ({ getPrGuardrailLog: vi.fn() }));
+const { getPrGuardrailLog, getPrGuardrailFindings } = vi.hoisted(() => ({
+  getPrGuardrailLog: vi.fn(),
+  getPrGuardrailFindings: vi.fn(),
+}));
 
 vi.mock("@/lib/api", () => ({
-  api: { getPrGuardrailLog, getPrGuardrailOrgLog: vi.fn() },
+  api: { getPrGuardrailLog, getPrGuardrailOrgLog: vi.fn(), getPrGuardrailFindings },
   LOG_STATUS_COLOR: {},
 }));
 
@@ -69,5 +72,63 @@ describe("PR Guardrail log scope line", () => {
     );
 
     expect(line.textContent).toContain("could not be retrieved");
+  });
+});
+
+function finding(id: number, overrides: Partial<PrGuardrailFinding> = {}): PrGuardrailFinding {
+  return {
+    id,
+    pr_scan_id: 1,
+    tool: "semgrep",
+    rule_id: `rule-${id}`,
+    title: `finding ${id}`,
+    file_path: "app/db.py",
+    line_start: 88,
+    severity: "High",
+    ignore_status: "none",
+    ignore_requested_by: "",
+    ignore_requested_reason: "",
+    ignore_reviewed_by: "",
+    ignore_reviewed_at: null,
+    ...overrides,
+  } as PrGuardrailFinding;
+}
+
+// A PR comment's "view" link has always ended in `#finding-{id}`, but nothing
+// in the DOM carried that id, so the browser had nothing to scroll to and the
+// link landed the reader on a page with their finding somewhere in a list.
+describe("deep-linked finding from a PR comment", () => {
+  it("gives every finding the anchor its PR-comment link names", async () => {
+    getPrGuardrailLog.mockResolvedValue([scan({ id: 1, new_findings_count: 2 })]);
+    getPrGuardrailFindings.mockResolvedValue([finding(7), finding(8)]);
+
+    const { container } = render(<PrGuardrailLog targetId={1} initialScanId={1} />);
+    await screen.findByText("finding 7");
+
+    expect(container.querySelector("#finding-7")).not.toBeNull();
+    expect(container.querySelector("#finding-8")).not.toBeNull();
+  });
+
+  it("marks out the one finding the link pointed at, not the rest", async () => {
+    getPrGuardrailLog.mockResolvedValue([scan({ id: 1, new_findings_count: 2 })]);
+    getPrGuardrailFindings.mockResolvedValue([finding(7), finding(8)]);
+
+    const { container } = render(
+      <PrGuardrailLog targetId={1} initialScanId={1} initialFindingId={8} />,
+    );
+    await screen.findByText("finding 8");
+
+    expect(container.querySelector("#finding-8")?.className).toContain("ring-1");
+    expect(container.querySelector("#finding-7")?.className).not.toContain("ring-1");
+  });
+
+  it("marks nothing when the scan was opened without a finding link", async () => {
+    getPrGuardrailLog.mockResolvedValue([scan({ id: 1, new_findings_count: 1 })]);
+    getPrGuardrailFindings.mockResolvedValue([finding(7)]);
+
+    const { container } = render(<PrGuardrailLog targetId={1} initialScanId={1} />);
+    await screen.findByText("finding 7");
+
+    expect(container.querySelector("#finding-7")?.className).not.toContain("ring-1");
   });
 });

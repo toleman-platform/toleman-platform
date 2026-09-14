@@ -150,6 +150,106 @@ def test_render_comment_per_finding_gfm_table_structure():
     assert "/ignore-request/9/42" in body
 
 
+def test_render_comment_links_each_location_to_the_scanned_commit():
+    """A reviewer reading a finding's location has to get to the code before
+    they can judge it. Pinned to the scanned commit rather than the branch:
+    the comment records what one commit contained, and a branch link would
+    silently re-point at later commits where the line numbers mean something
+    else."""
+    findings = [_pr_finding(42, "High", file_path="app/db.py", line_start=88)]
+    body = render_comment(
+        findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9,
+        repo_slug="acme/repo", head_sha="deadbeef",
+    )
+
+    assert "[`app/db.py:88`](https://github.com/acme/repo/blob/deadbeef/app/db.py#L88)" in body
+
+
+def test_render_comment_location_without_a_line_links_to_the_file():
+    findings = [_pr_finding(42, "High", file_path="app/db.py", line_start=None)]
+    body = render_comment(
+        findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9,
+        repo_slug="acme/repo", head_sha="deadbeef",
+    )
+
+    assert "[`app/db.py`](https://github.com/acme/repo/blob/deadbeef/app/db.py)" in body
+
+
+def test_render_comment_escapes_a_path_that_would_break_out_of_the_link():
+    """Anyone who can open a PR controls the filenames in it. Left raw, a name
+    containing ")" closes the Markdown link early and the rest of it renders as
+    markup -- an arbitrary link posted under this app's own identity."""
+    hostile = "src/x)[click here](https://evil.example.com/a.py"
+    findings = [_pr_finding(42, "High", file_path=hostile, line_start=1)]
+    body = render_comment(
+        findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9,
+        repo_slug="acme/repo", head_sha="deadbeef",
+    )
+
+    # The path still reads as itself in the rendered comment -- it is inside a
+    # code span, where GitHub renders it literally. What must not happen is it
+    # becoming a link destination, so the assertion is on the one cell, spelled
+    # out in full: exactly one link, pointing at github.com.
+    assert (
+        "[`src/x)[click here](https://evil.example.com/a.py:1`]"
+        "(https://github.com/acme/repo/blob/deadbeef/"
+        "src/x%29%5Bclick%20here%5D%28https%3A//evil.example.com/a.py#L1)"
+    ) in body
+
+
+def test_render_comment_survives_a_backtick_in_a_filename():
+    """A single-backtick code span ends at the first backtick inside it, which
+    on a PR-controlled filename leaves whatever follows as live markup -- here
+    a link to the attacker's domain, posted under this app's identity."""
+    hostile = "src/x`](https://evil.example.com)z.py"
+    findings = [_pr_finding(42, "High", file_path=hostile, line_start=1)]
+    body = render_comment(
+        findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9,
+        repo_slug="acme/repo", head_sha="deadbeef",
+    )
+
+    # Fenced with two backticks, so the one in the name cannot close it.
+    assert "``src/x`](https://evil.example.com)z.py:1``" in body
+    assert "](https://evil.example.com)z" not in body.replace(
+        "``src/x`](https://evil.example.com)z.py:1``", ""
+    )
+
+
+def test_render_comment_flattens_a_newline_in_a_filename():
+    """A newline in a cell ends the table row, putting the rest of the name
+    outside the table. Shown as a visible escape rather than dropped, so the
+    label still says what the file is called."""
+    findings = [_pr_finding(42, "High", file_path="src/a\nb.py", line_start=1)]
+    body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
+
+    assert "`src/a\\nb.py:1`" in body
+    assert len([line for line in body.splitlines() if "b.py" in line]) == 1
+
+
+def test_render_comment_escapes_a_pipe_that_would_split_the_table_row():
+    """The location is a GFM table cell: an unescaped "|" in a filename opens
+    an extra column and shifts every cell after it one place left, so the
+    Links column ends up rendering under Location."""
+    findings = [_pr_finding(42, "High", file_path="src/a|b.py", line_start=1)]
+    body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
+
+    row = next(line for line in body.splitlines() if "a.b.py" in line.replace("\\|", "."))
+    # Five columns, so six unescaped delimiters -- the escaped one in the
+    # filename must not add a seventh.
+    assert row.count("|") - row.count("\\|") == 6
+
+
+def test_render_comment_without_a_commit_keeps_the_plain_location():
+    """A caller that does not know which commit was scanned renders the code
+    span this comment always carried, rather than a link to a guessed
+    revision."""
+    findings = [_pr_finding(42, "High", file_path="app/db.py", line_start=88)]
+    body = render_comment(findings, [], PRGuardrailStatus.BLOCKED, target_id=5, pr_scan_id=9)
+
+    assert "`app/db.py:88`" in body
+    assert "https://github.com/" not in body
+
+
 def test_render_comment_badge_blocked_vs_passed():
     blocked_body = render_comment([_pr_finding(1, "Critical")], [], PRGuardrailStatus.BLOCKED, target_id=1, pr_scan_id=1)
     passed_body = render_comment([], [], PRGuardrailStatus.PASSED, target_id=1, pr_scan_id=1)

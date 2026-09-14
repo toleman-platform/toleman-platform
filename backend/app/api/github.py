@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.github_token import resolve_github_token
-from app.models.models import Target
+from app.models.models import PRGuardrailScan, Target
 
 router = APIRouter(prefix="/api/github", tags=["github"])
 
@@ -55,32 +55,114 @@ def repo_activity(target_id: int, session: Session = Depends(get_session)):
     ]
 
 
-@router.get("/prs/{target_id}")
-def repo_prs(target_id: int, session: Session = Depends(get_session)):
-    """Recent pull requests on a target repo, real GitHub API data.
+# How many pull requests one PR-History fetch pulls from GitHub. GitHub's own
+# ceiling for a single page; taken in full because the list is then paged
+# client-side at up to 100 rows, and a smaller fetch would make the pager lie
+# about how much there is.
+PR_LIST_PAGE_SIZE = 100
 
-    Diff-vuln status per PR is not populated: the PR Guardrail scan-on-push
-    flow (architecture doc Flow C) isn't wired up yet, only native/push scans
-    of default branches are. Shown as "not scanned" rather than fabricated.
+# What each dashboard PR-state choice asks GitHub for. GitHub has no "merged"
+# state -- a merged PR is a closed one carrying merged_at -- so Merged and
+# Closed both fetch the closed set and are split apart afterwards
+# (_matches_state below).
+_GITHUB_PR_STATE = {"open": "open", "closed": "closed", "merged": "closed", "all": "all"}
+
+
+def _pr_state(pr: dict) -> str:
+    """A PR's state as the dashboard means it. GitHub reports only open/closed;
+    merged and closed-without-merging are different outcomes to a reviewer, and
+    the PR-state filter offers them as separate choices. Derived here rather
+    than in the client so every consumer agrees on what a PR's state is."""
+    return "merged" if pr.get("merged_at") else pr["state"]
+
+
+def _matches_state(pr: dict, state: str) -> bool:
+    return state == "all" or _pr_state(pr) == state
+
+
+def _latest_guardrail_scans(
+    session: Session, target_id: int, pr_numbers: list[int]
+) -> dict[int, PRGuardrailScan]:
+    """Most recent PRGuardrailScan per PR number, for the PRs being rendered.
+
+    A PR that is pushed to repeatedly accumulates one scan row per push, and
+    only the newest one describes the code a reviewer is being asked to merge
+    today. Ordered ascending and overwritten as we go so the last write per
+    pr_number is the newest.
+
+    Restricted to `pr_numbers` rather than the target's whole scan history: a
+    target with webhook scanning on writes a row per push, so after a few
+    months "every scan for this target" is tens of thousands of rows loaded
+    and discarded on every request to a page the dashboard polls.
     """
+    if not pr_numbers:
+        return {}
+    rows = session.exec(
+        select(PRGuardrailScan)
+        .where(
+            PRGuardrailScan.target_id == target_id,
+            PRGuardrailScan.pr_number.in_(pr_numbers),  # type: ignore[attr-defined]
+        )
+        .order_by(PRGuardrailScan.created_at, PRGuardrailScan.id)
+    ).all()
+    return {row.pr_number: row for row in rows}
+
+
+@router.get("/prs/{target_id}")
+def repo_prs(target_id: int, state: str = "open", session: Session = Depends(get_session)):
+    """Pull requests on a target repo, real GitHub API data, joined to this
+    target's own PR Guardrail scan history.
+
+    `state` ("open"/"closed"/"merged"/"all") is answered by GitHub, not by
+    filtering a fixed page of PRs afterwards. That distinction is the whole
+    point: GitHub returns PRs newest-created first, so on a repo that closes
+    PRs faster than a page of them is opened -- pallets/flask has zero open
+    PRs in its 100 most recently created -- a page fetched with state=all and
+    then narrowed to open in the client is empty, and the dashboard reports
+    "no open pull requests" on a repo that has plenty. Merged and Closed both
+    fetch GitHub's closed set (there is no merged state upstream) and are
+    split by merged_at; that pair is therefore still capped at whatever share
+    of the newest 100 closed PRs merged.
+
+    `scan_status` used to be the hardcoded string "not scanned" for every PR,
+    a placeholder from before PR Guardrail existed: the row said "not scanned"
+    even on a PR this platform had scanned and blocked. It now reports the
+    latest PRGuardrailScan for the PR, along with the id and counts the PR
+    History page needs to expand a row into the vulnerabilities that scan
+    found. PRs with no scan still report "not scanned" -- that is now a fact
+    rather than a placeholder.
+    """
+    if state not in _GITHUB_PR_STATE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"state must be one of {', '.join(sorted(_GITHUB_PR_STATE))}",
+        )
     target = _get_target(target_id, session)
     slug = repo_slug_from_url(target.repo_url)
-    res = github_get(f"/repos/{slug}/pulls", params={"state": "all", "per_page": 20}, token=resolve_github_token(session, target.workspace_id, slug) or "")
+    res = github_get(
+        f"/repos/{slug}/pulls",
+        params={"state": _GITHUB_PR_STATE[state], "per_page": PR_LIST_PAGE_SIZE},
+        token=resolve_github_token(session, target.workspace_id, slug) or "",
+    )
     if res.status_code != 200:
         raise HTTPException(status_code=res.status_code, detail=res.text[:300])
-    prs = res.json()
+    prs = [p for p in res.json() if _matches_state(p, state)]
+    latest_scans = _latest_guardrail_scans(session, target.id, [p["number"] for p in prs])
     return [
         {
             "number": p["number"],
             "title": p["title"],
             "author": p["user"]["login"] if p.get("user") else "unknown",
-            "state": p["state"],
+            "state": _pr_state(p),
             "created_at": p["created_at"],
             "merged_at": p.get("merged_at"),
             "url": p["html_url"],
-            "scan_status": "not scanned",
+            "scan_status": scan.status if scan else "not scanned",
+            "latest_scan_id": scan.id if scan else None,
+            "new_findings_count": scan.new_findings_count if scan else 0,
+            "highest_new_severity": scan.highest_new_severity if scan else None,
         }
-        for p in prs
+        for p, scan in ((p, latest_scans.get(p["number"])) for p in prs)
     ]
 
 

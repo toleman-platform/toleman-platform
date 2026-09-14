@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ExternalLink, ShieldQuestion } from "lucide-react";
 import { api, ApiError, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
@@ -170,13 +170,47 @@ function PrGuardrailFindingRow({
   finding,
   onChanged,
   linkIgnoreFindingId,
+  isLinked = false,
 }: {
   finding: PrGuardrailFinding;
   onChanged: () => void;
   linkIgnoreFindingId?: number | null;
+  // True for the one finding a PR comment's "view" link pointed at. The
+  // link's `#finding-{id}` fragment has always been in the posted comment,
+  // but nothing in the DOM carried that id, so the browser had nothing to
+  // scroll to: "view" opened the page on the right scan and left the reader
+  // to find their finding in the list by eye. The id below is that anchor;
+  // this flag is what also scrolls to it and marks it, since a scan with a
+  // dozen findings makes "it's somewhere in here" not much better than
+  // nothing.
+  isLinked?: boolean;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isLinked) return;
+    // Fires once the row is actually in the tree, which is strictly after
+    // the browser's own fragment jump has already had (and missed) its
+    // chance: the findings list is fetched client-side, so at document-load
+    // time this element does not exist yet.
+    // Optional-called: the highlight above is what actually identifies the
+    // finding, and an environment without scrollIntoView (jsdom, and the odd
+    // embedded browser) should lose the scroll, not the row.
+    rowRef.current?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  }, [isLinked]);
+
   return (
-    <div className="rounded-md border border-border bg-secondary/40 px-3 py-2">
+    <div
+      ref={rowRef}
+      id={`finding-${finding.id}`}
+      // scroll-mt keeps the row clear of the sticky header when the browser
+      // does handle the fragment itself (a reload with the hash already set).
+      className={`scroll-mt-24 rounded-md border px-3 py-2 ${
+        isLinked
+          ? "border-chart-1 bg-chart-1/10 ring-1 ring-chart-1/40"
+          : "border-border bg-secondary/40"
+      }`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -219,7 +253,22 @@ function PrGuardrailFindingRow({
   );
 }
 
-function ScanFindings({ scanId, linkIgnoreFindingId }: { scanId: number; linkIgnoreFindingId?: number | null }) {
+/**
+ * The persisted findings of one PR Guardrail scan. Exported because the PR
+ * list at the top of PR History expands into the very same list -- a PR row
+ * and its audit-log row describe one scan, and rendering two different
+ * versions of "the vulnerabilities in this PR" would be two things to keep
+ * in step.
+ */
+export function ScanFindings({
+  scanId,
+  linkIgnoreFindingId,
+  linkedFindingId,
+}: {
+  scanId: number;
+  linkIgnoreFindingId?: number | null;
+  linkedFindingId?: number | null;
+}) {
   const {
     data: findings,
     error,
@@ -240,6 +289,7 @@ function ScanFindings({ scanId, linkIgnoreFindingId }: { scanId: number; linkIgn
           finding={f}
           onChanged={refresh}
           linkIgnoreFindingId={linkIgnoreFindingId}
+          isLinked={f.id === linkedFindingId}
         />
       ))}
     </div>
@@ -279,6 +329,7 @@ export function PrGuardrailLog({
   targetId,
   initialScanId = null,
   initialIgnoreFindingId = null,
+  initialFindingId = null,
 }: {
   targetId: number | null;
   // Deep-linking (#385/#393): pr_guardrail_executor.py's "view"/"request
@@ -292,6 +343,10 @@ export function PrGuardrailLog({
   // LINK_IGNORE_REASON/RequestIgnoreAction's autoSubmit).
   initialScanId?: number | null;
   initialIgnoreFindingId?: number | null;
+  // The finding a PR comment's "view" link named, taken from that link's
+  // `#finding-{id}` fragment. Only scrolled to and highlighted -- unlike
+  // initialIgnoreFindingId, "view" performs no action on the finding.
+  initialFindingId?: number | null;
 }) {
   const isOrgWide = targetId === ALL_TARGETS;
   // Seeded once from the prop at mount, same "initial value only" pattern
@@ -490,6 +545,7 @@ export function PrGuardrailLog({
                     <ScanFindings
                       scanId={entry.id}
                       linkIgnoreFindingId={entry.id === initialScanId ? initialIgnoreFindingId : null}
+                      linkedFindingId={entry.id === initialScanId ? initialFindingId : null}
                     />
                   </div>
                 )}

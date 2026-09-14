@@ -42,7 +42,18 @@ const FRAMEWORK_SELECT_CLASS =
  */
 function isExtractionArtefact(e: Pick<Endpoint, "method" | "route">): boolean {
   const route = e.route.trim();
-  return e.method === "-" || route === "" || route === "...";
+  // Deliberately NOT keyed on `method === "-"`. That reads like a placeholder
+  // but is a real value: backend/app/scanners/discovery.py's django and spring
+  // branches both fall through to `method, route = "-", groups[0]`, because
+  // neither framework encodes the HTTP method at the route declaration. Those
+  // are genuine endpoints with an unknown method, and filtering on "-" would
+  // have silently deleted every Django and Spring route the scanner found --
+  // hiding real API surface while the page claimed to list all of it.
+  //
+  // What makes a row an artefact is the ROUTE: a regex that matched but
+  // captured nothing usable. A route is the one field every framework
+  // populates, so its absence is unambiguous.
+  return route === "" || route === "..." || route === "-";
 }
 
 const METHOD_ORDER = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -122,13 +133,22 @@ export default function ApiDiscoveryPage() {
     return () => cancelPollRef.current?.();
   }, []);
 
-  useEffect(() => {
-    // A framework facet left over from the previous repo would otherwise
-    // silently render "0 routes" for the new one the instant it has no
-    // route under that framework, which reads as "discovery found nothing"
-    // rather than "your old filter doesn't apply here".
+  // A framework facet left over from the previous repo would otherwise
+  // silently render "0 routes" for the new one the instant it has no route
+  // under that framework, which reads as "discovery found nothing" rather
+  // than "your old filter doesn't apply here".
+  //
+  // Reset during render rather than in an effect: eslint-plugin-react-hooks v7
+  // errors on a setState called synchronously in an effect body
+  // (set-state-in-effect) and CI runs --max-warnings=0. The deeper reason is
+  // that the effect version paints one frame with the previous repo's filter
+  // still applied before correcting itself; this is the adjusting-state-on-
+  // prop-change pattern React documents for exactly this case.
+  const [prevTargetId, setPrevTargetId] = useState(targetId);
+  if (prevTargetId !== targetId) {
+    setPrevTargetId(targetId);
     setFrameworkFilter("");
-  }, [targetId]);
+  }
 
   const {
     data: persisted,
@@ -374,6 +394,29 @@ export default function ApiDiscoveryPage() {
             </div>
           </div>
 
+          {/* BulkActionBar renders null at count === 0 (bulk-action-bar.tsx),
+              so every no-selection branch of the label below was unreachable:
+              "Scan N shown" and "Scan all" could not appear at all, and the
+              only way to start a scan was to tick a row first. The scan-all
+              action is not a bulk action -- it is the page's primary verb --
+              so it renders on its own when nothing is selected, and hands over
+              to the bar once a selection exists. */}
+          {endpoints.length > 0 && selection.count === 0 && (
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                onClick={runApiScan}
+                disabled={apiScanRunning || !currentTarget?.api_base_url || scanAllCount === 0}
+              >
+                {apiScanRunning
+                  ? "Scanning..."
+                  : scanAllCount !== null
+                    ? `Scan ${scanAllCount} shown for vulnerabilities`
+                    : "Scan all for vulnerabilities"}
+              </Button>
+            </div>
+          )}
+
           {endpoints.length > 0 && (
             <BulkActionBar
               count={selection.count}
@@ -383,13 +426,9 @@ export default function ApiDiscoveryPage() {
                 {
                   label: apiScanRunning
                     ? "Scanning..."
-                    : selection.count > 0
-                      ? `Scan ${selection.count} selected for vulnerabilities`
-                      : scanAllCount !== null
-                        ? `Scan ${scanAllCount} shown for vulnerabilities`
-                        : "Scan all for vulnerabilities",
+                    : `Scan ${selection.count} selected for vulnerabilities`,
                   onClick: runApiScan,
-                  disabled: apiScanRunning || !currentTarget?.api_base_url || scanAllCount === 0,
+                  disabled: apiScanRunning || !currentTarget?.api_base_url,
                 },
               ]}
             >

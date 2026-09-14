@@ -132,7 +132,7 @@ beforeEach(() => {
 });
 
 describe("extraction-artefact filtering", () => {
-  it("drops a '-' method row, an empty-route row, and a '...' route row, keeping only genuine routes", async () => {
+  it("drops rows whose ROUTE did not extract, keeping genuine ones", async () => {
     getDiscoveredEndpoints.mockResolvedValue({
       target_id: 1,
       count: 5,
@@ -141,7 +141,8 @@ describe("extraction-artefact filtering", () => {
         endpoint({ method: "-", route: "..." }),
         // The production case: discovery.py's django fallback matched a bare
         // `path("...")` call inside a FastAPI repo's test file and tagged it
-        // "django" -- method is still "-", so the same predicate drops it.
+        // "django". It is dropped for its unusable ROUTE, not its method --
+        // see the next test for why the method must not be the signal.
         endpoint({ framework: "django", method: "-", route: "...", file: "backend/tests/test_runner.py", line: 33 }),
         endpoint({ method: "GET", route: "/active", file: "app/a.py", line: 1 }),
         endpoint({ method: "GET", route: "/active", file: "app/b.py", line: 2 }),
@@ -155,6 +156,30 @@ describe("extraction-artefact filtering", () => {
     // Both real "/active" registrations survive -- filtering removes
     // artefacts, not legitimate duplicate routes.
     expect(screen.getAllByText("/active").length).toBe(2);
+  });
+
+  it("keeps a django route even though its method is '-'", async () => {
+    // discovery.py's django and spring branches both fall through to
+    // `method, route = "-", groups[0]` -- neither framework encodes the HTTP
+    // method at the route declaration, so "-" there means "unknown method",
+    // not "failed extraction". An earlier version of the artefact filter
+    // keyed on `method === "-"` and would have silently deleted every Django
+    // and Spring endpoint the scanner found, while the page went on claiming
+    // to list all of them.
+    getDiscoveredEndpoints.mockResolvedValue({
+      target_id: 1,
+      count: 2,
+      endpoints: [
+        endpoint({ framework: "django", method: "-", route: "/admin/users", file: "urls.py", line: 12 }),
+        endpoint({ framework: "spring", method: "-", route: "/api/orders", file: "OrderController.java", line: 40 }),
+      ],
+    });
+
+    render(<ApiDiscoveryPage />);
+
+    expect(await screen.findByText("2 endpoints found")).not.toBeNull();
+    expect(screen.getByText("/admin/users")).not.toBeNull();
+    expect(screen.getByText("/api/orders")).not.toBeNull();
   });
 
   it("keeps a genuine route with a normal method untouched", async () => {

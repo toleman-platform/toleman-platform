@@ -77,7 +77,7 @@ RUN set -eux; \
         arm64) GITLEAKS_ARCH=arm64; GITLEAKS_SHA256="${GITLEAKS_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/gitleaks.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/gitleaks.tar.gz \
         "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GITLEAKS_ARCH}.tar.gz"; \
     echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/gitleaks.tar.gz gitleaks; \
@@ -104,7 +104,7 @@ RUN set -eux; \
         arm64) TRIVY_ASSET="Linux-ARM64"; TRIVY_SHA256="${TRIVY_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/trivy.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/trivy.tar.gz \
         "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_ASSET}.tar.gz"; \
     echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy; \
@@ -123,7 +123,7 @@ RUN set -eux; \
         arm64) GOSEC_ARCH=arm64; GOSEC_SHA256="${GOSEC_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/gosec.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/gosec.tar.gz \
         "https://github.com/securego/gosec/releases/download/v${GOSEC_VERSION}/gosec_${GOSEC_VERSION}_linux_${GOSEC_ARCH}.tar.gz"; \
     echo "${GOSEC_SHA256}  /tmp/gosec.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/gosec.tar.gz gosec; \

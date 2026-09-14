@@ -107,7 +107,7 @@ jobs:
       # genuinely from scratch) or need a registry to hand it over.
       - name: Install Trivy
         run: |
-          curl -sSL -o /tmp/trivy.tar.gz \
+          curl -fsSL --retry 5 --retry-delay 2 -o /tmp/trivy.tar.gz \
             "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
           echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
           sudo tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy

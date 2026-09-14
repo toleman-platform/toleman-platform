@@ -93,7 +93,7 @@ RUN set -eux; \
         arm64) GITLEAKS_ARCH=arm64; GITLEAKS_SHA256="${GITLEAKS_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/gitleaks.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/gitleaks.tar.gz \
         "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GITLEAKS_ARCH}.tar.gz"; \
     echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/gitleaks.tar.gz gitleaks; \
@@ -125,7 +125,7 @@ RUN set -eux; \
         arm64) TRIVY_ASSET="Linux-ARM64"; TRIVY_SHA256="${TRIVY_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/trivy.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/trivy.tar.gz \
         "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_ASSET}.tar.gz"; \
     echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy; \
@@ -146,7 +146,7 @@ RUN set -eux; \
         arm64) GOSEC_ARCH=arm64; GOSEC_SHA256="${GOSEC_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/gosec.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/gosec.tar.gz \
         "https://github.com/securego/gosec/releases/download/v${GOSEC_VERSION}/gosec_${GOSEC_VERSION}_linux_${GOSEC_ARCH}.tar.gz"; \
     echo "${GOSEC_SHA256}  /tmp/gosec.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/gosec.tar.gz gosec; \
@@ -178,7 +178,7 @@ RUN set -eux; \
         arm64) TFSEC_ARCH=arm64; TFSEC_SHA256="${TFSEC_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /usr/local/bin/tfsec \
+    curl -fsSL --retry 5 --retry-delay 2 -o /usr/local/bin/tfsec \
         "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/tfsec-linux-${TFSEC_ARCH}"; \
     echo "${TFSEC_SHA256}  /usr/local/bin/tfsec" | sha256sum -c -; \
     chmod +x /usr/local/bin/tfsec; \
@@ -203,7 +203,7 @@ RUN set -eux; \
         arm64) NUCLEI_ARCH=arm64; NUCLEI_SHA256="${NUCLEI_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/nuclei.zip \
+    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/nuclei.zip \
         "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${NUCLEI_ARCH}.zip"; \
     echo "${NUCLEI_SHA256}  /tmp/nuclei.zip" | sha256sum -c -; \
     unzip -o -j /tmp/nuclei.zip nuclei -d /usr/local/bin; \

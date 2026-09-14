@@ -35,12 +35,19 @@ export default async function AuditLogPage({
   ]);
   const result = auditResult ?? { items: [], total: 0 };
 
+  // The count is omitted entirely when the read failed. Previously the header
+  // rendered "... your data, 0 events, most recent first." directly above the
+  // ErrorState below, so the page asserted a confident zero for data it had
+  // not measured -- on a compliance surface, where "no events were recorded"
+  // and "we couldn't reach the API" are very different claims.
+  const description =
+    auditResult === null
+      ? "Every triage decision and scan run recorded against your data, most recent first."
+      : `Every triage decision and scan run recorded against your data, ${result.total} events, most recent first.`;
+
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader
-        title="Audit Log"
-        description={`Every triage decision and scan run recorded against your data, ${result.total} events, most recent first.`}
-      />
+      <PageHeader title="Audit Log" description={description} />
       <AuditLogFilterBar actors={actors} />
       {auditResult === null ? (
         <ErrorState description="The audit log couldn't be loaded from the API." action={<ReloadButton />} />

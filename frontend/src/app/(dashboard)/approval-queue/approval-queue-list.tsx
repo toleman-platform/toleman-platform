@@ -3,10 +3,11 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { api, type PrGuardrailFinding } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { IGNORE_STATUS_COLOR } from "@/lib/severity";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
@@ -73,35 +74,39 @@ export function ApprovalQueue() {
   const historyError = historyLoadError?.message ?? null;
   const history = historyResult?.items ?? null;
 
-  async function approve(id: number) {
+  // All three decisions used to be `try`/`finally` with no `catch`. On a
+  // failed call the spinner cleared, the row did not change, and the reviewer
+  // got no signal whatsoever -- so the natural read is "my click didn't
+  // register", and the natural next move is to click again. The error is
+  // pinned to the row it belongs to rather than to a page-level banner.
+  const [rowError, setRowError] = useState<{ id: number; message: string } | null>(null);
+
+  // Approve permanently suppresses a security finding; revoke reverses a
+  // prior approval and can put a merge block back. Both get a confirmation
+  // that states what changes. Reject is left un-gated: it denies a request
+  // without changing what the guardrail enforces, and the developer can ask
+  // again.
+  const [pending, setPending] = useState<{ finding: PrGuardrailFinding; action: "approve" | "revoke" } | null>(null);
+
+  async function run(id: number, action: () => Promise<unknown>, after: () => void, failureMessage: string) {
     setBusyId(id);
+    setRowError(null);
     try {
-      await api.approveIgnore(id);
-      refresh();
+      await action();
+      setPending(null);
+      after();
+    } catch (e) {
+      setRowError({ id, message: e instanceof Error ? e.message : failureMessage });
     } finally {
       setBusyId(null);
     }
   }
 
-  async function reject(id: number) {
-    setBusyId(id);
-    try {
-      await api.rejectIgnore(id);
-      refresh();
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function revoke(id: number) {
-    setBusyId(id);
-    try {
-      await api.revokeIgnore(id);
-      refreshHistory();
-    } finally {
-      setBusyId(null);
-    }
-  }
+  const approve = (id: number) =>
+    run(id, () => api.approveIgnore(id), refresh, "failed to approve this ignore request");
+  const reject = (id: number) => run(id, () => api.rejectIgnore(id), refresh, "failed to reject this ignore request");
+  const revoke = (id: number) =>
+    run(id, () => api.revokeIgnore(id), refreshHistory, "failed to revoke this approval");
 
   return (
     <div className="flex flex-col gap-6">
@@ -151,13 +156,18 @@ export function ApprovalQueue() {
                         <div className="mt-1 text-xs text-muted-foreground">
                           Requested by {f.ignore_requested_by}: {f.ignore_requested_reason}
                         </div>
+                        {rowError?.id === f.id && (
+                          <p role="alert" className="mt-1 text-xs text-destructive">
+                            Nothing was changed: {rowError.message}
+                          </p>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <Button
                           size="sm"
                           variant="outline"
                           disabled={busyId === f.id}
-                          onClick={() => approve(f.id)}
+                          onClick={() => setPending({ finding: f, action: "approve" })}
                           className="h-7 text-xs"
                         >
                           Approve
@@ -223,6 +233,11 @@ export function ApprovalQueue() {
                           {DECISION_LABEL[f.ignore_status] || f.ignore_status} by {f.ignore_reviewed_by}
                           {f.ignore_reviewed_at ? ` · ${serverDate(f.ignore_reviewed_at).toLocaleString()}` : ""}
                         </div>
+                        {rowError?.id === f.id && (
+                          <p role="alert" className="mt-1 text-xs text-destructive">
+                            Nothing was changed: {rowError.message}
+                          </p>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <Badge variant="outline" className={IGNORE_STATUS_COLOR[f.ignore_status] || "text-muted-foreground"}>
@@ -233,7 +248,7 @@ export function ApprovalQueue() {
                             size="sm"
                             variant="outline"
                             disabled={busyId === f.id}
-                            onClick={() => revoke(f.id)}
+                            onClick={() => setPending({ finding: f, action: "revoke" })}
                             className="h-7 text-xs text-destructive"
                           >
                             Revoke
@@ -259,6 +274,42 @@ export function ApprovalQueue() {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pending !== null}
+        title={pending?.action === "approve" ? "Approve this ignore request?" : "Revoke this approval?"}
+        description={
+          <>
+            {pending?.action === "approve" ? (
+              <>
+                <strong>{pending.finding.title}</strong> ({pending.finding.severity}) stops blocking this pull request
+                and is suppressed on the main findings list too. The developer&apos;s stated reason was:{" "}
+                <em>{pending.finding.ignore_requested_reason || "none given"}</em>.
+              </>
+            ) : (
+              <>
+                <strong>{pending?.finding.title}</strong> comes back as an open finding and the PR comment reverts to
+                a live &ldquo;request ignore&rdquo; link. If this was the only approved finding keeping the scan
+                unblocked, the pull request will be blocked again.
+              </>
+            )}
+            {/* The row-level error lives behind this overlay while the dialog
+                is open, so repeat it here rather than closing over a failure. */}
+            {pending && rowError?.id === pending.finding.id && (
+              <span className="mt-2 block text-destructive">Nothing was changed: {rowError.message}</span>
+            )}
+          </>
+        }
+        confirmLabel={pending?.action === "approve" ? "Approve ignore" : "Revoke approval"}
+        tone={pending?.action === "approve" ? "default" : "destructive"}
+        loading={pending !== null && busyId === pending.finding.id}
+        onConfirm={() => {
+          if (!pending) return;
+          if (pending.action === "approve") approve(pending.finding.id);
+          else revoke(pending.finding.id);
+        }}
+        onCancel={() => setPending(null)}
+      />
     </div>
   );
 }

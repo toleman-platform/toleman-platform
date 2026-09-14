@@ -9,113 +9,49 @@ import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
 import { PageHeader } from "@/components/ui/page-header";
 import { settleOrNull } from "@/std-lib";
-// Plain module, not the "use client" component; a Server Component
-// cannot call a function exported from a client module.
-import { pageSizeFromParams } from "@/lib/pagination";
-import type { FindingFilterOptions, FindingGroupSort } from "@/types";
-
-// Page size is now a user preference read off the URL (25/50/100),
-// defaulting to 25. See components/activity-pagination.tsx.
-
-function firstValue(v: string | string[] | undefined): string | undefined {
-  return Array.isArray(v) ? v[0] : v;
-}
-
-// severity/tool/fixability/state/target_id are all multi-select in the
-// filter bar (repeated query params, e.g. `?severity=Critical&severity=
-// High`); Next.js already hands back a string[] for a repeated key, a
-// bare string for exactly one, so this just always normalizes to an array.
-function toArray(v: string | string[] | undefined): string[] {
-  if (v === undefined) return [];
-  return Array.isArray(v) ? v : [v];
-}
-
-/**
- * The queues a findings page has to offer, and what each one actually asks of
- * the reader.
- *
- * The old page had a single "All" tab. On this repo's own scan that tab is 150
- * findings of which 148 are licence results, so the one Secrets finding — the
- * only item on the page shaped like an incident — sat on page six behind them.
- * Splitting them is not a filter convenience: a copyleft licence on a
- * transitive build binary is a quarterly policy call, a leaked credential is
- * an incident, and the two do not belong in the same ranked list.
- *
- * `Needs action` excludes licences by category rather than listing the
- * categories it wants, so a newly-integrated scanner's findings land in the
- * triage queue by default instead of silently going nowhere.
- */
-const POLICY_CATEGORIES = ["License"];
-
-type QueueId = "action" | "license" | "resolved" | "all";
-
-const QUEUES: { id: QueueId; label: string }[] = [
-  { id: "action", label: "Needs action" },
-  { id: "license", label: "Licence review" },
-  { id: "resolved", label: "Resolved" },
-  { id: "all", label: "All findings" },
-];
-
-function queueFilters(queue: QueueId): {
-  resolved: boolean;
-  category?: string;
-  exclude_category?: string[];
-} {
-  if (queue === "license") return { resolved: false, category: "License" };
-  if (queue === "resolved") return { resolved: true };
-  if (queue === "all") return { resolved: false };
-  return { resolved: false, exclude_category: POLICY_CATEGORIES };
-}
-
-const GROUP_SORTS: FindingGroupSort[] = ["exploitability", "severity", "blast_radius", "age", "recent"];
-
-function parseQueue(raw: string | undefined): QueueId {
-  return QUEUES.some((q) => q.id === raw) ? (raw as QueueId) : "action";
-}
+// Plain modules, not "use client" components; a Server Component cannot call
+// a function exported from a client module.
+import {
+  QUEUES,
+  parseFindingsView,
+  queueFilters,
+  type SearchParamRecord,
+} from "@/lib/findings-view";
+import type { FindingFilterOptions } from "@/types";
 
 export default async function FindingsPage({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | string[] | undefined>>;
+  searchParams: Promise<SearchParamRecord>;
 }) {
   const sp = await searchParams;
-  const severity = toArray(sp.severity);
-  const tool = toArray(sp.tool);
-  const fixability = toArray(sp.fixability);
-  // (#251) The owning target's metadata, multi-select since #270 like every
-  // other filter in the bar.
-  const environment = toArray(sp.environment);
-  const owner = toArray(sp.owner);
-  const state = toArray(sp.state);
-  const search = firstValue(sp.search);
-  const targetIdRaw = toArray(sp.target_id);
+  const {
+    severity,
+    tool,
+    fixability,
+    state,
+    search,
+    environment,
+    owner,
+    targetIdRaw,
+    group_id,
+    page,
+    pageSize,
+    pageSizeRaw,
+    queue,
+    queued,
+    grouped,
+    sort,
+    sortRaw,
+    new_since_days,
+    newSinceRaw,
+  } = parseFindingsView(sp);
   const target_id = targetIdRaw.map(Number);
-  const groupIdRaw = firstValue(sp.group_id);
-  const group_id = groupIdRaw ? Number(groupIdRaw) : undefined;
-  const pageRaw = firstValue(sp.page);
-  const page = pageRaw && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
-  const pageSizeRaw = firstValue(sp.page_size);
-  const pageSize = pageSizeFromParams(sp.page_size);
 
-  const queue = parseQueue(firstValue(sp.queue));
-  const queued = queueFilters(queue);
   // Category tabs only mean something inside the "All findings" queue; the
   // other three already pin the category dimension, and showing a second,
   // contradicting control for it is how a filter bar starts lying.
-  const category = queue === "all" ? firstValue(sp.category) : queued.category;
-
-  // Grouped is the default view: one row per decision. `?view=flat` is the
-  // old one-row-per-detection list, kept because "show me every occurrence"
-  // is a real question, just not the one a triage queue opens on.
-  const grouped = firstValue(sp.view) !== "flat";
-
-  const sortRaw = firstValue(sp.sort);
-  const sort = (GROUP_SORTS as string[]).includes(sortRaw ?? "")
-    ? (sortRaw as FindingGroupSort)
-    : "exploitability";
-
-  const newSinceRaw = firstValue(sp.new_since_days);
-  const new_since_days = newSinceRaw ? Number(newSinceRaw) : undefined;
+  const category = queue === "all" ? (Array.isArray(sp.category) ? sp.category[0] : sp.category) : queued.category;
 
   const commonFilters = {
     severity,
@@ -169,8 +105,13 @@ export default async function FindingsPage({
             resolved: qf.resolved,
             page_size: 1,
           })
-          .then((r) => r.total)
-          .catch(() => 0);
+          .then((r): number | null => r.total)
+          // `null`, not `0`. These four counts are independent requests, so
+          // when the findings API is down all four fail together and the page
+          // used to render "Needs action 0 / Licence review 0 / Resolved 0 /
+          // All findings 0" directly above its own "couldn't be loaded" error
+          // box. Zero is a measurement; a failed request has not made one.
+          .catch(() => null);
       }),
     ),
   ]);
@@ -237,7 +178,7 @@ export default async function FindingsPage({
   const queueTabs: CategoryTab[] = QUEUES.map((q, i) => ({
     id: q.id,
     label: q.label,
-    count: queueCounts[i] ?? 0,
+    count: queueCounts[i],
     href: hrefWith({
       queue: q.id === "action" ? undefined : q.id,
       // State options differ between open and resolved views, so a state
@@ -278,9 +219,19 @@ export default async function FindingsPage({
       <PageHeader
         title="Findings"
         description={
-          grouped && groupsResult
-            ? `${decisions} ${decisions === 1 ? "decision" : "decisions"} across ${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"}`
-            : `${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"} across all targets`
+          // The `failed` arm is the whole fix for this line. Both branches
+          // below bottom out in `?? 0`, so a failed list request rendered the
+          // headline "0 findings across all targets" -- the single largest,
+          // most quotable claim on the page -- immediately above the error box
+          // saying the list could not be loaded. A reader skimming takes away
+          // "we're clean"; a reader paying attention takes away "this UI
+          // contradicts itself". Neither is recoverable by adding an error
+          // state elsewhere: the number itself has to stop being asserted.
+          failed
+            ? "Finding count unavailable"
+            : grouped && groupsResult
+              ? `${decisions} ${decisions === 1 ? "decision" : "decisions"} across ${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"}`
+              : `${findingsBehind} ${findingsBehind === 1 ? "finding" : "findings"} across all targets`
         }
       />
 

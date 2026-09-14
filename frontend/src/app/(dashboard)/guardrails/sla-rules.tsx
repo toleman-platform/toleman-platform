@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SeverityChip } from "@/components/ui/severity-chip";
 import { SEVERITY_ORDER } from "@/lib/severity";
 import { Building2, Clock, Timer, Trash2 } from "lucide-react";
@@ -17,6 +18,15 @@ import { Building2, Clock, Timer, Trash2 } from "lucide-react";
 // optionally a repo Group (#61); null group means "workspace default",
 // applied to targets with no group-specific rule for that severity. Mirrors
 // the Groups tab's workspace-picker-then-CRUD-list shape (#61/#62).
+// An empty days field parses as `Number("") === 0`, which satisfied the old
+// `>= 0` guard and silently created a 0-day SLA -- one that is breached the
+// moment it exists. A rule has to mean "you have at least one day".
+function isValidDays(raw: string): boolean {
+  if (raw.trim() === "") return false;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1;
+}
+
 export function SlaRules() {
   const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -42,8 +52,8 @@ export function SlaRules() {
   async function createRule() {
     if (!workspaceId) return;
     const daysNum = Number(days);
-    if (!Number.isFinite(daysNum) || daysNum < 0) {
-      setMutationError("days_to_fix must be a non-negative number");
+    if (!isValidDays(days)) {
+      setMutationError("Days to fix must be a whole number of at least 1");
       return;
     }
     setSaving(true);
@@ -73,13 +83,23 @@ export function SlaRules() {
     }
   }
 
+  // Deleting an SLA rule silently changes (or removes) the deadline on every
+  // finding it governs -- a target with no matching rule anywhere shows no
+  // SLA at all. It used to fire on click from an unlabelled icon button.
+  const [pendingDelete, setPendingDelete] = useState<SlaRule | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   async function removeRule(id: number) {
     if (!workspaceId) return;
+    setDeleting(true);
     try {
       await api.deleteSlaRule(id);
+      setPendingDelete(null);
       refetch();
     } catch (e) {
       setMutationError(e instanceof Error ? e.message : "failed to delete SLA rule");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -118,6 +138,7 @@ export function SlaRules() {
             />
           ) : (
             <select
+              aria-label="Workspace"
               className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
               value={workspaceId ?? ""}
               onChange={(e) => setWorkspaceId(Number(e.target.value))}
@@ -134,6 +155,7 @@ export function SlaRules() {
             <>
               <div className="flex flex-wrap items-center gap-2">
                 <select
+                  aria-label="Repo group this rule applies to"
                   className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
                   value={groupId}
                   onChange={(e) => setGroupId(e.target.value === "" ? "" : Number(e.target.value))}
@@ -146,6 +168,7 @@ export function SlaRules() {
                   ))}
                 </select>
                 <select
+                  aria-label="Severity this rule applies to"
                   className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
                   value={severity}
                   onChange={(e) => setSeverity(e.target.value)}
@@ -158,13 +181,14 @@ export function SlaRules() {
                 </select>
                 <Input
                   type="number"
-                  min={0}
+                  min={1}
+                  aria-label="Days to fix"
                   className="w-28 bg-secondary"
                   placeholder="Days to fix"
                   value={days}
                   onChange={(e) => setDays(e.target.value)}
                 />
-                <Button onClick={createRule} disabled={saving} className="shrink-0">
+                <Button onClick={createRule} disabled={saving || !isValidDays(days)} className="shrink-0">
                   {saving ? "Adding..." : "Add rule"}
                 </Button>
               </div>
@@ -209,7 +233,9 @@ export function SlaRules() {
                             variant="ghost"
                             size="icon"
                             className="shrink-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => removeRule(r.id)}
+                            onClick={() => setPendingDelete(r)}
+                            aria-label={`Delete SLA rule: ${r.severity} in ${groupName(r.group_id)}`}
+                            title="Delete rule"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -218,6 +244,25 @@ export function SlaRules() {
                     ))
                 )}
               </div>
+
+              <ConfirmDialog
+                open={pendingDelete !== null}
+                title="Delete this SLA rule?"
+                description={
+                  <>
+                    <strong>
+                      {pendingDelete ? `${pendingDelete.severity} in ${groupName(pendingDelete.group_id)}` : ""}
+                    </strong>{" "}
+                    stops governing days-to-fix immediately. Findings it covered fall back to the workspace default
+                    for that severity, or show no SLA at all if there isn&apos;t one. This can&apos;t be undone.
+                  </>
+                }
+                confirmLabel="Delete rule"
+                tone="destructive"
+                loading={deleting}
+                onConfirm={() => pendingDelete && removeRule(pendingDelete.id)}
+                onCancel={() => setPendingDelete(null)}
+              />
             </>
           )}
         </CardContent>

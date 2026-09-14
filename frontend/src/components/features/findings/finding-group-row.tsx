@@ -10,9 +10,11 @@ import {
   SEVERITY_BORDER_COLOR,
   SEVERITY_COLOR,
 } from "@/lib/severity";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useWriteAction } from "@/hooks/use-write-action";
 import { cn } from "@/lib/utils";
 import { parseServerTimestamp } from "@/lib/format/date";
 
@@ -134,6 +136,7 @@ export function FindingGroupRow({
   memberQuery,
   targets = [],
   onTriaged,
+  onInspect,
 }: {
   group: FindingGroup;
   /**
@@ -150,6 +153,18 @@ export function FindingGroupRow({
   memberQuery?: FindingsQuery;
   targets?: Target[];
   onTriaged?: () => void;
+  /**
+   * Open one member finding's full detail.
+   *
+   * Grouping collapsed the row down to what a *decision* needs, and in doing
+   * so it cut off the route to what a single finding needs: the description,
+   * the NVD/OSV enrichment (CVE, CWE, CVSS, fix versions), the suggested fix
+   * and Raise-PR action, per-finding triage, and the link into the repo at the
+   * offending line. All of that still exists in FindingDetailDrawer -- after
+   * the grouped view became the default, nothing on the page reached it any
+   * more without switching to `?view=flat`.
+   */
+  onInspect?: (finding: Finding) => void;
 }) {
   const [now] = useState(() => Date.now());
   const [expanded, setExpanded] = useState(false);
@@ -158,7 +173,12 @@ export function FindingGroupRow({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  // One click here dispatches a write against every member of the group — up
+  // to MEMBER_FETCH_CAP findings. It used to have no `catch`, so that click
+  // failing looked exactly like it succeeding: buttons back, row unchanged,
+  // nothing said. See use-write-action.ts.
+  const triageAction = useWriteAction("Group triage failed");
+  const submitting = triageAction.submitting;
 
   const targetName = targets.find((t) => t.id === group.representative_target_id)?.name;
   const age = daysSince(group.oldest_first_seen, now);
@@ -205,8 +225,13 @@ export function FindingGroupRow({
     setExpanded(next);
     // Members are fetched on first expand and then kept: re-collapsing and
     // re-expanding a row is a navigation gesture, not a reason to re-hit the
-    // API. `grouped` rows are the only ones with anything to reveal.
-    if (!next || members !== null || !group.grouped) return;
+    // API.
+    //
+    // Ungrouped rows fetch too, even though the answer is a single finding.
+    // They used to skip it and render only a sentence explaining why they are
+    // not collapsed -- which meant a leaked credential, the highest-severity
+    // thing this page shows, was the one row you could not open.
+    if (!next || members !== null) return;
     await loadMembers();
   }
 
@@ -215,21 +240,23 @@ export function FindingGroupRow({
     // and a better audit trail than the same sentence retyped a dozen times.
     const ids = members?.map((m) => m.id) ?? [];
     if (ids.length === 0 || truncated) return;
-    setSubmitting(true);
-    try {
+    await triageAction.run(async () => {
       await api.bulkTriage(ids, toState, reason);
       setReason("");
       // The members just triaged may no longer match the active filters, and
       // the cached list would otherwise keep showing them with their old
       // states -- a second click would then re-triage findings already in that
       // state. Dropped so the next expand re-reads the truth.
+      //
+      // All of this is now reached only on success, which matters more here
+      // than anywhere else on the page: collapsing the row and dropping the
+      // member cache after a *failed* write is the single most convincing way
+      // to tell someone their triage went through when it did not.
       setMembers(null);
       setMemberTotal(0);
       setExpanded(false);
       onTriaged?.();
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   return (
@@ -286,13 +313,10 @@ export function FindingGroupRow({
 
       {expanded && (
         <div className="border-t border-border bg-secondary/30 px-3 py-2 pl-10">
-          {!group.grouped && (
-            <p className="text-xs text-muted-foreground">
-              Not grouped: one {group.category.toLowerCase()} finding is one incident with its own clock, so it
-              is never collapsed with others under the same rule.
-            </p>
-          )}
-
+          {/* Ungrouped categories (Secrets, Malicious Package) render their single
+              finding here with no explanation of why they are not collapsed --
+              that reasoning is a property of the code, not something the reader
+              needs on screen. See UNGROUPED_CATEGORIES in app/core/grouping.py. */}
           {loading && (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" /> Loading this group&apos;s findings…
@@ -304,21 +328,25 @@ export function FindingGroupRow({
             <>
               <ul className="flex flex-col">
                 {members.map((m) => (
-                  <li
-                    key={m.id}
-                    className="flex items-center gap-3 border-b border-border/60 py-1 font-mono text-[11px] text-muted-foreground last:border-b-0"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-foreground">{m.title}</span>
-                    <span className="shrink-0">#{m.id}</span>
-                    <span className="hidden shrink-0 sm:block">{m.file_path}</span>
+                  <li key={m.id} className="border-b border-border/60 last:border-b-0">
+                    <button
+                      type="button"
+                      onClick={() => onInspect?.(m)}
+                      className="flex w-full items-center gap-3 py-1 text-left font-mono text-[11px] text-muted-foreground hover:bg-secondary/60"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-foreground underline decoration-dotted underline-offset-2">
+                        {m.title}
+                      </span>
+                      <span className="shrink-0">#{m.id}</span>
+                      <span className="hidden shrink-0 sm:block">{m.file_path}</span>
+                    </button>
                   </li>
                 ))}
               </ul>
 
               {truncated && (
                 <p className="mt-2 text-xs text-destructive">
-                  Showing {members.length} of {memberTotal}. Group triage is disabled above this size — narrow the
-                  filters, or triage from the ungrouped list.
+                  Showing {members.length} of {memberTotal}. Narrow the filters to triage this group.
                 </p>
               )}
 
@@ -344,6 +372,19 @@ export function FindingGroupRow({
                   </Button>
                 ))}
               </div>
+
+              {/* The row stays expanded on failure (see triageGroup), so this
+                  sits directly under the buttons that produced it, with the
+                  member list it would have acted on still on screen. */}
+              {triageAction.error && (
+                <AlertBanner tone="critical" title="Group triage failed" className="mt-2">
+                  {/* As in findings-list.tsx: the request not completing is
+                      not evidence that nothing was written. */}
+                  {triageAction.error} The change was not confirmed, so some of these{" "}
+                  {members.length} findings may not have been updated. Reload to see their
+                  current states before retrying.
+                </AlertBanner>
+              )}
             </>
           )}
 

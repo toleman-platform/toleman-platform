@@ -242,11 +242,11 @@ export function ConnectGithubCard() {
                           <code>{appEntry.app_slug}</code>
                         </div>
                         <div className="flex items-center gap-2">
-                          <a href={safeHref(`https://github.com/apps/${appEntry.app_slug}/installations/new`)} target="_blank" rel="noreferrer">
-                            <Button size="sm" variant="outline">
+                          <Button asChild size="sm" variant="outline">
+                            <a href={safeHref(`https://github.com/apps/${appEntry.app_slug}/installations/new`)} target="_blank" rel="noreferrer">
                               Add installation
-                            </Button>
-                          </a>
+                            </a>
+                          </Button>
                           {/* GitHub Apps have no API to change permissions or
                               webhook event subscriptions -- only the App's own
                               settings page can. A "Manage on GitHub" link is the
@@ -264,6 +264,8 @@ export function ConnectGithubCard() {
                             variant="outline"
                             className="text-destructive hover:text-destructive"
                             onClick={() => setPendingDelete(appEntry)}
+                            aria-label={`Remove GitHub App ${appEntry.app_slug} from Toleman`}
+                            title={`Remove GitHub App ${appEntry.app_slug} from Toleman`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -349,6 +351,9 @@ export function ConnectGithubCard() {
                         <div className="flex gap-2">
                           <Input
                             type="password"
+                            autoComplete="off"
+                            spellCheck={false}
+                            aria-label={`Webhook secret for ${appEntry.app_slug}`}
                             className="bg-secondary"
                             placeholder="Webhook secret (must match this App's GitHub settings)"
                             value={webhookSecrets[appEntry.id] || ""}
@@ -465,6 +470,7 @@ export function ConnectGithubCard() {
                 </p>
                 <div className="flex gap-2">
                   <Input
+                    aria-label="GitHub organization to install the App on (optional)"
                     className="bg-secondary"
                     placeholder="Organization (optional)"
                     value={org}

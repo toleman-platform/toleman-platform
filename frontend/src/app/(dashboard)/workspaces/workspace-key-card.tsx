@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Copy, Eye, EyeOff, RotateCw } from "lucide-react";
 import { api } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ErrorState } from "@/components/ui/error-state";
 
 const MASKED_KEY = "•".repeat(32);
 
@@ -15,25 +18,43 @@ const MASKED_KEY = "•".repeat(32);
 // looks the key up directly by workspace id (api.workspaceApiKey), for the
 // new Workspaces page where a workspace is what's actually selected.
 export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
-  const [apiKey, setApiKey] = useState<string | null>(null);
+  // Remounted with `key={workspaceId}` by the parent on workspace switch,
+  // so per-workspace UI state resets for free (see the settings.tsx
+  // original for the same pattern).
+  //
+  // The read used to be an uncaught `.then(setApiKey)` paired with
+  // `if (!apiKey) return null`, so a slow or failed key read made this whole
+  // card silently disappear -- and an operator who cannot see an API-key card
+  // concludes the workspace has no key. Loading and failure are now each
+  // rendered as themselves.
+  const keyState = useAsyncData(() => api.workspaceApiKey(workspaceId), { deps: [workspaceId] });
+  // A regenerate returns the new key once and once only, so it is held here
+  // rather than re-read. Safe to keep outside the fetch state because the
+  // parent remounts this card with `key={workspaceId}` on a workspace switch,
+  // so one workspace's key can never survive into another's heading.
+  const [regeneratedKey, setRegeneratedKey] = useState<string | null>(null);
+  const apiKey = regeneratedKey ?? keyState.data?.api_key ?? null;
+
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Remounted with `key={workspaceId}` by the parent on workspace switch,
-  // so per-workspace UI state resets for free (see the settings.tsx
-  // original for the same pattern).
-  useEffect(() => {
-    api.workspaceApiKey(workspaceId).then((r) => setApiKey(r.api_key));
-  }, [workspaceId]);
-
+  // `navigator.clipboard` is undefined on a non-secure origin (plain http over
+  // a LAN is a normal self-hosted deployment), where this threw unhandled.
   async function copyKey() {
     if (!apiKey) return;
-    await navigator.clipboard.writeText(apiKey);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      setCopyFailed(false);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyFailed(true);
+      setRevealed(true);
+    }
   }
 
   async function regenerate() {
@@ -41,7 +62,7 @@ export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
     setError(null);
     try {
       const r = await api.regenerateWorkspaceApiKey(workspaceId);
-      setApiKey(r.api_key);
+      setRegeneratedKey(r.api_key);
       setRevealed(true);
       setConfirming(false);
     } catch (e) {
@@ -51,7 +72,34 @@ export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
     }
   }
 
-  if (!apiKey) return null;
+  if (keyState.isInitialLoading) {
+    return (
+      <Card className="border-border bg-card">
+        <CardContent className="flex flex-col gap-3 px-4 py-4" aria-busy="true">
+          <Skeleton className="h-3 w-72" />
+          <Skeleton className="h-9 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (apiKey === null) {
+    return (
+      <Card className="border-border bg-card">
+        <CardContent className="px-4 py-4">
+          <ErrorState
+            title="Couldn't load this workspace's API key"
+            description={keyState.error?.message ?? "The key could not be read. It has not been changed."}
+            action={
+              <Button size="sm" variant="outline" onClick={keyState.refetch}>
+                Try again
+              </Button>
+            }
+          />
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="border-border bg-card">
@@ -81,7 +129,17 @@ export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
             <Copy />
           </Button>
         </div>
-        {copied && <span className="text-xs text-chart-5">Copied to clipboard</span>}
+        {copied && (
+          <span role="status" className="text-xs text-chart-5">
+            Copied to clipboard
+          </span>
+        )}
+        {copyFailed && (
+          <span role="alert" className="text-xs text-destructive">
+            Couldn&apos;t write to the clipboard (this browser blocks it outside a secure origin). The key is revealed
+            above &mdash; select and copy it manually.
+          </span>
+        )}
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
           {!confirming ? (
@@ -103,7 +161,7 @@ export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
               </p>
               <div className="flex items-center gap-2">
                 <Button variant="destructive" size="sm" disabled={regenerating} onClick={regenerate}>
-                  {regenerating ? "Regenerating..." : "Yes, regenerate now"}
+                  {regenerating ? "Regenerating…" : "Yes, regenerate now"}
                 </Button>
                 <Button variant="outline" size="sm" disabled={regenerating} onClick={() => setConfirming(false)}>
                   Cancel
@@ -111,7 +169,11 @@ export function WorkspaceKeyCard({ workspaceId }: { workspaceId: number }) {
               </div>
             </div>
           )}
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-xs text-destructive">
+              {error}
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

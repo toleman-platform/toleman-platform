@@ -15,7 +15,9 @@ import {
   type Target,
 } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { AsyncContent } from "@/components/ui/async-content";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TargetPicker } from "@/components/features/targets";
@@ -112,18 +114,26 @@ function McpServerCard() {
 }
 
 function ApiTokensCard() {
-  const [tokens, setTokens] = useState<ApiToken[] | null>(null);
+  // Was `api.apiTokens().then(setTokens)` with no `.catch`: a failed read left
+  // `tokens` null forever, which this card rendered as a permanent
+  // "Loading..." line. Routed through the hook/component pair that already
+  // renders loading, error-with-retry and empty as three distinct things.
+  const tokensState = useAsyncData<ApiToken[]>(() => api.apiTokens());
+  const refresh = tokensState.refetch;
   const [name, setName] = useState("");
   const [scope, setScope] = useState<ApiTokenScope>("read");
   const [creating, setCreating] = useState(false);
   const [justCreated, setJustCreated] = useState<string | null>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function refresh() {
-    api.apiTokens().then(setTokens);
-  }
-
-  useEffect(refresh, []);
+  // Revoking is immediate and irreversible, and it breaks every CI pipeline
+  // and MCP client presenting that token. It used to be one unguarded click
+  // with no `try`/`catch`, so a failed revoke left the row reading as live
+  // with nothing said at all.
+  const [pendingRevoke, setPendingRevoke] = useState<ApiToken | null>(null);
+  const [revoking, setRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
 
   async function create() {
     if (!name.trim()) return;
@@ -132,6 +142,7 @@ function ApiTokensCard() {
     try {
       const created = await api.createApiToken(name.trim(), scope);
       setJustCreated(created.token);
+      setCopyFailed(false);
       setName("");
       refresh();
     } catch (e) {
@@ -141,9 +152,35 @@ function ApiTokensCard() {
     }
   }
 
-  async function revoke(id: number) {
-    await api.revokeApiToken(id);
-    refresh();
+  // `navigator.clipboard` is undefined on a non-secure origin -- plain http
+  // over a LAN, which is a normal self-hosted deployment -- and the handler
+  // threw. This is the only copy affordance for a value that is never shown
+  // again, so a silent throw loses the token outright.
+  async function copyJustCreated() {
+    if (!justCreated) return;
+    try {
+      await navigator.clipboard.writeText(justCreated);
+      setCopyFailed(false);
+    } catch {
+      setCopyFailed(true);
+    }
+  }
+
+  async function confirmRevoke() {
+    if (!pendingRevoke) return;
+    setRevoking(true);
+    setRevokeError(null);
+    try {
+      await api.revokeApiToken(pendingRevoke.id);
+      setPendingRevoke(null);
+      refresh();
+    } catch (e) {
+      // Dialog deliberately stays open: a closed dialog plus an unchanged row
+      // is indistinguishable from "it worked".
+      setRevokeError(e instanceof Error ? e.message : "failed to revoke token");
+    } finally {
+      setRevoking(false);
+    }
   }
 
   return (
@@ -159,7 +196,7 @@ function ApiTokensCard() {
         </div>
 
         {justCreated && (
-          <div className="flex flex-col gap-2 rounded-md border border-chart-5/40 bg-chart-5/5 p-3">
+          <div role="status" className="flex flex-col gap-2 rounded-md border border-chart-5/40 bg-chart-5/5 p-3">
             <p className="text-xs text-foreground">
               Copy this token now; it won&apos;t be shown again.
             </p>
@@ -167,15 +204,16 @@ function ApiTokensCard() {
               <code className="flex-1 break-all rounded-md bg-secondary px-3 py-2 text-sm text-foreground">
                 {justCreated}
               </code>
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label="Copy token"
-                onClick={() => navigator.clipboard.writeText(justCreated)}
-              >
+              <Button variant="outline" size="icon" aria-label="Copy token" onClick={copyJustCreated}>
                 <Copy />
               </Button>
             </div>
+            {copyFailed && (
+              <p role="alert" className="text-xs text-destructive">
+                Couldn&apos;t write to the clipboard (this browser blocks it outside a secure origin). Select the token
+                above and copy it manually before dismissing this panel.
+              </p>
+            )}
             <Button variant="outline" size="sm" className="self-start" onClick={() => setJustCreated(null)}>
               Done
             </Button>
@@ -186,61 +224,105 @@ function ApiTokensCard() {
           <Input
             className="h-9 min-w-[160px] flex-1 bg-secondary"
             placeholder="Token name (e.g. ci-pipeline)"
+            aria-label="Token name"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
           <select
             className="h-9 rounded-md border border-input bg-secondary px-3 text-sm text-foreground"
+            aria-label="Token scope"
             value={scope}
             onChange={(e) => setScope(e.target.value as ApiTokenScope)}
           >
             <option value="read">Read-only</option>
-            <option value="read_write">Read/write</option>
+            <option value="read_write">Read/write (can trigger scans and open PRs)</option>
           </select>
           <Button size="sm" disabled={creating || !name.trim()} onClick={create}>
-            {creating ? "Creating..." : "Create token"}
+            {creating ? "Creating…" : "Create token"}
           </Button>
         </div>
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          {tokens === null && <p className="text-xs text-muted-foreground">Loading...</p>}
-          {tokens?.length === 0 && <p className="text-xs text-muted-foreground">No API tokens yet.</p>}
-          {tokens?.map((t) => (
-            <div
-              key={t.id}
-              className="flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/40 px-3 py-2"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-sm font-medium text-foreground">{t.name}</span>
-                  <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">
-                    {t.scope === "read_write" ? "read/write" : "read-only"}
-                  </span>
-                  {t.revoked_at && (
-                    <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">
-                      revoked
-                    </span>
-                  )}
-                </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">
-                  {t.token_prefix}... · created {serverDate(t.created_at).toLocaleDateString()}
-                  {t.last_used_at ? ` · last used ${serverDate(t.last_used_at).toLocaleDateString()}` : " · never used"}
-                </div>
+          <AsyncContent
+            state={tokensState}
+            itemNoun="API tokens"
+            errorTitle="Couldn't load your API tokens"
+            emptyTitle="No API tokens yet"
+            emptyDescription="Create one above to call the public API or connect an MCP client."
+            skeletonCount={2}
+          >
+            {(tokens) => (
+              <div className="flex flex-col gap-2">
+                {tokens.map((t) => (
+                  <div
+                    key={t.id}
+                    className="flex items-center justify-between gap-3 rounded-md border border-border bg-secondary/40 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-foreground">{t.name}</span>
+                        <span className="shrink-0 rounded bg-secondary px-1.5 py-0.5 text-xs text-muted-foreground">
+                          {t.scope === "read_write" ? "read/write" : "read-only"}
+                        </span>
+                        {t.revoked_at && (
+                          <span className="shrink-0 rounded bg-destructive/10 px-1.5 py-0.5 text-xs text-destructive">
+                            revoked
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        {t.token_prefix}… · created {serverDate(t.created_at).toLocaleDateString()}
+                        {t.last_used_at
+                          ? ` · last used ${serverDate(t.last_used_at).toLocaleDateString()}`
+                          : " · never used"}
+                      </div>
+                    </div>
+                    {!t.revoked_at && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 text-destructive hover:text-destructive"
+                        onClick={() => {
+                          setRevokeError(null);
+                          setPendingRevoke(t);
+                        }}
+                      >
+                        Revoke
+                      </Button>
+                    )}
+                  </div>
+                ))}
               </div>
-              {!t.revoked_at && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="shrink-0 text-destructive hover:text-destructive"
-                  onClick={() => revoke(t.id)}
-                >
-                  Revoke
-                </Button>
-              )}
-            </div>
-          ))}
+            )}
+          </AsyncContent>
         </div>
+
+        <ConfirmDialog
+          open={pendingRevoke !== null}
+          title={`Revoke "${pendingRevoke?.name ?? ""}"?`}
+          description={
+            <>
+              Every CI pipeline and MCP client presenting this{" "}
+              <strong>{pendingRevoke?.scope === "read_write" ? "read/write" : "read-only"}</strong> token starts
+              failing <strong>immediately</strong>. Revoking can&apos;t be undone &mdash; you would have to create a new
+              token and update each caller with it.
+              {revokeError && <span className="mt-2 block text-destructive">{revokeError}</span>}
+            </>
+          }
+          confirmLabel="Revoke token"
+          tone="destructive"
+          loading={revoking}
+          onConfirm={confirmRevoke}
+          onCancel={() => {
+            setRevokeError(null);
+            setPendingRevoke(null);
+          }}
+        />
       </CardContent>
     </Card>
   );
@@ -330,16 +412,25 @@ function ProfileSection() {
                 {nameSaving ? "Saving..." : "Save"}
               </Button>
             </div>
-            {nameSaved && <span className="text-xs text-chart-5">Saved</span>}
+            {nameSaved && <span role="status" className="text-xs text-chart-5">Saved</span>}
           </div>
         </div>
 
         <div className="flex flex-col gap-3 border-t border-border pt-4">
           <h3 className="text-xs font-medium text-foreground">Change Password</h3>
+          {/* These three are the only fields in the app that genuinely *are*
+              the user's login credential, so they get the real autoComplete
+              tokens: the password manager can offer the stored password for
+              the first and offer to save the new one for the other two. Every
+              other password-typed field on these surfaces is a service secret
+              and is marked autoComplete="off" instead, so a manager never
+              offers to save a Slack webhook as a login or autofills the
+              admin's own password into a Jira token box. */}
           <Input
             type="password"
             placeholder="Current password"
             aria-label="Current password"
+            autoComplete="current-password"
             className="bg-secondary"
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
@@ -348,6 +439,7 @@ function ProfileSection() {
             type="password"
             placeholder="New password (min 8 characters)"
             aria-label="New password"
+            autoComplete="new-password"
             className="bg-secondary"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
@@ -356,6 +448,7 @@ function ProfileSection() {
             type="password"
             placeholder="Confirm new password"
             aria-label="Confirm new password"
+            autoComplete="new-password"
             className="bg-secondary"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
@@ -368,9 +461,9 @@ function ProfileSection() {
             >
               {pwSaving ? "Changing..." : "Change Password"}
             </Button>
-            {pwSaved && <span className="text-xs text-chart-5">Password changed</span>}
+            {pwSaved && <span role="status" className="text-xs text-chart-5">Password changed</span>}
           </div>
-          {pwError && <p className="text-xs text-destructive">{pwError}</p>}
+          {pwError && <p role="alert" className="text-xs text-destructive">{pwError}</p>}
         </div>
       </CardContent>
     </Card>

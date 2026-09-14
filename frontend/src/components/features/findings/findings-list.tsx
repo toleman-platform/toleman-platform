@@ -6,6 +6,7 @@ import { ShieldCheck } from "lucide-react";
 import { Finding, Target, api } from "@/lib/api";
 import { FindingRow } from "./finding-row";
 import { FindingDetailDrawer } from "./finding-detail-drawer";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -13,6 +14,7 @@ import { ActivityPagination } from "@/components/activity-pagination";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { SelectAllVisible } from "@/components/ui/list-row";
 import { useSelection } from "@/hooks/use-selection";
+import { useWriteAction } from "@/hooks/use-write-action";
 
 const BULK_TRIAGE_STATES = ["Accepted Risk", "False Positive", "Won't Fix", "Open"];
 
@@ -37,8 +39,14 @@ export function FindingsList({
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [inspectingFinding, setInspectingFinding] = useState<Finding | null>(null);
+  // A bulk triage moves every selected finding in one request, so this is the
+  // single most expensive write on the page to lose silently: 40 findings
+  // selected, a rationale typed, the request rejects, the buttons re-enable
+  // and the selection stays exactly as it was — indistinguishable from a
+  // success whose list has not refreshed yet. See use-write-action.ts.
+  const bulkAction = useWriteAction("Bulk triage failed");
+  const submitting = bulkAction.submitting;
 
   // Issue #210: selection state now comes from useSelection, which is page-
   // aware by construction. The hand-rolled version here computed "select all"
@@ -61,15 +69,15 @@ export function FindingsList({
 
   async function bulkTriage(toState: string) {
     if (selection.count === 0) return;
-    setSubmitting(true);
-    try {
+    await bulkAction.run(async () => {
       await api.bulkTriage(selection.selectedIds, toState, reason);
+      // Deliberately after the await: on failure the selection and the typed
+      // rationale survive, so retrying is one click rather than reselecting
+      // forty rows. Clearing them on failure would also have read as "done".
       selection.clear();
       setReason("");
       router.refresh();
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   return (
@@ -102,6 +110,25 @@ export function FindingsList({
           onChange={(e) => setReason(e.target.value)}
         />
       </BulkActionBar>
+
+      {/* Outside the BulkActionBar rather than inside it: the bar is
+          selection-gated, and the whole point of leaving the selection intact
+          on failure is that this message and the retry it explains stay
+          together. `AlertBanner` is `role="alert"`, so the failure is
+          announced rather than only drawn. */}
+      {bulkAction.error && (
+        <AlertBanner tone="critical" title="Bulk triage failed">
+          {/* Careful not to swap one false certainty for another: a rejected
+              request may still have applied some or all of the changes before
+              failing, so "no findings were changed" would be exactly the kind
+              of unearned claim the rest of this page was just fixed for. What
+              we can state is what the client knows — the call did not
+              complete, and nothing here was cleared. */}
+          {bulkAction.error} The change was not confirmed, so some findings may not have been
+          updated. Your selection and rationale have been kept — reload to see the current
+          states before retrying.
+        </AlertBanner>
+      )}
 
       {total > pageSize && <ActivityPagination total={total} page={page} pageSize={pageSize} position="top" />}
 

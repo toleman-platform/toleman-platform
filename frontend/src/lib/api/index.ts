@@ -71,6 +71,7 @@ export const api = {
   findingGroups: findings.findingGroups,
   triage: findings.triage,
   bulkTriage: findings.bulkTriage,
+  findingFacets: findings.findingFacets,
   findingTools: findings.findingTools,
   findingEnvironments: findings.findingEnvironments,
   findingOwners: findings.findingOwners,

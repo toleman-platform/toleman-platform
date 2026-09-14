@@ -70,6 +70,12 @@ export type FindingsQuery = {
   /** Categories to leave out. What the "Needs action" queue is built on. */
   exclude_category?: string[];
   fixability?: string | string[];
+  /**
+   * (#251) The owning target's metadata. Multi-select since #270, like every
+   * other filter in the bar; a single value still works.
+   */
+  environment?: string | string[];
+  owner?: string | string[];
   resolved?: boolean;
   search?: string;
   /** Both halves of a group key, for expanding one grouped row into its members. */
@@ -145,6 +151,60 @@ export type CategoryFacetsQuery = Omit<FindingsQuery, "category" | "page" | "pag
 export type CategoryFacet = {
   category: string;
   count: number;
+};
+
+/**
+ * One option of one filter, and how many findings it would match.
+ */
+export type FacetCount = { value: string; count: number };
+
+/**
+ * (#270) Live per-value counts for every filter on the Findings page
+ * (GET /api/findings/facets), so the filter bar reads as a summary of the
+ * backlog ("Critical 12") instead of controls you have to operate to learn
+ * anything. Takes the same query params as api.findings; each dimension's
+ * counts are scoped by every OTHER active filter but not by its own, so
+ * picking `environment=production` re-counts Critical/High for production
+ * rather than blanking out the severities you haven't picked.
+ *
+ * Every dimension always lists its full option set, zeros included: "none
+ * match right now" and "not a dimension" have to look different.
+ */
+export type FindingFacets = {
+  severity: FacetCount[];
+  state: FacetCount[];
+  tool: FacetCount[];
+  fixability: FacetCount[];
+  environment: FacetCount[];
+  owner: FacetCount[];
+  category: FacetCount[];
+  /**
+   * The count for the complete filter set -- identical to api.findings()'
+   * `total` for the same params, by construction on the backend.
+   */
+  total: number;
+};
+
+/**
+ * Facets take the list's filters, never its paging: only the list has pages.
+ * `rule_id` expands one grouped row into its members, which is not a filter
+ * the bar offers either.
+ */
+export type FindingFacetsQuery = Omit<FindingsQuery, "page" | "page_size" | "rule_id" | "sort">;
+
+/**
+ * What the Findings page falls back to when the facets call fails: the same
+ * option sets, from the plain per-dimension endpoints, with no counts. The
+ * filter bar takes `facets: FindingFacets | null` and renders these instead
+ * when it is null -- deliberately NOT an all-zeros FindingFacets, because
+ * "0 findings match Critical" and "we could not count" are different claims
+ * and only one of them is true in that situation.
+ */
+export type FindingFilterOptions = {
+  tool: string[];
+  environment: string[];
+  owner: string[];
+  category: CategoryFacet[];
 };
 
 /**

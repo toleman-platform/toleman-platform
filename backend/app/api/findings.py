@@ -30,6 +30,8 @@ from app.core.time import utcnow
 from app.core.tool_registry import UNKNOWN_TOOL_CATEGORY, all_categories, all_known_tools, tool_category, tools_in_category
 from app.core.triage import apply_triage
 from app.core.fixability import (
+    FIXABLE,
+    NO_KNOWN_FIX,
     UNKNOWN,
     VALID_FIXABILITY,
     fixability_for_enrichment,
@@ -292,6 +294,40 @@ def _apply_finding_window(query, date_from: datetime | None, date_to: datetime |
     if date_to is not None:
         query = query.where(Finding.first_seen <= date_to)
     return query
+# Sentinel for "resolve the caller's workspace scope yourself". `None` is a
+# real, meaningful value here (a global admin sees every workspace, #57), so
+# it cannot double as "not supplied" -- hence an object() rather than None.
+_RESOLVE_SCOPE = object()
+
+
+def _fixability_conditions(cve_id_column) -> dict[str, object]:
+    """(#246) The SQL condition for each fixability bucket, expressed
+    against whichever `cve_id` column the caller has in scope --
+    `Finding.cve_id` when filtering the list, `subquery.c.cve_id` when
+    counting the facet (#270).
+
+    One definition, two callers, deliberately: the filter and the count
+    next to it are the same claim ("N findings are fixable") made in two
+    places, and the only way they can never disagree is to be the same
+    expression. Expressed as subqueries over CveEnrichment rather than a
+    join so it composes with the Target/TargetGroup joins without
+    duplicating rows when a finding's CVE has several enrichment matches.
+
+    `unknown` deliberately includes findings with no CVE at all: see
+    app.core.fixability -- "we have not established either way" is not a
+    softer way of saying no_known_fix.
+    """
+    fixable_cves = select(CveEnrichment.cve_id).where(
+        CveEnrichment.osv_found == True,  # noqa: E712
+        CveEnrichment.fixed_versions.is_not(None),
+        CveEnrichment.fixed_versions != "[]",
+    )
+    known_cves = select(CveEnrichment.cve_id).where(CveEnrichment.osv_found == True)  # noqa: E712
+    return {
+        FIXABLE: cve_id_column.in_(fixable_cves),
+        NO_KNOWN_FIX: and_(cve_id_column.in_(known_cves), cve_id_column.not_in(fixable_cves)),
+        UNKNOWN: or_(cve_id_column.is_(None), cve_id_column.not_in(known_cves)),
+    }
 
 
 def _filtered_findings_query(
@@ -306,8 +342,8 @@ def _filtered_findings_query(
     severity: list[Severity] | None,
     tool: list[str] | None,
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None,
-    environment: str | None,
-    owner: str | None,
+    environment: list[str] | None,
+    owner: list[str] | None,
     search: str | None,
     rule_id: list[str] | None = None,
     new_since_days: int | None = None,
@@ -318,21 +354,32 @@ def _filtered_findings_query(
     # for nothing. See _apply_finding_window for the overlap semantics.
     date_from: datetime | None = None,
     date_to: datetime | None = None,
+    ws_ids=_RESOLVE_SCOPE,
 ):
     """Every list_findings filter except `category` (deliberately excluded:
     the category-counts facet below needs the SAME filters applied for its
     counts to mean anything -- "12 SCA findings" while severity=Critical is
     active must count only critical SCA findings -- but obviously can't
-    itself filter by the one dimension it's counting across). Shared so the
-    two endpoints can't drift on what a given filter param means.
+    itself filter by the one dimension it's counting across; callers that
+    do want it apply `_apply_category` on top). Shared by the lists and by
+    both facet endpoints so they can't drift on what a given filter param
+    means -- a facet count is a promise about what the list will show when
+    you click it (#270), which only holds if both run the same query.
 
-    `target_id`/`state`/`severity`/`tool`/`fixability` are all multi-select
-    (the Findings page's filter bar lets a caller pick more than one value
-    per filter, e.g. Critical+High severity in one view) -- each is `None`
-    for "no filter", or a non-empty list applied as `.in_(...)`, never a
-    single bare value. An empty list is treated the same as `None` (a
-    caller that deselects every checkbox means "no filter", not "match
-    nothing") rather than a query that can never match any row.
+    `target_id`/`state`/`severity`/`tool`/`fixability`/`environment`/`owner`
+    are all multi-select (the Findings page's filter bar lets a caller pick
+    more than one value per filter, e.g. Critical+High severity in one
+    view) -- each is `None` for "no filter", or a non-empty list applied as
+    `.in_(...)`, never a single bare value. An empty list is treated the
+    same as `None` (a caller that deselects every checkbox means "no
+    filter", not "match nothing") rather than a query that can never match
+    any row.
+
+    (`environment`/`owner` arrived single-valued with #251 and became
+    multi-select with #270's facet pills, so that every filter in the bar
+    behaves the same way as its neighbours. FastAPI parses a lone
+    `?environment=production` into a one-element list, so every existing
+    caller and bookmarked URL still means exactly what it did before.)
 
     `resolved` (Open vs Resolved split on the Findings page) is `None` for
     every caller except that page itself: a target's own Vulnerabilities
@@ -352,8 +399,17 @@ def _filtered_findings_query(
     Returns `(query, target_joined)`, or `(None, False)` when the caller's
     workspace membership resolves to zero workspaces (#57): a real query
     would come back empty anyway, and returning None here lets both callers
-    short-circuit without a wasted round trip."""
-    ws_ids = accessible_workspace_ids(session, user)
+    short-circuit without a wasted round trip.
+
+    `ws_ids` is the caller's workspace scope (#57), resolved here by
+    default. GET /facets builds eight of these queries for one request and
+    passes the scope in instead: it is constant within a request, and eight
+    identical membership lookups per page load is a cost with nothing to
+    show for it. Pass it only after resolving it via
+    accessible_workspace_ids for the *same* user -- this is the one thing
+    standing between a caller and another tenant's rows."""
+    if ws_ids is _RESOLVE_SCOPE:
+        ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return None, False
 
@@ -402,7 +458,7 @@ def _filtered_findings_query(
         # below at 1 so `?new_since_days=0` cannot mean "nothing ever".
         cutoff = utcnow() - timedelta(days=max(1, new_since_days))
         query = query.where(Finding.first_seen >= cutoff)
-    if environment is not None or owner is not None:
+    if environment or owner:
         # (#251) Filter findings by the owning target's metadata. Needs the
         # Target join, which only happens above when ws_ids is not None (an
         # admin caller skips it), so join here if it hasn't happened yet;
@@ -410,35 +466,17 @@ def _filtered_findings_query(
         if not target_joined:
             query = query.join(Target, Target.id == Finding.target_id)
             target_joined = True
-        if environment is not None:
-            query = query.where(Target.environment == environment)
-        if owner is not None:
-            query = query.where(Target.owner == owner)
+        if environment:
+            query = query.where(Target.environment.in_(environment))
+        if owner:
+            query = query.where(Target.owner.in_(owner))
     if fixability:
-        # (#246) Expressed as a subquery over CveEnrichment rather than a
-        # join, so it composes with the joins above without duplicating rows
-        # when a finding's CVE has several enrichment matches.
-        fixable_cves = select(CveEnrichment.cve_id).where(
-            CveEnrichment.osv_found == True,  # noqa: E712
-            CveEnrichment.fixed_versions.is_not(None),
-            CveEnrichment.fixed_versions != "[]",
-        )
-        known_cves = select(CveEnrichment.cve_id).where(CveEnrichment.osv_found == True)  # noqa: E712
         # Multi-select: each requested value contributes its own condition,
         # OR'd together (e.g. "fixable" + "unknown" together means "either
         # a known fix exists, or fixability couldn't be established at
         # all" -- exactly what selecting both checkboxes should mean).
-        conditions = []
-        if "fixable" in fixability:
-            conditions.append(Finding.cve_id.in_(fixable_cves))
-        if "no_known_fix" in fixability:
-            conditions.append(
-                and_(Finding.cve_id.in_(known_cves), Finding.cve_id.not_in(fixable_cves))
-            )
-        if "unknown" in fixability:
-            conditions.append(
-                or_(Finding.cve_id.is_(None), Finding.cve_id.not_in(known_cves))
-            )
+        buckets = _fixability_conditions(Finding.cve_id)
+        conditions = [buckets[value] for value in (FIXABLE, NO_KNOWN_FIX, UNKNOWN) if value in fixability]
         if conditions:
             query = query.where(or_(*conditions))
     if search:
@@ -534,8 +572,8 @@ def list_findings(
     category: str | None = None,
     exclude_category: list[str] | None = Query(default=None),
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
-    environment: str | None = None,
-    owner: str | None = None,
+    environment: list[str] | None = Query(default=None),
+    owner: list[str] | None = Query(default=None),
     search: str | None = None,
     # Expanding a grouped row: same list, both halves of the group key pinned.
     rule_id: list[str] | None = Query(default=None),
@@ -691,8 +729,8 @@ def list_finding_groups(
     category: str | None = None,
     exclude_category: list[str] | None = Query(default=None),
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
-    environment: str | None = None,
-    owner: str | None = None,
+    environment: list[str] | None = Query(default=None),
+    owner: list[str] | None = Query(default=None),
     search: str | None = None,
     new_since_days: int | None = None,
     sort: Literal["exploitability", "severity", "blast_radius", "age", "recent"] = DEFAULT_SORT,
@@ -883,13 +921,362 @@ def distinct_finding_tools(session: Session, user: User) -> list[str]:
     the moment the endpoint grows a parameter.
     """
     ws_ids = accessible_workspace_ids(session, user)
+class FacetCount(BaseModel):
+    """One option of one filter, and how many findings it would match."""
+    value: str
+    count: int
+
+
+class FindingFacets(BaseModel):
+    """(#270) Every filterable dimension of the Findings page, each with a
+    per-value count, so the filter bar can read as a summary of the backlog
+    ("Critical 12") instead of a row of controls you have to operate to
+    find anything out.
+
+    Every dimension lists its full option set, including values at 0 (see
+    _visible_tools): a filter that currently matches nothing and a filter
+    that doesn't exist have to look different.
+
+    `total` is the count for the *complete* filter set -- every dimension
+    applied, nothing excluded. It is exactly GET /api/findings' `total` for
+    the same query params, from the same query builder, and the tests pin
+    that: a count in the filter bar that disagrees with the list below it
+    is worse than no count at all.
+    """
+    severity: list[FacetCount]
+    state: list[FacetCount]
+    tool: list[FacetCount]
+    fixability: list[FacetCount]
+    environment: list[FacetCount]
+    owner: list[FacetCount]
+    category: list[FacetCount]
+    total: int
+
+
+def _enum_facet_key(raw, enum_cls) -> str:
+    """The API-facing spelling ("Critical") of a value read back from an
+    enum column.
+
+    Finding.severity/state are `sa.Enum` columns, which persist the member
+    *name* ("CRITICAL"), while every API surface -- the query params this
+    endpoint accepts, FindingOut, the frontend, SEVERITY_ORDER -- speaks the
+    member *value* ("Critical"). In practice the member itself arrives:
+    `query.subquery()` proxies each column with its type intact, so
+    `subq.c["severity"]` still carries `sa.Enum(Severity)` and its result
+    processor maps the stored label back before we ever see it. The later
+    branches are belt-and-braces for a raw name or a raw value.
+
+    Worth knowing before "simplifying" any of this against the schema:
+    SQLAlchemy never reflects, so bind and result processing come from
+    `SQLModel.metadata`, not from the DB's actual column type. The DDL a
+    migration happened to declare for a column therefore tells you nothing
+    about what arrives here -- a field typed `sa.Enum` in the model is
+    processed as one even where a hand-written migration declared it
+    VARCHAR. Read the model, not the migration.
+
+    Going through `enum_cls.__members__` rather than transforming the text
+    is the part that matters: name and value diverge non-trivially for
+    exactly the members a naive transform breaks -- INFO -> "Informational"
+    (not "Info"), ACCEPTED_RISK -> "Accepted Risk", WONT_FIX -> "Won't Fix".
+    A `.title()`/`.capitalize()` fallback would have produced three keys
+    outside the option universe, i.e. three permanently-zero pills, with
+    nothing anywhere saying so.
+
+    Which is also why the unmatched case raises. `_facet_list` builds its
+    rows from the option universe, so a key that matches no option is not a
+    visible error -- it is a count that quietly disappears and leaves a 0
+    behind, the exact failure this function exists to prevent. On a security
+    dashboard a wrong number that looks right is worse than a 500.
+    """
+    if isinstance(raw, enum_cls):
+        return raw.value
+    text = str(raw)
+    member = enum_cls.__members__.get(text)
+    if member is not None:
+        return member.value
+    if text in {m.value for m in enum_cls}:
+        return text
+    logger.error(
+        "facet counts: %r is not a name or value of %s; refusing to drop the bucket silently",
+        text,
+        enum_cls.__name__,
+    )
+    raise ValueError(f"unrecognised {enum_cls.__name__} spelling in facet counts: {text!r}")
+
+
+def _counts_by_column(session: Session, query, column_name: str, enum_cls=None) -> dict[str, int]:
+    """`GROUP BY` count over one of Finding's own columns.
+
+    Aggregated in SQL, never by loading rows and counting in Python: a real
+    instance carries ~1400 findings across 35 repos and the filter bar asks
+    for every dimension on every page load."""
+    subq = query.subquery()
+    column = subq.c[column_name]
+    rows = session.exec(select(column, func.count()).group_by(column)).all()
+    counts: dict[str, int] = {}
+    for value, count in rows:
+        if value is None:
+            continue
+        key = _enum_facet_key(value, enum_cls) if enum_cls is not None else str(value)
+        # Summed rather than assigned: two DB spellings of one enum member
+        # would otherwise silently drop a bucket (see _enum_facet_key).
+        counts[key] = counts.get(key, 0) + count
+    return counts
+
+
+def _counts_by_target_column(session: Session, query, column) -> dict[str, int]:
+    """`GROUP BY` count over a column of the finding's *target* (#251's
+    environment/owner). Joined onto the filtered set by primary key, so it
+    cannot duplicate rows the way a second filter join could.
+
+    NULLs are dropped rather than counted under an "unrecorded" bucket,
+    matching _target_facet's own call on that: the facet exists to narrow a
+    list, and on day one "unrecorded" would be the biggest entry in it."""
+    subq = query.subquery()
+    rows = session.exec(
+        select(column, func.count())
+        .select_from(subq)
+        .join(Target, Target.id == subq.c.target_id)
+        .group_by(column)
+    ).all()
+    return {str(value): count for value, count in rows if value}
+
+
+def _counts_by_fixability(session: Session, query) -> dict[str, int]:
+    """(#246) Counts per fixability bucket.
+
+    fixability is derived from CveEnrichment rather than stored on Finding,
+    so there is no column to GROUP BY; this is one aggregate COUNT per
+    bucket instead (three cheap queries, still zero rows into Python),
+    each using the *same* condition `_filtered_findings_query` would apply
+    if you clicked that pill -- see _fixability_conditions."""
+    subq = query.subquery()
+    buckets = _fixability_conditions(subq.c.cve_id)
+    return {
+        value: session.exec(select(func.count()).select_from(subq).where(condition)).one()
+        for value, condition in buckets.items()
+    }
+
+
+def _category_counts(session: Session, query) -> dict[str, int]:
+    """Counts per vulnerability-type category. Category is derived from
+    `tool` (app.core.tool_registry.tool_category) rather than stored, so
+    this groups by tool in SQL and folds the (at most a few dozen) distinct
+    tool names into categories in Python -- the fold is over tools, not
+    findings, so it doesn't grow with the backlog."""
+    counts = {c: 0 for c in all_categories()}
+    if query is None:
+        return counts
+    for tool_name, count in _counts_by_column(session, query, "tool").items():
+        counts[tool_category(tool_name)] += count
+    return counts
+
+
+def _facet_list(values: list[str], counts: dict[str, int]) -> list[FacetCount]:
+    """Pair an option universe with the counts just measured, zeros and
+    all. Driven by `values` rather than by the counts, so the option set is
+    stable as filters change: options never appear and disappear underneath
+    someone mid-triage."""
+    return [FacetCount(value=value, count=counts.get(value, 0)) for value in values]
+
+
+# Which filter params a dimension must drop when counting itself (rule 1
+# below). Nearly always just its own, with two that are not:
+#
+#   state    also drops `resolved`. `resolved` is the same dimension wearing
+#            a different name -- it narrows to OPEN_FINDING_STATES or
+#            RESOLVED_FINDING_STATES -- and in the list `state` *wins* over
+#            it (see _filtered_findings_query). Counting states with
+#            `resolved` still applied, while the list ignores it, is exactly
+#            how `?state=Open&resolved=false` came to report "Mitigated: 0"
+#            beside a `?state=Mitigated&resolved=false` query that returns
+#            rows. A count answers "what would I get if I picked this
+#            state", and the answer the list gives ignores `resolved`.
+#   category is not a _filtered_findings_query param at all; it is applied
+#            on top via _apply_category, along with `exclude_category` --
+#            the queue tabs' "every category but these" (#456), which is the
+#            same dimension stated as a complement. Both are skipped for the
+#            category dimension itself, inside scoped_query rather than here.
+#
+# Doubles as the allow-list of dimension names: a typo'd dimension would
+# otherwise drop nothing and quietly return counts filtered by themselves,
+# which still look like plausible numbers.
+_FACET_SELF_EXCLUSIONS: dict[str, tuple[str, ...]] = {
+    "severity": ("severity",),
+    "state": ("state", "resolved"),
+    "tool": ("tool",),
+    "fixability": ("fixability",),
+    "environment": ("environment",),
+    "owner": ("owner",),
+    "category": (),
+}
+
+
+@router.get("/facets")
+def list_finding_facets(
+    target_id: list[int] | None = Query(default=None),
+    group_id: int | None = None,
+    branch: str | None = None,
+    state: list[FindingState] | None = Query(default=None),
+    resolved: bool | None = None,
+    severity: list[Severity] | None = Query(default=None),
+    tool: list[str] | None = Query(default=None),
+    category: str | None = None,
+    exclude_category: list[str] | None = Query(default=None),
+    fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
+    environment: list[str] | None = Query(default=None),
+    owner: list[str] | None = Query(default=None),
+    search: str | None = None,
+    new_since_days: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> FindingFacets:
+    """(#270) Per-value counts for every filterable dimension at once,
+    taking exactly the same query params as GET /api/findings.
+
+    Two rules make these numbers mean what a reader assumes they mean:
+
+    1. Each dimension's counts are scoped by every OTHER active filter, but
+       *not* by its own. Selecting environment=production narrows the
+       numbers next to Critical/High to production; it must not zero out
+       every severity except the one already selected, which is what
+       applying a dimension to itself would do (and would make the control
+       unusable: you could never see what widening to High would get you).
+       `category` is the one dimension that is a tab rather than a filter,
+       and follows the same rule -- counted across, applied to everything
+       else. `state` additionally drops `resolved`, which is the same
+       dimension under another name; see _FACET_SELF_EXCLUSIONS.
+
+       Concretely, every count answers one question: "how many findings
+       would the list return if I selected this value?". The tests assert
+       exactly that, per value, per dimension, against GET /api/findings.
+    2. Every count comes from `_filtered_findings_query`, the same builder
+       GET /api/findings uses -- including its workspace scoping (#57). A
+       count is a promise about what clicking it shows, so it is built from
+       the query that will actually run, and can never total up rows from a
+       workspace the caller isn't a member of.
+
+    One endpoint rather than seven: the filter bar needs all of these on
+    every page load, and seven round-trips that each re-derive the same
+    filter set is both slower and a way for them to disagree mid-flight.
+
+    Aggregated with SQL GROUP BY/COUNT throughout -- no dimension loads
+    findings into Python to count them.
+    """
+    filters = dict(
+        target_id=target_id,
+        group_id=group_id,
+        branch=branch,
+        state=state,
+        resolved=resolved,
+        severity=severity,
+        tool=tool,
+        fixability=fixability,
+        environment=environment,
+        owner=owner,
+        search=search,
+        new_since_days=new_since_days,
+    )
+
+    # Resolved once, then handed to every query below. It is constant within
+    # a request, and this endpoint builds eleven scoped queries for one page
+    # load; re-deriving the caller's memberships eleven times is ten round
+    # trips spent re-learning the same thing.
+    ws_ids = accessible_workspace_ids(session, user)
+
+    def scoped_query(dimension: str | None):
+        """The filtered query one dimension's counts are measured over:
+        every filter except the ones that dimension excludes for itself
+        (rule 1 above, see _FACET_SELF_EXCLUSIONS). `dimension=None` applies
+        the lot, which is what `total` wants."""
+        active = dict(filters)
+        if dimension is not None:
+            if dimension not in _FACET_SELF_EXCLUSIONS:
+                raise ValueError(f"unknown facet dimension: {dimension!r}")
+            for key in _FACET_SELF_EXCLUSIONS[dimension]:
+                active[key] = None
+        query, _ = _filtered_findings_query(session, user, ws_ids=ws_ids, **active)
+        if query is None:
+            # (#57) Caller is in zero workspaces: every count is 0, and
+            # crucially not "every workspace's".
+            return None
+        if dimension == "category":
+            # The dimension being counted across, so neither the active
+            # category tab nor a queue's category exclusion applies to it.
+            return query
+        return _apply_category(query, category, exclude_category)
+
+    def counts_for(dimension: str, counter) -> dict[str, int]:
+        query = scoped_query(dimension)
+        return {} if query is None else counter(query)
+
+    total_query = scoped_query(None)
+    total = (
+        0
+        if total_query is None
+        else session.exec(select(func.count()).select_from(total_query.subquery())).one()
+    )
+
+    return FindingFacets(
+        # Severity and state are closed enums: the full ladder is always
+        # offered, so "0 Critical" reads as the good news it is rather than
+        # as a missing row. The frontend narrows state to the options that
+        # make sense in the active queue.
+        severity=_facet_list(
+            [s.value for s in Severity],
+            counts_for("severity", lambda q: _counts_by_column(session, q, "severity", Severity)),
+        ),
+        state=_facet_list(
+            [s.value for s in FindingState],
+            counts_for("state", lambda q: _counts_by_column(session, q, "state", FindingState)),
+        ),
+        tool=_facet_list(
+            _visible_tools(session, user, ws_ids),
+            counts_for("tool", lambda q: _counts_by_column(session, q, "tool")),
+        ),
+        fixability=_facet_list([FIXABLE, NO_KNOWN_FIX, UNKNOWN], counts_for("fixability", lambda q: _counts_by_fixability(session, q))),
+        environment=_facet_list(
+            _target_facet(session, user, Target.environment, ws_ids),
+            counts_for("environment", lambda q: _counts_by_target_column(session, q, Target.environment)),
+        ),
+        owner=_facet_list(
+            _target_facet(session, user, Target.owner, ws_ids),
+            counts_for("owner", lambda q: _counts_by_target_column(session, q, Target.owner)),
+        ),
+        category=_facet_list(all_categories(), counts_for("category", lambda q: _category_counts(session, q))),
+        total=total,
+    )
+
+
+@router.get("/facets/tools")
+def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
+    """Distinct tool names across findings visible to the caller (issue #57),
+    for populating the tool filter. Still here, unchanged, alongside the
+    richer GET /facets (#270): it's the cheapest possible answer to "what
+    tools exist", which is all some callers want."""
+    return _visible_tools(session, user)
+
+
+def _visible_tools(session: Session, user: User, ws_ids=_RESOLVE_SCOPE) -> list[str]:
+    """Every tool that has produced at least one finding the caller can see
+    (#57), deliberately *unfiltered* by the active filter bar.
+
+    This is the option universe, not the counts: a tool whose findings are
+    all filtered out right now still belongs in the filter, showing 0 --
+    "none match" and "not a dimension" have to look different (#270)."""
+    if ws_ids is _RESOLVE_SCOPE:
+        ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
     query = target_lifecycle.exclude_deleted_targets(select(Finding.tool).distinct(), Finding.target_id)
     if ws_ids is not None:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
-    rows = session.exec(query).all()
-    return sorted(rows)
+    # Not filtered for emptiness: Finding.tool is non-nullable, and a
+    # free-form ingest that wrote "" is a real value that real findings
+    # carry. Dropping it here while _counts_by_column still counts it would
+    # make the tool column's counts sum to less than `total` with no row
+    # anywhere explaining the gap.
+    return sorted(session.exec(query).all())
 
 
 def distinct_target_environments(session: Session, user: User) -> list[str]:
@@ -928,8 +1315,8 @@ def list_category_facets(
     severity: list[Severity] | None = Query(default=None),
     tool: list[str] | None = Query(default=None),
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
-    environment: str | None = None,
-    owner: str | None = None,
+    environment: list[str] | None = Query(default=None),
+    owner: list[str] | None = Query(default=None),
     search: str | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
@@ -946,17 +1333,16 @@ def list_category_facets(
     Every registered category is returned, including ones with count 0 --
     a tab that's currently empty under the active filters is still a real,
     clickable destination, not the same as a category that doesn't exist
-    (app.core.tool_registry.all_categories)."""
+    (app.core.tool_registry.all_categories).
+
+    Kept as its own route after #270 folded the same numbers into GET
+    /facets' `category` dimension: the tabs are the one caller that wants
+    only this, and anything already pointing here keeps working."""
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
         severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
     )
-    counts = {c: 0 for c in all_categories()}
-    if query is not None:
-        subq = query.subquery()
-        rows = session.exec(select(subq.c.tool, func.count()).group_by(subq.c.tool)).all()
-        for tool_name, count in rows:
-            counts[tool_category(tool_name)] += count
+    counts = _category_counts(session, query)
     return [CategoryFacet(category=c, count=counts[c]) for c in all_categories()]
 
 
@@ -1006,8 +1392,9 @@ def list_owner_facets(
     return distinct_target_owners(session, user)
 
 
-def _target_facet(session: Session, user: User, column) -> list[str]:
-    ws_ids = accessible_workspace_ids(session, user)
+def _target_facet(session: Session, user: User, column, ws_ids=_RESOLVE_SCOPE) -> list[str]:
+    if ws_ids is _RESOLVE_SCOPE:
+        ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
     # (#273) A deleted target's owner/environment must not linger in the

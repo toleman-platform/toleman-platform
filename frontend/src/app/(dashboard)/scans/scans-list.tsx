@@ -15,6 +15,8 @@ import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pa
 import { ScanProgress, ScanHealthBadge } from "@/components/features/scans";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
+import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
+import { ReloadButton } from "@/components/reload-button";
 import { SelectAllVisible } from "@/components/ui/list-row";
 import { useSelection } from "@/hooks/use-selection";
 import { Scan as ScanIcon } from "lucide-react";
@@ -68,7 +70,17 @@ function lastScannedBucket(lastScanAt: string | null): string {
 // targets/targets-list.tsx), #117's CriticalityChip (reused verbatim, not
 // re-implemented), and #118's ConfirmDialog for a Prod-aware confirmation
 // step nothing on this surface had before.
-export function ScansList({ targets, summary }: { targets: Target[]; summary: ScanSummary }) {
+export function ScansList({
+  targets,
+  summary,
+  summaryFailed = false,
+}: {
+  targets: Target[];
+  summary: ScanSummary;
+  /** `/api/scans/summary` did not answer. `summary` is then an empty map that
+   * means "we do not know", not "nothing has ever been scanned". */
+  summaryFailed?: boolean;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [dispatchState, setDispatchState] = useState<Record<number, DispatchState>>({});
@@ -98,11 +110,21 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
       }
       if (criticality && t.label !== criticality) return false;
       const entry = summary[String(t.id)];
-      if (tool && !(entry?.tools ?? []).includes(tool)) return false;
-      if (lastScanned && lastScannedBucket(entry?.last_scan_at ?? null) !== lastScanned) return false;
+      // Both of these predicates are evaluated against scan history, so with
+      // the summary missing neither can be answered — and answering anyway
+      // produced the worst possible result: `tool` excluded *every* target and
+      // the page rendered "No targets match these filters", while
+      // `last_scanned=never` matched every target. A filter that cannot be
+      // evaluated is skipped rather than guessed, and the banner above the
+      // list says so; an unapplied filter the reader is told about beats a
+      // confidently wrong empty list.
+      if (!summaryFailed) {
+        if (tool && !(entry?.tools ?? []).includes(tool)) return false;
+        if (lastScanned && lastScannedBucket(entry?.last_scan_at ?? null) !== lastScanned) return false;
+      }
       return true;
     });
-  }, [targets, summary, search, criticality, tool, lastScanned]);
+  }, [targets, summary, summaryFailed, search, criticality, tool, lastScanned]);
 
   const { items: visible, clampedPage } = paginateSlice(filtered, page, pageSize);
   const visibleIds = useMemo(() => visible.map((t) => t.id), [visible]);
@@ -224,6 +246,18 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
 
   return (
     <div className="flex flex-col gap-3">
+      <PartialFailureBanner
+        sources={[
+          {
+            label: "Scan history",
+            failed: summaryFailed,
+            consequence:
+              "Freshness and tool history are not shown, rows read — rather than “never scanned”, and the tool and last-scanned filters are not applied. Scans can still be triggered.",
+          },
+        ]}
+        action={<ReloadButton />}
+      />
+
       {filtered.length > 0 && (
         <SelectAllVisible
           allSelected={selection.allVisibleSelected}
@@ -320,12 +354,21 @@ export function ScansList({ targets, summary }: { targets: Target[]; summary: Sc
                     </div>
                     <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
                       {t.default_branch} ·{" "}
+                      {/* `is_active` is read off the target row itself, so it
+                          stays truthful whether or not the scan summary
+                          answered; only the freshness/tool clauses below
+                          depend on it. Em dash is the codebase's unknown
+                          glyph (DESIGN_SYSTEM.md §18): "never scanned" is a
+                          statement about the repository and must not be
+                          produced by a failed request. */}
                       {t.is_active === false
                         ? "scanning off"
-                        : entry?.last_scan_at
-                          ? `last scan ${timeAgo(entry.last_scan_at)}`
-                          : "never scanned"}
-                      {entry && entry.tools.length > 0 ? ` · ${entry.tools.join(", ")}` : ""}
+                        : summaryFailed
+                          ? "— scan history unavailable"
+                          : entry?.last_scan_at
+                            ? `last scan ${timeAgo(entry.last_scan_at)}`
+                            : "never scanned"}
+                      {!summaryFailed && entry && entry.tools.length > 0 ? ` · ${entry.tools.join(", ")}` : ""}
                     </div>
                     {/* (#229) The line above is reassuring by construction:
                         "last scan 4m ago · trivy" says the repo was checked.

@@ -220,6 +220,51 @@ describe("FindingGroupRow", () => {
     await waitFor(() => expect(findings).toHaveBeenCalledTimes(2));
   });
 
+  it("says so when a group triage fails, instead of looking like it worked", async () => {
+    // The defect: `try { ... } finally { setSubmitting(false) }` with no
+    // `catch`. A rejected bulkTriage re-enabled the buttons and changed
+    // nothing else, which is indistinguishable from a success whose list has
+    // not refreshed -- on a single click that can move 148 findings.
+    findings.mockResolvedValue({ items: [makeMember(38), makeMember(37)], total: 2 });
+    bulkTriage.mockRejectedValue(new Error("502 Bad Gateway"));
+
+    render(<FindingGroupRow group={makeGroup()} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    await waitFor(() => expect(screen.getByText(/package-38/)).not.toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "Accepted Risk" }));
+
+    // The API's own message, in an alert so it is announced and not merely
+    // drawn.
+    const alert = await waitFor(() => screen.getByRole("alert"));
+    expect(alert.textContent).toContain("502 Bad Gateway");
+    expect(alert.textContent).toContain("Group triage failed");
+
+    // Everything the success path does must NOT have happened: the row stays
+    // expanded over its members, so the reader can see what was not triaged.
+    expect(screen.getByText(/package-38/)).not.toBeNull();
+    expect(screen.getByRole("button", { expanded: true })).not.toBeNull();
+    // ...and the buttons are usable again, so a retry is possible.
+    expect(screen.getByRole("button", { name: "Accepted Risk" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("does not claim the findings were left unchanged, which it cannot know", async () => {
+    // A rejected request may still have applied some or all of the writes
+    // before failing. Replacing one false certainty ("done") with another
+    // ("nothing happened") would repeat the bug in the opposite direction.
+    findings.mockResolvedValue({ items: [makeMember(38)], total: 1 });
+    bulkTriage.mockRejectedValue(new Error("timeout"));
+
+    render(<FindingGroupRow group={makeGroup()} />);
+    fireEvent.click(screen.getByRole("button", { expanded: false }));
+    await waitFor(() => expect(screen.getByText(/package-38/)).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Accepted Risk" }));
+
+    const alert = await waitFor(() => screen.getByRole("alert"));
+    expect(alert.textContent).toMatch(/may not have been updated/i);
+    expect(alert.textContent).not.toMatch(/no findings were (changed|updated)/i);
+  });
+
   it("never fetches for an ungrouped row, which would reveal only itself", async () => {
     render(<FindingGroupRow group={makeGroup({ grouped: false, category: "Secrets", finding_count: 1 })} />);
     fireEvent.click(screen.getByRole("button", { expanded: false }));

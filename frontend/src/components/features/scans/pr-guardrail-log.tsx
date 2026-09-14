@@ -674,8 +674,20 @@ export function PrGuardrailLog({
                         tools_failed is: "0 new findings" means something
                         much narrower here, and the row must not imply
                         whole-repo assurance it never had. */}
+                    {/* The colour below is `--warning`, not a raw `amber-*`,
+                        for the same two reasons as the fixability badge in
+                        finding-row.tsx: DESIGN_SYSTEM.md §1 bans raw color
+                        scales, and the `dark:` half never applied (the `dark`
+                        custom variant matches a `.dark` class the app never
+                        sets — see globals.css). `text-amber-600` (#d97706)
+                        therefore rendered in BOTH themes, which on the light
+                        canvas is ~3.2:1 and fails §26's 4.5:1 floor.
+                        `--warning` is #f2924a on dark and #8a6200 on light;
+                        both pass. This caveat is the one line telling a
+                        reviewer the scan did not cover the whole repo, so it
+                        is a bad one to render unreadable. */}
                     {entry.scan_scope === "diff" && (
-                      <div className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                      <div className="mt-1 text-xs text-warning">
                         {(entry.blast_radius_files ?? 0) > 0
                           ? /* (#244) Saying "changed file(s) only" here would
                                understate a scan that deliberately reached past

@@ -1,6 +1,30 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* INERT — and deliberately left that way. This is shadcn's stock variant,
+   which matches a `.dark` CLASS; this app has never used one. Theming is done
+   entirely with `data-theme="light"` on <html> (see the token comment below
+   and src/components/theme-toggle.tsx), dark being the attribute-less default,
+   so `.dark` appears nowhere in the codebase and nothing can match `&:is(.dark
+   *)`. Every `dark:` utility in src/ is therefore dead CSS: whatever the
+   non-`dark:` half of the class list says is what renders, in BOTH themes.
+
+   That silently produced two real contrast failures, since a `text-x-700
+   dark:text-x-400` pair collapses to its light-theme half on the dark canvas.
+   Both are fixed at the call site by switching to the `--success` /
+   `--warning` tokens, which flip per theme the way the dead variant was
+   supposed to (finding-row.tsx's fixability badge,
+   pr-guardrail-log.tsx's diff-scope caveat).
+
+   Repointing this at `:root:not([data-theme="light"])` would "fix" the variant
+   in one line, but it would also switch on ~8 remaining `dark:` utilities in
+   the stock shadcn button/input/badge recipes all at once — changing the fill
+   of every outline button, every input and the destructive badge app-wide, in
+   the DEFAULT theme, with no design review behind it. Correcting the two
+   token bugs is the smaller, verifiable change; resurrecting the variant is a
+   deliberate visual decision that deserves its own PR and a look at the
+   result. Until then: do not add new `dark:` utilities, they will not apply.
+   Use the light/dark token pairs defined below instead. */
 @custom-variant dark (&:is(.dark *));
 
 /* Light/dark design tokens (#115); dark is the app's original, unchanged

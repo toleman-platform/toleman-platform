@@ -123,7 +123,14 @@ export function ScanHealthBadge({ health, className }: { health: ScanHealth; cla
     <Badge
       variant="outline"
       className={cn(
-        "inline-flex items-center gap-1.5 border-amber-500/40 bg-amber-500/10 font-medium text-amber-700 dark:text-amber-400",
+        // `--warning`, not raw `amber-*`: DESIGN_SYSTEM.md §1 bans the raw
+        // scales, and the `dark:` half here never applies -- the `dark`
+        // custom variant matches a `.dark` class this app never sets (see
+        // globals.css), so `text-amber-700` (#b45309) rendered on the dark
+        // card in the DEFAULT theme at roughly 3.4:1, under §26's 4.5:1
+        // floor. This badge exists to tell a reader the scan result is not
+        // authoritative, so it is a bad one to render hard to read.
+        "inline-flex items-center gap-1.5 border-warning/40 bg-warning/10 font-medium text-warning",
         className
       )}
     >
@@ -172,7 +179,8 @@ export function ScanHealthNotice({
       <div
         className={cn(
           "flex items-center gap-1.5 font-medium",
-          suspect ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"
+          // Same dead-`dark:` contrast fix as ScanHealthBadge above.
+          suspect ? "text-warning" : "text-muted-foreground"
         )}
       >
         <ShieldAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

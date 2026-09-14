@@ -10,9 +10,11 @@ import {
   SEVERITY_BORDER_COLOR,
   SEVERITY_COLOR,
 } from "@/lib/severity";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useWriteAction } from "@/hooks/use-write-action";
 import { cn } from "@/lib/utils";
 import { parseServerTimestamp } from "@/lib/format/date";
 
@@ -158,7 +160,12 @@ export function FindingGroupRow({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  // One click here dispatches a write against every member of the group — up
+  // to MEMBER_FETCH_CAP findings. It used to have no `catch`, so that click
+  // failing looked exactly like it succeeding: buttons back, row unchanged,
+  // nothing said. See use-write-action.ts.
+  const triageAction = useWriteAction("Group triage failed");
+  const submitting = triageAction.submitting;
 
   const targetName = targets.find((t) => t.id === group.representative_target_id)?.name;
   const age = daysSince(group.oldest_first_seen, now);
@@ -215,21 +222,23 @@ export function FindingGroupRow({
     // and a better audit trail than the same sentence retyped a dozen times.
     const ids = members?.map((m) => m.id) ?? [];
     if (ids.length === 0 || truncated) return;
-    setSubmitting(true);
-    try {
+    await triageAction.run(async () => {
       await api.bulkTriage(ids, toState, reason);
       setReason("");
       // The members just triaged may no longer match the active filters, and
       // the cached list would otherwise keep showing them with their old
       // states -- a second click would then re-triage findings already in that
       // state. Dropped so the next expand re-reads the truth.
+      //
+      // All of this is now reached only on success, which matters more here
+      // than anywhere else on the page: collapsing the row and dropping the
+      // member cache after a *failed* write is the single most convincing way
+      // to tell someone their triage went through when it did not.
       setMembers(null);
       setMemberTotal(0);
       setExpanded(false);
       onTriaged?.();
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   return (
@@ -344,6 +353,19 @@ export function FindingGroupRow({
                   </Button>
                 ))}
               </div>
+
+              {/* The row stays expanded on failure (see triageGroup), so this
+                  sits directly under the buttons that produced it, with the
+                  member list it would have acted on still on screen. */}
+              {triageAction.error && (
+                <AlertBanner tone="critical" title="Group triage failed" className="mt-2">
+                  {/* As in findings-list.tsx: the request not completing is
+                      not evidence that nothing was written. */}
+                  {triageAction.error} The change was not confirmed, so some of these{" "}
+                  {members.length} findings may not have been updated. Reload to see their
+                  current states before retrying.
+                </AlertBanner>
+              )}
             </>
           )}
 

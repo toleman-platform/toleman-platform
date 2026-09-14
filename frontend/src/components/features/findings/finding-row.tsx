@@ -23,9 +23,14 @@ import {
   STATE_COLOR,
 } from "@/lib/severity";
 import { Card, CardContent } from "@/components/ui/card";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+// Direct path, not the `@/hooks` barrel: that barrel re-exports
+// hooks/features, which imports back into @/components/features, and this is
+// a components/features module.
+import { useWriteAction } from "@/hooks/use-write-action";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { CriticalityChip } from "@/components/features/targets";
@@ -118,7 +123,22 @@ function FixabilityBadge({ finding }: { finding: Finding }) {
       <Badge
         variant="outline"
         title="An upgrade that resolves this is available"
-        className="shrink-0 border-emerald-600/30 bg-emerald-600/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+        // `--success` rather than raw `emerald-*`. Two separate problems with
+        // what was here:
+        //
+        // 1. DESIGN_SYSTEM.md §1 prohibits raw Tailwind color scales, naming
+        //    `text-emerald-500` as its own example, and a `--success` token
+        //    exists precisely for this.
+        // 2. The `dark:text-emerald-400` half was inert. `globals.css` defines
+        //    `@custom-variant dark (&:is(.dark *))`, but the app themes with
+        //    `data-theme="light"` on <html> and never sets a `.dark` class
+        //    anywhere — so every `dark:` utility in the codebase is dead (see
+        //    the note at globals.css). This badge therefore rendered
+        //    `text-emerald-700` (#047857) on the card (#1d2023) in the app's
+        //    DEFAULT theme: roughly 2.9:1, under the 4.5:1 floor §26 commits
+        //    to. `--success` is #34b774 on dark and #047857 on light, so the
+        //    token flips where the dead variant did not, and both sides pass.
+        className="shrink-0 border-success/30 bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
       >
         Fix available
       </Badge>
@@ -686,19 +706,23 @@ export function FindingRow({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Was `try { ... } finally { setSubmitting(false) }` with no `catch`: a
+  // failed triage re-enabled the buttons, left the row exactly as it was, and
+  // said nothing at all. See use-write-action.ts.
+  const triageAction = useWriteAction("Triage failed");
+  const submitting = triageAction.submitting;
 
   async function triage(toState: string) {
-    setSubmitting(true);
-    try {
+    await triageAction.run(async () => {
       await api.triage(finding.id, toState, reason);
+      // Only reached when the write actually succeeded, so a failure now
+      // keeps the panel open with the typed reason intact — the user can
+      // read the error and retry without retyping it.
       setOpen(false);
       setReason("");
       router.refresh();
-    } finally {
-      setSubmitting(false);
-    }
+    });
   }
 
   return (
@@ -842,21 +866,33 @@ export function FindingRow({
               Triage
             </button>
           ) : (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Input
-                className="h-7 min-w-[160px] flex-1 bg-secondary text-xs"
-                placeholder="Reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-              {TRIAGE_STATES.map((s) => (
-                <Button key={s} size="sm" variant="outline" disabled={submitting} onClick={() => triage(s)} className="h-7 text-xs">
-                  {s}
-                </Button>
-              ))}
-              <button onClick={() => setOpen(false)} className="text-xs text-muted-foreground">
-                cancel
-              </button>
+            <div className="mt-2 flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  className="h-7 min-w-[160px] flex-1 bg-secondary text-xs"
+                  placeholder="Reason"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                />
+                {TRIAGE_STATES.map((s) => (
+                  <Button key={s} size="sm" variant="outline" disabled={submitting} onClick={() => triage(s)} className="h-7 text-xs">
+                    {s}
+                  </Button>
+                ))}
+                <button onClick={() => setOpen(false)} className="text-xs text-muted-foreground">
+                  cancel
+                </button>
+              </div>
+              {/* Same component and same wording as the detail drawer's
+                  triage failure, so the two paths to the identical action
+                  fail identically. `AlertBanner` is `role="alert"`, which is
+                  what makes this reach a screen reader at all — the previous
+                  behaviour announced nothing because nothing rendered. */}
+              {triageAction.error && (
+                <AlertBanner tone="critical" title="Triage failed">
+                  {triageAction.error}
+                </AlertBanner>
+              )}
             </div>
           )}
         </div>

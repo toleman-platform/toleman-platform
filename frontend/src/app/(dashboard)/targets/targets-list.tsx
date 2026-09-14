@@ -23,6 +23,8 @@ import { Button } from "@/components/ui/button";
 import { GroupBadge } from "@/components/features/targets/group-badge";
 import { CriticalityChip } from "@/components/features/targets/criticality-chip";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
+import { ReloadButton } from "@/components/reload-button";
 import { pollUntilSettled } from "@/lib/poll";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
 import type { TargetSort } from "./targets-filter-bar";
@@ -149,11 +151,24 @@ function repoSlug(repoUrl: string): string {
 // Scan age, coloured only when it is genuinely stale. A repo scanned today
 // and one scanned last quarter read identically as plain grey text
 // otherwise, which defeats the point of showing the date at all.
-function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
+function ScanFreshness({ lastScanAt, unknown = false }: { lastScanAt: string | null; unknown?: boolean }) {
   // Captured at mount rather than read during render: staleness is measured
   // in days, so re-reading the clock changes nothing visible, and a render
   // that depends on the current time is impure.
   const [now] = useState(() => Date.now());
+  // The scan-summary fetch failed, so there is no freshness to report. This
+  // used to fall through to the branch below and state, in an amber tooltip,
+  // that the repository had never been scanned — on every row at once. The
+  // tooltip was the worst part: it removed any ambiguity a reader might have
+  // read into the bare text. Neutral, not amber: we are not asserting a
+  // staleness problem, we are declining to assert anything.
+  if (unknown) {
+    return (
+      <span className="text-muted-foreground" title="Scan history could not be loaded, so this repository's scan freshness is unknown">
+        — scan history unavailable
+      </span>
+    );
+  }
   if (!lastScanAt) {
     return (
       <span className="text-chart-3" title="This repository has never been scanned">
@@ -176,15 +191,34 @@ function ScanFreshness({ lastScanAt }: { lastScanAt: string | null }) {
 // gets typographic weight and a fixed-width column rather than being one more
 // item in a right-aligned run of text. Everything in the column lines up
 // across rows, which is what makes 35 of them scannable instead of readable.
-function FindingsColumn({ entry, scanned }: { entry?: TargetSummaryEntry; scanned: boolean }) {
+function FindingsColumn({
+  entry,
+  scanned,
+  unknown = false,
+}: {
+  entry?: TargetSummaryEntry;
+  /** `null` when scan history failed to load: we cannot say whether this
+   * target has been scanned, so that fact cannot be used as evidence either
+   * way. The presence of a counts row is then the only measurement signal
+   * left, which is what the `!entry` check below already reads. */
+  scanned: boolean | null;
+  /** The counts fetch failed, so `entry` being absent says nothing. */
+  unknown?: boolean;
+}) {
   // Missing summary and never-scanned are different from clean, and neither
   // may render as a reassuring zero; a repo nobody looked at is unknown,
   // not safe (#174).
-  if (!entry || (entry.open === 0 && !scanned)) {
+  if (unknown || !entry || (entry.open === 0 && scanned === false)) {
     return (
       <div className="w-28 shrink-0 text-right">
-        <div className="text-sm text-muted-foreground/60">--</div>
-        <div className="text-[10px] uppercase tracking-wide text-muted-foreground/60">not scanned</div>
+        {/* Em dash, matching StatCard and DESIGN_SYSTEM.md §18's `— Never
+            scanned`. This column previously rendered two hyphens, making the
+            product's single most load-bearing glyph inconsistent between its
+            two main consumers. */}
+        <div className="text-sm text-muted-foreground">—</div>
+        <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          {unknown ? "unavailable" : "not scanned"}
+        </div>
       </div>
     );
   }
@@ -227,13 +261,22 @@ export function TargetsList({
   targets,
   scanSummary = {},
   targetSummary = {},
+  scanSummaryFailed = false,
+  targetSummaryFailed = false,
 }: {
   targets: Target[];
   // Issue #174: real per-target scan history and open-finding counts. Both
-  // optional and defaulted, callers without them (and a failed fetch on
-  // the page, which degrades to {}) just render the card without that line.
+  // optional and defaulted, callers without them just render the row without
+  // that line.
   scanSummary?: ScanSummary;
   targetSummary?: TargetSummary;
+  // ...but a caller whose fetch *failed* passes the matching boolean, because
+  // "{} because nothing has been scanned" and "{} because the request died"
+  // have to render differently. Everything derived from these maps — the row
+  // text, the quick-filter counts, the default ordering — is suppressed
+  // rather than computed against data we do not have.
+  scanSummaryFailed?: boolean;
+  targetSummaryFailed?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -282,7 +325,14 @@ export function TargetsList({
   // quick-filtered) set so a tab's own count doesn't change when it's the
   // active one; "Needs attention (6)" should mean the same 6 regardless of
   // which tab is currently selected.
-  const quickCounts = useMemo(() => {
+  //
+  // A count is `null` when the data it summarises did not load. "Needs
+  // attention (0)" reads as "nothing needs attention", which is the opposite
+  // of what a failed counts fetch means; "Never scanned (33)" reads as an
+  // estate nobody has ever looked at. The tab keeps its label and simply
+  // shows no number — see the render below, where a null count also disables
+  // the tab, since clicking it would produce a list filtered on nothing.
+  const quickCounts = useMemo((): Record<QuickFilter, number | null> => {
     const base = targets.filter((t) => {
       if (search) {
         const haystack = `${t.name} ${t.repo_url}`.toLowerCase();
@@ -307,8 +357,18 @@ export function TargetsList({
       if (!at) unscanned++;
       else if ((now - parseServerTimestamp(at)) / 86_400_000 > 30) stale++;
     }
-    return { all: base.length, attention, unscanned, stale, deactivated };
-  }, [targets, search, criticality, targetSummary, scanSummary, now]);
+    return {
+      // "All" and "Deactivated" are both counted off the target list itself,
+      // which is a separate fetch and still trustworthy here: `is_active`
+      // lives on the target row, not in either summary, so switching a repo
+      // off stays visible and filterable even with both summaries down.
+      all: base.length,
+      deactivated,
+      attention: targetSummaryFailed ? null : attention,
+      unscanned: scanSummaryFailed ? null : unscanned,
+      stale: scanSummaryFailed ? null : stale,
+    };
+  }, [targets, search, criticality, targetSummary, scanSummary, now, targetSummaryFailed, scanSummaryFailed]);
 
   const filtered = useMemo(() => {
     const matched = targets.filter((t) => {
@@ -317,13 +377,21 @@ export function TargetsList({
         if (!haystack.includes(search)) return false;
       }
       if (criticality && t.label !== criticality) return false;
-      if (quick === "attention") {
+      // Each quick filter is a predicate over a summary map. When that map
+      // failed to load the predicate has no answer, so the filter is skipped
+      // rather than guessed — guessing gave "Needs attention" an empty list
+      // captioned "No targets match these filters", and "Never scanned" the
+      // entire estate. The banner above the list says which filters are
+      // inert, and the tab itself is disabled.
+      if (quick === "attention" && !targetSummaryFailed) {
         const entry = targetSummary[String(t.id)];
         if (!entry || (entry.critical === 0 && entry.high === 0)) return false;
       }
+      // Not guarded by a failure bit: `is_active` is on the target row, so
+      // this predicate is answerable whether or not either summary loaded.
       if (quick === "deactivated" && t.is_active !== false) return false;
-      if (quick === "unscanned" && scanSummary[String(t.id)]?.last_scan_at) return false;
-      if (quick === "stale") {
+      if (quick === "unscanned" && !scanSummaryFailed && scanSummary[String(t.id)]?.last_scan_at) return false;
+      if (quick === "stale" && !scanSummaryFailed) {
         const at = scanSummary[String(t.id)]?.last_scan_at;
         if (!at || (now - parseServerTimestamp(at)) / 86_400_000 <= 30) return false;
       }
@@ -333,6 +401,16 @@ export function TargetsList({
     // Default sort is "most findings", because that is the question this
     // page exists to answer. Alphabetical buried the one repo with 1137 open
     // findings in the middle of 35 rows.
+    //
+    // `?? 0` for a target with no summary row was the bug underneath that:
+    // a target nobody has counted scored 0 and therefore sorted *below* a
+    // target with a single Low finding, so the least-known repositories
+    // ranked as the safest — exactly inverted from what a posture ranking is
+    // for. Unknown posture now sorts to the top of the findings and severity
+    // orderings, on the same reasoning the `stale` ordering already used for
+    // never-scanned repos ("an unscanned repo is the least-known, not the
+    // most recently checked").
+    const isUnknown = (t: Target) => targetSummaryFailed || targetSummary[String(t.id)] === undefined;
     const openOf = (t: Target) => targetSummary[String(t.id)]?.open ?? 0;
     const criticalOf = (t: Target) => targetSummary[String(t.id)]?.critical ?? 0;
     const highOf = (t: Target) => targetSummary[String(t.id)]?.high ?? 0;
@@ -342,6 +420,9 @@ export function TargetsList({
     };
 
     const byName = (a: Target, b: Target) => a.name.localeCompare(b.name);
+    // Unknown-before-known, as a tiebreak-able comparator: 0 when both sides
+    // are equally (un)known, so the real ordering below still decides.
+    const byUnknownFirst = (a: Target, b: Target) => Number(isUnknown(b)) - Number(isUnknown(a));
 
     return [...matched].sort((a, b) => {
       switch (sort) {
@@ -354,14 +435,29 @@ export function TargetsList({
           return scannedAt(a) - scannedAt(b) || byName(a, b);
         case "severity":
           return (
-            criticalOf(b) - criticalOf(a) || highOf(b) - highOf(a) || openOf(b) - openOf(a) || byName(a, b)
+            byUnknownFirst(a, b) ||
+            criticalOf(b) - criticalOf(a) ||
+            highOf(b) - highOf(a) ||
+            openOf(b) - openOf(a) ||
+            byName(a, b)
           );
         case "findings":
         default:
-          return openOf(b) - openOf(a) || criticalOf(b) - criticalOf(a) || byName(a, b);
+          return byUnknownFirst(a, b) || openOf(b) - openOf(a) || criticalOf(b) - criticalOf(a) || byName(a, b);
       }
     });
-  }, [targets, search, criticality, quick, sort, targetSummary, scanSummary, now]);
+  }, [
+    targets,
+    search,
+    criticality,
+    quick,
+    sort,
+    targetSummary,
+    scanSummary,
+    now,
+    targetSummaryFailed,
+    scanSummaryFailed,
+  ]);
 
   useEffect(() => {
     if (!batch || batch.status !== "running") return;
@@ -537,22 +633,56 @@ export function TargetsList({
           Snyk's target-list status filters; "which of my repos need
           looking at" answered in one click instead of reconstructing it
           from the criticality/sort dropdowns. */}
+      <PartialFailureBanner
+        sources={[
+          {
+            label: "Open-finding counts",
+            failed: targetSummaryFailed,
+            consequence:
+              "Targets show — instead of a finding count, the “Needs attention” filter is unavailable, and the list is not ranked by posture.",
+          },
+          {
+            label: "Scan history",
+            failed: scanSummaryFailed,
+            consequence:
+              "Scan freshness is not shown, and the “Never scanned” and “Stale” filters are unavailable.",
+          },
+        ]}
+        action={<ReloadButton />}
+      />
+
       <div className="flex flex-wrap gap-1 border-b border-border pb-2">
-        {QUICK_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => setQuick(f.value)}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-              quick === f.value
-                ? "bg-accent text-accent-strong"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {f.label}
-            <span className="ml-1.5 text-muted-foreground">({quickCounts[f.value]})</span>
-          </button>
-        ))}
+        {QUICK_FILTERS.map((f) => {
+          const count = quickCounts[f.value];
+          // A count of null means the summary behind this filter did not
+          // load. The tab keeps its label but shows no number and cannot be
+          // selected: an un-numbered tab reads as "not known right now",
+          // where "(0)" read as "nothing here", and clicking through to a
+          // list filtered on absent data is how the original bug convinced
+          // an operator that nothing needed attention.
+          const unavailable = count === null;
+          return (
+            <button
+              key={f.value}
+              onClick={() => setQuick(f.value)}
+              disabled={unavailable}
+              title={unavailable ? `${f.label} is unavailable while its data is not loaded` : undefined}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                unavailable
+                  ? "cursor-not-allowed text-muted-foreground opacity-50"
+                  : quick === f.value
+                    ? "bg-accent text-accent-strong"
+                    : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {/* Label and count share one span with a literal space so the
+                  accessible name is "Needs attention (6)", not
+                  "Needs attention(6)". */}
+              <span>{unavailable ? `${f.label} (—)` : `${f.label} (${count})`}</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex items-center justify-between gap-2">
@@ -882,13 +1012,17 @@ export function TargetsList({
                       }
                     />
                   ) : (
-                    <ScanFreshness lastScanAt={scanSummary[String(t.id)]?.last_scan_at ?? null} />
+                    <ScanFreshness
+                      lastScanAt={scanSummary[String(t.id)]?.last_scan_at ?? null}
+                      unknown={scanSummaryFailed}
+                    />
                   )}
                 </div>
               </div>
               <FindingsColumn
                 entry={targetSummary[String(t.id)]}
-                scanned={Boolean(scanSummary[String(t.id)]?.last_scan_at)}
+                scanned={scanSummaryFailed ? null : Boolean(scanSummary[String(t.id)]?.last_scan_at)}
+                unknown={targetSummaryFailed}
               />
               {/* Labelled like the findings column beside it. A bare "2/5"
                   floating at the row end is unreadable as anything, the

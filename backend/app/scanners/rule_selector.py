@@ -46,6 +46,8 @@ block a PR at all) rather than a TODO left by accident.
 from __future__ import annotations
 
 import glob
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -60,6 +62,26 @@ import yaml
 # files) -- point this at wherever that clone is refreshed on a schedule,
 # not at a URL fetched per-scan.
 DEFAULT_REGISTRY_ROOT = os.environ.get("SEMGREP_RULES_REGISTRY_ROOT", "/opt/semgrep-rules")
+
+# Bump whenever build_registry_config's pruning/merging logic changes in a
+# way that would produce a different output file from the same registry
+# clone -- e.g. a new category filter, a different dedupe key, a change to
+# which folders are walked. Cached configs built by an older version are
+# discarded rather than silently reused, which is the whole reason this is
+# a constant and not just a comment.
+REGISTRY_CONFIG_SCHEMA_VERSION = 2
+
+# A detected language does not always map to exactly one registry folder.
+# semgrep-rules keeps 169 security rules under javascript/ and only a
+# handful under typescript/, and 153 of those javascript rules explicitly
+# declare `languages: [javascript, typescript]` -- so pruning a
+# TypeScript repo against typescript/ alone yielded 1 rule where the two
+# folders together yield ~170. Measured on the clone, not assumed.
+# Keyed by detected language; the first entry is the language's own
+# folder. Add an entry here rather than special-casing a caller.
+REGISTRY_LANGUAGE_ALIASES: dict[str, tuple[str, ...]] = {
+    "typescript": ("typescript", "javascript"),
+}
 
 # language -> file extensions used for the census in detect_languages().
 LANGUAGE_EXTENSIONS = {
@@ -97,6 +119,30 @@ def _sig(technology: str, manifest_names: tuple[str, ...], package_names: tuple[
     )
 
 
+def _js_sig(technology: str, package_names: tuple[str, ...]) -> TechnologySignature:
+    """JavaScript/TypeScript equivalent of _sig.
+
+    Needs its own builder because _sig's patterns are Python syntax:
+    dependencies live as JSON keys in package.json rather than as
+    line-leading names in requirements.txt, and imports are
+    `import x from 'pkg'` / `require('pkg')` / `import 'pkg'` rather than
+    `import pkg`. Subpath imports ('next/server', '@aws-sdk/client-s3')
+    count as a hit for the package, which is why the import pattern
+    allows a trailing path segment.
+    """
+    alternation = "|".join(re.escape(n) for n in package_names)
+    return TechnologySignature(
+        technology=technology,
+        manifest_names=("package.json",),
+        # A dependency entry: "express": "^4.18.0"
+        manifest_pattern=re.compile(r'(?m)"(' + alternation + r')"\s*:'),
+        # from 'pkg' | from "pkg/sub" | require('pkg') | import 'pkg'
+        import_pattern=re.compile(
+            r'''(?m)(from|require\s*\(|import)\s*\(?\s*['"](''' + alternation + r""")(/[^'"]*)?['"]"""
+        ),
+    )
+
+
 TECHNOLOGY_SIGNATURES["python"] = {
     "django": _sig("django", ("requirements.txt", "pyproject.toml", "Pipfile"), ("django",), ("django",)),
     "flask": _sig("flask", ("requirements.txt", "pyproject.toml", "Pipfile"), ("flask",), ("flask",)),
@@ -111,6 +157,43 @@ TECHNOLOGY_SIGNATURES["python"] = {
     "boto3": _sig("boto3", ("requirements.txt", "pyproject.toml", "Pipfile"), ("boto3",), ("boto3",)),
     "pymongo": _sig("pymongo", ("requirements.txt", "pyproject.toml", "Pipfile"), ("pymongo",), ("pymongo",)),
 }
+
+# JavaScript/TypeScript. Covers the registry folders that (a) hold three
+# or more security rules and (b) correspond to a real npm package, so a
+# package.json/import check can actually decide them. Rule counts below
+# are from a 2026-09-14 semgrep-rules clone, security-category only, and
+# are what justifies each entry's inclusion -- re-measure rather than
+# guess when adding to this table.
+#
+# Deliberately NOT here: javascript/browser (10 rules). It is not a
+# package, so there is no dependency or import to key on, and the
+# alternative -- always-on for every JS/TS repo -- would push DOM rules
+# at pure Node services without anyone having measured the false-positive
+# cost. Decide it with a fixture, not by defaulting it in.
+_JS_SIGNATURES = {
+    "express": _js_sig("express", ("express",)),                    # 51 rules
+    "angular": _js_sig("angular", ("@angular/core", "@angular/common")),  # 12
+    "aws-lambda": _js_sig("aws-lambda", ("aws-sdk", "@aws-sdk/client-lambda", "aws-lambda")),  # 11
+    "react": _js_sig("react", ("react", "react-dom", "next")),      # 8
+    "playwright": _js_sig("playwright", ("playwright", "@playwright/test")),  # 6
+    "sequelize": _js_sig("sequelize", ("sequelize",)),              # 5
+    "puppeteer": _js_sig("puppeteer", ("puppeteer", "puppeteer-core")),  # 5
+    "jsonwebtoken": _js_sig("jsonwebtoken", ("jsonwebtoken",)),     # 4
+    "nestjs": _js_sig("nestjs", ("@nestjs/core", "@nestjs/common")),  # 3
+    "node-crypto": _js_sig("node-crypto", ("crypto", "node:crypto")),  # 3
+    "jquery": _js_sig("jquery", ("jquery",)),                       # 3
+    "jose": _js_sig("jose", ("jose",)),                             # 3
+}
+# Both share one table: the registry splits its JS/TS rules across
+# javascript/ and typescript/ (see REGISTRY_LANGUAGE_ALIASES) but a
+# repo's dependencies are declared in the same package.json either way.
+TECHNOLOGY_SIGNATURES["javascript"] = _JS_SIGNATURES
+TECHNOLOGY_SIGNATURES["typescript"] = _JS_SIGNATURES
+
+# Still empty, and honestly so: go, java, php and ruby fall back to their
+# "lang" folder alone until someone measures their registry folders the
+# way the tables above were measured. See HANDOFF.md.
+
 # Every language always gets its own "lang" folder (framework-agnostic
 # core security rules) regardless of detected frameworks -- not a
 # TechnologySignature entry, handled directly in build_registry_config.
@@ -197,6 +280,70 @@ class PrunedRegistryConfig:
     technologies: tuple[str, ...]
     path: str
     rule_count: int
+    cache_hit: bool = False  # True when this was reused, not rebuilt
+
+
+def _registry_language_roots(registry_root: str, language: str) -> list[str]:
+    """Existing registry folders that contribute rules for `language`,
+    in priority order (the language's own folder first).
+
+    Returns [] when the vendored clone has nothing for this language --
+    callers treat that as "custom pack only", not as an error.
+    """
+    names = REGISTRY_LANGUAGE_ALIASES.get(language, (language,))
+    return [
+        os.path.join(registry_root, name)
+        for name in names
+        if os.path.isdir(os.path.join(registry_root, name))
+    ]
+
+
+def _registry_fingerprint(registry_root: str, lang_roots: list[str], folders: set[str]) -> str:
+    """Cheap, content-sensitive identity for the slice of the registry
+    clone that build_registry_config would actually read.
+
+    Preferred form is the clone's git HEAD -- one subprocess, and the
+    vendored clone is refreshed by pulling, so HEAD moving is exactly the
+    signal we want. The stat fallback exists because the clone may be
+    shipped as a plain directory (an image layer, a tarball) with no .git
+    at all; it walks the same folders the build would walk but only
+    stats them, which is the point -- stat'ing ~2000 files is cheap, and
+    parsing them as YAML is the expensive thing this cache exists to
+    avoid.
+
+    Note the fallback deliberately hashes (path, size, mtime) rather than
+    file contents: reading every file to hash it would cost roughly what
+    rebuilding costs, which would make the cache pointless.
+    """
+    if os.path.isdir(os.path.join(registry_root, ".git")):
+        try:
+            proc = subprocess.run(
+                ["git", "-C", registry_root, "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            )
+            head = proc.stdout.strip()
+            if proc.returncode == 0 and head:
+                return f"git:{head}"
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    digest = hashlib.sha256()
+    for lang_root in lang_roots:
+        for folder in sorted(folders):
+            folder_path = os.path.join(lang_root, folder)
+            if not os.path.isdir(folder_path):
+                continue
+            for f in sorted(glob.glob(os.path.join(folder_path, "**", "*.yaml"), recursive=True)):
+                try:
+                    st = os.stat(f)
+                except OSError:
+                    continue
+                digest.update(f"{f}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+    return f"stat:{digest.hexdigest()}"
+
+
+def _cache_meta_path(out_dir: str, language: str) -> str:
+    return os.path.join(out_dir, f"{language}-registry-pruned.meta.json")
 
 
 def build_registry_config(
@@ -204,6 +351,7 @@ def build_registry_config(
     technologies: set[str],
     out_dir: str,
     registry_root: str = DEFAULT_REGISTRY_ROOT,
+    force_rebuild: bool = False,
 ) -> PrunedRegistryConfig | None:
     """Offline/build-time step: walk registry_root/<language>/{lang, each
     detected technology}, keep only metadata.category == "security"
@@ -215,52 +363,126 @@ def build_registry_config(
     consolidated file with the identical rules, for zero coverage
     difference. See KT.md for the exact numbers.
 
+    Result is cached in out_dir and reused when the registry fingerprint,
+    the detected technology set, and REGISTRY_CONFIG_SCHEMA_VERSION all
+    still match what the sidecar .meta.json records. Without this, every
+    scan re-parses ~2000 registry YAML files, which costs more than the
+    consolidated-file load time the pruning was introduced to save --
+    i.e. the uncached version measures well in a one-shot benchmark and
+    is wrong in production, so do not remove the cache to "simplify".
+    Pass force_rebuild=True to bypass the check (used by the refresh job
+    and by tests that need a known-cold build).
+
     Returns None if registry_root/<language> doesn't exist (e.g. this
     Semgrep-supported language has no registry folder, or the vendored
     clone hasn't been fetched) -- callers should fall back to the custom
     pack alone in that case, not fail the scan.
     """
-    lang_root = os.path.join(registry_root, language)
-    if not os.path.isdir(lang_root):
+    lang_roots = _registry_language_roots(registry_root, language)
+    if not lang_roots:
         return None
 
     folders = {"lang"} | technologies
+    out_path = os.path.join(out_dir, f"{language}-registry-pruned.yaml")
+    meta_path = _cache_meta_path(out_dir, language)
+    fingerprint = _registry_fingerprint(registry_root, lang_roots, folders)
+
+    if not force_rebuild and os.path.isfile(out_path) and os.path.isfile(meta_path):
+        try:
+            meta = json.loads(open(meta_path).read())
+        except (OSError, ValueError):
+            meta = None
+        if (
+            meta
+            and meta.get("schema_version") == REGISTRY_CONFIG_SCHEMA_VERSION
+            and meta.get("fingerprint") == fingerprint
+            and meta.get("technologies") == sorted(folders)
+        ):
+            return PrunedRegistryConfig(
+                language=language,
+                technologies=tuple(sorted(folders)),
+                path=out_path,
+                rule_count=meta.get("rule_count", 0),
+                cache_hit=True,
+            )
+
     all_rules: list[dict] = []
     seen_ids: set[str] = set()
-    for folder in folders:
-        folder_path = os.path.join(lang_root, folder)
-        if not os.path.isdir(folder_path):
-            continue
-        for f in glob.glob(os.path.join(folder_path, "**", "*.yaml"), recursive=True):
-            if os.sep + "tests" + os.sep in f or f.endswith(".test.yaml"):
+    for lang_root in lang_roots:
+        for folder in folders:
+            folder_path = os.path.join(lang_root, folder)
+            if not os.path.isdir(folder_path):
                 continue
-            try:
-                doc = yaml.safe_load(open(f))
-            except Exception:
-                continue
-            if not doc or "rules" not in doc:
-                continue
-            for rule in doc["rules"]:
-                metadata = rule.get("metadata") or {}
-                if metadata.get("category") != "security":
+            for f in glob.glob(os.path.join(folder_path, "**", "*.yaml"), recursive=True):
+                if os.sep + "tests" + os.sep in f or f.endswith(".test.yaml"):
                     continue
-                rule_id = rule.get("id")
-                if not rule_id or rule_id in seen_ids:
+                try:
+                    doc = yaml.safe_load(open(f))
+                except Exception:
                     continue
-                seen_ids.add(rule_id)
-                all_rules.append(rule)
+                if not doc or "rules" not in doc:
+                    continue
+                for rule in doc["rules"]:
+                    metadata = rule.get("metadata") or {}
+                    if metadata.get("category") != "security":
+                        continue
+                    rule_id = rule.get("id")
+                    if not rule_id or rule_id in seen_ids:
+                        continue
+                    seen_ids.add(rule_id)
+                    all_rules.append(rule)
 
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"{language}-registry-pruned.yaml")
     with open(out_path, "w") as fh:
         yaml.safe_dump({"rules": all_rules}, fh)
+    with open(meta_path, "w") as fh:
+        json.dump(
+            {
+                "schema_version": REGISTRY_CONFIG_SCHEMA_VERSION,
+                "fingerprint": fingerprint,
+                "technologies": sorted(folders),
+                "language_roots": [os.path.basename(r) for r in lang_roots],
+                "rule_count": len(all_rules),
+            },
+            fh,
+        )
 
     return PrunedRegistryConfig(
         language=language,
         technologies=tuple(sorted(folders)),
         path=out_path,
         rule_count=len(all_rules),
+        cache_hit=False,
     )
+
+
+def _resolve_reported_path(repo_path: str, reported_path: str) -> str | None:
+    """Turn a path out of Semgrep's JSON into one that can actually be
+    opened, or None if no candidate exists.
+
+    Semgrep reports paths relative to the *invocation* directory, echoing
+    back the target argument it was given -- so scanning `..` yields
+    `../backend/app/foo.py`, not `backend/app/foo.py`. Joining that onto
+    repo_path produces `../../backend/app/foo.py`, which does not exist,
+    and the caller's open() fails silently.
+
+    This mattered: with a relative repo_path every nosemgrep suppression
+    failed open, resurfacing 14 findings a human had already triaged and
+    marked -- the precise noise the registry layer's nosemgrep-respecting
+    posture exists to prevent. It went unnoticed because the original
+    benchmark ran with an absolute repo_path, where os.path.join happens
+    to discard the first argument and the bug cannot fire.
+
+    Absolute reported paths are returned as-is; otherwise the path is
+    tried as given (the common case) before falling back to joining it
+    onto repo_path.
+    """
+    if os.path.isabs(reported_path):
+        return reported_path if os.path.isfile(reported_path) else None
+    for candidate in (reported_path, os.path.join(repo_path, reported_path)):
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def _line_has_nosemgrep_marker(repo_path: str, relative_file: str, line_no: int) -> bool:
@@ -280,8 +502,11 @@ def _line_has_nosemgrep_marker(repo_path: str, relative_file: str, line_no: int)
     14 of which already carried a human-reviewed nosemgrep comment: with
     id-matching, 0 were suppressed; with this marker-only check, all 14
     were, correctly leaving the 1 finding nobody had reviewed yet."""
+    path = _resolve_reported_path(repo_path, relative_file)
+    if path is None:
+        return False
     try:
-        with open(os.path.join(repo_path, relative_file), errors="ignore") as fh:
+        with open(path, errors="ignore") as fh:
             for i, line in enumerate(fh, start=1):
                 if i == line_no:
                     return "nosemgrep" in line.lower() or "nosem" in line.lower()
@@ -296,7 +521,15 @@ class LayeredScanResult:
     registry_findings: list[dict]  # after the nosemgrep post-filter
     registry_findings_before_filter: int
     custom_config_path: str
-    registry_config_path: str | None
+    # One pruned config per detected language, not one per repo: a repo
+    # with a Python backend and a TypeScript frontend needs both layers,
+    # and scanning only the first-detected language silently drops the
+    # other one's registry coverage.
+    registry_configs: list[PrunedRegistryConfig] = field(default_factory=list)
+
+    @property
+    def registry_config_paths(self) -> list[str]:
+        return [c.path for c in self.registry_configs]
 
 
 def run_layered_scan(
@@ -323,20 +556,29 @@ def run_layered_scan(
     Runs both with subprocess in parallel (not sequentially) -- measured:
     sequential was slower than plain `semgrep --config=auto` on 2 of 3
     benchmark repos; parallel beat or matched it on all 3, since wall time
-    becomes max(custom, registry) instead of their sum."""
+    becomes max(custom, registry) instead of their sum.
+
+    Polyglot repos: every detected language gets its own pruned registry
+    config, and the registry invocation is handed all of them at once.
+    This stays one subprocess, not one per language -- the parallelism
+    that matters here is custom-vs-registry, and splitting the registry
+    layer further would just contend for the same cores."""
     import concurrent.futures
     import json as _json
 
     cache_dir = cache_dir or tempfile.mkdtemp(prefix="toleman-registry-")
     languages = detect_languages(repo_path)
 
-    registry_config_path = None
+    # Every detected language contributes its own pruned config. Kept as
+    # separate --config files rather than merged into one: the registry
+    # namespaces rule ids per language so there is nothing to dedupe
+    # across them, and per-language files are what the cache is keyed on.
+    registry_configs: list[PrunedRegistryConfig] = []
     for language in languages:
         technologies = detect_technologies(repo_path, language)
         pruned = build_registry_config(language, technologies, cache_dir, registry_root)
         if pruned and pruned.rule_count:
-            registry_config_path = pruned.path
-            break  # TODO: merge multiple languages' pruned configs into one run; single-language repos only for now
+            registry_configs.append(pruned)
 
     def _run_custom() -> list[dict]:
         proc = subprocess.run(
@@ -346,10 +588,11 @@ def run_layered_scan(
         return _json.loads(proc.stdout or "{}").get("results", [])
 
     def _run_registry() -> list[dict]:
-        if not registry_config_path:
+        if not registry_configs:
             return []
+        config_args = [f"--config={c.path}" for c in registry_configs]
         proc = subprocess.run(
-            ["semgrep", "scan", f"--config={registry_config_path}", "--json", "--quiet", repo_path],
+            ["semgrep", "scan", *config_args, "--json", "--quiet", repo_path],
             capture_output=True, text=True,
         )
         return _json.loads(proc.stdout or "{}").get("results", [])
@@ -370,5 +613,5 @@ def run_layered_scan(
         registry_findings=registry_findings,
         registry_findings_before_filter=len(registry_findings_raw),
         custom_config_path=custom_config_path,
-        registry_config_path=registry_config_path,
+        registry_configs=registry_configs,
     )

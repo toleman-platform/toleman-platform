@@ -124,32 +124,91 @@ registry findings after nosemgrep filter: 1
 ```
 matches the manual benchmark run exactly.
 
-**Not built yet**:
-1. **Caching.** `build_registry_config()` rebuilds its pruned/consolidated
-   file from scratch every call — fine for a benchmark, wrong for
-   production (parsing ~2000 YAML files per scan defeats the whole point).
-   Needs a freshness check against `cache_dir` before rebuilding, and
-   probably a scheduled job that refreshes the vendored `semgrep-rules`
-   clone itself (weekly cron is plenty — this isn't fast-moving content).
+**Built 2026-09-14** (this section previously listed items 1 and 3 as not
+built; both are now done, with tests in `backend/tests/test_rule_selector.py`):
+
+- **Caching.** `build_registry_config()` now writes a sidecar
+  `<language>-registry-pruned.meta.json` recording a registry
+  fingerprint, the technology folder set, and
+  `REGISTRY_CONFIG_SCHEMA_VERSION`, and reuses the built config when all
+  three still match. The fingerprint is the clone's git HEAD when
+  `registry_root/.git` exists (one subprocess), otherwise a hash of
+  `(path, size, mtime)` over just the folders the build would read —
+  stat'ing files is cheap, parsing them as YAML is the cost being
+  avoided, so the fallback deliberately does not hash contents. Measured
+  on this repo against a real clone: Python layer cold 2.55s → warm
+  0.33s, TypeScript cold 0.81s → warm 0.06s. Bump the schema constant
+  whenever the pruning logic changes, or stale configs get reused.
+  `force_rebuild=True` bypasses the check.
+- **Polyglot repos.** `run_layered_scan()` no longer stops at the first
+  language. Every detected language gets its own pruned config and all of
+  them are passed to a single registry invocation (`--config` repeated) —
+  still one subprocess, since the parallelism that matters is
+  custom-vs-registry, not language-vs-language. A language whose pruned
+  config comes out empty is skipped rather than given a `--config` slot.
+  `LayeredScanResult.registry_config_path` is accordingly replaced by
+  `registry_configs: list[PrunedRegistryConfig]`, with a
+  `registry_config_paths` convenience property.
+- **TypeScript reads the `javascript/` registry folder too**
+  (`REGISTRY_LANGUAGE_ALIASES`). Found while verifying the polyglot path:
+  the registry keeps 169 security rules under `javascript/` and only 25
+  files under `typescript/`, and 153 of those javascript rules explicitly
+  declare `languages: [javascript, typescript]`. Pruning a TypeScript
+  repo against `typescript/` alone yielded **1 rule**. Rule ids are
+  deduped across the two folders.
+- **JavaScript/TypeScript technology signatures.** `TECHNOLOGY_SIGNATURES`
+  had entries for Python only, so every other language read its `lang/`
+  folder and skipped every framework folder. Added a `_js_sig()` builder
+  (package.json dependency keys + `import`/`require` syntax, subpath
+  imports included, prefix matches excluded) and a table covering the
+  JS/TS registry folders with ≥3 security rules that are real npm
+  packages. On this repo that takes the TypeScript layer from 1 rule to
+  **39**, correctly detecting `react` and not `express`/`angular`/`nestjs`.
+- **A real bug in `_line_has_nosemgrep_marker()`.** It joined Semgrep's
+  reported path onto `repo_path`, but Semgrep echoes back the target
+  argument it was given — scanning `..` reports `../backend/app/foo.py`,
+  and the join produced `../../backend/app/foo.py`, which does not exist.
+  The filter then failed open. With a relative `repo_path`, **every**
+  suppression silently failed: 18 registry findings, 0 suppressed, 17 of
+  them already carrying a human `# nosemgrep:` comment. It hid because
+  the original benchmark used an absolute `repo_path`, where
+  `os.path.join` discards its first argument and the bug cannot fire.
+  `_resolve_reported_path()` now tries the path as reported before
+  falling back to the join, and still fails open (surfacing an
+  unsuppressed finding beats silently dropping a real one) when neither
+  candidate exists.
+
+**Still not built**:
+1. **A scheduled job to refresh the vendored `semgrep-rules` clone.**
+   The cache above is keyed on that clone's state, but nothing populates
+   or updates `SEMGREP_RULES_REGISTRY_ROOT` today. Weekly is plenty —
+   this isn't fast-moving content.
 2. **`runner.py`/`tool_registry.py` wiring.** Deliberately not done — see
    "Wiring in" in the README, same reasoning as `semgrep-core` before it:
    tool naming, default on/off per surface, and whether the registry layer
    should ever be allowed to block a PR (its findings are lower-precision
    by construction — they're generic, not app-specific) are real product
    decisions, not something to default silently.
-3. **Multi-language repos in one scan.** `run_layered_scan()` picks the
-   *first* detected language with a non-empty pruned config and stops —
-   see the `TODO` inline. A repo with both a Python backend and a
-   TypeScript frontend (like this one) needs both languages' registry
-   configs merged into the run, not just one.
-4. **A `--confidence` filter was tried and explicitly rejected.** Don't
+3. **Technology signatures for Go, Java, PHP and Ruby.** Same gap the
+   JS/TS table above closed: with no entries, these four read their
+   `lang/` folder alone and skip every framework folder in the registry.
+   Bounded, measurable work — count each folder's security rules first,
+   the way the JS/TS table records its counts, and note that `_sig()`'s
+   patterns are Python syntax, so each language needs its own builder
+   like `_js_sig()`.
+4. **`javascript/browser` (10 security rules) is not selected by
+   anything.** It isn't an npm package, so there is nothing to key a
+   signature on. The alternative is always-on for every JS/TS repo,
+   which would aim DOM rules at pure Node services — decide it against a
+   fixture and measure the false positives, don't just default it in.
+5. **A `--confidence` filter was tried and explicitly rejected.** Don't
    re-add one without re-reading this: only 19/266 Python security rules
    in the registry are tagged `confidence: HIGH`; `eval-detected` (the
    exact rule that caught PyGoat's live-fired RCE) is tagged `LOW`. A
    HIGH-only filter would have silently dropped it. Confidence tagging in
    this registry does not correlate with "is this rule worth keeping" —
    verified, not assumed.
-5. **Non-Python languages' registry folders** haven't been surveyed the
+6. **Non-Python languages' registry folders** haven't been surveyed the
    same way (which Java/Go/PHP/Ruby/JS rules are duplicates of our own —
    only spot-checked a few: CSRF-exempt, pickle, yaml.load, subprocess
    shell=True, mass-assignment, SSRF). A full per-language dedup pass like
@@ -163,14 +222,20 @@ matches the manual benchmark run exactly.
 - [x] `rule_selector.py` written and smoke-tested end to end against this repo (see "Test plan" below for the exact command and expected numbers).
 - [x] The nosemgrep-respecting merge behavior specifically verified (15 raw registry findings → 1 after the marker-based post-filter, on this repo's own source).
 
+- [x] Pruned-registry caching with fingerprint + schema-version invalidation, benchmarked cold vs. warm against a real clone (2026-09-14).
+- [x] `run_layered_scan()` handles every detected language, not just the first (2026-09-14).
+- [x] TypeScript pulls the `javascript/` registry folder; JS/TS technology signatures added — took this repo's TypeScript layer from 1 rule to 39 (2026-09-14).
+- [x] `_line_has_nosemgrep_marker()` path-resolution bug fixed — it had been failing open on every suppression whenever `repo_path` was relative (2026-09-14).
+- [x] 22 tests in `backend/tests/test_rule_selector.py`, hermetic (they build a miniature fake registry rather than depending on a network clone).
+
 **Designed and prototyped, not yet in the product's actual scan path:**
 - [ ] `runner.py`/`tool_registry.py` wiring — `rule_selector.py` is a standalone module today, nothing calls it from the real scan pipeline yet.
-- [ ] Caching for `build_registry_config()` — currently rebuilds from the vendored registry clone on every call.
-- [ ] A scheduled job to fetch/refresh the vendored `semgrep-rules` clone itself — nothing populates `SEMGREP_RULES_REGISTRY_ROOT` today.
+- [ ] A scheduled job to fetch/refresh the vendored `semgrep-rules` clone itself — nothing populates `SEMGREP_RULES_REGISTRY_ROOT` today. The cache is keyed on that clone's state, so it is correct but never refreshed until this exists.
 
 **Not started / explicitly out of scope for this branch:**
-- [ ] Registry-overlap check for Java/PHP/Ruby/Go/JS rules (only Python's was done — see item 5 under "Not built yet" above).
-- [ ] `run_layered_scan()` handling more than one language per repo.
+- [ ] Registry-overlap check for Java/PHP/Ruby/Go/JS rules (only Python's was done — see item 6 under "Still not built" above).
+- [ ] Technology signatures for Go/Java/PHP/Ruby (item 3 above) — those four still read `lang/` alone.
+- [ ] Whether `javascript/browser`'s 10 rules should be always-on for JS/TS repos (item 4 above).
 - [ ] CSS injection/exfiltration rule (the one class in the taxonomy with zero coverage in any language).
 - [ ] Anything DAST-side (the "Confirmation Loop" design from earlier in this work — route resolution, live-request confirmation) — a related but separate effort, not touched on this branch.
 
@@ -204,9 +269,20 @@ the same day this branch was pushed):
 If any of these go silent, that's a regression — bisect from there, don't
 assume the fixture changed.
 
-**3. `rule_selector.py` end to end** (this is the one that catches "the
+**3. The unit tests** — hermetic, no clone and no semgrep binary needed,
+so run these before anything slower:
+```bash
+cd backend && python3 -m pytest tests/test_rule_selector.py -q
+# expect: 22 passed
+```
+They cover cache hit/miss, every invalidation path (registry content,
+technology set, schema version, corrupt metadata, git HEAD), the
+`javascript/` alias, JS/TS framework detection, polyglot layering, and
+the nosemgrep path resolution described above.
+
+**4. `rule_selector.py` end to end** (this is the one that catches "the
 rule pack passes but the file was never actually written" — see the meta-
-lesson below):
+lesson below). Needs a `semgrep/semgrep-rules` clone and takes ~50s:
 ```bash
 cd backend && python3 -c "
 from app.scanners import rule_selector as rs
@@ -215,39 +291,56 @@ result = rs.run_layered_scan(
     custom_config_path='app/scanners/rules/core',
     registry_root='<path to a semgrep/semgrep-rules clone>',
 )
-print('custom findings:', len(result.custom_findings))              # expect 50
-print('registry before filter:', result.registry_findings_before_filter)  # expect 15
+print('custom findings:', len(result.custom_findings))                    # expect 50
+print('registry before filter:', result.registry_findings_before_filter)  # expect 18
 print('registry after filter:', len(result.registry_findings))            # expect 1
+print([(c.language, c.rule_count) for c in result.registry_configs])      # expect python 112, typescript 39
 "
 ```
-These three numbers were the exact output when this branch was pushed. A
-different `custom findings` count most likely means a rule file changed;
-a different `registry after filter` count with the same `before filter`
-count means the nosemgrep post-filter logic broke — check
-`_line_has_nosemgrep_marker()` first.
+These were the exact numbers on 2026-09-14 against a clone of that date.
+Read them as follows:
 
-**4. Manual spot-check, not just automated**: pick at least one finding
+- A different `custom findings` count most likely means a rule file
+  changed — 50 has held since the branch was first pushed.
+- `registry before filter` was 15 before the TypeScript layer existed;
+  the extra 3 are `unsafe-dynamic-method` in
+  `frontend/src/hooks/use-tool-install.ts`, all three already carrying a
+  developer's `// nosemgrep:` comment, so they filter out.
+- `registry after filter` climbing back toward `before filter` means the
+  nosemgrep post-filter broke — check `_resolve_reported_path()` first,
+  then `_line_has_nosemgrep_marker()`. That is exactly how the path bug
+  fixed on 2026-09-14 presented (18 in, 18 out).
+- The one surviving finding should be `use-defusedcsv` on
+  `backend/app/core/csv_export.py:28`. That is the honest residual
+  documented above — a class named `SafeCsvWriter` that nobody had
+  reviewed or suppressed — not a filter failure.
+- Registry rule counts depend on the clone's date; treat a modest drift
+  as the registry moving, a collapse to single digits as a pruning or
+  alias regression.
+
+**5. Manual spot-check, not just automated**: pick at least one finding
 from step 2 or 3 and open the actual file at that line yourself before
 trusting any of the above. That's the standard this whole pack was held
 to — a green test run is necessary, not sufficient.
 
 ## Immediate next steps, roughly in order
 
-1. Add the freshness-check/caching to `build_registry_config()` — this is
-   the one thing that makes the whole design production-viable instead of
-   a nice benchmark.
-2. Decide and implement the `runner.py` wiring (see README's "Wiring in").
+1. Decide and implement the `runner.py` wiring (see README's "Wiring in").
    Suggested shape, not gospel: a `semgrep-core` tool entry for the custom
    pack (as already sketched), plus a separate `semgrep-registry` tool
    entry for the pruned layer, both surfaced independently in Tool
    Marketplace/per-tool coverage so an operator can turn the (lower-
    precision, broader-recall) registry layer off without losing the
    custom pack.
-3. Run the same registry-duplicate-check done for Python against the other
+2. Add the scheduled refresh for the vendored `semgrep-rules` clone. The
+   cache is keyed on that clone, so until this exists the pruned configs
+   are correct and permanently stale.
+3. Add technology signatures for Go/Java/PHP/Ruby, the way the JS/TS ones
+   were added — each needs its own `_sig`-style builder, since `_sig()`'s
+   patterns are Python import syntax.
+4. Run the same registry-duplicate-check done for Python against the other
    5 languages' rule files, and retire what's genuinely redundant there
    too.
-4. Fix `run_layered_scan()`'s single-language limitation for polyglot
-   repos.
 5. The pack itself still has real gaps, not registry-integration gaps —
    see `backend/app/scanners/rules/core`'s companion tracker artifact from
    this session (ask the user for the link if you need the full taxonomy

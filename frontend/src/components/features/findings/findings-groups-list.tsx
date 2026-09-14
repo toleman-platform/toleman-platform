@@ -1,12 +1,14 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
-import { FindingGroup, FindingsQuery, Target } from "@/lib/api";
+import { Finding, FindingGroup, FindingsQuery, Target } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination } from "@/components/activity-pagination";
 import { FindingGroupRow } from "./finding-group-row";
+import { FindingDetailDrawer } from "./finding-detail-drawer";
 
 /**
  * The findings list with one row per decision.
@@ -39,6 +41,12 @@ export function FindingsGroupsList({
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // One drawer for the whole list rather than one per row, the same shape
+  // findings-list.tsx uses: the grouped row collapsed the page to what a
+  // decision needs, and this is the way back to what a single finding needs.
+  const [inspecting, setInspecting] = useState<Finding | null>(null);
+  const repoUrlByTargetId = new Map(targets.map((t) => [t.id, t.repo_url]));
+  const targetById = new Map(targets.map((t) => [t.id, t]));
 
   return (
     <div className="flex flex-col gap-3">
@@ -52,8 +60,7 @@ export function FindingsGroupsList({
 
       {truncated && (
         <p className="text-xs text-destructive">
-          More groups than this view returns. The counts above are floors, not totals — narrow the filters for
-          exact numbers.
+          Showing the first {total} groups. Narrow the filters for exact counts.
         </p>
       )}
 
@@ -106,12 +113,21 @@ export function FindingsGroupsList({
             memberQuery={memberQuery}
             targets={targets}
             onTriaged={() => router.refresh()}
+            onInspect={setInspecting}
           />
         ))}
       </div>
       )}
 
       {total > 0 && <ActivityPagination total={total} page={page} pageSize={pageSize} />}
+
+      <FindingDetailDrawer
+        finding={inspecting}
+        repoUrl={inspecting ? repoUrlByTargetId.get(inspecting.target_id) : undefined}
+        targetName={inspecting ? targetById.get(inspecting.target_id)?.name : undefined}
+        onClose={() => setInspecting(null)}
+        onTriageSuccess={() => router.refresh()}
+      />
     </div>
   );
 }

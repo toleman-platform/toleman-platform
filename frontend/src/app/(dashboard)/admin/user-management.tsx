@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api, AuthUser } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { AsyncContent } from "@/components/ui/async-content";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { SkeletonList } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 const ROLES = ["admin", "user", "viewer", "developer", "security_engineer"];
 
 export function UserManagement() {
-  const [users, setUsers] = useState<AuthUser[] | null>(null);
+  // Was `api.users().then(setUsers)` with no `.catch`, so a failed read left
+  // the skeleton up forever with no error and no retry.
+  const usersState = useAsyncData<AuthUser[]>(() => api.users());
+  const refresh = usersState.refetch;
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -28,12 +32,8 @@ export function UserManagement() {
   const [deleting, setDeleting] = useState(false);
   const [pendingRoleChange, setPendingRoleChange] = useState<{ user: AuthUser; newRole: string } | null>(null);
   const [changingRole, setChangingRole] = useState(false);
-
-  function refresh() {
-    api.users().then(setUsers);
-  }
-
-  useEffect(refresh, []);
+  const [roleError, setRoleError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -61,34 +61,50 @@ export function UserManagement() {
       setPendingRoleChange({ user: u, newRole });
       return;
     }
-    applyRoleChange(u.id, newRole);
+    void applyRoleChange(u.id, newRole);
   }
 
-  async function applyRoleChange(id: number, newRole: string) {
-    await api.updateUserRole(id, newRole);
-    refresh();
+  // The un-awaited, un-caught version of this left the controlled `<select>`
+  // showing whichever role the server had just rejected: nothing re-rendered
+  // it, so the dropdown claimed a role the user did not have. Refresh runs on
+  // both paths so the row always ends up showing stored state.
+  async function applyRoleChange(id: number, newRole: string): Promise<boolean> {
+    setRoleError(null);
+    try {
+      await api.updateUserRole(id, newRole);
+      return true;
+    } catch (e) {
+      setRoleError(e instanceof Error ? e.message : "failed to change role");
+      return false;
+    } finally {
+      refresh();
+    }
   }
 
   async function confirmRoleChange() {
     if (!pendingRoleChange) return;
     setChangingRole(true);
     try {
-      await applyRoleChange(pendingRoleChange.user.id, pendingRoleChange.newRole);
+      const ok = await applyRoleChange(pendingRoleChange.user.id, pendingRoleChange.newRole);
+      if (ok) setPendingRoleChange(null);
     } finally {
       setChangingRole(false);
-      setPendingRoleChange(null);
     }
   }
 
   async function confirmDelete() {
     if (!pendingDelete) return;
     setDeleting(true);
+    setDeleteError(null);
     try {
       await api.deleteUser(pendingDelete.id);
+      setPendingDelete(null);
       refresh();
+    } catch (e) {
+      // Used to close the dialog with the row still present and nothing said.
+      setDeleteError(e instanceof Error ? e.message : "failed to delete user");
     } finally {
       setDeleting(false);
-      setPendingDelete(null);
     }
   }
 
@@ -102,7 +118,7 @@ export function UserManagement() {
           <form onSubmit={onCreate} className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Input className="bg-secondary" placeholder="Name" aria-label="New user name" value={name} onChange={(e) => setName(e.target.value)} required />
             <Input className="bg-secondary" placeholder="Email" aria-label="New user email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            <Input className="bg-secondary" placeholder="Password" aria-label="New user password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <Input className="bg-secondary" placeholder="Password" aria-label="New user password" type="password" autoComplete="new-password" spellCheck={false} value={password} onChange={(e) => setPassword(e.target.value)} required />
             <select
               className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
               aria-label="New user role"
@@ -116,16 +132,28 @@ export function UserManagement() {
               ))}
             </select>
             <Button type="submit" disabled={submitting} className="col-span-2 self-start md:col-span-4">
-              {submitting ? "Creating..." : "Create User"}
+              {submitting ? "Creating…" : "Create User"}
             </Button>
           </form>
-          {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+          {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
         </CardContent>
       </Card>
 
-      {users === null && <SkeletonList count={3} />}
+      {roleError && (
+        <p role="alert" className="text-xs text-destructive">
+          {roleError}
+        </p>
+      )}
 
-      {users !== null && (
+      <AsyncContent
+        state={usersState}
+        itemNoun="users"
+        errorTitle="Couldn't load the user list"
+        emptyTitle="No users yet"
+        skeletonCount={3}
+        className="flex flex-col gap-2"
+      >
+        {(users) => (
       <div className="flex flex-col gap-2">
         {users.map((u) => (
           <Card key={u.id} className="border-border bg-card">
@@ -163,7 +191,8 @@ export function UserManagement() {
           </Card>
         ))}
       </div>
-      )}
+        )}
+      </AsyncContent>
 
       <ConfirmDialog
         open={pendingDelete !== null}
@@ -173,6 +202,7 @@ export function UserManagement() {
             <>
               Permanently delete <span className="font-medium text-foreground">{pendingDelete.name}</span> (
               {pendingDelete.email})? This cannot be undone.
+              {deleteError && <span className="mt-2 block text-destructive">{deleteError}</span>}
             </>
           ) : null
         }
@@ -180,7 +210,10 @@ export function UserManagement() {
         tone="destructive"
         loading={deleting}
         onConfirm={confirmDelete}
-        onCancel={() => setPendingDelete(null)}
+        onCancel={() => {
+          setDeleteError(null);
+          setPendingDelete(null);
+        }}
       />
 
       <ConfirmDialog
@@ -192,6 +225,7 @@ export function UserManagement() {
               Make <span className="font-medium text-foreground">{pendingRoleChange.user.name}</span> a global admin?
               Admins bypass all workspace-scoped permissions and can manage every workspace, user, and
               platform setting.
+              {roleError && <span className="mt-2 block text-destructive">{roleError}</span>}
             </>
           ) : null
         }
@@ -199,7 +233,10 @@ export function UserManagement() {
         tone="default"
         loading={changingRole}
         onConfirm={confirmRoleChange}
-        onCancel={() => setPendingRoleChange(null)}
+        onCancel={() => {
+          setRoleError(null);
+          setPendingRoleChange(null);
+        }}
       />
     </div>
   );

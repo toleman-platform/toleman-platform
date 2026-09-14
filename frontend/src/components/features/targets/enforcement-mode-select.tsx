@@ -12,16 +12,25 @@ export function EnforcementModeSelect({
   disabled,
   className,
   inheritLabel = "Inherit",
+  label,
 }: {
   value: EnforcementMode | null;
   onChange: (mode: EnforcementMode | null) => void;
   disabled?: boolean;
   className?: string;
   inheritLabel?: string;
+  /**
+   * Accessible name for this particular control. A page that renders one of
+   * these per group gave every one of them the identical "Enforcement mode"
+   * name, so a screen-reader user tabbing the list could not tell which
+   * group's setting they were about to change. Callers in a list must pass
+   * something that identifies the row, e.g. `Enforcement mode for production`.
+   */
+  label?: string;
 }) {
   return (
     <select
-      aria-label="Enforcement mode"
+      aria-label={label ?? "Enforcement mode"}
       className={
         className ??
         "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground disabled:opacity-50"
@@ -43,6 +52,34 @@ const MODE_LABEL: Record<EnforcementMode, string> = {
   alert: "Alert",
   disabled: "Disabled",
 };
+
+/**
+ * What each mode actually does to a pull request. The three options were bare
+ * one-word labels everywhere they appeared, with no statement anywhere in the
+ * UI of the difference between them -- so the control that decides whether a
+ * Critical finding stops a merge was unexplained at the point of change.
+ * Stated once here and rendered wherever the select is offered.
+ */
+export const ENFORCEMENT_MODE_HELP: Record<EnforcementMode, string> = {
+  block: "PR Guardrail posts its findings and fails the check, so the PR can't merge until they're fixed, ignored with approval, or overridden.",
+  alert: "PR Guardrail posts its findings as a comment and passes the check. Nothing is blocked.",
+  disabled: "PR Guardrail doesn't run on pull requests at all. Nothing is posted and nothing is checked.",
+};
+
+/** Platform fallback when neither the target, its groups, nor the workspace set a mode. */
+export const DEFAULT_ENFORCEMENT_MODE: EnforcementMode = "block";
+
+/**
+ * Resolve what a row will actually do, given its own override and the mode it
+ * inherits from. Kept next to the select because "Inherit" on its own is not
+ * a legible answer to "what happens to my PR?".
+ */
+export function resolveEnforcementMode(
+  own: EnforcementMode | null,
+  inheritedFrom: EnforcementMode | null,
+): EnforcementMode {
+  return own ?? inheritedFrom ?? DEFAULT_ENFORCEMENT_MODE;
+}
 
 const SOURCE_LABEL: Record<string, string> = {
   target: "set directly on this target",

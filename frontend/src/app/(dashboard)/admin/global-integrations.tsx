@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { api, AiProvider, GithubTokenView, PlatformConfigView, WorkspaceSummary, workspaceDisplayName } from "@/lib/api";
+import { useAsyncData } from "@/hooks/use-async-data";
+import { AsyncContent } from "@/components/ui/async-content";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { SkeletonList } from "@/components/ui/skeleton";
 import { AlertTriangle, BrainCircuit, CheckCircle2, Key, MessageSquare, Send, Ticket } from "lucide-react";
 import { ConnectGithubCard } from "@/components/features/integrations";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -29,7 +32,18 @@ const GITHUB_TTL_OPTIONS: { value: string; label: string }[] = [
 ];
 
 export function GlobalIntegrations() {
-  const [config, setConfig] = useState<PlatformConfigView | null>(null);
+  // Issue: every read on this page used to be a bare `api.x().then(setX)`
+  // with no `.catch`. A failed config read left `config` null, which this
+  // component renders exactly like "nothing is configured" -- Slack, Jira,
+  // SIEM, the AI key and the GitHub PAT all showing as unset on a platform
+  // where they are all set. That is the worst possible lie on a secrets
+  // page: it invites an admin to re-enter credentials that are already
+  // stored. Both reads now go through `useAsyncData`, and the card stack
+  // that depends on `config` is wrapped in `AsyncContent`, so a failed read
+  // renders as a failure with a retry instead of as a clean empty form.
+  const configState = useAsyncData<PlatformConfigView>(() => api.getConfig());
+  const config = configState.data;
+
   const [provider, setProvider] = useState<AiProvider>("anthropic");
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -39,6 +53,7 @@ export function GlobalIntegrations() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [revokeOpen, setRevokeOpen] = useState(false);
 
   // Slack (issue #74)
   const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
@@ -72,61 +87,84 @@ export function GlobalIntegrations() {
   // Encryption key health banner
   const [reseedOpen, setReseedOpen] = useState(false);
   const [reseeding, setReseeding] = useState(false);
+  const [reseedError, setReseedError] = useState<string | null>(null);
+
+  // Workspace-scoped GitHub Personal Access Token (issue #74)
+  const workspacesState = useAsyncData<WorkspaceSummary[]>(() => api.workspaces());
+  const workspaces = workspacesState.data ?? [];
+  const [githubWorkspaceId, setGithubWorkspaceId] = useState<number | null>(null);
+  const [githubToken, setGithubToken] = useState("");
+  const [githubTtl, setGithubTtl] = useState("");
+  const [githubSaving, setGithubSaving] = useState(false);
+  const [githubTesting, setGithubTesting] = useState(false);
+  const [githubDeleting, setGithubDeleting] = useState(false);
+  const [githubRemoveOpen, setGithubRemoveOpen] = useState(false);
+  const [githubSaved, setGithubSaved] = useState(false);
+  const [githubError, setGithubError] = useState<string | null>(null);
+  const [githubTestResult, setGithubTestResult] = useState<string | null>(null);
+
+  // Default the PAT card to the first workspace once the list lands. Kept as
+  // an effect rather than folded into the workspaces fetcher so the
+  // selection survives a background refetch of the list.
+  useEffect(() => {
+    if (githubWorkspaceId === null && workspaces.length > 0) setGithubWorkspaceId(workspaces[0].id);
+  }, [workspaces, githubWorkspaceId]);
+
+  // The PAT read used to be `.catch(() => {})`, which collapsed "the read
+  // failed" into the same blank render as "no token stored". An unknown
+  // token state must never present as "no token" -- see the three-way status
+  // line below the card header.
+  const githubTokenState = useAsyncData<GithubTokenView>(() => api.getGithubToken(githubWorkspaceId!), {
+    enabled: githubWorkspaceId != null,
+    deps: [githubWorkspaceId],
+  });
+  const githubTokenView = githubTokenState.data;
+  const githubTokenUnknown = githubTokenState.isInitialLoading || (githubTokenState.status === "error" && githubTokenView === null);
+
+  const refresh = configState.refetch;
 
   async function reseedEncryptionKey() {
     setReseeding(true);
+    setReseedError(null);
     try {
       await api.reseedEncryptionKey();
       setReseedOpen(false);
       refresh();
+    } catch (e) {
+      // Previously uncaught: the dialog just sat open with no message, which
+      // reads as "nothing happened" rather than "this failed".
+      setReseedError(e instanceof Error ? e.message : "failed to reset the encryption-key warning");
     } finally {
       setReseeding(false);
     }
   }
 
-  // Workspace-scoped GitHub Personal Access Token (issue #74)
-  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
-  const [githubWorkspaceId, setGithubWorkspaceId] = useState<number | null>(null);
-  const [githubToken, setGithubToken] = useState("");
-  const [githubTtl, setGithubTtl] = useState("");
-  const [githubTokenView, setGithubTokenView] = useState<GithubTokenView | null>(null);
-  const [githubSaving, setGithubSaving] = useState(false);
-  const [githubTesting, setGithubTesting] = useState(false);
-  const [githubDeleting, setGithubDeleting] = useState(false);
-  const [githubSaved, setGithubSaved] = useState(false);
-  const [githubError, setGithubError] = useState<string | null>(null);
-  const [githubTestResult, setGithubTestResult] = useState<string | null>(null);
-
-  function loadGithubToken(workspaceId: number) {
+  function selectGithubWorkspace(workspaceId: number) {
     setGithubWorkspaceId(workspaceId);
-    setGithubTokenView(null);
     setGithubError(null);
     setGithubTestResult(null);
     setGithubSaved(false);
-    api.getGithubToken(workspaceId).then(setGithubTokenView).catch(() => {});
   }
 
-  function refresh() {
-    api.getConfig().then((c) => {
-      setConfig(c);
-      setProvider(c.ai_provider || "anthropic");
-      setBaseUrl(c.openai_compatible_base_url || "");
-      setModel(c.openai_compatible_model || "");
-      setJiraUrl(c.jira_url || "");
-      setJiraProjectKey(c.jira_project_key || "");
-      setJiraIssueType(c.jira_issue_type || "Task");
-      setJiraAutoCreateSeverity(c.jira_auto_create_severity || "");
-      setSiemExportSeverity(c.siem_export_severity || "High");
-    });
-    api.workspaces().then((ws) => {
-      setWorkspaces(ws);
-      if (ws.length > 0) {
-        loadGithubToken(ws[0].id);
-      }
-    });
-  }
-
-  useEffect(refresh, []);
+  // Seed the editable fields from whatever the server last told us. Keyed on
+  // the config object's identity, which `useAsyncData` only replaces when a
+  // request actually resolves, so this runs on first load and after each
+  // save-triggered refetch rather than on every render.
+  useEffect(() => {
+    if (!config) return;
+    setProvider(config.ai_provider || "anthropic");
+    setBaseUrl(config.openai_compatible_base_url || "");
+    setModel(config.openai_compatible_model || "");
+    setJiraUrl(config.jira_url || "");
+    setJiraProjectKey(config.jira_project_key || "");
+    setJiraIssueType(config.jira_issue_type || "Task");
+    setJiraAutoCreateSeverity(config.jira_auto_create_severity || "");
+    // `??`, not `||`: "" is the stored value for "auto-export disabled", and
+    // `||` coalesced that falsy value back to "High" on the next read -- so
+    // an operator who disabled SIEM export saw a threshold the server was
+    // not actually holding. null (never configured) still falls back to High.
+    setSiemExportSeverity(config.siem_export_severity ?? "High");
+  }, [config]);
 
   async function saveGithubToken() {
     if (!githubToken.trim()) return;
@@ -135,14 +173,16 @@ export function GlobalIntegrations() {
     setGithubSaved(false);
     setGithubTestResult(null);
     try {
-      const view = await api.saveGithubToken(
+      await api.saveGithubToken(
         githubToken.trim(),
         githubTtl === "" ? null : Number(githubTtl),
         githubWorkspaceId ?? undefined
       );
       setGithubToken("");
       setGithubSaved(true);
-      setGithubTokenView(view);
+      // Re-read rather than trusting the mutation's echo: the stored state is
+      // the server's, and a refetch is the only thing that proves it.
+      githubTokenState.refetch();
     } catch (e) {
       setGithubError(e instanceof Error ? e.message : "failed to save");
     } finally {
@@ -170,10 +210,12 @@ export function GlobalIntegrations() {
     setGithubTestResult(null);
     try {
       await api.deleteGithubToken(githubWorkspaceId ?? undefined);
-      setGithubTokenView({ token_set: false, created_at: null, expires_at: null });
       setGithubSaved(false);
+      setGithubRemoveOpen(false);
+      githubTokenState.refetch();
     } catch (e) {
       setGithubError(e instanceof Error ? e.message : "failed to remove");
+      // Leave the dialog open on failure: closing it would read as "done".
     } finally {
       setGithubDeleting(false);
     }
@@ -321,17 +363,29 @@ export function GlobalIntegrations() {
       await api.updateConfig(payload);
       setApiKey("");
       setCompatKey("");
+      setRevokeOpen(false);
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed to revoke key");
+      // Dialog stays open so the failure is attached to the action that
+      // caused it rather than appearing behind a dismissed modal.
     } finally {
       setRevoking(false);
     }
   }
 
+  // "Configured" has to describe the *saved* provider, not whichever radio
+  // happens to be selected. Deriving it from the local `provider` state meant
+  // flipping the radio without saving repainted the green line to describe a
+  // provider that was not the active one.
+  const savedProvider: AiProvider = config?.ai_provider || "anthropic";
   const configuredNow =
     config &&
-    (provider === "anthropic" ? config.anthropic_api_key_set : Boolean(config.openai_compatible_base_url && config.openai_compatible_model));
+    (savedProvider === "anthropic"
+      ? config.anthropic_api_key_set
+      : Boolean(config.openai_compatible_base_url && config.openai_compatible_model));
+  const savedProviderLabel = PROVIDERS.find((p) => p.value === savedProvider)?.label ?? savedProvider;
+  const providerDirty = Boolean(config) && provider !== savedProvider;
 
   const canSave = provider === "anthropic" ? true : baseUrl.trim().length > 0 && model.trim().length > 0;
 
@@ -360,12 +414,21 @@ export function GlobalIntegrations() {
       <ConfirmDialog
         open={reseedOpen}
         title="Confirm encryption key reset"
-        description="Only confirm once every affected integration above has actually been reconnected. This clears the warning but does not itself fix any secret still encrypted under the old key."
+        description={
+          <>
+            Only confirm once every affected integration above has actually been reconnected. This clears the warning
+            but does not itself fix any secret still encrypted under the old key.
+            {reseedError && <span className="mt-2 block text-destructive">{reseedError}</span>}
+          </>
+        }
         confirmLabel="Confirm"
         tone="default"
         loading={reseeding}
         onConfirm={reseedEncryptionKey}
-        onCancel={() => setReseedOpen(false)}
+        onCancel={() => {
+          setReseedError(null);
+          setReseedOpen(false);
+        }}
       />
       <ConnectGithubCard />
 
@@ -381,34 +444,70 @@ export function GlobalIntegrations() {
             </div>
           </div>
 
-          {githubTokenView?.token_set && (
-            <div className="flex items-center gap-2 text-sm text-chart-5">
-              <CheckCircle2 className="h-4 w-4" />
-              Configured
-              {githubTokenView.expires_at
-                ? ` · auto-purges ${serverDate(githubTokenView.expires_at).toLocaleString()}`
-                : " · never expires"}
+          {/* Three states, not two. "Checking" and "couldn't read" are both
+              distinct from "no token stored": an admin who sees a blank card
+              because the read failed will paste in a fresh PAT that the
+              workspace already has. */}
+          {githubTokenState.isInitialLoading ? (
+            <div role="status" className="text-sm text-muted-foreground">
+              Checking whether this workspace has a token stored&hellip;
             </div>
+          ) : githubTokenState.status === "error" && githubTokenView === null ? (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>
+                Couldn&apos;t read this workspace&apos;s stored token ({githubTokenState.error?.message}). It may or
+                may not be set &mdash; don&apos;t assume it isn&apos;t.
+              </span>
+              <Button size="sm" variant="outline" className="h-6 text-xs" onClick={githubTokenState.refetch}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            githubTokenView?.token_set && (
+              <div className="flex items-center gap-2 text-sm text-chart-5">
+                <CheckCircle2 className="h-4 w-4" />
+                Configured
+                {githubTokenView.expires_at
+                  ? ` · auto-purges ${serverDate(githubTokenView.expires_at).toLocaleString()}`
+                  : " · never expires"}
+              </div>
+            )
           )}
 
-          {workspaces.length > 1 && (
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="github-token-workspace" className="text-xs text-muted-foreground">
-                Workspace
-              </Label>
-              <select
-                id="github-token-workspace"
-                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
-                value={githubWorkspaceId ?? ""}
-                onChange={(e) => loadGithubToken(Number(e.target.value))}
-              >
-                {workspaces.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {workspaceDisplayName(w, workspaces)}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {workspacesState.isInitialLoading ? (
+            <SkeletonList count={1} />
+          ) : workspacesState.status === "error" && workspacesState.data === null ? (
+            <p role="alert" className="text-xs text-destructive">
+              Couldn&apos;t load the workspace list ({workspacesState.error?.message}). The token below can&apos;t be
+              scoped to a workspace until it loads.{" "}
+              <button type="button" className="underline" onClick={workspacesState.refetch}>
+                Retry
+              </button>
+            </p>
+          ) : (
+            workspaces.length > 1 && (
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="github-token-workspace" className="text-xs text-muted-foreground">
+                  Workspace
+                </Label>
+                <select
+                  id="github-token-workspace"
+                  className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                  value={githubWorkspaceId ?? ""}
+                  onChange={(e) => selectGithubWorkspace(Number(e.target.value))}
+                >
+                  {workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {workspaceDisplayName(w, workspaces)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )
           )}
 
           <div className="flex flex-col gap-1">
@@ -418,8 +517,16 @@ export function GlobalIntegrations() {
             <Input
               id="github-token"
               type="password"
+              autoComplete="off"
+              spellCheck={false}
               className="bg-secondary"
-              placeholder={githubTokenView?.token_set ? "Replace token..." : "ghp_... / github_pat_..."}
+              placeholder={
+                githubTokenUnknown
+                  ? "Enter a token to replace whatever is stored…"
+                  : githubTokenView?.token_set
+                    ? "Replace token…"
+                    : "ghp_… / github_pat_…"
+              }
               value={githubToken}
               onChange={(e) => {
                 setGithubToken(e.target.value);
@@ -452,7 +559,7 @@ export function GlobalIntegrations() {
 
           <div className="flex gap-2">
             <Button onClick={saveGithubToken} disabled={githubSaving || !githubToken.trim()} className="self-start">
-              {githubSaving ? "Saving..." : "Save"}
+              {githubSaving ? "Saving…" : "Save"}
             </Button>
             <Button
               variant="outline"
@@ -460,23 +567,62 @@ export function GlobalIntegrations() {
               disabled={githubTesting || (!githubToken.trim() && !githubTokenView?.token_set)}
               className="self-start"
             >
-              {githubTesting ? "Testing..." : "Test Connection"}
+              {githubTesting ? "Testing…" : "Test Connection"}
             </Button>
             {githubTokenView?.token_set && (
               <Button
-                variant="outline"
-                onClick={removeGithubToken}
+                variant="destructive"
+                onClick={() => setGithubRemoveOpen(true)}
                 disabled={githubDeleting}
-                className="self-start text-destructive"
+                className="self-start"
               >
-                {githubDeleting ? "Removing..." : "Remove"}
+                {githubDeleting ? "Removing…" : "Remove"}
               </Button>
             )}
           </div>
 
-          {githubSaved && !githubError && <p className="text-xs text-chart-5">Saved.</p>}
-          {githubTestResult && !githubError && <p className="text-xs text-chart-5">{githubTestResult}</p>}
-          {githubError && <p className="text-xs text-destructive">{githubError}</p>}
+          {/* The PAT is write-only by design, so removing it is unrecoverable:
+              nobody can read the stored value back out to put it in again.
+              Consequence-first copy, same shape as workspace-key-card.tsx's
+              regenerate confirmation. */}
+          <ConfirmDialog
+            open={githubRemoveOpen}
+            title="Remove this workspace's GitHub token?"
+            description={
+              <>
+                Private-repo cloning and SBOM enrichment stop immediately for every target in{" "}
+                <strong>
+                  {workspaces.find((w) => w.id === githubWorkspaceId)
+                    ? workspaceDisplayName(workspaces.find((w) => w.id === githubWorkspaceId)!, workspaces)
+                    : "this workspace"}
+                </strong>
+                . The token is stored write-only and can&apos;t be read back, so it can&apos;t be restored &mdash;
+                you&apos;d have to issue a new one on GitHub.
+                {githubError && <span className="mt-2 block text-destructive">{githubError}</span>}
+              </>
+            }
+            confirmLabel="Remove token"
+            tone="destructive"
+            loading={githubDeleting}
+            onConfirm={removeGithubToken}
+            onCancel={() => setGithubRemoveOpen(false)}
+          />
+
+          {githubSaved && !githubError && (
+            <p role="status" className="text-xs text-chart-5">
+              Saved.
+            </p>
+          )}
+          {githubTestResult && !githubError && (
+            <p role="status" className="text-xs text-chart-5">
+              {githubTestResult}
+            </p>
+          )}
+          {githubError && (
+            <p role="alert" className="text-xs text-destructive">
+              {githubError}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             Use a fine-grained, repo-scoped PAT with <strong>Contents: Read-only</strong> permission (
             <strong>Metadata: Read-only</strong> is included automatically) &mdash; no other permissions are needed.
@@ -486,396 +632,463 @@ export function GlobalIntegrations() {
         </CardContent>
       </Card>
 
-      <Card className="border-border bg-card">
-        <CardContent className="flex flex-col gap-4 px-4 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
-              <BrainCircuit className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="font-medium text-foreground">AI Provider</div>
-              <div className="text-xs text-muted-foreground">Powers AI Analysis remediation suggestions</div>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            {PROVIDERS.map((p) => (
-              <label key={p.value} className="flex items-center gap-2 text-sm text-foreground">
-                <input
-                  type="radio"
-                  name="ai_provider"
-                  value={p.value}
-                  checked={provider === p.value}
-                  onChange={() => {
-                    setProvider(p.value);
-                    setSaved(false);
-                  }}
-                  className="h-4 w-4 accent-primary"
-                />
-                {p.label}
-              </label>
-            ))}
-          </div>
-
-          {configuredNow && (
-            <div className="flex items-center gap-2 text-sm text-chart-5">
-              <CheckCircle2 className="h-4 w-4" />
-              Configured
-            </div>
-          )}
-
-          {provider === "anthropic" && (
-            <div className="flex gap-2">
-              <Input
-                type="password"
-                className="bg-secondary"
-                placeholder={config?.anthropic_api_key_set ? "Replace key..." : "sk-ant-..."}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-            </div>
-          )}
-
-          {provider === "openai_compatible" && (
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="oc-base-url" className="text-xs text-muted-foreground">
-                  Base URL
-                </Label>
-                <Input
-                  id="oc-base-url"
-                  className="bg-secondary"
-                  placeholder="http://localhost:11434/v1 (Ollama) or https://api.moonshot.cn/v1 (Kimi)"
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                />
+      {/* Everything below is rendered straight off `config`. If that read
+          failed there is nothing honest to draw here: a blank Slack/Jira/SIEM
+          form is indistinguishable from "these are not configured". AsyncContent
+          gives the skeleton, the error-with-retry and the stale-data banner in
+          one place, so a failed refresh keeps the last known state visible and
+          says it is stale rather than silently reverting to "unset". */}
+      <AsyncContent
+        state={configState}
+        itemNoun="integration settings"
+        errorTitle="Couldn't load integration settings"
+        loadingFallback={<SkeletonList count={4} />}
+        className="flex flex-col gap-4"
+      >
+        {() => (
+          <>
+          <Card className="border-border bg-card">
+            <CardContent className="flex flex-col gap-4 px-4 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
+                  <BrainCircuit className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">AI Provider</div>
+                  <div className="text-xs text-muted-foreground">Powers AI Analysis remediation suggestions</div>
+                </div>
               </div>
+
+              <div className="flex flex-col gap-2">
+                {PROVIDERS.map((p) => (
+                  <label key={p.value} className="flex items-center gap-2 text-sm text-foreground">
+                    <input
+                      type="radio"
+                      name="ai_provider"
+                      value={p.value}
+                      checked={provider === p.value}
+                      onChange={() => {
+                        setProvider(p.value);
+                        setSaved(false);
+                      }}
+                      className="h-4 w-4 accent-primary"
+                    />
+                    {p.label}
+                  </label>
+                ))}
+              </div>
+
+              {configuredNow && (
+                <div className="flex items-center gap-2 text-sm text-chart-5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Configured &middot; {savedProviderLabel}
+                </div>
+              )}
+
+              {providerDirty && (
+                <p role="status" className="text-xs text-muted-foreground">
+                  Unsaved change: {savedProviderLabel} is still the active provider until you save.
+                </p>
+              )}
+
+              {provider === "anthropic" && (
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="anthropic-api-key" className="text-xs text-muted-foreground">
+                    Anthropic API key
+                  </Label>
+                  <Input
+                    id="anthropic-api-key"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="bg-secondary"
+                    placeholder={config?.anthropic_api_key_set ? "Replace key…" : "sk-ant-…"}
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {provider === "openai_compatible" && (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="oc-base-url" className="text-xs text-muted-foreground">
+                      Base URL
+                    </Label>
+                    <Input
+                      id="oc-base-url"
+                      className="bg-secondary"
+                      placeholder="http://localhost:11434/v1 (Ollama) or https://api.moonshot.cn/v1 (Kimi)"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="oc-api-key" className="text-xs text-muted-foreground">
+                      API Key (optional: self-hosted backends like Ollama usually don&apos;t need one)
+                    </Label>
+                    <Input
+                      id="oc-api-key"
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="bg-secondary"
+                      placeholder={config?.openai_compatible_api_key_set ? "Replace key…" : "Leave blank if not required"}
+                      value={compatKey}
+                      onChange={(e) => setCompatKey(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="oc-model" className="text-xs text-muted-foreground">
+                      Model name
+                    </Label>
+                    <Input
+                      id="oc-model"
+                      className="bg-secondary"
+                      placeholder="llama3.1, qwen2.5:0.5b, kimi-k2, ..."
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button onClick={save} disabled={saving || !canSave} className="self-start">
+                  {saving ? "Saving…" : "Save"}
+                </Button>
+                {((provider === "anthropic" && config?.anthropic_api_key_set) ||
+                  (provider === "openai_compatible" && config?.openai_compatible_api_key_set)) && (
+                  <Button variant="destructive" onClick={() => setRevokeOpen(true)} disabled={revoking} className="self-start">
+                    {revoking ? "Revoking…" : "Revoke key"}
+                  </Button>
+                )}
+              </div>
+
+              {/* The consequence used to live only in 12px muted helper text
+                  below the button; it belongs at the point of no return. */}
+              <ConfirmDialog
+                open={revokeOpen}
+                title="Revoke the stored AI provider key?"
+                description={
+                  <>
+                    This clears the key server-side <strong>immediately</strong>. AI Analysis and Autofix&apos;s
+                    AI-generated patches fall back to no-AI behavior for everyone on this platform until a new key is
+                    saved. The stored key can&apos;t be read back, so revoking it means re-entering it from your
+                    provider to undo this.
+                    {error && <span className="mt-2 block text-destructive">{error}</span>}
+                  </>
+                }
+                confirmLabel="Revoke key"
+                tone="destructive"
+                loading={revoking}
+                onConfirm={revokeAiKey}
+                onCancel={() => setRevokeOpen(false)}
+              />
+
+              {saved && !error && (
+                <p role="status" className="text-xs text-chart-5">
+                  Saved.
+                </p>
+              )}
+              {error && (
+                <p role="alert" className="text-xs text-destructive">
+                  {error}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Stored in the database (Admin-only). The Anthropic key takes precedence over ANTHROPIC_API_KEY in backend
+                .env when that provider is selected. Revoke key immediately clears the stored key -- AI Analysis and
+                Autofix&apos;s AI-generated patches fall back to no-AI behavior until a new key is saved.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border bg-card">
+            <CardContent className="flex flex-col gap-4 px-4 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
+                  <MessageSquare className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">Slack</div>
+                  <div className="text-xs text-muted-foreground">Incoming webhook for notifications</div>
+                </div>
+              </div>
+
+              {config?.slack_webhook_url_set && (
+                <div className="flex items-center gap-2 text-sm text-chart-5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Configured
+                </div>
+              )}
+
               <div className="flex flex-col gap-1">
-                <Label htmlFor="oc-api-key" className="text-xs text-muted-foreground">
-                  API Key (optional: self-hosted backends like Ollama usually don&apos;t need one)
+                <Label htmlFor="slack-webhook-url" className="text-xs text-muted-foreground">
+                  Webhook URL
                 </Label>
                 <Input
-                  id="oc-api-key"
+                  id="slack-webhook-url"
                   type="password"
+                  autoComplete="off"
+                  spellCheck={false}
                   className="bg-secondary"
-                  placeholder={config?.openai_compatible_api_key_set ? "Replace key..." : "Leave blank if not required"}
-                  value={compatKey}
-                  onChange={(e) => setCompatKey(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <Label htmlFor="oc-model" className="text-xs text-muted-foreground">
-                  Model name
-                </Label>
-                <Input
-                  id="oc-model"
-                  className="bg-secondary"
-                  placeholder="llama3.1, qwen2.5:0.5b, kimi-k2, ..."
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                />
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-2">
-            <Button onClick={save} disabled={saving || !canSave} className="self-start">
-              {saving ? "Saving..." : "Save"}
-            </Button>
-            {((provider === "anthropic" && config?.anthropic_api_key_set) ||
-              (provider === "openai_compatible" && config?.openai_compatible_api_key_set)) && (
-              <Button variant="outline" onClick={revokeAiKey} disabled={revoking} className="self-start text-destructive">
-                {revoking ? "Revoking..." : "Revoke key"}
-              </Button>
-            )}
-          </div>
-
-          {saved && !error && <p className="text-xs text-chart-5">Saved.</p>}
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <p className="text-xs text-muted-foreground">
-            Stored in the database (Admin-only). The Anthropic key takes precedence over ANTHROPIC_API_KEY in backend
-            .env when that provider is selected. Revoke key immediately clears the stored key -- AI Analysis and
-            Autofix&apos;s AI-generated patches fall back to no-AI behavior until a new key is saved.
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card className="border-border bg-card">
-        <CardContent className="flex flex-col gap-4 px-4 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
-              <MessageSquare className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="font-medium text-foreground">Slack</div>
-              <div className="text-xs text-muted-foreground">Incoming webhook for notifications</div>
-            </div>
-          </div>
-
-          {config?.slack_webhook_url_set && (
-            <div className="flex items-center gap-2 text-sm text-chart-5">
-              <CheckCircle2 className="h-4 w-4" />
-              Configured
-            </div>
-          )}
-
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="slack-webhook-url" className="text-xs text-muted-foreground">
-              Webhook URL
-            </Label>
-            <Input
-              id="slack-webhook-url"
-              type="password"
-              className="bg-secondary"
-              placeholder={config?.slack_webhook_url_set ? "Replace webhook URL..." : "https://hooks.slack.com/services/..."}
-              value={slackWebhookUrl}
-              onChange={(e) => {
-                setSlackWebhookUrl(e.target.value);
-                setSlackSaved(false);
-                setSlackTestResult(null);
-              }}
-            />
-          </div>
-
-          <div className="flex gap-2">
-            <Button onClick={saveSlack} disabled={slackSaving || !slackWebhookUrl.trim()} className="self-start">
-              {slackSaving ? "Saving..." : "Save"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={testSlack}
-              disabled={slackTesting || (!slackWebhookUrl.trim() && !config?.slack_webhook_url_set)}
-              className="self-start"
-            >
-              {slackTesting ? "Testing..." : "Test Connection"}
-            </Button>
-          </div>
-
-          {slackSaved && !slackError && <p className="text-xs text-chart-5">Saved.</p>}
-          {slackTestResult && !slackError && <p className="text-xs text-chart-5">{slackTestResult}</p>}
-          {slackError && <p className="text-xs text-destructive">{slackError}</p>}
-          <p className="text-xs text-muted-foreground">
-            A real test message is posted to this webhook when you click Test Connection. Stored encrypted in the
-            database (Admin-only).
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card className="border-border bg-card">
-        <CardContent className="flex flex-col gap-4 px-4 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
-              <Ticket className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="font-medium text-foreground">Jira</div>
-              <div className="text-xs text-muted-foreground">Auto-create tickets for findings</div>
-            </div>
-          </div>
-
-          {config?.jira_url && config?.jira_api_token_set && (
-            <div className="flex items-center gap-2 text-sm text-chart-5">
-              <CheckCircle2 className="h-4 w-4" />
-              Configured
-            </div>
-          )}
-
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="jira-url" className="text-xs text-muted-foreground">
-                Jira Server URL
-              </Label>
-              <Input
-                id="jira-url"
-                className="bg-secondary"
-                placeholder="https://yourorg.atlassian.net"
-                value={jiraUrl}
-                onChange={(e) => {
-                  setJiraUrl(e.target.value);
-                  setJiraSaved(false);
-                  setJiraTestResult(null);
-                }}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="jira-api-token" className="text-xs text-muted-foreground">
-                API Token
-              </Label>
-              <Input
-                id="jira-api-token"
-                type="password"
-                className="bg-secondary"
-                placeholder={config?.jira_api_token_set ? "Replace token..." : "API token or PAT"}
-                value={jiraApiToken}
-                onChange={(e) => {
-                  setJiraApiToken(e.target.value);
-                  setJiraSaved(false);
-                  setJiraTestResult(null);
-                }}
-              />
-            </div>
-            <div className="flex gap-3">
-              <div className="flex flex-1 flex-col gap-1">
-                <Label htmlFor="jira-project-key" className="text-xs text-muted-foreground">
-                  Project Key
-                </Label>
-                <Input
-                  id="jira-project-key"
-                  className="bg-secondary"
-                  placeholder="SEC"
-                  value={jiraProjectKey}
+                  placeholder={config?.slack_webhook_url_set ? "Replace webhook URL…" : "https://hooks.slack.com/services/..."}
+                  value={slackWebhookUrl}
                   onChange={(e) => {
-                    setJiraProjectKey(e.target.value);
-                    setJiraSaved(false);
+                    setSlackWebhookUrl(e.target.value);
+                    setSlackSaved(false);
+                    setSlackTestResult(null);
                   }}
                 />
               </div>
-              <div className="flex flex-1 flex-col gap-1">
-                <Label htmlFor="jira-issue-type" className="text-xs text-muted-foreground">
-                  Issue Type
-                </Label>
-                <Input
-                  id="jira-issue-type"
-                  className="bg-secondary"
-                  placeholder="Task"
-                  value={jiraIssueType}
-                  onChange={(e) => {
-                    setJiraIssueType(e.target.value);
-                    setJiraSaved(false);
-                  }}
-                />
+
+              <div className="flex gap-2">
+                <Button onClick={saveSlack} disabled={slackSaving || !slackWebhookUrl.trim()} className="self-start">
+                  {slackSaving ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={testSlack}
+                  disabled={slackTesting || (!slackWebhookUrl.trim() && !config?.slack_webhook_url_set)}
+                  className="self-start"
+                >
+                  {slackTesting ? "Testing…" : "Test Connection"}
+                </Button>
               </div>
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="jira-auto-create-severity" className="text-xs text-muted-foreground">
-                Auto-create ticket threshold
-              </Label>
-              <select
-                id="jira-auto-create-severity"
-                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
-                value={jiraAutoCreateSeverity}
-                onChange={(e) => {
-                  setJiraAutoCreateSeverity(e.target.value);
-                  setJiraSaved(false);
-                }}
-              >
-                <option value="">Disabled</option>
-                {SEVERITY_ORDER.map((s) => (
-                  <option key={s} value={s}>
-                    {s} and above
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
 
-          <div className="flex gap-2">
-            <Button onClick={saveJira} disabled={jiraSaving || !jiraUrl.trim() || !jiraProjectKey.trim()} className="self-start">
-              {jiraSaving ? "Saving..." : "Save"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={testJira}
-              disabled={jiraTesting || (!jiraUrl.trim() && !config?.jira_url) || (!jiraApiToken.trim() && !config?.jira_api_token_set)}
-              className="self-start"
-            >
-              {jiraTesting ? "Testing..." : "Test Connection"}
-            </Button>
-          </div>
+              {slackSaved && !slackError && <p role="status" className="text-xs text-chart-5">Saved.</p>}
+              {slackTestResult && !slackError && <p role="status" className="text-xs text-chart-5">{slackTestResult}</p>}
+              {slackError && <p role="alert" className="text-xs text-destructive">{slackError}</p>}
+              <p className="text-xs text-muted-foreground">
+                A real test message is posted to this webhook when you click Test Connection. Stored encrypted in the
+                database (Admin-only).
+              </p>
+            </CardContent>
+          </Card>
 
-          {jiraSaved && !jiraError && <p className="text-xs text-chart-5">Saved.</p>}
-          {jiraTestResult && !jiraError && <p className="text-xs text-chart-5">{jiraTestResult}</p>}
-          {jiraError && <p className="text-xs text-destructive">{jiraError}</p>}
-          <p className="text-xs text-muted-foreground">
-            Test Connection makes a real authenticated call to your Jira instance. A ticket is auto-created for every
-            new finding at or above the selected severity. API token stored encrypted in the database (Admin-only).
-          </p>
-        </CardContent>
-      </Card>
+          <Card className="border-border bg-card">
+            <CardContent className="flex flex-col gap-4 px-4 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
+                  <Ticket className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">Jira</div>
+                  <div className="text-xs text-muted-foreground">Auto-create tickets for findings</div>
+                </div>
+              </div>
 
-      <Card className="border-border bg-card">
-        <CardContent className="flex flex-col gap-4 px-4 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
-              <Send className="h-5 w-5" />
-            </div>
-            <div>
-              <div className="font-medium text-foreground">SIEM Export</div>
-              <div className="text-xs text-muted-foreground">Generic webhook; one JSON event per qualifying finding</div>
-            </div>
-          </div>
+              {config?.jira_url && config?.jira_api_token_set && (
+                <div className="flex items-center gap-2 text-sm text-chart-5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Configured
+                </div>
+              )}
 
-          {config?.siem_webhook_url_set && (
-            <div className="flex items-center gap-2 text-sm text-chart-5">
-              <CheckCircle2 className="h-4 w-4" />
-              Configured
-            </div>
-          )}
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="jira-url" className="text-xs text-muted-foreground">
+                    Jira Server URL
+                  </Label>
+                  <Input
+                    id="jira-url"
+                    className="bg-secondary"
+                    placeholder="https://yourorg.atlassian.net"
+                    value={jiraUrl}
+                    onChange={(e) => {
+                      setJiraUrl(e.target.value);
+                      setJiraSaved(false);
+                      setJiraTestResult(null);
+                    }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="jira-api-token" className="text-xs text-muted-foreground">
+                    API Token
+                  </Label>
+                  <Input
+                    id="jira-api-token"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="bg-secondary"
+                    placeholder={config?.jira_api_token_set ? "Replace token…" : "API token or PAT"}
+                    value={jiraApiToken}
+                    onChange={(e) => {
+                      setJiraApiToken(e.target.value);
+                      setJiraSaved(false);
+                      setJiraTestResult(null);
+                    }}
+                  />
+                </div>
+                <div className="flex gap-3">
+                  <div className="flex flex-1 flex-col gap-1">
+                    <Label htmlFor="jira-project-key" className="text-xs text-muted-foreground">
+                      Project Key
+                    </Label>
+                    <Input
+                      id="jira-project-key"
+                      className="bg-secondary"
+                      placeholder="SEC"
+                      value={jiraProjectKey}
+                      onChange={(e) => {
+                        setJiraProjectKey(e.target.value);
+                        setJiraSaved(false);
+                      }}
+                    />
+                  </div>
+                  <div className="flex flex-1 flex-col gap-1">
+                    <Label htmlFor="jira-issue-type" className="text-xs text-muted-foreground">
+                      Issue Type
+                    </Label>
+                    <Input
+                      id="jira-issue-type"
+                      className="bg-secondary"
+                      placeholder="Task"
+                      value={jiraIssueType}
+                      onChange={(e) => {
+                        setJiraIssueType(e.target.value);
+                        setJiraSaved(false);
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="jira-auto-create-severity" className="text-xs text-muted-foreground">
+                    Auto-create ticket threshold
+                  </Label>
+                  <select
+                    id="jira-auto-create-severity"
+                    className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                    value={jiraAutoCreateSeverity}
+                    onChange={(e) => {
+                      setJiraAutoCreateSeverity(e.target.value);
+                      setJiraSaved(false);
+                    }}
+                  >
+                    <option value="">Disabled</option>
+                    {SEVERITY_ORDER.map((s) => (
+                      <option key={s} value={s}>
+                        {s} and above
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="siem-webhook-url" className="text-xs text-muted-foreground">
-                Webhook URL
-              </Label>
-              <Input
-                id="siem-webhook-url"
-                type="password"
-                className="bg-secondary"
-                placeholder={config?.siem_webhook_url_set ? "Replace webhook URL..." : "https://your-siem.example.com/ingest"}
-                value={siemWebhookUrl}
-                onChange={(e) => {
-                  setSiemWebhookUrl(e.target.value);
-                  setSiemSaved(false);
-                  setSiemTestResult(null);
-                }}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="siem-export-severity" className="text-xs text-muted-foreground">
-                Auto-export threshold
-              </Label>
-              <select
-                id="siem-export-severity"
-                className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
-                value={siemExportSeverity}
-                onChange={(e) => {
-                  setSiemExportSeverity(e.target.value);
-                  setSiemSaved(false);
-                }}
-              >
-                <option value="">Disabled</option>
-                {SEVERITY_ORDER.map((s) => (
-                  <option key={s} value={s}>
-                    {s} and above
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
+              <div className="flex gap-2">
+                <Button onClick={saveJira} disabled={jiraSaving || !jiraUrl.trim() || !jiraProjectKey.trim()} className="self-start">
+                  {jiraSaving ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={testJira}
+                  disabled={jiraTesting || (!jiraUrl.trim() && !config?.jira_url) || (!jiraApiToken.trim() && !config?.jira_api_token_set)}
+                  className="self-start"
+                >
+                  {jiraTesting ? "Testing…" : "Test Connection"}
+                </Button>
+              </div>
 
-          <div className="flex gap-2">
-            <Button onClick={saveSiem} disabled={siemSaving} className="self-start">
-              {siemSaving ? "Saving..." : "Save"}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={testSiem}
-              disabled={siemTesting || (!siemWebhookUrl.trim() && !config?.siem_webhook_url_set)}
-              className="self-start"
-            >
-              {siemTesting ? "Testing..." : "Test Connection"}
-            </Button>
-          </div>
+              {jiraSaved && !jiraError && <p role="status" className="text-xs text-chart-5">Saved.</p>}
+              {jiraTestResult && !jiraError && <p role="status" className="text-xs text-chart-5">{jiraTestResult}</p>}
+              {jiraError && <p role="alert" className="text-xs text-destructive">{jiraError}</p>}
+              <p className="text-xs text-muted-foreground">
+                Test Connection makes a real authenticated call to your Jira instance. A ticket is auto-created for every
+                new finding at or above the selected severity. API token stored encrypted in the database (Admin-only).
+              </p>
+            </CardContent>
+          </Card>
 
-          {siemSaved && !siemError && <p className="text-xs text-chart-5">Saved.</p>}
-          {siemTestResult && !siemError && <p className="text-xs text-chart-5">{siemTestResult}</p>}
-          {siemError && <p className="text-xs text-destructive">{siemError}</p>}
-          <p className="text-xs text-muted-foreground">
-            A real test event is posted to this webhook when you click Test Connection. A JSON event is sent for every
-            new finding at or above the selected severity. Stored encrypted in the database (Admin-only).
-          </p>
-        </CardContent>
-      </Card>
+          <Card className="border-border bg-card">
+            <CardContent className="flex flex-col gap-4 px-4 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-accent-strong">
+                  <Send className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">SIEM Export</div>
+                  <div className="text-xs text-muted-foreground">Generic webhook; one JSON event per qualifying finding</div>
+                </div>
+              </div>
+
+              {config?.siem_webhook_url_set && (
+                <div className="flex items-center gap-2 text-sm text-chart-5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Configured
+                </div>
+              )}
+
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="siem-webhook-url" className="text-xs text-muted-foreground">
+                    Webhook URL
+                  </Label>
+                  <Input
+                    id="siem-webhook-url"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="bg-secondary"
+                    placeholder={config?.siem_webhook_url_set ? "Replace webhook URL…" : "https://your-siem.example.com/ingest"}
+                    value={siemWebhookUrl}
+                    onChange={(e) => {
+                      setSiemWebhookUrl(e.target.value);
+                      setSiemSaved(false);
+                      setSiemTestResult(null);
+                    }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <Label htmlFor="siem-export-severity" className="text-xs text-muted-foreground">
+                    Auto-export threshold
+                  </Label>
+                  <select
+                    id="siem-export-severity"
+                    className="h-9 rounded-md border border-input bg-secondary px-2 text-sm text-foreground"
+                    value={siemExportSeverity}
+                    onChange={(e) => {
+                      setSiemExportSeverity(e.target.value);
+                      setSiemSaved(false);
+                    }}
+                  >
+                    <option value="">Disabled</option>
+                    {SEVERITY_ORDER.map((s) => (
+                      <option key={s} value={s}>
+                        {s} and above
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button onClick={saveSiem} disabled={siemSaving} className="self-start">
+                  {siemSaving ? "Saving…" : "Save"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={testSiem}
+                  disabled={siemTesting || (!siemWebhookUrl.trim() && !config?.siem_webhook_url_set)}
+                  className="self-start"
+                >
+                  {siemTesting ? "Testing…" : "Test Connection"}
+                </Button>
+              </div>
+
+              {siemSaved && !siemError && <p role="status" className="text-xs text-chart-5">Saved.</p>}
+              {siemTestResult && !siemError && <p role="status" className="text-xs text-chart-5">{siemTestResult}</p>}
+              {siemError && <p role="alert" className="text-xs text-destructive">{siemError}</p>}
+              <p className="text-xs text-muted-foreground">
+                A real test event is posted to this webhook when you click Test Connection. A JSON event is sent for every
+                new finding at or above the selected severity. Stored encrypted in the database (Admin-only).
+              </p>
+            </CardContent>
+          </Card>
+          </>
+        )}
+      </AsyncContent>
     </div>
   );
 }

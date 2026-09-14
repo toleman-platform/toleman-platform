@@ -47,7 +47,7 @@ frontend/src/lib/poll.ts        shared polling helper for async job status (scan
 | `webhooks` | `/api/webhooks` | HMAC signature, not session | GitHub webhook deliveries |
 | `ai` | `/api/ai` | login | remediation analysis, Anthropic or OpenAI-compatible provider |
 | `config` | `/api/config` | admin | `PlatformConfig` (AI provider, keys, Slack webhook, Jira config; encrypted); `POST /test-slack`/`POST /test-jira` make real outbound calls to verify credentials (#74) |
-| `reports` | `/api/reports` | login | compliance posture export (CSV/PDF) |
+| `reports` | `/api/reports` | login | compliance posture export (CSV/PDF); filterable by the same facets as the Findings page (severity/state/tool/category/environment/owner/repo group + a finding-window date range, reusing `findings._filtered_findings_query`) with selectable sections via repeated `sections=` (`GET /sections` lists them). Every export prints the filters it was generated under, marks excluded sections as excluded, and states which figures are as-of the window end vs unavoidably current-state (#302) |
 | `admin` | `/api/admin` | admin | user CRUD |
 | `policies` | `/api/policies` | admin | policy-as-code rules |
 | `tools` | `/api/tools` | login; install routes admin-only | scanner health check, marketplace registry, per-workspace usage assignment, one-click install (`POST /{tool}/install` + `GET /installs/{id}`, #216) |

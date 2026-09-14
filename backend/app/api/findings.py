@@ -222,6 +222,32 @@ class RaiseFixPrResponse(BaseModel):
     branch: str
 
 
+def _apply_finding_window(query, date_from: datetime | None, date_to: datetime | None):
+    """(#302) Narrow to findings whose observed window overlaps
+    [date_from, date_to].
+
+    A Finding is not a point in time: it has a `first_seen` and a
+    `last_seen`, and it is a live fact about the repository for the whole
+    span between them. So "the report for Q3" has to mean "everything that
+    was an open/triaged issue at some point during Q3", i.e. an interval
+    overlap (`last_seen >= from AND first_seen <= to`), not
+    `first_seen BETWEEN from AND to`. The latter would silently drop the
+    worst rows in any compliance export -- a critical finding first seen in
+    March and still open in September is precisely the one an auditor
+    asking about Q3 wants to see, and it is the one a `first_seen`-only
+    filter hides.
+
+    Each bound is independent: passing only `date_from` means "still
+    present on or after that date", passing only `date_to` means "already
+    present on or before it".
+    """
+    if date_from is not None:
+        query = query.where(Finding.last_seen >= date_from)
+    if date_to is not None:
+        query = query.where(Finding.first_seen <= date_to)
+    return query
+
+
 def _filtered_findings_query(
     session: Session,
     user: User,
@@ -239,6 +265,13 @@ def _filtered_findings_query(
     search: str | None,
     rule_id: list[str] | None = None,
     new_since_days: int | None = None,
+    # (#302) Finding-window date range, used by the compliance report export
+    # (`app/api/reports.py`). Defaulted, like the two above, so the
+    # Findings-page callers below stay exactly as they were: a report asking
+    # for "Q3" must not change what the Findings page returns when it asks
+    # for nothing. See _apply_finding_window for the overlap semantics.
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
 ):
     """Every list_findings filter except `category` (deliberately excluded:
     the category-counts facet below needs the SAME filters applied for its
@@ -267,6 +300,9 @@ def _filtered_findings_query(
     open (`OPEN_FINDING_STATES`) or resolved (`RESOLVED_FINDING_STATES`)
     group when `state` is absent.
 
+    `date_from`/`date_to` (#302) bound the *finding window*, not a single
+    timestamp -- see _apply_finding_window.
+
     Returns `(query, target_joined)`, or `(None, False)` when the caller's
     workspace membership resolves to zero workspaces (#57): a real query
     would come back empty anyway, and returning None here lets both callers
@@ -291,6 +327,7 @@ def _filtered_findings_query(
         query = query.where(Finding.target_id.in_(target_id))
     if branch is not None:
         query = query.where(Finding.branch == branch)
+    query = _apply_finding_window(query, date_from, date_to)
     if state:
         query = query.where(Finding.state.in_(state))
     elif resolved is not None:
@@ -390,7 +427,10 @@ def _apply_category(query, category: str | None, exclude_category: list[str] | N
     exclusion it means and new categories land in the queue by default.
 
     Extracted so the flat list and the grouped list cannot disagree about
-    what a category means.
+    what a category means. The compliance posture export (#302,
+    app/api/reports.py) calls it for the same reason: a report that quietly
+    disagreed with the Findings page about what "Other" covers would be an
+    audit-evidence problem.
     """
     for excluded in exclude_category or []:
         if excluded == UNKNOWN_TOOL_CATEGORY:
@@ -780,10 +820,15 @@ def list_finding_groups(
     )
 
 
-@router.get("/facets/tools")
-def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
-    """Distinct tool names across findings visible to the caller (issue #57),
-    for populating the tool filter."""
+def distinct_finding_tools(session: Session, user: User) -> list[str]:
+    """Distinct tool names across findings visible to the caller (issue #57).
+
+    The plain function behind GET /facets/tools, so other modules
+    (app/api/reports.py validates its `tool` filter against this) can reuse
+    it without calling a route handler as if it were one -- that works, but
+    only by accident of its `Depends(...)` defaults, and it breaks silently
+    the moment the endpoint grows a parameter.
+    """
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
         return []
@@ -792,6 +837,27 @@ def list_tool_facets(session: Session = Depends(get_session), user: User = Depen
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     rows = session.exec(query).all()
     return sorted(rows)
+
+
+def distinct_target_environments(session: Session, user: User) -> list[str]:
+    """(#251) Distinct environments among targets the caller can see.
+
+    Reads Target rows, not findings, so a target nobody has scanned yet is
+    still a valid thing to filter by.
+    """
+    return _target_facet(session, user, Target.environment)
+
+
+def distinct_target_owners(session: Session, user: User) -> list[str]:
+    """(#251) Distinct owners among targets the caller can see."""
+    return _target_facet(session, user, Target.owner)
+
+
+@router.get("/facets/tools")
+def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
+    """Distinct tool names across findings visible to the caller (issue #57),
+    for populating the tool filter."""
+    return distinct_finding_tools(session, user)
 
 
 class CategoryFacet(BaseModel):
@@ -875,7 +941,7 @@ def list_environment_facets(
     nobody has labelled yet would be the largest and least useful entry in
     it on day one.
     """
-    return _target_facet(session, user, Target.environment)
+    return distinct_target_environments(session, user)
 
 
 @router.get("/facets/owners")
@@ -883,7 +949,7 @@ def list_owner_facets(
     session: Session = Depends(get_session), user: User = Depends(current_user)
 ) -> list[str]:
     """(#251) Distinct owners among targets the caller can see."""
-    return _target_facet(session, user, Target.owner)
+    return distinct_target_owners(session, user)
 
 
 def _target_facet(session: Session, user: User, column) -> list[str]:

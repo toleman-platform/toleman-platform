@@ -136,6 +136,28 @@ export async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T>
 }
 
 /**
+ * Pulls the server-chosen filename out of a Content-Disposition header so a
+ * download can be saved under the name the backend already decided on
+ * instead of one rebuilt client-side (#302). Handles both the plain
+ * `filename="x.csv"` form this API emits and RFC 5987's `filename*=`.
+ * Returns "" when the header is missing or unparseable; callers fall back to
+ * their own name rather than saving something called "undefined".
+ */
+export function filenameFromContentDisposition(header: string | null): string {
+  if (!header) return "";
+  const extended = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
+  if (extended) {
+    try {
+      return decodeURIComponent(extended[1].trim().replace(/^"|"$/g, ""));
+    } catch {
+      // A malformed percent-escape is not worth failing a download over.
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  return plain ? plain[1].trim() : "";
+}
+
+/**
  * Appends a multi-select query param: a single value behaves like `params.set`,
  * an array appends one entry per value so the backend receives repeated params.
  */

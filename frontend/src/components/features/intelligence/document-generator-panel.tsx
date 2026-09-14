@@ -97,6 +97,46 @@ export function DocGenToggle({
   );
 }
 
+/**
+ * Single-value picker for a generator step (#302): the Reports page's repo
+ * group / environment / owner / category filters. Same markup as the
+ * Findings page's own single-value filters (see group-filter.tsx), but
+ * driven by local state rather than a search param, since a report builder
+ * is a form the operator submits, not a view whose state belongs in the URL.
+ *
+ * `placeholder` is the "no filter" option and always maps to "", so an
+ * un-set filter is a real, re-selectable choice rather than a one-way door.
+ */
+export function DocGenSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+  ariaLabel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: DocGenOption[];
+  placeholder: string;
+  ariaLabel: string;
+}) {
+  return (
+    <select
+      aria-label={ariaLabel}
+      className="h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      <option value="">{placeholder}</option>
+      {options.map((o) => (
+        <option key={o.value} value={o.value} disabled={o.disabled}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function WhatsIncludedCard({
   items,
   footnote,

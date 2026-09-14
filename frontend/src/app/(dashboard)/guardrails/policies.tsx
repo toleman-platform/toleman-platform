@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Building2, ScrollText, ShieldAlert, Trash2 } from "lucide-react";
 
 const RULE_TYPES: { value: PolicyRuleType; label: string; placeholder: string }[] = [
@@ -66,13 +67,23 @@ export function Policies() {
     }
   }
 
+  // Deleting a policy rule changes what PR Guardrail blocks for the whole
+  // workspace and can't be undone; it used to mutate on click from an
+  // icon-only button with no accessible name at all.
+  const [pendingDelete, setPendingDelete] = useState<PolicyRule | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   async function removeRule(id: number) {
     if (!workspaceId) return;
+    setDeleting(true);
     try {
       await api.deletePolicy(id);
+      setPendingDelete(null);
       refetch();
     } catch (e) {
       setMutationError(e instanceof Error ? e.message : "failed to delete policy");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -182,7 +193,9 @@ export function Policies() {
                         variant="ghost"
                         size="icon"
                         className="shrink-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => removeRule(r.id)}
+                        onClick={() => setPendingDelete(r)}
+                        aria-label={`Delete policy rule ${ruleLabel(r.rule_type)}: ${r.value}`}
+                        title="Delete rule"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -190,6 +203,26 @@ export function Policies() {
                   ))
                 )}
               </div>
+
+              <ConfirmDialog
+                open={pendingDelete !== null}
+                title="Delete this policy rule?"
+                description={
+                  <>
+                    <strong>
+                      {pendingDelete ? `${ruleLabel(pendingDelete.rule_type)}: ${pendingDelete.value}` : ""}
+                    </strong>{" "}
+                    stops applying to this workspace immediately, and PR Guardrail&apos;s blocking decision changes
+                    accordingly &mdash; with no rules left, the default Critical/High-blocks behavior applies. This
+                    can&apos;t be undone.
+                  </>
+                }
+                confirmLabel="Delete rule"
+                tone="destructive"
+                loading={deleting}
+                onConfirm={() => pendingDelete && removeRule(pendingDelete.id)}
+                onCancel={() => setPendingDelete(null)}
+              />
             </>
           )}
         </CardContent>

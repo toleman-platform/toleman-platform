@@ -62,6 +62,7 @@ function RenamableWorkspaceRow({
       <div className="flex items-center gap-2 px-3 py-2">
         <Input
           autoFocus
+          aria-label={`New name for ${workspace.name}`}
           className="h-8 bg-secondary"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -86,33 +87,49 @@ function RenamableWorkspaceRow({
         >
           <X className="h-4 w-4" />
         </Button>
-        {error && <span className="text-xs text-destructive">{error}</span>}
+        {error && <span role="alert" className="text-xs text-destructive">{error}</span>}
       </div>
     );
   }
 
+  // The rename affordance used to be a bare <Pencil> SVG carrying an onClick,
+  // nested *inside* the row's own <button>. That is three separate problems:
+  // a button inside a button is invalid HTML (browsers unnest it, so which
+  // element actually receives the click is up to the parser), an SVG is not
+  // focusable so there was no tab stop and no way to trigger it from a
+  // keyboard at all, and it had no role and no accessible name. The two
+  // actions are now two sibling buttons in a plain row container: selecting
+  // the workspace, and renaming it, each independently reachable and named.
   return (
-    <button
-      onClick={onSelect}
+    <div
       className={cn(
-        "flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+        "flex w-full items-center justify-between gap-1 transition-colors",
         selected ? "bg-accent" : "hover:bg-secondary/50"
       )}
     >
-      <div className="min-w-0">
-        <div className={cn("truncate text-sm font-medium", selected ? "text-accent-strong" : "text-foreground")}>
+      <button
+        type="button"
+        onClick={onSelect}
+        aria-current={selected ? "true" : undefined}
+        className="flex min-w-0 flex-1 flex-col items-start px-3 py-2 text-left"
+      >
+        <span className={cn("w-full truncate text-sm font-medium", selected ? "text-accent-strong" : "text-foreground")}>
           {displayName}
-        </div>
-        <div className="text-xs text-muted-foreground">Workspace #{workspace.id}</div>
-      </div>
-      <Pencil
-        className="h-3.5 w-3.5 shrink-0 text-muted-foreground hover:text-foreground"
-        onClick={(e) => {
-          e.stopPropagation();
-          setEditing(true);
-        }}
-      />
-    </button>
+        </span>
+        <span className="text-xs text-muted-foreground">Workspace #{workspace.id}</span>
+      </button>
+      <Button
+        type="button"
+        size="icon"
+        variant="ghost"
+        className="mr-2 h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
+        onClick={() => setEditing(true)}
+        aria-label={`Rename ${displayName}`}
+        title={`Rename ${displayName}`}
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </Button>
+    </div>
   );
 }
 
@@ -146,6 +163,7 @@ function CreateWorkspaceForm({
     <div className="flex flex-col gap-2 px-3 py-3">
       <Input
         autoFocus
+        aria-label="New workspace name"
         className="h-8 bg-secondary"
         placeholder="Workspace name"
         value={name}
@@ -157,13 +175,13 @@ function CreateWorkspaceForm({
       />
       <div className="flex items-center gap-2">
         <Button size="sm" disabled={creating || !name.trim()} onClick={create}>
-          {creating ? "Creating..." : "Create"}
+          {creating ? "Creating…" : "Create"}
         </Button>
         <Button size="sm" variant="outline" disabled={creating} onClick={onCancel}>
           Cancel
         </Button>
       </div>
-      {error && <span className="text-xs text-destructive">{error}</span>}
+      {error && <span role="alert" className="text-xs text-destructive">{error}</span>}
     </div>
   );
 }
@@ -193,7 +211,7 @@ export default function WorkspacesPage() {
         }
       />
 
-      {error && <p className="text-xs text-destructive">{error.message}</p>}
+      {error && <p role="alert" className="text-xs text-destructive">{error.message}</p>}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[280px_1fr]">
         <Card className="border-border bg-card">

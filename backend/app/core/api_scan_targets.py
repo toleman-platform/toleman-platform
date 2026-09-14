@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse
 
 from sqlmodel import Session, select
 
+from app.core.crypto import SecretDecryptionError, decrypt_secret
 from app.models.models import ApiEndpoint, Target
 
 
@@ -172,3 +173,27 @@ def build_scan_urls(
         scope.endpoints.append(endpoint)
 
     return scope
+
+
+def build_scan_headers(target: Target) -> dict[str, str]:
+    """Headers the active scanner should present for this target (#470).
+
+    Empty dict when no credential is configured, which is the pre-existing
+    anonymous behaviour and stays a supported way to run.
+
+    A credential that cannot be decrypted raises rather than silently
+    scanning anonymously. Falling back would produce a scan that answers
+    401 on every authenticated route and still reports success -- an
+    all-clear caused by a broken PLATFORM_ENCRYPTION_KEY, indistinguishable
+    from a clean API. Failing loudly is the only honest option.
+    """
+    if not target.api_auth_header_name or not target.api_auth_header_value_ciphertext:
+        return {}
+    try:
+        value = decrypt_secret(target.api_auth_header_value_ciphertext)
+    except SecretDecryptionError as exc:
+        raise ApiScanConfigError(
+            "this target's API scan credential cannot be decrypted "
+            "(PLATFORM_ENCRYPTION_KEY changed?); re-enter it before scanning"
+        ) from exc
+    return {target.api_auth_header_name: value}

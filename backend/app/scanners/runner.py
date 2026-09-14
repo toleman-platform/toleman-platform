@@ -16,6 +16,8 @@ import subprocess
 import tempfile
 import time
 import uuid
+
+import yaml
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -460,7 +462,40 @@ def _validate_scan_url(url: str) -> None:
         raise ValueError(f"invalid nuclei scan URL: {url!r}")
 
 
-def run_nuclei(urls: list[str]) -> list[dict]:
+def _write_nuclei_header_config(headers: dict[str, str] | None) -> str | None:
+    """Write nuclei's custom headers to a 0600 config file, returning its
+    path, or None when there are no headers.
+
+    nuclei accepts headers as repeated `-H "Name: value"` arguments, which
+    would be simpler -- and wrong for a credential. Anything in argv is
+    visible to every local process through `ps`, and would also be captured
+    by any tooling that records the command a scan ran. nuclei's `-config`
+    file takes the same flags as YAML keys, so the value never leaves a
+    file only this process's user can read.
+
+    tempfile.mkstemp is what creates it, rather than NamedTemporaryFile as
+    the URL list above uses: mkstemp opens with O_CREAT|O_EXCL and mode
+    0600 atomically, so the credential is never on disk under a wider mode
+    even briefly. Do not replace this with a create-then-chmod, which
+    leaves exactly that window.
+    """
+    if not headers:
+        return None
+
+    fd, path = tempfile.mkstemp(suffix=".yaml")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            yaml.safe_dump({"header": [f"{name}: {value}" for name, value in headers.items()]}, fh)
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def run_nuclei(urls: list[str], headers: dict[str, str] | None = None) -> list[dict]:
     """Run nuclei against an already-validated list of live URLs and return
     parsed JSONL results (one dict per finding).
 
@@ -498,6 +533,14 @@ def run_nuclei(urls: list[str]) -> list[dict]:
         and zero findings from a scanner that loaded no checks at all. The
         image installs templates at build time (see backend/Dockerfile) so
         the normal path is the isolated one.
+      - `headers`, when given (#470), is written into a nuclei config file
+        with 0600 permissions rather than passed as `-H` arguments. An
+        Authorization header is a live credential, and argv is readable by
+        any local process via `ps`; a config file is not. The file is
+        removed in the same `finally` as the URL list. The header value is
+        never logged and never appears in an error message: the exit-code
+        handler below quotes nuclei's stderr, which is why the config path
+        (not its contents) is what reaches the command line.
       - The exit code is checked (#253's lesson, which this function had
         been skipping because it does not go through _execute). nuclei is
         not given a findings-based exit code, so anything nonzero means it
@@ -514,6 +557,8 @@ def run_nuclei(urls: list[str]) -> list[dict]:
         f.write("\n".join(urls))
         target_file = f.name
 
+    config_file = _write_nuclei_header_config(headers)
+
     try:
         cmd = [
             settings.nuclei_binary,
@@ -524,6 +569,8 @@ def run_nuclei(urls: list[str]) -> list[dict]:
             "-rate-limit", str(settings.nuclei_rate_limit),
             "-timeout", "5",
         ]
+        if config_file:
+            cmd += ["-config", config_file]
         if nuclei_templates_present():
             cmd.append("-duc")
         if settings.nuclei_exclude_tags:
@@ -534,10 +581,13 @@ def run_nuclei(urls: list[str]) -> list[dict]:
             cmd, capture_output=True, text=True, timeout=settings.nuclei_timeout_seconds
         )
     finally:
-        try:
-            os.unlink(target_file)
-        except OSError:
-            pass
+        for path in (target_file, config_file):
+            if not path:
+                continue
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     if proc.returncode != 0:
         # (#229/#253) This function bypasses _execute, so it bypassed the

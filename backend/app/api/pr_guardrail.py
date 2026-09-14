@@ -20,6 +20,7 @@ from app.core.github import github_get, repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core.pr_guardrail_executor import (
     execute_pr_guardrail_scan,
+    group_findings_by_location,
     recompute_pr_scan_status,
     revoke_finding_status_in_pr_comment,
     set_commit_status,
@@ -84,6 +85,56 @@ def _finding_out(f: PRGuardrailFinding) -> dict:
         "ignore_reviewed_by": f.ignore_reviewed_by,
         "ignore_reviewed_at": f.ignore_reviewed_at,
     }
+
+
+def _grouped_findings_out(findings: list[PRGuardrailFinding]) -> list[dict]:
+    """(#383) The same per-finding rows as `_finding_out`, each additionally
+    carrying which same-location group it belongs to.
+
+    Rows stay individual on purpose -- every ignore action, deep link and
+    approval in this file addresses one finding, and a group is a row in a
+    rendering, not an entity -- so this returns a flat list and annotates it
+    rather than nesting members inside group objects. What the annotation
+    buys is that the *rule* (which findings group, and at which severity a
+    group is reported) is decided here, in the same
+    `group_findings_by_location` the PR comment renders from, instead of
+    being reimplemented in TypeScript and drifting from it. The frontend
+    only has to bucket by `group_key`.
+
+    What travels is *membership only*: `group_key`, which is unique per group
+    (a location is not -- `group_findings_by_location` deliberately emits one
+    group per finding for a single tool's own findings on a line and for
+    file-level findings with no line number, and all of those share a
+    file/line), and `group_size`, so a consumer can tell a group of one from
+    a group still missing members and can never merge more rows into a bucket
+    than the backend put there.
+
+    What does not travel is the group's tool list, severity and headline
+    finding. Those are pure functions of the members (highest severity wins;
+    distinct tools in arrival order -- see LocationGroup) and are derived
+    where they are rendered, so a row physically cannot be labelled with
+    another group's tools or badged at a severity none of its members has.
+    Transporting a label is what makes that failure possible in the first
+    place.
+
+    Findings that group with nothing still carry the fields (a group of one),
+    so no consumer needs a null branch: `group_size == 1` is the ungrouped
+    case.
+
+    Deliberately not applied to the Approval Queue's pending/history
+    endpoints below: those list findings across scans, where two rows at the
+    same file and line are usually two different PRs' scans rather than one
+    line flagged twice, and a reviewer there is acting on exactly one
+    finding at a time anyway.
+    """
+    out: list[dict] = []
+    for group in group_findings_by_location(findings):
+        for f in group.findings:
+            row = _finding_out(f)
+            row["group_key"] = group.key
+            row["group_size"] = len(group.findings)
+            out.append(row)
+    return out
 
 
 @router.get("/active")
@@ -299,12 +350,36 @@ def list_pr_guardrail_findings(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    """Persisted net-new findings for one PR scan, with ignore-request state."""
+    """Persisted net-new findings for one PR scan, with ignore-request state.
+
+    (#383) Each row also carries its same-location grouping (`group_key` and
+    `group_size`) so the UI can collapse "one line, flagged by semgrep and
+    gitleaks" into one expandable row the way the PR comment does, without
+    re-deriving the grouping rule client-side. Still one row per finding:
+    nothing is merged away, and each remains independently ignorable.
+
+    Ordered by id, and that is load-bearing rather than tidiness. `group_key`
+    used to be a pure function of a finding's location and so came out the
+    same whatever order rows arrived in; it is now a function of *position*
+    (it carries the group's first member's id to stay unique per group). An
+    unordered SELECT has no stability guarantee -- Postgres relocates a row
+    on UPDATE, and the ignore workflow updates exactly these rows -- so the
+    same scan could come back with the group keyed off a different member
+    between two fetches. The partition stays correct either way, but the
+    React key changes, which remounts the group and collapses it under a
+    user who has just expanded it and requested an ignore (that request
+    triggers the refetch). It also pins two things that are otherwise only
+    incidentally true: a severity tie picking the same headline finding here
+    as in the PR comment, and LocationGroup.tools' "the order they were
+    scanned" being the insertion order it claims to be.
+    """
     pr_scan = _get_pr_scan_scoped(pr_scan_id, session, user)
     findings = session.exec(
-        select(PRGuardrailFinding).where(PRGuardrailFinding.pr_scan_id == pr_scan_id)
+        select(PRGuardrailFinding)
+        .where(PRGuardrailFinding.pr_scan_id == pr_scan_id)
+        .order_by(PRGuardrailFinding.id)
     ).all()
-    return [_finding_out(f) for f in findings]
+    return _grouped_findings_out(list(findings))
 
 
 @router.post("/findings/{finding_id}/request-ignore")

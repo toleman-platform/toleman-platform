@@ -6,6 +6,8 @@ import { AuditEvent } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
+import { ReloadButton } from "@/components/reload-button";
 import { ActivityPagination } from "@/components/activity-pagination";
 import { serverDate } from "@/lib/format/date";
 
@@ -67,13 +69,52 @@ function AuditEventCard({ event }: { event: AuditEvent }) {
   );
 }
 
-export function AuditLogList({ events, total, page, pageSize }: { events: AuditEvent[]; total: number; page: number; pageSize: number }) {
+export function AuditLogList({
+  events,
+  total,
+  page,
+  pageSize,
+  failed = false,
+}: {
+  events: AuditEvent[];
+  total: number;
+  page: number;
+  pageSize: number;
+  /**
+   * True when the request that produced `events` failed (audit-log/page.tsx
+   * passes `auditResult === null` from its `settleOrNull(api.auditLog(...))`).
+   *
+   * This used to be a decision the *page* made on its own: call this
+   * component only on success, render an `ErrorState` itself otherwise. That
+   * puts the empty-vs-failed distinction one `if` away from evaporating --
+   * on a compliance surface, a caller that forgets the branch (or a future
+   * surface that reuses this list without copying it) renders "No audit
+   * events found" for a request that never actually answered, which is
+   * exactly the false all-clear #77/#465's honesty pass exists to prevent
+   * everywhere else. Taking `failed` as a prop instead means the guarantee
+   * lives once, in the component every caller already has to use, rather
+   * than in every call site's discipline. Defaults to `false` so existing
+   * callers that don't pass it keep today's behavior.
+   */
+  failed?: boolean;
+}) {
+  if (failed) {
+    return (
+      <ErrorState description="The audit log couldn't be loaded from the API." action={<ReloadButton />} />
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <ActivityPagination total={total} page={page} pageSize={pageSize} position="top" />
       <div className="flex flex-col gap-2">
-        {events.map((e, i) => (
-          <AuditEventCard key={i} event={e} />
+        {events.map((e) => (
+          // No id comes back from the API (AuditEvent is an immutable log
+          // row, not a keyed entity) -- timestamp+actor+type+summary is as
+          // close to a natural key as the shape allows, and unlike `key={i}`
+          // it survives a row being inserted/removed by a page-size or
+          // filter change instead of silently relabeling every card below it.
+          <AuditEventCard key={`${e.timestamp}|${e.actor}|${e.type}|${e.summary}`} event={e} />
         ))}
         {events.length === 0 && (
           <EmptyState

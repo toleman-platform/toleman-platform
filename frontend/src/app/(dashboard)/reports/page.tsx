@@ -7,8 +7,10 @@ import { FINDING_STATE_ORDER, SEVERITY_ORDER } from "@/lib/severity";
 import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { MultiSelectDropdown } from "@/components/multi-select-filter";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
+import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import {
   DocGenField,
   DocGenSelect,
@@ -31,8 +33,21 @@ const FALLBACK_INCLUDED = [
 ];
 
 export default function ReportsPage() {
-  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  const {
+    data: targetsData,
+    status: targetsStatus,
+    refetch: reloadTargets,
+  } = useAsyncData<Target[]>(() => api.targets());
   const targets = targetsData ?? [];
+  // Unlike the facet fetches below (groups/tools/categories/...), which are
+  // decoration the generator can run without, Targets *is* the Scope step:
+  // `targets ?? []` used to make a rejected request indistinguishable from a
+  // workspace that genuinely has none, so Generate went quietly disabled with
+  // nothing on screen saying why. useAsyncData already turns the rejection
+  // into a status rather than an uncaught throw (see use-async-data.ts); the
+  // bug was this page reading only `data` and throwing that status away one
+  // line later -- the same shape `settledOr` exists to prevent in std-lib.
+  const targetsFailed = targetsStatus === "error";
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
   const targetId = selectedTargetId ?? (targets.length > 0 ? ALL_TARGETS : null);
   const setTargetId = setSelectedTargetId;
@@ -337,6 +352,21 @@ export default function ReportsPage() {
       <PageHeader
         title="Compliance Reports"
         description="Audit-ready posture export built from live workspace data, finding counts by severity and state, SLA age, scan coverage, and SBOM summary. Narrow it with the same filters as the Findings page, and pick the sections you need; whatever you choose is recorded on the document itself."
+      />
+
+      <PartialFailureBanner
+        sources={[
+          {
+            label: "Targets",
+            failed: targetsFailed,
+            consequence: "The scope picker can't list your repositories, and Generate stays off until it does.",
+          },
+        ]}
+        action={
+          <Button size="sm" variant="outline" onClick={reloadTargets}>
+            Retry
+          </Button>
+        }
       />
 
       <DocumentGeneratorPanel

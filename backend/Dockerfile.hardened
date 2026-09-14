@@ -163,11 +163,19 @@ COPY requirements.txt .
 # image build resolved whatever was newest that day. For the primary SAST
 # engine that means scan results are not reproducible: the same commit built a
 # week apart could produce a different finding set, with no way to say which
-# version produced a historical result. Pinned to 1.177.0, which is what the
-# unpinned install resolved to at the time of pinning -- so this is
-# behaviour-neutral today and only stops the drift.
+# version produced a historical result.
+#
+# 1.136.0 is what the unpinned install actually resolved to, so the pin is
+# behaviour-neutral. It is deliberately NOT the newest semgrep, and the gap is
+# load-bearing: requirements.txt pins jsonschema==4.26.0, while semgrep 1.137.0
+# narrowed to jsonschema~=4.20.0 and current releases ask for ~=4.25.1 --
+# neither admits 4.26.0. 1.136.0 wants jsonschema~=4.6 and is the last release
+# that fits. Pip was rediscovering that ceiling by backtracking through forty-odd
+# semgrep versions on every single build; pinning also removes that work.
+#
+# So semgrep cannot move until jsonschema does. See #265.
 RUN pip install --upgrade pip \
-    && pip install -r requirements.txt semgrep==1.177.0 "setuptools>=78.1.1,<81" \
+    && pip install -r requirements.txt semgrep==1.136.0 "setuptools>=78.1.1,<81" \
     && semgrep --version
 
 COPY . .

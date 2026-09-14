@@ -70,7 +70,7 @@ jobs:
         # semgrep's pinned opentelemetry-instrumentation imports
         # `pkg_resources`, which setuptools removed in 82.0.0 and deprecated
         # in 81. A silently broken security scan is worse than a loud one.
-        run: pip install semgrep==1.177.0 "setuptools<81"
+        run: pip install semgrep==1.136.0 "setuptools<81"
 
       - name: Run Semgrep
         # --disable-nosem: don't let a `# nosemgrep` comment silently drop a
@@ -194,7 +194,7 @@ jobs:
         run: |
           python -m venv /tmp/resolved-backend
           /tmp/resolved-backend/bin/pip install --upgrade pip -q
-          /tmp/resolved-backend/bin/pip install -q -r backend/requirements.txt semgrep==1.177.0 "setuptools>=78.1.1,<81"
+          /tmp/resolved-backend/bin/pip install -q -r backend/requirements.txt semgrep==1.136.0 "setuptools>=78.1.1,<81"
 
       - name: Resolve mcp-server/requirements.txt into a real venv
         run: |

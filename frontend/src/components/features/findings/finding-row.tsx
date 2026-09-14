@@ -88,10 +88,16 @@ function RiskScore({ score }: { score: number }) {
  * reason SlaBadge does it below: age is day-granular, so re-reading it changes
  * nothing a reader can see, and a render that depends on the current time is
  * impure -- two renders of the same finding could disagree.
+ *
+ * NaN-guarded the same way its sibling `daysSince` (finding-group-row.tsx)
+ * guards the identical computation: an unparseable `first_seen` must read as
+ * unknown-age (0d) rather than let NaN propagate through Math.max/Math.floor
+ * into a rendered "NaNd".
  */
 function FirstSeenAge({ finding }: { finding: Finding }) {
   const [now] = useState(() => Date.now());
-  const days = Math.max(0, Math.floor((now - parseServerTimestamp(finding.first_seen)) / (24 * 60 * 60 * 1000)));
+  const then = parseServerTimestamp(finding.first_seen);
+  const days = Number.isNaN(then) ? 0 : Math.max(0, Math.floor((now - then) / (24 * 60 * 60 * 1000)));
   return (
     <div className="flex flex-col items-end">
       <span

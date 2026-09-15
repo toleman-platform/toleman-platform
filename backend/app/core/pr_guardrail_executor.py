@@ -9,6 +9,7 @@ logic instead of two copies drifting apart.
 import logging
 import re
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -88,12 +89,21 @@ def _resolve_guardrail_tools(session: Session, target: Target) -> list[str]:
 
 
 def _run_guardrail_tools(
-    tools: list[str], repo_path, paths: list[str] | None = None
+    tools: list[str], repo_path, paths: list[str] | None = None,
+    durations: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[str], dict[str, str]]:
     """Run every assigned tool over the PR checkout.
 
     ``paths`` (repo-relative changed files, #243) scopes each tool per
     ``runner.TOOL_SCOPING``. ``None`` scans the whole checkout.
+
+    ``durations``, when a dict is passed, is filled in with each tool's
+    wall-clock seconds -- including tools that failed or were skipped, since
+    "it took 80 seconds and then errored" is the interesting case. Recorded
+    for the same reason the scan-history view shows per-tool duration: a
+    guardrail check that sits at "Scanning..." for eighteen minutes with no
+    per-tool breakdown gives a reviewer nothing to act on, and cost real
+    time diagnosing exactly that.
 
     Returns ``(findings, failed_tools, skipped_tools)``. Each finding carries
     its own ``tool`` key so downstream dedup, persistence and rendering can
@@ -140,18 +150,36 @@ def _run_guardrail_tools(
         #                      that is then skipped.
         runner.ensure_warm_trivy_db()
     for tool in tools:
+        started = time.perf_counter()
         try:
             raw = runner.run_tool(tool, repo_path, paths=paths)
             parsed = parsers.PARSER_MAP[tool](raw)
         except runner.ToolNotApplicable as exc:
             # Not a failure and not a pass. Nothing was examined, so say so.
-            logger.info("pr guardrail tool %s skipped: %s", tool, exc)
+            elapsed = time.perf_counter() - started
+            logger.info("pr guardrail tool %s skipped after %.1fs: %s", tool, elapsed, exc)
+            if durations is not None:
+                durations[tool] = elapsed
             skipped[tool] = str(exc)
             continue
         except Exception:
-            logger.exception("pr guardrail tool %s failed", tool)
+            elapsed = time.perf_counter() - started
+            logger.exception("pr guardrail tool %s failed after %.1fs", tool, elapsed)
+            if durations is not None:
+                durations[tool] = elapsed
             failed.append(tool)
             continue
+        elapsed = time.perf_counter() - started
+        if durations is not None:
+            durations[tool] = elapsed
+        # Logged per tool, not only aggregated at the end: a scan that is
+        # still running has already emitted the tools that finished, which
+        # is the only way to tell "slow tool" from "hung scan" while it is
+        # in flight.
+        logger.info(
+            "pr guardrail tool %s finished in %.1fs with %d finding(s)",
+            tool, elapsed, len(parsed),
+        )
         for item in parsed:
             item["tool"] = tool
         findings.extend(parsed)
@@ -1075,6 +1103,28 @@ def _staleness_footer(scanned_at: datetime | None) -> str | None:
     )
 
 
+def _render_tools_run(tools_run: list[str], tool_durations: dict[str, float] | None) -> str:
+    """The "Scanned with" line, with each tool's wall-clock time when known.
+
+    Without the timings the line names the tools and says nothing about
+    what they cost, so a reviewer looking at a slow check has no way to
+    tell which tool to blame. That is not hypothetical: semgrep-core
+    shipped carrying ~80s of fixed rule-loading cost and the only way to
+    find it was to reproduce the scan by hand off-platform.
+
+    Slowest first, because that is the one being looked for. Tools with no
+    recorded duration keep their bare name rather than a zero, which would
+    read as "instant" instead of "not measured".
+    """
+    if not tool_durations:
+        return ", ".join(tools_run)
+    ordered = sorted(tools_run, key=lambda t: tool_durations.get(t, -1.0), reverse=True)
+    return ", ".join(
+        f"{tool} ({tool_durations[tool]:.0f}s)" if tool in tool_durations else tool
+        for tool in ordered
+    )
+
+
 def render_comment(
     findings: list[PRGuardrailFinding],
     new_endpoints: list[dict],
@@ -1093,6 +1143,7 @@ def render_comment(
     repo_slug: str | None = None,
     head_sha: str | None = None,
     total_findings: int | None = None,
+    tool_durations: dict[str, float] | None = None,
 ) -> str:
     """`tools_run`/`tools_failed` default to None for callers (and tests)
     predating the multi-tool guardrail (GH-01); None means "don't render a
@@ -1236,7 +1287,7 @@ def render_comment(
             lines.append("No net-new findings or API changes vs the default branch. ✅")
         if tools_run:
             lines.append("")
-            lines.append(f"<sub>Scanned with: {', '.join(tools_run)}</sub>")
+            lines.append(f"<sub>Scanned with: {_render_tools_run(tools_run, tool_durations)}</sub>")
         staleness = _staleness_footer(scanned_at)
         if staleness:
             lines.append(staleness)
@@ -1337,7 +1388,7 @@ def render_comment(
 
     if tools_run:
         lines.append("")
-        lines.append(f"<sub>Scanned with: {', '.join(tools_run)}</sub>")
+        lines.append(f"<sub>Scanned with: {_render_tools_run(tools_run, tool_durations)}</sub>")
 
     staleness = _staleness_footer(scanned_at)
     if staleness:
@@ -1870,8 +1921,9 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             for path in scan_paths:
                 changed_lines.setdefault(path, WHOLE_FILE)
 
+        tool_durations: dict[str, float] = {}
         parsed, failed_tools, skipped_tools = _run_guardrail_tools(
-            guardrail_tools, repo_path, paths=scan_paths
+            guardrail_tools, repo_path, paths=scan_paths, durations=tool_durations
         )
         pr_scan.scan_scope = "diff" if scan_paths is not None else "full"
         pr_scan.files_scanned = len(scan_paths) if scan_paths is not None else 0
@@ -2010,6 +2062,7 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             baseline_missing=baseline_missing,
             blast_radius_files=pr_scan.blast_radius_files,
             diff_attributed=not attribution_unavailable,
+            tool_durations=tool_durations,
             # Every finding's location links to that line of that file at the
             # commit this scan actually read, which is not necessarily the SHA
             # the PR API reported (see _scanned_commit and _source_link).

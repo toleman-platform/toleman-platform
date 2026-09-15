@@ -97,6 +97,36 @@ def describe_secret_shape(secret: str, entropy: float | None = None) -> str:
     return f"Matched value: {', '.join(parts)}."
 
 
+def parse_semgrep_core(raw: dict) -> list[dict]:
+    """parse_semgrep, with a rule_id that does not depend on where the
+    rules were loaded from.
+
+    Semgrep derives check_id from the path of the config it loaded a rule
+    out of, and parse_semgrep uses check_id as rule_id verbatim. rule_id
+    feeds compute_dedup_hash, so any change to how this pack is loaded --
+    consolidating 62 files into one, moving a rule between directories,
+    renaming a category folder -- silently orphans every existing finding
+    and re-reports it as net-new, bringing back everything anyone had
+    ignored.
+
+    Keying on the rule's own `id` instead makes dedup independent of
+    layout. These ids are already globally unique and deliberately
+    namespaced ("toleman-java-sql-injection-..."), so the final segment is
+    the whole identity; nothing is lost by dropping the path.
+
+    This does re-baseline the semgrep-core findings that already exist:
+    they were stored under the long path form and will be reported once
+    more under the short one. That is a one-time cost, taken knowingly
+    while the tool is a day old and has produced one scan's worth of
+    findings, in exchange for dedup that stops breaking every time the rule
+    files move.
+    """
+    out = parse_semgrep(raw)
+    for item in out:
+        item["rule_id"] = item["rule_id"].rsplit(".", 1)[-1]
+    return out
+
+
 def parse_gitleaks(raw: list) -> list[dict]:
     out = []
     for r in raw:
@@ -599,7 +629,7 @@ PARSER_MAP = {
     # TOOL_COMMANDS alone is silently dropped from every usage surface. It
     # does not fail, and it does not appear in scan history as skipped --
     # it is simply never considered. That is how semgrep-core shipped inert.
-    "semgrep-core": parse_semgrep,
+    "semgrep-core": parse_semgrep_core,
     "semgrep-registry": parse_semgrep,
     "gitleaks": parse_gitleaks,
     "noseyparker": parse_noseyparker,

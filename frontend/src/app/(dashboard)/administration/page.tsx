@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { Building2, Settings, UserCog, type LucideIcon } from "lucide-react";
 import { api } from "@/lib/api";
+import { canSeeAdminOnly } from "@/lib/roles";
 import { settleOrNull } from "@/std-lib";
 import { PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
-import { Card, CardContent } from "@/components/ui/card";
+import { ReloadButton } from "@/components/reload-button";
+import { ListRow } from "@/components/ui/list-row";
 
 type Destination = {
   href: string;
@@ -57,8 +59,8 @@ export default async function AdministrationPage() {
   // and the second is said out loud rather than rendered as a short list
   // that looks authoritative.
   const me = await settleOrNull(api.me());
-  const canSeeAdminOnly = me?.role === "admin" || me?.role === "security_engineer";
-  const destinations = DESTINATIONS.filter((d) => !d.adminOnly || canSeeAdminOnly);
+  const canSee = canSeeAdminOnly(me?.role);
+  const destinations = DESTINATIONS.filter((d) => !d.adminOnly || canSee);
   const roleUnknown = me === null;
 
   return (
@@ -70,8 +72,13 @@ export default async function AdministrationPage() {
 
       {roleUnknown && (
         <AlertBanner tone="warning" title="Some destinations may be missing">
-          Your account role could not be read, so anything restricted to administrators is not listed here.
-          Reload the page to try again.
+          <div className="flex flex-col items-start gap-2">
+            <span>
+              Your account could not be read, so anything restricted to administrators and security
+              engineers is not listed here. You may simply be signed out.
+            </span>
+            <ReloadButton />
+          </div>
         </AlertBanner>
       )}
 
@@ -82,8 +89,8 @@ export default async function AdministrationPage() {
               href={d.href}
               className="block rounded-xl outline-none focus-visible:ring-ring/50 focus-visible:ring-[3px]"
             >
-              <Card interactive className="border-border bg-card py-0">
-                <CardContent className="flex items-start gap-3 px-4 py-4">
+              <ListRow interactive>
+                <div className="flex items-start gap-3">
                   <d.icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
                     <div className="flex items-center gap-2">
@@ -96,8 +103,8 @@ export default async function AdministrationPage() {
                     </div>
                     <p className="text-xs text-muted-foreground">{d.description}</p>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </ListRow>
             </Link>
           </li>
         ))}

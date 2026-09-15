@@ -30,6 +30,7 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
+import { canSeeAdminOnly } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { api, AuthUser, BuildInfo } from "@/lib/api";
 import { GlobalSearch } from "@/components/global-search";
@@ -102,7 +103,11 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Administration",
     items: [
-      { href: "/administration", label: "Administration", icon: Wrench },
+      // "Overview", not "Administration": the group heading directly above
+      // already says Administration, and a row repeating its own heading is
+      // announced as "Administration, Administration" and reads as a
+      // duplicate rather than as the index of the group.
+      { href: "/administration", label: "Overview", icon: Wrench },
       { href: "/settings", label: "Settings", icon: Settings },
       { href: "/workspaces", label: "Workspaces", icon: Building2, adminOnly: true },
       { href: "/admin", label: "Control Plane", icon: UserCog, adminOnly: true },
@@ -290,7 +295,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
         <nav ref={navRef} onScroll={updateNavScroll} className="flex flex-1 flex-col gap-3 overflow-y-auto p-2">
           {NAV_GROUPS.map((group) => {
             const items = group.items.filter(
-              (item) => !item.adminOnly || user?.role === "admin" || user?.role === "security_engineer"
+              (item) => !item.adminOnly || canSeeAdminOnly(user?.role)
             );
             if (items.length === 0) return null;
             return (

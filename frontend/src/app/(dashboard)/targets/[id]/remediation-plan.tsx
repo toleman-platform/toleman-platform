@@ -194,11 +194,20 @@ function emptyPlanCopy(coverage: RemediationCoverage | null): { title: string; d
     };
   }
 
-  const unchecked = cve_findings - enriched_findings;
-  const remainder =
-    unchecked > 0
-      ? ` The other ${unchecked} ${unchecked === 1 ? "has" : "have"} not been looked up yet.`
-      : "";
+  // Three buckets, and they must add up to cve_findings: an advisory came
+  // back, a lookup ran and found no record, or no lookup has run. Stating
+  // only one of the last two leaves a reader subtracting and getting a
+  // number no sentence on the page accounts for.
+  const noRecord = Math.max(0, enriched_findings - findings_with_advisory);
+  const unchecked = Math.max(0, cve_findings - enriched_findings);
+  const remainderParts: string[] = [];
+  if (noRecord > 0) {
+    remainderParts.push(`${noRecord} returned no advisory record`);
+  }
+  if (unchecked > 0) {
+    remainderParts.push(`${unchecked} ${unchecked === 1 ? "has" : "have"} not been looked up yet`);
+  }
+  const remainder = remainderParts.length > 0 ? ` Of the rest, ${remainderParts.join(", and ")}.` : "";
 
   if (enriched_findings === 0) {
     return {
@@ -210,7 +219,11 @@ function emptyPlanCopy(coverage: RemediationCoverage | null): { title: string; d
   if (findings_with_advisory === 0) {
     return {
       title: "No advisory records found",
-      description: `Lookups ran for ${enriched_findings} of ${cve_findings} open CVE ${findingsWord(cve_findings)} and returned no advisory record, so no fixed version is known — which is not the same as none existing.${remainder}`,
+      description: `Lookups ran for ${enriched_findings} of ${cve_findings} open CVE ${findingsWord(cve_findings)} and returned no advisory record, so no fixed version is known — which is not the same as none existing.${
+        unchecked > 0
+          ? ` The other ${unchecked} ${unchecked === 1 ? "has" : "have"} not been looked up yet.`
+          : ""
+      }`,
     };
   }
 
@@ -260,10 +273,24 @@ export function RemediationPlanView({
   // are real, and the CVEs nobody has looked up yet are neither fixed nor
   // fix-less, they are unmeasured. Saying so is the same rule the empty
   // state follows, applied to a list that would otherwise read as complete.
-  const coverageNote =
-    coverage !== null && coverage.enriched_findings < coverage.cve_findings
-      ? `Advisory data covers ${coverage.enriched_findings} of ${coverage.cve_findings} open CVE ${findingsWord(coverage.cve_findings)}; the other ${coverage.cve_findings - coverage.enriched_findings} ${coverage.cve_findings - coverage.enriched_findings === 1 ? "has" : "have"} not been looked up yet.`
-      : null;
+  // Keyed on `findings_with_advisory` -- an advisory actually came back --
+  // not on `enriched_findings`, which only records that a lookup was
+  // attempted. During an upstream outage every CVE is looked up and nothing
+  // is found, so enriched_findings reaches cve_findings while the plan rests
+  // on almost no data; keying on the attempt made the caveat disappear at
+  // exactly the moment it was most needed.
+  const coverageNote = (() => {
+    if (coverage === null) return null;
+    const { cve_findings, enriched_findings, findings_with_advisory } = coverage;
+    if (findings_with_advisory >= cve_findings) return null;
+    const noRecord = Math.max(0, enriched_findings - findings_with_advisory);
+    const unchecked = Math.max(0, cve_findings - enriched_findings);
+    const parts: string[] = [];
+    if (noRecord > 0) parts.push(`${noRecord} returned no advisory record`);
+    if (unchecked > 0) parts.push(`${unchecked} ${unchecked === 1 ? "has" : "have"} not been looked up yet`);
+    const rest = parts.length > 0 ? ` Of the rest, ${parts.join(", and ")}.` : "";
+    return `This plan is built on the ${findings_with_advisory} of ${cve_findings} open CVE ${findingsWord(cve_findings)} with an advisory.${rest}`;
+  })();
 
   return (
     <div className="flex flex-col gap-3">

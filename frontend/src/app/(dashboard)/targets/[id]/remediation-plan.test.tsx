@@ -165,7 +165,33 @@ describe("RemediationPlanView", () => {
     );
 
     expect(container.textContent).toContain("Advisories cover 4 of 9 open CVE findings");
-    expect(container.textContent).toContain("The other 5 have not been looked up yet");
+    // 4 covered + 0 with no record + 5 never looked up = 9. Every finding is
+    // accounted for; the earlier wording reported one remainder computed
+    // against a different denominator than the fraction it followed, so a
+    // reader subtracting the two got a number no sentence explained.
+    expect(container.textContent).toContain("5 have not been looked up yet");
+    expect(container.textContent).not.toContain("returned no advisory record");
+  });
+
+  it("accounts for every finding when some were looked up and found nothing", () => {
+    // The case the old wording lost entirely: 4 covered, 3 looked up with no
+    // record, 3 never looked up. Reporting only "the other 3 have not been
+    // looked up" left three findings unexplained.
+    const coverage = makeCoverage({
+      cve_findings: 10,
+      distinct_cves: 10,
+      enriched_findings: 7,
+      findings_with_advisory: 4,
+      findings_with_fix_data: 0,
+    });
+    const { container } = render(
+      <RemediationPlanView targetId={7} plans={[]} coverage={coverage} failed={false} />,
+    );
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("Advisories cover 4 of 10 open CVE findings");
+    expect(text).toContain("3 returned no advisory record");
+    expect(text).toContain("3 have not been looked up yet");
   });
 
   it("falls back to an unknown-coverage empty state rather than a negative one", () => {
@@ -282,8 +308,29 @@ describe("RemediationPlanView", () => {
     );
 
     expect(container.textContent).toContain("1 upgrade would close open findings on this target.");
-    expect(container.textContent).toContain("Advisory data covers 8 of 20 open CVE findings");
-    expect(container.textContent).toContain("the other 12 have not been looked up yet");
+    expect(container.textContent).toContain("built on the 8 of 20 open CVE findings with an advisory");
+    expect(container.textContent).toContain("12 have not been looked up yet");
+  });
+
+  it("keeps the caveat when every CVE was looked up and almost nothing came back", () => {
+    // An upstream outage looks like full coverage if the caveat keys on
+    // lookups attempted: enriched_findings reaches cve_findings while only
+    // two advisories actually exist, so the plan rests on almost no data and
+    // the old condition suppressed the warning entirely.
+    const coverage = makeCoverage({
+      cve_findings: 20,
+      distinct_cves: 20,
+      enriched_findings: 20,
+      findings_with_advisory: 2,
+      findings_with_fix_data: 1,
+    });
+    const { container } = render(
+      <RemediationPlanView targetId={3} plans={[makePlan()]} coverage={coverage} failed={false} />,
+    );
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("built on the 2 of 20 open CVE findings with an advisory");
+    expect(text).toContain("18 returned no advisory record");
   });
 
   it("adds no coverage caveat when every CVE finding has been looked up", () => {

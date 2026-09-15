@@ -344,7 +344,7 @@ export default function SbomPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="SBOM & OSS Vulnerabilities"
-        description="Real dependency inventory for the target, imported from GitHub's Dependency Graph and uploaded CycloneDX/SPDX JSON documents. Results are persisted."
+        description="Every dependency recorded for this target, from GitHub's dependency graph and any SBOM documents you have uploaded."
         badge={<HelpHint topic={HELP_CONTENT.sbom} />}
       />
 
@@ -367,9 +367,9 @@ export default function SbomPage() {
                 <WhatsIncludedCard
                   key="included"
                   items={[
-                    "Components from GitHub's Dependency Graph and uploaded SBOM documents, with versions when available",
-                    "Known-vulnerable packages cross-referenced against this target's OSS Vulnerabilities tab",
-                    "Package URL (purl) and ecosystem per component",
+                    "Every dependency on file for this target, with its version where the source recorded one",
+                    "Where each component was recorded from, so an entry can be traced back to its source",
+                    "Each component's package URL (purl) and ecosystem",
                   ]}
                 />,
               ]

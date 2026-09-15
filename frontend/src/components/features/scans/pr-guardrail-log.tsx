@@ -35,6 +35,9 @@ const TOOL_STATUS_COLOR: Record<string, string> = {
   ran: "text-muted-foreground",
   failed: "text-destructive",
   skipped: "text-muted-foreground",
+  // A tool the scan has not reached yet. Dimmer than the rest so the eye
+  // lands on where the scan currently is: the last non-pending row.
+  pending: "text-muted-foreground/60",
 };
 
 export const LOG_STATUS_COLOR: Record<string, string> = {
@@ -44,6 +47,50 @@ export const LOG_STATUS_COLOR: Record<string, string> = {
   error: "border-border bg-muted text-muted-foreground",
   overridden: "border-chart-3/20 bg-chart-3/10 text-chart-3",
 };
+
+function RetryAction({
+  entry,
+  onRetried,
+}: {
+  entry: PrGuardrailLogEntry;
+  onRetried: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function retry() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.retryPrScan(entry.id);
+      onRetried();
+    } catch (e) {
+      // A 409 here is the useful case, not a fault: the scan is genuinely
+      // still working, and running a second one would race the first's
+      // findings and commit status. The server's message says how long to
+      // wait, so it is shown verbatim rather than flattened to "failed".
+      setError(e instanceof Error ? e.message : "could not retry this scan");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div>
+        <Button size="sm" variant="outline" onClick={retry} disabled={busy}>
+          {busy ? "Retrying…" : "Retry scan"}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {entry.status === "running"
+          ? "Available once a scan stops reporting; a healthy run is left alone."
+          : "Re-runs the guardrail for this PR."}
+      </p>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
 
 function OverrideAction({ entry, onOverridden }: { entry: PrGuardrailLogEntry; onOverridden: () => void }) {
   const [open, setOpen] = useState(false);
@@ -830,6 +877,12 @@ export function PrGuardrailLog({
                     </span>
                   </div>
                 </button>
+
+                {(entry.status === "error" || entry.status === "running") && (
+                  <div className="mt-2">
+                    <RetryAction entry={entry} onRetried={refresh} />
+                  </div>
+                )}
 
                 {entry.status === "blocked" && (
                   <div className="mt-2">

@@ -11,6 +11,7 @@ import logging
 import re
 import subprocess
 import time
+from typing import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -93,11 +94,21 @@ def _run_guardrail_tools(
     tools: list[str], repo_path, paths: list[str] | None = None,
     durations: dict[str, float] | None = None,
     counts: dict[str, int] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> tuple[list[dict], list[str], dict[str, str]]:
     """Run every assigned tool over the PR checkout.
 
     ``paths`` (repo-relative changed files, #243) scopes each tool per
     ``runner.TOOL_SCOPING``. ``None`` scans the whole checkout.
+
+    ``on_progress``, when given, is called after every tool with the
+    log-so-far as JSON. The caller persists it, which is what makes the
+    breakdown visible *during* a scan rather than only after one. That
+    distinction is the whole point: the first version of this recorded the
+    log once, after every tool had finished, so a scan still running showed
+    nothing and a scan killed mid-run -- by a deploy restarting the worker,
+    say -- showed nothing forever. Those are exactly the two cases someone
+    looks at a scan log to understand.
 
     ``durations``, when a dict is passed, is filled in with each tool's
     wall-clock seconds -- including tools that failed or were skipped, since
@@ -163,6 +174,7 @@ def _run_guardrail_tools(
             if durations is not None:
                 durations[tool] = elapsed
             skipped[tool] = str(exc)
+            _emit_progress(on_progress, tools, durations, counts, failed, skipped)
             continue
         except Exception:
             elapsed = time.perf_counter() - started
@@ -170,6 +182,7 @@ def _run_guardrail_tools(
             if durations is not None:
                 durations[tool] = elapsed
             failed.append(tool)
+            _emit_progress(on_progress, tools, durations, counts, failed, skipped)
             continue
         elapsed = time.perf_counter() - started
         if durations is not None:
@@ -187,6 +200,7 @@ def _run_guardrail_tools(
         for item in parsed:
             item["tool"] = tool
         findings.extend(parsed)
+        _emit_progress(on_progress, tools, durations, counts, failed, skipped)
     return findings, failed, skipped
 
 
@@ -1107,6 +1121,29 @@ def _staleness_footer(scanned_at: datetime | None) -> str | None:
     )
 
 
+def _emit_progress(
+    on_progress,
+    tools: list[str],
+    durations: dict[str, float] | None,
+    counts: dict[str, int] | None,
+    failed: list[str],
+    skipped: dict[str, str],
+) -> None:
+    """Hand the caller the log-so-far, swallowing anything it raises.
+
+    Persisting progress must never be able to fail the scan it is
+    describing. A commit that deadlocks or a serialisation error here would
+    turn an observability nicety into the cause of the outage it was added
+    to help diagnose, so the exception is logged and the scan continues.
+    """
+    if on_progress is None:
+        return
+    try:
+        on_progress(build_tool_log(tools, durations or {}, counts or {}, failed, skipped))
+    except Exception:
+        logger.exception("could not persist pr guardrail scan progress")
+
+
 def build_tool_log(
     tools: list[str],
     durations: dict[str, float],
@@ -1127,6 +1164,15 @@ def build_tool_log(
     """
     entries = []
     for tool in tools:
+        if tool not in durations and tool not in failed and tool not in skipped:
+            # Not reached yet. Distinct from "ran and found nothing", and
+            # the reason a live log is readable at all: a reviewer can see
+            # which tool the scan is currently sitting on.
+            entries.append({
+                "tool": tool, "status": "pending", "seconds": None,
+                "findings": None, "detail": "",
+            })
+            continue
         if tool in failed:
             status, detail = "failed", "the tool raised; see the scan logs"
         elif tool in skipped:
@@ -1981,15 +2027,21 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
 
         tool_durations: dict[str, float] = {}
         tool_counts: dict[str, int] = {}
+
+        def _persist_progress(tool_log: str) -> None:
+            # Committed per tool, not once at the end. A scan still running
+            # then shows how far it has got, and a scan killed mid-run --
+            # by a deploy restarting the worker, which is how this was
+            # noticed -- keeps whatever it had reached instead of losing
+            # the lot.
+            pr_scan.tool_log = tool_log
+            session.add(pr_scan)
+            session.commit()
+
         parsed, failed_tools, skipped_tools = _run_guardrail_tools(
             guardrail_tools, repo_path, paths=scan_paths,
             durations=tool_durations, counts=tool_counts,
-        )
-        # (#501) Persisted so the PR History view can show what the scan
-        # actually did. Built here, where the skip reasons still exist --
-        # tools_skipped keeps only names.
-        pr_scan.tool_log = build_tool_log(
-            guardrail_tools, tool_durations, tool_counts, failed_tools, skipped_tools
+            on_progress=_persist_progress,
         )
         pr_scan.scan_scope = "diff" if scan_paths is not None else "full"
         pr_scan.files_scanned = len(scan_paths) if scan_paths is not None else 0

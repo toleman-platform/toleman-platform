@@ -140,6 +140,7 @@ export const api = {
   getDiscoveredEndpoints: security.getDiscoveredEndpoints,
   setEndpointScope: security.setEndpointScope,
   getApiScanCredential: security.getApiScanCredential,
+  retryPrScan: security.retryPrScan,
   setApiScanCredential: security.setApiScanCredential,
   clearApiScanCredential: security.clearApiScanCredential,
   testApiScanCredential: security.testApiScanCredential,

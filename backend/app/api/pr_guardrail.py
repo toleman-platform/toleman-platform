@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, func, select
 
-from app.api.auth import accessible_workspace_ids, current_user, require_security_reviewer, require_workspace_role
+from app.api.auth import enforce_workspace_role, accessible_workspace_ids, current_user, require_security_reviewer, require_workspace_role
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.github_token import resolve_github_token
@@ -28,7 +28,9 @@ from app.core.pr_guardrail_executor import (
     submit_ignore_request,
     update_finding_status_in_pr_comment,
 )
+from app.core.config import settings
 from app.core.staleness import mark_stale_if_needed
+from app.tasks.pr_guardrail_tasks import run_pr_guardrail_scan_task
 from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.triage import apply_triage
@@ -659,6 +661,77 @@ def revoke_ignore(
         recompute_pr_scan_status(session, pr_scan)
 
     return _finding_out(finding)
+
+
+@router.post("/{pr_scan_id}/retry")
+def retry_pr_guardrail_scan(
+    pr_scan_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Re-run the guardrail scan for this PR.
+
+    Exists because a scan that dies has no way back from the product. A
+    worker restarted by a deploy mid-scan leaves the row on "running"
+    forever -- observed on #510, where a deploy was queued thirteen seconds
+    before the scan started -- and a scan that errored had no button either.
+    The only recourse was pushing an empty commit to make GitHub re-fire the
+    webhook.
+
+    DEVELOPER, the same bar as POST /scan: this sends real work at a real
+    checkout, so it is not a display action.
+
+    Dispatched asynchronously through the same Celery task the webhook uses,
+    rather than the synchronous /scan route, because a guardrail scan takes
+    minutes and a request that blocks that long times out in front of the
+    person who clicked it.
+    """
+    # current_user plus the scoped lookup, not require_workspace_role: that
+    # dependency resolves the workspace from a target_id/workspace_id/
+    # finding_id *query* parameter, and this route is addressed by
+    # pr_scan_id, so it had nothing to resolve and 404'd every request. The
+    # override route two definitions down already uses this pattern for the
+    # same reason. The role is then enforced explicitly against the
+    # workspace the scan actually belongs to.
+    pr_scan = _get_pr_scan_scoped(pr_scan_id, session, user)
+    target = _get_target(pr_scan.target_id, session)
+    enforce_workspace_role(
+        session, user, WorkspaceRole.DEVELOPER, workspace_id=target.workspace_id
+    )
+
+    refusal = target_lifecycle.scan_refusal_reason(target)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+
+    # A scan that is genuinely still working must not be duplicated: two
+    # runs over one PR race each other's findings and commit status. Only a
+    # run old enough for the staleness sweep to disown counts as retryable,
+    # which reuses the existing definition rather than inventing a second
+    # one.
+    if pr_scan.status == PRGuardrailStatus.RUNNING:
+        went_stale = mark_stale_if_needed(
+            session, pr_scan,
+            message="Superseded by a manual retry after the scan stopped reporting",
+            failed_status=PRGuardrailStatus.ERROR,
+        )
+        if not went_stale:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "this scan is still running; wait for it to finish or time out "
+                    f"({settings.stale_job_timeout_seconds // 60} minutes) before retrying"
+                ),
+            )
+
+    run_pr_guardrail_scan_task.delay(
+        target_id=target.id, pr_number=pr_scan.pr_number
+    )
+    return {
+        "target_id": target.id,
+        "pr_number": pr_scan.pr_number,
+        "retried_scan_id": pr_scan.id,
+        "status": "queued",
+    }
 
 
 @router.post("/{pr_scan_id}/override")

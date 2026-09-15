@@ -46,6 +46,21 @@ export function getDiscoveredEndpoints(
  */
 /** Whether an active-scan credential is configured, and under which header
  * name. The stored value is never returned by the API (#470). */
+/**
+ * Re-run the guardrail scan for a PR. A scan that died -- a worker
+ * restarted by a deploy mid-run leaves the row on "running" forever -- had
+ * no way back from the product; the only recourse was pushing an empty
+ * commit to make GitHub re-fire the webhook.
+ *
+ * 409 when the scan is genuinely still working: two runs over one PR race
+ * each other's findings and commit status.
+ */
+export function retryPrScan(
+  prScanId: number,
+): Promise<{ target_id: number; pr_number: number; retried_scan_id: number; status: string }> {
+  return jsonFetch(`/api/pr-guardrail/${prScanId}/retry`, { method: "POST" });
+}
+
 export function getApiScanCredential(
   targetId: number,
 ): Promise<{ target_id: number; configured: boolean; header_name: string | null }> {

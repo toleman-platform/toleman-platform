@@ -1,8 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* `@custom-variant dark` below is Tailwind v4's mechanism for swapping the
-   built-in `dark:` variant (which otherwise defaults to
+/* `@custom-variant dark` USED to sit here. It is Tailwind v4's mechanism for
+   swapping the built-in `dark:` variant (which otherwise defaults to
    `@media (prefers-color-scheme: dark)`) for a class-based one. shadcn
    scaffolds it as `&:is(.dark *)` — but this app has never set a `.dark`
    class anywhere; it themes entirely via `data-theme="light"` on <html>
@@ -25,22 +25,25 @@
    there was nothing to preserve, and leaving them in place would keep
    implying a `.dark`-class toggle the app does not have.
 
-   The `@custom-variant dark` declaration itself is NOT deleted, and must
-   not be until every `dark:` utility in the codebase is gone. Tailwind v4
-   defines `dark:` as `@media (prefers-color-scheme: dark)` whenever nothing
-   overrides it, so removing this line would not make any surviving
-   `dark:` utility inert — it would make it LIVE, keyed to the visitor's OS
-   colour-scheme setting instead of this app's own `data-theme` state.
-   button.tsx still carries seven `dark:` utilities as of this writing
-   (owned by an in-flight PR, out of scope here); deleting this line before
-   that PR also clears them would silently make every outline/destructive
-   button's fill flip with the OS setting, independent of — and possibly
-   contradicting — whatever theme the user actually chose. Once button.tsx
-   (and anywhere else) is `dark:`-free, this line and the variant it
-   overrides can be deleted together in one change. Until then: do not add
-   new `dark:` utilities, they will not apply as written. Use the light/dark
-   token pairs defined below instead. */
-@custom-variant dark (&:is(.dark *));
+   The `@custom-variant dark` declaration is now GONE, and that required
+   clearing every `dark:` utility in src/ first -- in that order, not the
+   other way round.
+
+   The ordering matters and is not obvious. Tailwind v4 defines `dark:` as
+   `@media (prefers-color-scheme: dark)` whenever nothing overrides it, so
+   deleting this line while any `dark:` utility survived would not have made
+   that utility inert -- it would have made it LIVE, keyed to the visitor's OS
+   colour-scheme setting instead of this app's own `data-theme` state. Every
+   outline and destructive button's fill would have started flipping with the
+   OS, independent of and possibly contradicting the theme the user chose.
+
+   So the variant was first neutered (pointed at a `.dark` class this app
+   never sets, which is what it had always accidentally been), every `dark:`
+   utility was removed, and only then was the declaration itself dropped.
+
+   Do not reintroduce `dark:` utilities. This app themes through the light and
+   dark token pairs defined below; a `dark:` utility would now be live and
+   keyed to the OS rather than to the user's choice. */
 
 /* Light/dark design tokens (#115); dark is the app's original, unchanged
    default (no attribute needed); light is opted into via `data-theme="light"`

@@ -46,7 +46,11 @@ describe("Timestamp", () => {
   it("marks the instant up as <time> carrying the ISO value and an absolute title", () => {
     process.env.TZ = "Asia/Kolkata";
     const html = renderToStaticMarkup(<Timestamp value={BARE} />);
-    expect(html).toContain(`datetime="${ISO}"`);
+    // React emits the JSX prop name verbatim (`dateTime="..."`), not the
+    // lowercased HTML attribute. HTML parses attribute names
+    // case-insensitively so the browser reads it as `datetime` either way --
+    // assert case-insensitively rather than pinning React's spelling.
+    expect(html).toMatch(new RegExp(`datetime="${ISO}"`, "i"));
     expect(html).toContain(`title="${UTC_LABEL}"`);
     expect(html).toContain(`>${UTC_LABEL}<`);
     // 15:30 is 10:00 UTC read in Asia/Kolkata: the server must not have

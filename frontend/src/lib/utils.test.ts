@@ -46,9 +46,13 @@ describe("timeAgo", () => {
     expect(timeAgo(nowIso)).toBe("Just now");
   });
 
-  it("handles epoch 0 correctly", () => {
+  it("falls back to a locale-independent UTC date once the relative form stops being useful", () => {
     const epochZero = new Date(0).toISOString();
-    expect(timeAgo(epochZero)).toBe(new Date(0).toLocaleDateString());
+    // A literal rather than a toLocaleDateString mirror of the
+    // implementation: the old expectation recomputed the answer exactly the
+    // way the code did, so it passed under every locale and timezone and
+    // could never have caught the hydration mismatch this fallback causes.
+    expect(timeAgo(epochZero)).toBe("1970-01-01 UTC");
   });
 });
 

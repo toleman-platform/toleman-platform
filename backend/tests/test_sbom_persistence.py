@@ -98,7 +98,7 @@ def test_org_aggregation_groups_same_component_version_across_targets(session):
     upsert_components(session, target_id=t1.id, branch="main", discovered=[_comp(name="log4j-core", version="2.14.1")], source="github")
     upsert_components(session, target_id=t2.id, branch="main", discovered=[_comp(name="log4j-core", version="2.14.1")], source="github")
 
-    ordered, summary, targets, targets_by_id = _aggregate_org_components(session)
+    ordered, summary, targets, targets_by_id = _aggregate_org_components(session, None)
 
     assert len(ordered) == 1
     group = ordered[0]
@@ -120,7 +120,7 @@ def test_org_aggregation_keeps_different_versions_as_separate_rows(session):
     upsert_components(session, target_id=t1.id, branch="main", discovered=[_comp(name="log4j-core", version="2.14.1")], source="github")
     upsert_components(session, target_id=t2.id, branch="main", discovered=[_comp(name="log4j-core", version="2.17.1")], source="github")
 
-    ordered, summary, _targets, _targets_by_id = _aggregate_org_components(session)
+    ordered, summary, _targets, _targets_by_id = _aggregate_org_components(session, None)
 
     assert len(ordered) == 2
     versions = {g["version"]: g["target_ids"] for g in ordered}
@@ -136,7 +136,7 @@ def test_org_aggregation_counts_targets_without_any_sbom(session):
     _target(session, name="repo-b")  # never scanned
     upsert_components(session, target_id=t1.id, branch="main", discovered=[_comp()], source="github")
 
-    _ordered, summary, _targets, _targets_by_id = _aggregate_org_components(session)
+    _ordered, summary, _targets, _targets_by_id = _aggregate_org_components(session, None)
 
     assert summary["total_targets_count"] == 2
     assert summary["targets_with_sbom_count"] == 1
@@ -149,7 +149,7 @@ def test_org_aggregation_only_uses_each_targets_default_branch(session):
     t1 = _target(session, name="repo-a", branch="main")
     upsert_components(session, target_id=t1.id, branch="feature-x", discovered=[_comp()], source="github")
 
-    ordered, summary, _targets, _targets_by_id = _aggregate_org_components(session)
+    ordered, summary, _targets, _targets_by_id = _aggregate_org_components(session, None)
 
     assert ordered == []
     assert summary["targets_with_sbom_count"] == 0

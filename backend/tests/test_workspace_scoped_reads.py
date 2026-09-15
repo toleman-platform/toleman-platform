@@ -6,126 +6,14 @@ paths; this covers the read-path counterpart added by
 app.api.auth.accessible_workspace_ids.
 
 Follows the same in-memory SQLite + TestClient + session-token-login pattern
-used in tests/test_workspace_roles.py.
+used in tests/test_workspace_roles.py. `engine`/`client` fixtures and the
+`_login`/`_make_workspace`/`_make_target`/`_make_finding`/`_make_pr_scan`/
+`_assign` helpers now live in conftest.py (issue #506, once a second and
+third test module needed the same pattern) -- imported here, not redefined.
 """
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from app.models.models import Severity, UserRole
 
-import app.api.deps as deps_module
-from app.api.deps import get_session
-from app.core.security import create_session_token, hash_password
-from app.main import app
-from app.models.models import (
-    Finding,
-    FindingState,
-    Organization,
-    PRGuardrailScan,
-    Severity,
-    Target,
-    User,
-    UserRole,
-    Workspace,
-    WorkspaceMembership,
-    WorkspaceRole,
-)
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
-
-
-@pytest.fixture()
-def client(engine):
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    original_engine = deps_module.engine
-    deps_module.engine = engine
-
-    c = TestClient(app)
-    yield c
-    app.dependency_overrides.clear()
-    deps_module.engine = original_engine
-
-
-def _login(client, engine, role=UserRole.USER, email=None):
-    email = email or f"{role.value}-{id(object())}@example.com"
-    with Session(engine) as session:
-        user = User(email=email, name="Test", password_hash=hash_password("whatever123"), role=role)
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        uid = user.id
-        token = create_session_token(user.id, user.token_version)
-    client.cookies.set("toleman_session", token)
-    return client, uid
-
-
-def _make_workspace(engine, name="ws") -> int:
-    with Session(engine) as session:
-        org = Organization(name=f"org-{name}")
-        session.add(org)
-        session.commit()
-        session.refresh(org)
-        ws = Workspace(organization_id=org.id, name=name, api_key=f"key-{name}")
-        session.add(ws)
-        session.commit()
-        session.refresh(ws)
-        return ws.id
-
-
-def _make_target(engine, workspace_id: int, name="target") -> int:
-    with Session(engine) as session:
-        target = Target(workspace_id=workspace_id, name=name, repo_url="https://github.com/acme/repo")
-        session.add(target)
-        session.commit()
-        session.refresh(target)
-        return target.id
-
-
-def _make_finding(engine, target_id: int, **overrides) -> int:
-    defaults = dict(
-        target_id=target_id,
-        dedup_hash=f"hash-{target_id}-{overrides.get('rule_id', 'r')}",
-        tool="semgrep",
-        rule_id="rule-1",
-        title="Finding",
-        file_path="app/main.py",
-        severity=Severity.HIGH,
-        state=FindingState.OPEN,
-    )
-    defaults.update(overrides)
-    with Session(engine) as session:
-        finding = Finding(**defaults)
-        session.add(finding)
-        session.commit()
-        session.refresh(finding)
-        return finding.id
-
-
-def _make_pr_scan(engine, target_id: int, **overrides) -> int:
-    defaults = dict(target_id=target_id, pr_number=1, branch="feature")
-    defaults.update(overrides)
-    with Session(engine) as session:
-        scan = PRGuardrailScan(**defaults)
-        session.add(scan)
-        session.commit()
-        session.refresh(scan)
-        return scan.id
-
-
-def _assign(engine, user_id: int, workspace_id: int, role: WorkspaceRole = WorkspaceRole.VIEWER):
-    with Session(engine) as session:
-        m = WorkspaceMembership(user_id=user_id, workspace_id=workspace_id, role=role)
-        session.add(m)
-        session.commit()
+from .conftest import _assign, _login, _make_finding, _make_pr_scan, _make_target, _make_workspace
 
 
 # ---------------------------------------------------------------------------

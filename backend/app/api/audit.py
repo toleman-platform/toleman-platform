@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.models.models import FindingStateLog, Finding, McpAuditLog, Scan, Target, User
 
@@ -57,6 +58,56 @@ def _parse_date_bound(value: str | None, *, end_of_day: bool) -> datetime | None
     return parsed
 
 
+def _scoped_targets_and_findings(
+    session: Session, ws_ids: list[int] | None
+) -> tuple[dict[int, Target], dict[int, Finding]]:
+    """Issue #506: the audit trail joins raw FindingStateLog/Scan/McpAuditLog
+    rows against these dicts to render titles/names -- for a non-admin they
+    also double as the visibility filter (a row referencing a target/finding
+    absent from these dicts is outside the caller's accessible workspaces and
+    gets dropped, not just rendered without a title)."""
+    if ws_ids is None:
+        targets = {t.id: t for t in session.exec(select(Target)).all()}
+        findings = {f.id: f for f in session.exec(select(Finding)).all()}
+        return targets, findings
+    targets = {
+        t.id: t
+        for t in session.exec(select(Target).where(Target.workspace_id.in_(ws_ids))).all()
+    }
+    findings = {
+        f.id: f
+        for f in session.exec(
+            select(Finding)
+            .join(Target, Target.id == Finding.target_id)
+            .where(Target.workspace_id.in_(ws_ids))
+        ).all()
+    }
+    return targets, findings
+
+
+def _mcp_event_visible(
+    log: McpAuditLog,
+    *,
+    ws_ids: list[int] | None,
+    viewer_id: int,
+    targets: dict[int, Target],
+    findings: dict[int, Finding],
+) -> bool:
+    """MCP calls carry nullable target_id/finding_id (not every tool call is
+    scoped to one -- e.g. list_targets). When one is present, resolve the
+    workspace through it and apply the normal filter. When neither is
+    present the call can't be workspace-attributed at all: an admin still
+    sees it, a non-admin only sees their own (you can always see what you
+    did), closing the leak without hiding a caller's own history."""
+    if log.target_id is not None:
+        return log.target_id in targets
+    if log.finding_id is not None:
+        return log.finding_id in findings
+    if ws_ids is None:
+        return True
+    return log.user_id == viewer_id
+
+
 @router.get("/log")
 def audit_log(
     event_type: str | None = None,
@@ -66,22 +117,20 @@ def audit_log(
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> AuditLogResponse:
     """Global audit trail: finding triage transitions + scan runs + MCP/
     public-API actions, real DB records. Supports the same filter-bar +
     real-pagination pattern as findings.list_findings (issue #123), date
     range, event type, actor.
+
+    Issue #506: scoped to the caller's accessible workspaces (plus, for the
+    minority of MCP events that carry no target/finding to scope by, to
+    their own actions) -- previously every authenticated viewer saw every
+    workspace's triage/scan/MCP history here regardless of membership.
     """
-    findings = {f.id: f for f in session.exec(select(Finding)).all()}
-    # (#273) Deliberately NOT filtered to live targets, unlike every list and
-    # aggregate elsewhere in the app. This is the audit trail: a scan that
-    # really happened against a repo that has since been deleted still
-    # happened, and rendering it as "scan on 47" once the target is gone
-    # would destroy the one thing the row exists to record. Soft delete is
-    # what makes keeping this possible -- a cascade would have taken the
-    # Scan rows with it.
-    targets = {t.id: t for t in session.exec(select(Target)).all()}
-    users = {u.id: u for u in session.exec(select(User)).all()}
+    ws_ids = accessible_workspace_ids(session, user)
+    targets, findings = _scoped_targets_and_findings(session, ws_ids)
 
     dt_from = _parse_date_bound(date_from, end_of_day=False)
     dt_to = _parse_date_bound(date_to, end_of_day=True)
@@ -97,6 +146,8 @@ def audit_log(
         if dt_to:
             query = query.where(FindingStateLog.created_at <= dt_to)
         triage_logs = session.exec(query.order_by(FindingStateLog.created_at.desc())).all()
+        if ws_ids is not None:
+            triage_logs = [log for log in triage_logs if log.finding_id in findings]
 
         grouped: dict[str, list[FindingStateLog]] = {}
         ungrouped: list[FindingStateLog] = []
@@ -156,6 +207,8 @@ def audit_log(
             if dt_to:
                 query = query.where(Scan.started_at <= dt_to)
             scans = session.exec(query.order_by(Scan.started_at.desc())).all()
+            if ws_ids is not None:
+                scans = [s for s in scans if s.target_id in targets]
             for scan in scans:
                 target = targets.get(scan.target_id)
                 events.append({
@@ -182,8 +235,17 @@ def audit_log(
         if dt_to:
             query = query.where(McpAuditLog.created_at <= dt_to)
         mcp_logs = session.exec(query.order_by(McpAuditLog.created_at.desc())).all()
+        mcp_logs = [
+            log
+            for log in mcp_logs
+            if _mcp_event_visible(log, ws_ids=ws_ids, viewer_id=user.id, targets=targets, findings=findings)
+        ]
+        user_ids = {log.user_id for log in mcp_logs}
+        actor_users = {
+            u.id: u for u in session.exec(select(User).where(User.id.in_(user_ids))).all()
+        } if user_ids else {}
         for log in mcp_logs:
-            actor_user = users.get(log.user_id)
+            actor_user = actor_users.get(log.user_id)
             events.append({
                 "type": "mcp",
                 "timestamp": log.created_at.isoformat(),
@@ -206,15 +268,39 @@ def audit_log(
 
 
 @router.get("/actors")
-def list_actors(session: Session = Depends(get_session)) -> list[str]:
+def list_actors(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
     """Distinct actors across the triage + MCP audit trails, for
     populating the Audit Log actor filter; same 'real facet from real
     data' pattern as findings.list_tool_facets. A user who's only ever
     acted through an MCP token (never triaged a finding in the UI) has no
     FindingStateLog row at all, so that trail alone would silently omit
-    them from the filter -- join in McpAuditLog's own distinct users too."""
-    triage_actors = set(session.exec(select(FindingStateLog.actor).distinct()).all())
-    mcp_user_ids = session.exec(select(McpAuditLog.user_id).distinct()).all()
+    them from the filter -- join in McpAuditLog's own distinct users too.
+
+    Issue #506: scoped the same way as GET /log, so the actor filter never
+    offers (or reveals the existence of) an actor whose only activity is on
+    a workspace the caller can't see.
+    """
+    ws_ids = accessible_workspace_ids(session, user)
+    targets, findings = _scoped_targets_and_findings(session, ws_ids)
+
+    triage_query = select(FindingStateLog.actor).distinct()
+    if ws_ids is not None:
+        triage_query = (
+            select(FindingStateLog.actor)
+            .join(Finding, Finding.id == FindingStateLog.finding_id)
+            .join(Target, Target.id == Finding.target_id)
+            .where(Target.workspace_id.in_(ws_ids))
+            .distinct()
+        )
+    triage_actors = set(session.exec(triage_query).all())
+
+    mcp_logs = session.exec(select(McpAuditLog)).all()
+    mcp_logs = [
+        log
+        for log in mcp_logs
+        if _mcp_event_visible(log, ws_ids=ws_ids, viewer_id=user.id, targets=targets, findings=findings)
+    ]
+    mcp_user_ids = {log.user_id for log in mcp_logs}
     if mcp_user_ids:
         mcp_actors = session.exec(select(User.email).where(User.id.in_(mcp_user_ids))).all()
         triage_actors.update(mcp_actors)

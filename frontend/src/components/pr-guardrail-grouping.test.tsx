@@ -36,6 +36,7 @@ function finding(overrides: Partial<PrGuardrailFinding> = {}): PrGuardrailFindin
     file_path: "README.md",
     line_start: 7,
     severity: "High",
+    reject_reason: null,
     ignore_status: "none",
     ignore_requested_by: "",
     ignore_requested_reason: "",

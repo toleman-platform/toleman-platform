@@ -40,14 +40,19 @@ describe("Policies, rule type explanations", () => {
 
     const select = await screen.findByLabelText("Rule type");
 
-    const blockSeverityText = await screen.findByText(/PR Guardrail block a pull request/);
+    // Snapshot the TEXT, never the element: the explanation is one node that
+    // React re-renders in place, so a ref captured before a change reads the
+    // text AFTER it -- which makes every one of these comparisons pass
+    // vacuously by comparing a string to itself.
+    const blockSeverityText = (await screen.findByText(/PR Guardrail block a pull request/)).textContent;
 
     fireEvent.change(select, { target: { value: "suppress_rule" } });
-    const suppressRuleText = await screen.findByText(/removes every finding whose rule_id matches/i);
-    expect(suppressRuleText.textContent).not.toBe(blockSeverityText.textContent);
+    const suppressRuleText = (await screen.findByText(/removes every finding whose rule_id matches/i)).textContent;
+    expect(suppressRuleText).not.toBe(blockSeverityText);
 
     fireEvent.change(select, { target: { value: "suppress_license" } });
-    const suppressLicenseText = await screen.findByText(/Same effect as Suppress rule/);
-    expect(suppressLicenseText.textContent).not.toBe(suppressRuleText.textContent);
+    const suppressLicenseText = (await screen.findByText(/Same effect as Suppress rule/)).textContent;
+    expect(suppressLicenseText).not.toBe(suppressRuleText);
+    expect(suppressLicenseText).not.toBe(blockSeverityText);
   });
 });

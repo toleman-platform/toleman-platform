@@ -60,14 +60,19 @@ def workspace_scoring_weights(session: Session, workspace_id: int | None) -> dic
 
 # Presentation order for the Admin surface: how bad the tool says it is, how
 # exploitable it actually is, whether anyone is exploiting it, where it runs,
-# how much the thing it runs on matters, and whether it can be fixed -- the
-# order a person reasons about a finding in, not the enum's declaration order.
+# whether what it runs in even ships, how much the thing it runs on matters,
+# and whether it can be fixed -- the order a person reasons about a finding
+# in, not the enum's declaration order.
 SIGNAL_ORDER = (
     ScoringSignal.SEVERITY,
     ScoringSignal.CVSS_EXPLOITABILITY,
     ScoringSignal.EPSS,
     ScoringSignal.KEV,
     ScoringSignal.INTERNET_EXPOSURE,
+    # Sits next to internet exposure because it answers the same question
+    # one layer in: exposure is whether the host is reachable, scope is
+    # whether the vulnerable code is even deployed on it.
+    ScoringSignal.DEPENDENCY_SCOPE,
     ScoringSignal.BUSINESS_CRITICALITY,
     ScoringSignal.FIXABILITY,
 )
@@ -141,6 +146,10 @@ def breakdown_for_signals(
         target_environment=target.environment if target else None,
         target_owner=target.owner if target else None,
         fixability=fixability_for_enrichment(enrichment) if finding.cve_id else UNKNOWN,
+        # Read off the persisted column (#500), not recomputed: the
+        # scanner output that produced it is long gone by the time a
+        # re-score runs.
+        dependency_scope=getattr(finding, "dependency_scope", "unknown"),
         weights=weights,
     )
 

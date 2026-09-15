@@ -422,3 +422,50 @@ def test_a_package_name_prefix_is_not_a_match(tmp_path):
     (repo / "package.json").write_text('{"dependencies": {"expressive": "^1.0.0"}}')
 
     assert rs.detect_technologies(str(repo), "javascript") == set()
+
+
+def test_a_denylisted_registry_rule_is_dropped_from_the_pruned_config(tmp_path):
+    """The only lever available for the public registry's rules: we do not
+    own them and cannot fix their precision, so excluding one is the sole
+    way to act on a rule that does not earn its keep."""
+    registry = tmp_path / "registry"
+    _write_registry(registry, "python", "lang", "a.yaml", [
+        _rule("keep.this.one"),
+        _rule("drop.this.one"),
+    ])
+
+    with mock.patch.object(rs, "REGISTRY_RULE_DENYLIST", frozenset({"drop.this.one"})):
+        pruned = rs.build_registry_config("python", set(), str(tmp_path / "cache"), str(registry))
+
+    assert _loaded_ids(pruned.path) == {"keep.this.one"}
+    assert pruned.rule_count == 1
+
+
+def test_changing_the_denylist_invalidates_the_cache(tmp_path):
+    """Without this the denylist would appear to do nothing: the already
+    built config stays in place until the registry clone happens to move,
+    so an operator excluding a noisy rule would see no change and conclude
+    the feature is broken."""
+    registry = tmp_path / "registry"
+    cache = tmp_path / "cache"
+    _write_registry(registry, "python", "lang", "a.yaml", [_rule("one"), _rule("two")])
+
+    first = rs.build_registry_config("python", set(), str(cache), str(registry))
+    assert _loaded_ids(first.path) == {"one", "two"}
+    assert rs.build_registry_config("python", set(), str(cache), str(registry)).cache_hit is True
+
+    with mock.patch.object(rs, "REGISTRY_RULE_DENYLIST", frozenset({"two"})):
+        after = rs.build_registry_config("python", set(), str(cache), str(registry))
+
+    assert after.cache_hit is False
+    assert _loaded_ids(after.path) == {"one"}
+
+
+def test_the_shipped_denylist_is_empty(tmp_path):
+    """Pinned deliberately. The measurement that prompted building this
+    mechanism did not justify using it -- exactly one registry rule scored
+    below 0.5 precision on BenchmarkJava, and removing it loses 26 true
+    findings to drop 28 false ones. An entry appearing here without the
+    per-rule numbers in rule_selector's table being updated to justify it
+    should fail this test and prompt that conversation."""
+    assert rs.REGISTRY_RULE_DENYLIST == frozenset()

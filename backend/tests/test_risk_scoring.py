@@ -253,6 +253,12 @@ def test_every_signal_slot_has_a_weight_that_moves_a_score():
             target_label="Public",
             target_environment="production",
             fixability=FIXABLE,
+            # (#500) Runtime is the state that carries the uplift; the slot
+            # is an uplift for a package that positively ships, not a
+            # penalty for one that does not, so "development" or an absent
+            # value would correctly move nothing and make this dial look
+            # inert.
+            dependency_scope="runtime",
         )
         zeroed = {s: 0.0 for s in ScoringSignal}
         baseline = compute_priority_score(Severity.MEDIUM, 3, weights=zeroed, **kwargs)

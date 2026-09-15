@@ -1,0 +1,97 @@
+## Broken or risky symmetric cipher algorithms in Java (CWE-327).
+##
+## Why this file exists: OWASP BenchmarkJava scored this pack 0.000 recall
+## on its `crypto` category -- 130 real cases, zero detected -- and
+## identically zero for the pruned registry layer and the unpruned
+## registry, so nothing on either side of the layering covered it. The
+## cause was a missing rule class rather than a weak one. This directory
+## had weak-HASH rules (CWE-328, which duly scored 0.690 recall) and
+## nothing at all matching Cipher.getInstance or KeyGenerator.getInstance.
+##
+## What the real cases look like (BenchmarkTest00005 and 129 others):
+##
+##   javax.crypto.Cipher c = javax.crypto.Cipher.getInstance("DES/CBC/PKCS5Padding");
+##   javax.crypto.SecretKey key = javax.crypto.KeyGenerator.getInstance("DES").generateKey();
+##
+## Algorithm forms counted across those 130 cases: 72 use the literal
+## "DES/CBC/PKCS5Padding", 25 the same string upper-cased, 33 read it from
+## an `algorithm` variable, and 497 call sites take it from a
+## java.lang.String resolved elsewhere (the counts exceed 130 because a
+## case has several call sites). So literal matching is the majority of the
+## reachable ground truth and is what this file does; the
+## variable-sourced form needs constant propagation semgrep will not do
+## here, and is deliberately left to a separate lower-confidence rule
+## rather than guessed at.
+##
+## Case-insensitive on the algorithm name because JCA itself is: both
+## "DES/CBC/PKCS5Padding" and "DES/CBC/PKCS5PADDING" appear in the corpus
+## and both are accepted by the provider.
+##
+## ECB is included as its own id rather than folded in with the broken
+## algorithms, because the mode is the defect there, not the cipher --
+## AES/ECB is a real finding with an otherwise fine algorithm, and
+## reporting it under the same id as DES would make the message wrong.
+rules:
+  - id: toleman-java-broken-cipher-algorithm
+    languages: [java]
+    severity: ERROR
+    confidence: HIGH
+    message: >-
+      A cipher is requested with a broken or deprecated algorithm (DES,
+      3DES/DESede, RC2, RC4/ARCFOUR, Blowfish). These have practical
+      attacks and short block or key sizes; use AES-GCM, or
+      AES/CBC/PKCS5Padding with a random IV and a separate MAC.
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      references:
+        - "https://cwe.mitre.org/data/definitions/327.html"
+        - "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+      validated-against:
+        - "OWASP BenchmarkJava: written against its crypto category, which the pack previously scored 0.000 recall on across 130 real cases"
+    patterns:
+      - pattern-either:
+          - pattern: javax.crypto.Cipher.getInstance("$ALG", ...)
+          - pattern: Cipher.getInstance("$ALG", ...)
+          - pattern: javax.crypto.KeyGenerator.getInstance("$ALG", ...)
+          - pattern: KeyGenerator.getInstance("$ALG", ...)
+          - pattern: javax.crypto.SecretKeyFactory.getInstance("$ALG", ...)
+          - pattern: SecretKeyFactory.getInstance("$ALG", ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          # Anchored at the start because JCA transformation strings are
+          # "ALGORITHM/MODE/PADDING": the algorithm is the first segment,
+          # and an unanchored match would also fire on a padding or mode
+          # name that happened to contain one of these substrings.
+          #
+          # DESede before DES is not required (both are reported by this
+          # rule) but the alternation keeps them separate so the regex
+          # reads as the list it is. ARCFOUR is the JCA name for RC4.
+          regex: (?i)^(DES|DESede|TripleDES|RC2|RC4|ARCFOUR|Blowfish)([/_-].*)?$
+
+  - id: toleman-java-cipher-ecb-mode
+    languages: [java]
+    severity: ERROR
+    confidence: HIGH
+    message: >-
+      A cipher is requested in ECB mode, which encrypts identical
+      plaintext blocks to identical ciphertext blocks and so leaks
+      structure regardless of how strong the underlying algorithm is. Use
+      an authenticated mode (GCM), or CBC with a random IV and a separate
+      MAC.
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      references:
+        - "https://cwe.mitre.org/data/definitions/327.html"
+      validated-against:
+        - "OWASP BenchmarkJava: separate id from the broken-algorithm rule above because the mode is the defect, not the cipher -- AES/ECB is a real finding with an otherwise sound algorithm"
+    patterns:
+      - pattern-either:
+          - pattern: javax.crypto.Cipher.getInstance("$ALG", ...)
+          - pattern: Cipher.getInstance("$ALG", ...)
+      - metavariable-regex:
+          metavariable: $ALG
+          # Matches the MODE segment specifically, so "AES/ECB/NoPadding"
+          # fires and an algorithm merely containing the letters does not.
+          regex: (?i)^[A-Za-z0-9]+/ECB(/.*)?$

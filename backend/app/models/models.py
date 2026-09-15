@@ -1070,6 +1070,24 @@ class PRGuardrailScan(SQLModel, table=True):
     # the assurance being offered rather than implying whole-repo coverage.
     scan_scope: str = "full"
     files_scanned: int = 0  # meaningful only when scan_scope == "diff"
+    # (#501) Per-tool execution record for this scan, as a JSON array of
+    # {tool, status, seconds, findings, detail}. Empty string means a scan
+    # that predates the column, which the API renders as an empty log
+    # rather than inventing entries.
+    #
+    # Exists because tools_run/tools_failed/tools_skipped are names only.
+    # A reviewer looking at a slow or failed check could see *which* tools
+    # participated and nothing about what they did -- not how long any of
+    # them took, not why a skipped one was skipped (the executor records
+    # that reason and then dropped it), not how many findings each
+    # produced. A guardrail check that sat at "Scanning..." for eighteen
+    # minutes offered no way to tell a slow tool from a hung scan, and
+    # finding the answer meant reproducing the scan by hand off-platform.
+    #
+    # JSON in a text column rather than a child table, matching how the
+    # three CSV columns above already denormalise this: it is read whole,
+    # written once, never queried by field, and never joined.
+    tool_log: str = ""
     # (#244) How many of files_scanned were pulled in by the code graph
     # rather than literally changed by the PR -- the blast radius. 0 with
     # scan_scope "diff" means the changed files import nothing else in this
@@ -1447,6 +1465,7 @@ class ScoringSignal(str, Enum):
     INTERNET_EXPOSURE = "internet_exposure"          # Target.label / Target.environment
     BUSINESS_CRITICALITY = "business_criticality"    # Target.criticality_weight + #251 metadata
     FIXABILITY = "fixability"                        # #246: can this be closed today
+    DEPENDENCY_SCOPE = "dependency_scope"            # #500: does the package ship, or only build
 
 
 class ScoringWeight(SQLModel, table=True):

@@ -85,10 +85,18 @@ def test_both_layers_are_offered_on_the_deep_scan_surface():
 
 
 def test_core_pack_runs_the_in_repo_rules_with_suppression_disabled():
+    """Asserts the rules reach semgrep, not the shape of the path they
+    arrive by. This originally asserted CORE_RULES_DIR appeared in the
+    command; #501 consolidates the 62 rule files into one cached config for
+    a 4.7x speedup, so the argument is now that file -- and a test pinned to
+    the directory form would have blocked the speedup while proving nothing
+    extra. What matters is that the full pack is loaded, which
+    test_core_pack_consolidation checks by rule count."""
     cmd = runner.TOOL_COMMANDS["semgrep-core"]("/some/repo")
 
     assert "--disable-nosem" in cmd
-    assert any(str(runner.CORE_RULES_DIR) in arg for arg in cmd)
+    config = next(a for a in cmd if a.startswith("--config="))
+    assert config.endswith(("core-consolidated.yaml", "rules/core")), config
     assert cmd[-1] == "/some/repo"
 
 

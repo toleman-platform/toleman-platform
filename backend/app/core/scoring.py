@@ -78,6 +78,13 @@ INTERNET_EXPOSURE_MAX_POINTS = 180
 # close today, and surfacing those above the wall of un-actionable Criticals
 # is the point of that verdict existing.
 FIXABILITY_POINTS = 120
+# Reserved for a dependency finding whose package positively ships to
+# production (#500). An uplift for runtime rather than a penalty for
+# development, which keeps the "unknown is never punished" property every
+# other slot here has: a finding from a tool that reports no scope, or an
+# ecosystem whose manifest cannot express one, is left exactly where the
+# base formula put it.
+DEPENDENCY_SCOPE_POINTS = 140
 
 
 BASELINE_WEIGHTS: dict[ScoringSignal, float] = {
@@ -93,6 +100,10 @@ BASELINE_WEIGHTS: dict[ScoringSignal, float] = {
     ScoringSignal.CVSS_EXPLOITABILITY: 0.0,
     ScoringSignal.INTERNET_EXPOSURE: 0.0,
     ScoringSignal.FIXABILITY: 0.0,
+    # Also 0.0, same reasoning: #488 started reporting dev-dependency CVEs
+    # and this is the lever that ranks them, but nobody gets a re-ranked
+    # backlog without asking for it.
+    ScoringSignal.DEPENDENCY_SCOPE: 0.0,
 }
 
 SIGNAL_LABELS: dict[ScoringSignal, str] = {
@@ -103,6 +114,7 @@ SIGNAL_LABELS: dict[ScoringSignal, str] = {
     ScoringSignal.KEV: "CISA KEV",
     ScoringSignal.INTERNET_EXPOSURE: "Internet exposure",
     ScoringSignal.FIXABILITY: "Fixability",
+    ScoringSignal.DEPENDENCY_SCOPE: "Dependency scope",
 }
 
 SIGNAL_DESCRIPTIONS: dict[ScoringSignal, str] = {
@@ -136,6 +148,13 @@ SIGNAL_DESCRIPTIONS: dict[ScoringSignal, str] = {
         "Whether an upgrade that resolves this finding is already available (#246). Raises findings "
         "someone can actually close today above ones with no fix to apply."
     ),
+    ScoringSignal.DEPENDENCY_SCOPE: (
+        "Whether the vulnerable package ships to production or only builds it (#500). A runtime "
+        "dependency is reachable by anyone who can reach the deployed service; a build-time one "
+        "needs someone who can already run the build. Only a package positively recorded as "
+        "runtime gets the uplift; a finding with no scope recorded is unknown and is never "
+        "penalised for it."
+    ),
 }
 
 # How each slot enters the score. The three behave differently enough that a
@@ -155,6 +174,7 @@ SIGNAL_CONTRIBUTION: dict[ScoringSignal, str] = {
     ScoringSignal.KEV: CONTRIBUTION_FLOOR,
     ScoringSignal.INTERNET_EXPOSURE: CONTRIBUTION_POINTS,
     ScoringSignal.FIXABILITY: CONTRIBUTION_POINTS,
+    ScoringSignal.DEPENDENCY_SCOPE: CONTRIBUTION_POINTS,
 }
 
 # Points each slot can contribute at weight 1.0, for the Admin UI to show
@@ -168,6 +188,7 @@ SIGNAL_MAX_POINTS: dict[ScoringSignal, int | None] = {
     ScoringSignal.KEV: KEV_FLOOR,
     ScoringSignal.INTERNET_EXPOSURE: INTERNET_EXPOSURE_MAX_POINTS,
     ScoringSignal.FIXABILITY: FIXABILITY_POINTS,
+    ScoringSignal.DEPENDENCY_SCOPE: DEPENDENCY_SCOPE_POINTS,
 }
 
 
@@ -420,6 +441,7 @@ def compute_score_breakdown(
     target_environment: str | None = None,
     target_owner: str | None = None,
     fixability: str | None = None,
+    dependency_scope: str | None = None,
     weights: Mapping[ScoringSignal, float] | None = None,
 ) -> ScoreBreakdown:
     """Score one finding and explain the result.
@@ -634,6 +656,43 @@ def compute_score_breakdown(
             points=cvss_points,
             established=cvss_established,
             detail=cvss_detail,
+        )
+    )
+
+    # (#500) An uplift for a package that positively ships, not a penalty
+    # for one that does not. Three states, and the third is the point:
+    # "unknown" covers every finding that predates the column, every tool
+    # other than trivy, and every ecosystem whose manifest cannot express
+    # the distinction. Treating those as runtime would re-rank the whole
+    # backlog on data nobody collected; treating them as development would
+    # bury real runtime risk. They get nothing, either way.
+    #
+    # Compared against string literals rather than importing the parser's
+    # constants, matching how fixability is handled just below: this module
+    # is deliberately pure -- no session, no I/O -- and the values are
+    # already part of the API contract the findings list filters on.
+    scope_points = 0
+    scope_established = False
+    scope_detail = "no dependency scope recorded for this finding"
+    if dependency_scope == "runtime":
+        scope_established = True
+        scope_points = _add(round(DEPENDENCY_SCOPE_POINTS * w[ScoringSignal.DEPENDENCY_SCOPE]))
+        scope_detail = "the vulnerable package ships to production, so this is reachable in the deployed service"
+    elif dependency_scope == "development":
+        scope_established = True
+        scope_detail = (
+            "the vulnerable package is a build-time dependency only; no uplift, "
+            "but no penalty either -- it still needs fixing, and a compromised "
+            "build tool runs with CI's credentials"
+        )
+    contributions.append(
+        SignalContribution(
+            signal=ScoringSignal.DEPENDENCY_SCOPE,
+            label=SIGNAL_LABELS[ScoringSignal.DEPENDENCY_SCOPE],
+            weight=w[ScoringSignal.DEPENDENCY_SCOPE],
+            points=scope_points,
+            established=scope_established,
+            detail=scope_detail,
         )
     )
 

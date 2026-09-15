@@ -325,7 +325,15 @@ def _wire_common_scan_mocks(monkeypatch, findings):
     # Each finding carries its own `tool`, which the real path sets and
     # dedup_hash depends on. It returns (findings, failed, skipped) since
     # #243; "skipped" being a third state distinct from both.
-    def _fake_run_tools(tools, repo_path, paths=None):
+    # **kwargs deliberately: the real _run_guardrail_tools grows optional
+    # keyword arguments (durations and counts came with #501's scan log),
+    # and a stub pinned to the exact signature raises TypeError inside the
+    # executor, which catches it and reports the scan as ERROR rather than
+    # BLOCKED. That failure mode is indistinguishable from a real
+    # enforcement bug from the assertion's point of view, and it has now
+    # happened three times in this area -- twice to run_nuclei's stubs and
+    # once here. Absorbing unknown keywords is the point of a double.
+    def _fake_run_tools(tools, repo_path, paths=None, **kwargs):
         return [{**f, "tool": f.get("tool", "semgrep")} for f in findings], [], {}
 
     monkeypatch.setattr(pr_guardrail_executor, "_run_guardrail_tools", _fake_run_tools)

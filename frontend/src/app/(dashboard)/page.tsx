@@ -1,6 +1,6 @@
 import { api, type WidgetDataResponse } from "@/lib/api";
 import { DashboardBoard } from "@/components/dashboard/dashboard-board";
-import { settledOr } from "@/std-lib";
+import { settledOr, settleOrNull } from "@/std-lib";
 
 // Issue #69: dashboard composition is now per-user and configurable
 // (widget catalog + saved layout), replacing the previous hardcoded card
@@ -29,11 +29,27 @@ import { settledOr } from "@/std-lib";
 // `settledOr` (std-lib/async.ts) keeps the failure bit alive past this fetch
 // so DashboardBoard can render each failure as what it is instead of a
 // confident empty state.
+//
+// The fourth fetch is the signed-in user, which drives which widgets a
+// dashboard starts with: posture and trend for the people who report on
+// them, the queue of outstanding work for the people who clear it. The
+// surrounding (dashboard)/layout.tsx already reads /api/auth/me for the
+// sidebar, but a Server Component cannot reach into its layout's data, so
+// this asks again.
+//
+// `settleOrNull` rather than `settledOr` here, per that module's own rule:
+// the fallback is a single object the page either has or does not have, not
+// an empty collection, so `null` already carries the failure bit -- this
+// endpoint cannot answer `null` successfully. A role we could not read is
+// not a role, and must not be allowed to decay into a persona the user never
+// picked, so `null` propagates as "show everything" rather than as a default
+// persona.
 export default async function PosturePage() {
-  const [[layout, layoutFailed], [catalog, catalogFailed], [initialData, dataFailed]] = await Promise.all([
+  const [[layout, layoutFailed], [catalog, catalogFailed], [initialData, dataFailed], user] = await Promise.all([
     settledOr(api.dashboardLayout(), { widgets: [] }),
     settledOr(api.dashboardWidgets(), []),
     settledOr<WidgetDataResponse>(api.dashboardWidgetData(), { widgets: {} }),
+    settleOrNull(api.me()),
   ]);
 
   return (
@@ -44,6 +60,9 @@ export default async function PosturePage() {
       layoutFailed={layoutFailed}
       catalogFailed={catalogFailed}
       dataFailed={dataFailed}
+      userId={user?.id ?? null}
+      role={user?.role ?? null}
+      profileFailed={user === null}
     />
   );
 }

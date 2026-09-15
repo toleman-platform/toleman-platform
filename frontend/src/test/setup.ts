@@ -14,3 +14,27 @@ configure({ asyncUtilTimeout: 5000 });
 // which is exactly the kind of false pass that makes accessibility tests
 // worthless.
 afterEach(() => cleanup());
+
+// jsdom 30 implements localStorage (verified directly: `new JSDOM("", {url})`
+// exposes it), but vitest 2.1.9's jsdom environment does not surface it as a
+// global here -- `window.localStorage` is undefined in every test. Without a
+// real implementation, code that persists a user preference silently takes
+// its storage-unavailable branch, so a test for the persisted path cannot
+// tell "saved and read back" apart from "storage was never there" -- and a
+// test for the UNavailable path passes for the wrong reason.
+//
+// The methods go on `Storage.prototype` rather than onto a plain object so
+// that `vi.spyOn(Storage.prototype, "getItem")` still intercepts them. A
+// test simulating a browser that refuses storage does it that way, and a
+// polyfill holding its own methods would make those spies silently inert.
+if (typeof window !== "undefined" && !window.localStorage) {
+  const store = new Map<string, string>();
+  Storage.prototype.getItem = (k: string) => (store.has(k) ? store.get(k)! : null);
+  Storage.prototype.setItem = (k: string, v: string) => void store.set(k, String(v));
+  Storage.prototype.removeItem = (k: string) => void store.delete(k);
+  Storage.prototype.clear = () => store.clear();
+  Storage.prototype.key = (i: number) => [...store.keys()][i] ?? null;
+  const storage = Object.create(Storage.prototype) as Storage;
+  Object.defineProperty(storage, "length", { get: () => store.size });
+  Object.defineProperty(window, "localStorage", { value: storage, configurable: true, writable: true });
+}

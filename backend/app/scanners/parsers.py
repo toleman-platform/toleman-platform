@@ -3,6 +3,8 @@
 Each parser returns a list of dicts with keys:
   rule_id, title, description, file_path, line_start, line_end, severity, snippet, cve_id
 """
+import re
+
 from app.core.github_dependency_graph import parse_spdx_packages
 from app.core.scan_health import ScanHealth
 from app.models.models import Severity
@@ -39,13 +41,73 @@ def parse_semgrep(raw: dict) -> list[dict]:
     return out
 
 
+# Character classes a detected secret can fall into, most specific first.
+# The point of naming these is triage: "128 hex characters" is what `rails
+# secret` or `openssl rand -hex` produces and is almost certainly a real
+# generated key, while "11 characters, letters and digits" is the shape of a
+# placeholder. A reviewer can reach that judgement from the class and the
+# length without opening the file.
+# Order matters, and the reason is easy to get wrong: these alphabets nest.
+# Digits are a subset of hex, hex of alphanumeric, and alphanumeric of both
+# base64 alphabets -- so the narrowest class has to be tested first, or
+# every digit string reports as base64. The two base64 entries additionally
+# require at least one character that is NOT alphanumeric ("+/" or "-_", or
+# the "=" padding), because without one there is nothing to distinguish
+# them from a plain alphanumeric string and claiming base64 would be a
+# guess dressed up as a fact.
+_SECRET_CHARSETS = (
+    ("digits", re.compile(r"\A[0-9]+\Z")),
+    ("hex", re.compile(r"\A[0-9a-fA-F]+\Z")),
+    ("alphanumeric", re.compile(r"\A[A-Za-z0-9]+\Z")),
+    ("base64", re.compile(r"\A(?=[A-Za-z0-9+/]*[+/=])[A-Za-z0-9+/]+={0,2}\Z")),
+    ("base64url", re.compile(r"\A(?=[A-Za-z0-9_-]*[-_=])[A-Za-z0-9_-]+={0,2}\Z")),
+)
+
+
+def describe_secret_shape(secret: str, entropy: float | None = None) -> str:
+    """Non-secret facts about a detected secret, for the finding text.
+
+    Returns "" for an empty secret.
+
+    Deliberately contains no part of the secret itself, not even a prefix.
+    A finding is read by everyone who can see the workspace and travels
+    into exports and tickets, and a prefix is enough to confirm a guess
+    about which credential it is. The shape is what triage actually needs:
+    on the false positive that prompted this (#481), the facts that settled
+    it were "128 characters" and "hex" -- the value was a published
+    RailsGoat fixture, and nothing about the first twelve characters would
+    have said so.
+
+    Derived here rather than at ingestion because the secret does not
+    survive that far: core.ingestion feeds the match into
+    compute_dedup_hash and then drops it, and Finding has no column for it.
+    This is the last point at which these facts can be computed at all,
+    which is why they are computed here and not stored raw for later.
+    """
+    if not secret:
+        return ""
+    charset = next((name for name, pattern in _SECRET_CHARSETS if pattern.match(secret)), "mixed")
+    parts = [f"{len(secret)} characters", charset]
+    if entropy is not None:
+        # gitleaks' own Shannon entropy over the matched string. Reported
+        # rather than thresholded: what counts as "high" depends on the
+        # character class, and a number a reviewer can see beats a verdict
+        # this code would have to invent.
+        parts.append(f"entropy {entropy:.2f}")
+    return f"Matched value: {', '.join(parts)}."
+
+
 def parse_gitleaks(raw: list) -> list[dict]:
     out = []
     for r in raw:
+        # Appended rather than replacing gitleaks' own Description, which
+        # says what the rule looks for; this says what it actually matched.
+        shape = describe_secret_shape(r.get("Secret", ""), r.get("Entropy"))
+        description = " ".join(part for part in (r.get("Description", ""), shape) if part)
         out.append({
             "rule_id": r.get("RuleID", "secret"),
             "title": f"Secret detected: {r.get('RuleID', 'secret')}",
-            "description": r.get("Description", ""),
+            "description": description,
             "file_path": r.get("File", ""),
             "line_start": r.get("StartLine"),
             "line_end": r.get("EndLine"),

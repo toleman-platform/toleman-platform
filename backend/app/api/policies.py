@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.api.auth import current_user
 from app.api.deps import get_session
+from app.core.pr_guardrail import SEVERITY_ORDER
 from app.models.models import PolicyRule, PolicyRuleType, User, Workspace
 
 router = APIRouter(prefix="/api/policies", tags=["policies"])
@@ -48,6 +49,21 @@ def create_policy(
         rule_type = PolicyRuleType(rule_type)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"invalid rule_type: {rule_type}")
+
+    # A BLOCK_SEVERITY threshold is matched by exact, case-sensitive membership
+    # of SEVERITY_ORDER (app.core.policy.blocking_severities). A value outside
+    # that set was previously stored and listed as an active policy, then
+    # skipped by the match, and `blocking_severities` fell back to the default
+    # set -- so an admin who wrote "critical" got a rule that changed nothing,
+    # with the UI showing it as in force. Rejecting it here is the only place
+    # that holds for every client, not just this product's own form.
+    if rule_type == PolicyRuleType.BLOCK_SEVERITY and value not in SEVERITY_ORDER:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"invalid severity: {value}. Must be one of: {', '.join(SEVERITY_ORDER)}"
+            ),
+        )
 
     rule = PolicyRule(
         workspace_id=workspace_id,

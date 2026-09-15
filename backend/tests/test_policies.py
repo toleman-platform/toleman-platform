@@ -131,6 +131,56 @@ def test_create_policy_rejects_invalid_rule_type(client, engine):
     assert res.status_code == 400
 
 
+def test_create_policy_rejects_a_severity_the_engine_would_never_match(client, engine):
+    """A BLOCK_SEVERITY threshold is matched by exact, case-sensitive membership
+    of SEVERITY_ORDER. Before this, "critical" was accepted, stored, and listed
+    as an active policy -- and then skipped by `blocking_severities`, which fell
+    back to the default blocking set. The admin saw a rule in force that changed
+    nothing, which is worse than a rejected write."""
+    client = _login(client, engine)
+    workspace_id = _make_workspace(engine)
+
+    res = client.post("/api/policies", json={
+        "workspace_id": workspace_id,
+        "rule_type": "block_severity",
+        "value": "critical",
+    })
+    assert res.status_code == 400
+    assert "critical" in res.json()["detail"]
+
+    # And nothing was stored: a rejected policy must not appear in the list the
+    # admin reads as their active configuration.
+    listed = client.get(f"/api/policies?workspace_id={workspace_id}").json()
+    assert [p for p in listed if p["rule_type"] == "block_severity"] == []
+
+
+def test_create_policy_accepts_every_severity_the_engine_matches(client, engine):
+    client = _login(client, engine)
+    workspace_id = _make_workspace(engine)
+
+    for severity in ["Informational", "Low", "Medium", "High", "Critical"]:
+        res = client.post("/api/policies", json={
+            "workspace_id": workspace_id,
+            "rule_type": "block_severity",
+            "value": severity,
+        })
+        assert res.status_code == 200, f"{severity} should be accepted: {res.text}"
+
+
+def test_suppress_rules_still_take_free_text(client, engine):
+    """The severity constraint must not leak onto the other rule types, whose
+    value is a rule_id or a licence name and is deliberately free-form."""
+    client = _login(client, engine)
+    workspace_id = _make_workspace(engine)
+
+    res = client.post("/api/policies", json={
+        "workspace_id": workspace_id,
+        "rule_type": "suppress_rule",
+        "value": "generic.secrets.security.detected-aws-access-key-id-value",
+    })
+    assert res.status_code == 200
+
+
 def test_delete_policy_soft_deletes_and_excludes_from_list(client, engine):
     client = _login(client, engine)
     ws_id = _make_workspace(engine)

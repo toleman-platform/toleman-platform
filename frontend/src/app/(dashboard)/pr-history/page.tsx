@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { PrScanAction, PrGuardrailLog, ScanFindings } from "@/components/features/scans";
+import { PrStateBadge } from "@/components/features/pull-requests/pr-state-badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
@@ -62,11 +63,6 @@ const PR_STATE_FILTERS: { value: PullRequestState | "all"; label: string }[] = [
 ];
 
 const DEFAULT_PR_STATE: PullRequestState | "all" = "open";
-
-function prStateBadgeStatus(state: PullRequestState) {
-  if (state === "open") return "running";
-  return state === "merged" ? "completed" : "blocked";
-}
 
 // admin M9: this used to fold "blocked", "error", "overridden" and "not
 // scanned" all down into just two buckets ("failed" or the "queued" catch-all
@@ -203,7 +199,13 @@ function PrRow({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <StatusBadge status={prStateBadgeStatus(pr.state)} label={pr.state} />
+            {/* The PR's own lifecycle state, in its own vocabulary. It used
+                to be mapped onto StatusBadge's async-task states -- "open"
+                onto "running", whose rendering is a spinning loader -- so
+                every open PR in this list claimed to be perpetually working.
+                What runs on a PR is a scan, and that keeps its own badge
+                directly below. */}
+            <PrStateBadge state={pr.state} />
             {/* The scan verdict is shown on every row, open ones included.
                 It used to be the *alternative* to PrScanAction, which shows
                 only a scan started from that button in this session -- so an

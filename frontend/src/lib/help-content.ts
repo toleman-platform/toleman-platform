@@ -54,8 +54,12 @@ export const HELP_CONTENT: Record<HelpFeatureKey, HelpTopic> = {
   },
   guardrails: {
     title: "Guardrails",
-    body: "The rules that decide how findings are handled: repo groups, SLA clocks, false-positive suppressions, pull request policy gates and risk-scoring weights. Use it to change what the platform blocks, escalates or ignores.",
-    docsUrl: `${DOCS}/github-integration/pr-guardrail`,
+    body: "The rules that decide how findings are handled: repo groups, SLA clocks, workflow templates, false-positive suppressions, pull request policy gates and risk-scoring weights. Use it to change what the platform blocks, escalates or ignores.",
+    // No docsUrl on purpose. This page has six tabs and the published site has
+    // no page covering them; the nearest candidate documents PR gating only,
+    // which is one tab, so a reader on Risk Scoring or SLA Rules would be sent
+    // somewhere that does not describe what they are looking at. An absent
+    // link is better than a confidently wrong one.
   },
   "api-discovery": {
     title: "API Discovery",

@@ -27,6 +27,7 @@ import {
   ArrowRight,
   Command,
   FileCode,
+  Wrench,
 } from "lucide-react";
 import { api, SearchResults } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
@@ -63,6 +64,7 @@ const STATIC_PAGES = [
   { href: "/ai-analysis", title: "Explain with AI", subtitle: "Automated vulnerability risk explanations", icon: BrainCircuit, keywords: "ai explanation claude gpt summarize" },
   { href: "/audit-log", title: "Audit Trail", subtitle: "User action and system security logs", icon: ScrollText, keywords: "audit logs activity history events" },
   { href: "/github-org-logs", title: "GitHub Org Logs", subtitle: "Organization webhook and sync events", icon: Github, keywords: "github org sync webhooks events" },
+  { href: "/administration", title: "Administration", subtitle: "Index of every configuration surface", icon: Wrench, keywords: "administration admin configuration setup index" },
   { href: "/workspaces", title: "Workspaces", subtitle: "Multi-tenant workspace configuration", icon: Building2, keywords: "workspaces tenants organizations" },
   { href: "/admin", title: "Control Plane / Admin", subtitle: "Tool registry, Celery workers & health", icon: UserCog, keywords: "admin celery workers tools health status" },
   { href: "/design-system", title: "Design System Gallery", subtitle: "Typography, color tokens, and components", icon: Palette, keywords: "design system tokens colors typography gallery" },

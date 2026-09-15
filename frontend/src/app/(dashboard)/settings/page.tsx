@@ -15,7 +15,9 @@ import {
   type Target,
 } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWriteAction } from "@/hooks/use-write-action";
 import { AsyncContent } from "@/components/ui/async-content";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { Card, CardContent } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Input } from "@/components/ui/input";
@@ -350,8 +352,13 @@ const NOTIFICATION_CHANNELS: { value: NotificationChannel; label: string }[] = [
 function ProfileSection() {
   const [me, setMe] = useState<AuthUser | null>(null);
   const [name, setName] = useState("");
-  const [nameSaving, setNameSaving] = useState(false);
   const [nameSaved, setNameSaved] = useState(false);
+  // Was `try`/`finally` with no `catch`: a rejected PATCH re-enabled the
+  // button, left the typed name in the box and said nothing, so a rename the
+  // server refused looked exactly like one it accepted. useWriteAction keeps
+  // `submitting` and `error` in the same place, so the disabled state cannot
+  // be wired up without the failure state coming with it.
+  const nameAction = useWriteAction("Couldn't save your name");
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -368,15 +375,12 @@ function ProfileSection() {
   }, []);
 
   async function saveName() {
-    setNameSaving(true);
     setNameSaved(false);
-    try {
+    await nameAction.run(async () => {
       const updated = await api.updateMe(name);
       setMe(updated);
       setNameSaved(true);
-    } finally {
-      setNameSaving(false);
-    }
+    });
   }
 
   async function changePassword() {
@@ -413,11 +417,16 @@ function ProfileSection() {
             <label className="text-xs text-muted-foreground">Name</label>
             <div className="flex gap-2">
               <Input className="bg-secondary" aria-label="Display name" value={name} onChange={(e) => setName(e.target.value)} />
-              <Button onClick={saveName} disabled={nameSaving} className="shrink-0">
-                {nameSaving ? "Saving..." : "Save"}
+              <Button onClick={saveName} disabled={nameAction.submitting} className="shrink-0">
+                {nameAction.submitting ? "Saving..." : "Save"}
               </Button>
             </div>
             {nameSaved && <span role="status" className="text-xs text-chart-5">Saved</span>}
+            {nameAction.error && (
+              <AlertBanner tone="critical" title="Couldn't save your name">
+                {nameAction.error}
+              </AlertBanner>
+            )}
           </div>
         </div>
 
@@ -476,57 +485,61 @@ function ProfileSection() {
 }
 
 function NotificationPreferencesSection() {
-  const [prefs, setPrefs] = useState<Map<string, boolean>>(new Map());
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  // Was `api.notificationPreferences().then(...)` with no `.catch`, and
+  // `setLoading(false)` only on the success path: a rejected read left the
+  // skeleton on screen for the rest of the session, with nothing to retry and
+  // nothing saying the request had failed. Same hook/component pair the
+  // sections beside this one already use, so loading, error-with-retry and
+  // loaded are three distinguishable things.
+  const prefsState = useAsyncData<NotificationPreference[]>(() => api.notificationPreferences());
+  // The toggles the user has flipped since the read, keyed `channel:event`.
+  // Kept beside the server's answer rather than copied over it in an effect:
+  // copying would need a set-state-in-effect, and there would be a render in
+  // which the two disagree.
+  const [edits, setEdits] = useState<Map<string, boolean>>(new Map());
   const [saved, setSaved] = useState(false);
+  const saveAction = useWriteAction("Couldn't save your notification preferences");
 
-  useEffect(() => {
-    api.notificationPreferences().then((rows) => {
-      const m = new Map<string, boolean>();
-      for (const r of rows) m.set(`${r.channel}:${r.event_type}`, r.enabled);
-      setPrefs(m);
-      setLoading(false);
-    });
-  }, []);
+  const serverPrefs = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const r of prefsState.data ?? []) m.set(`${r.channel}:${r.event_type}`, r.enabled);
+    return m;
+  }, [prefsState.data]);
+
+  function enabledFor(channel: NotificationChannel, eventType: NotificationEventType): boolean {
+    const key = `${channel}:${eventType}`;
+    // `??`, not `||`: a deliberate `false` edit has to win over the server's
+    // `true`, and `||` would fall through to it.
+    return edits.get(key) ?? serverPrefs.get(key) ?? false;
+  }
 
   function toggle(channel: NotificationChannel, eventType: NotificationEventType) {
     const key = `${channel}:${eventType}`;
-    setPrefs((prev) => {
-      const next = new Map(prev);
-      next.set(key, !next.get(key));
-      return next;
+    const next = !enabledFor(channel, eventType);
+    setEdits((prev) => {
+      const m = new Map(prev);
+      m.set(key, next);
+      return m;
     });
     setSaved(false);
   }
 
   async function save() {
-    setSaving(true);
-    try {
+    setSaved(false);
+    await saveAction.run(async () => {
       const preferences: NotificationPreference[] = [];
       for (const channel of NOTIFICATION_CHANNELS) {
         for (const event of NOTIFICATION_EVENT_TYPES) {
-          const key = `${channel.value}:${event.value}`;
-          preferences.push({ channel: channel.value, event_type: event.value, enabled: prefs.get(key) ?? false });
+          preferences.push({
+            channel: channel.value,
+            event_type: event.value,
+            enabled: enabledFor(channel.value, event.value),
+          });
         }
       }
       await api.setNotificationPreferences(preferences);
       setSaved(true);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (loading) {
-    return (
-      <Card className="border-border bg-card">
-        <CardContent className="flex flex-col gap-3 px-4 py-4">
-          <Skeleton className="h-4 w-48" />
-          <Skeleton className="h-3 w-full" />
-          <Skeleton className="h-24 w-full" />
-        </CardContent>
-      </Card>
-    );
+    });
   }
 
   return (
@@ -540,45 +553,79 @@ function NotificationPreferencesSection() {
           </p>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                <th className="py-2 font-medium">Event</th>
-                {NOTIFICATION_CHANNELS.map((c) => (
-                  <th key={c.value} className="py-2 pl-4 font-medium">
-                    {c.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {NOTIFICATION_EVENT_TYPES.map((event) => (
-                <tr key={event.value} className="border-b border-border/50">
-                  <td className="py-2 text-foreground">{event.label}</td>
-                  {NOTIFICATION_CHANNELS.map((channel) => (
-                    <td key={channel.value} className="py-2 pl-4">
-                      <input
-                        type="checkbox"
-                        aria-label={`${channel.label} for ${event.label}`}
-                        className="h-4 w-4 accent-primary"
-                        checked={prefs.get(`${channel.value}:${event.value}`) ?? false}
-                        onChange={() => toggle(channel.value, event.value)}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <AsyncContent
+          state={prefsState}
+          itemNoun="notification preferences"
+          errorTitle="Couldn't load your notification preferences"
+          // Nothing stored yet is not an empty state: every row below is a
+          // choice the user can still make, defaulted off.
+          isEmpty={() => false}
+          loadingFallback={
+            <div className="flex flex-col gap-3">
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-24 w-full" />
+            </div>
+          }
+        >
+          {() => (
+            <div className="flex flex-col gap-4">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="py-2 font-medium">Event</th>
+                      {NOTIFICATION_CHANNELS.map((c) => (
+                        <th key={c.value} className="py-2 pl-4 font-medium">
+                          {c.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {NOTIFICATION_EVENT_TYPES.map((event) => (
+                      <tr key={event.value} className="border-b border-border/50">
+                        <td className="py-2 text-foreground">{event.label}</td>
+                        {NOTIFICATION_CHANNELS.map((channel) => (
+                          <td key={channel.value} className="py-2 pl-4">
+                            <input
+                              type="checkbox"
+                              aria-label={`${channel.label} for ${event.label}`}
+                              className="h-4 w-4 accent-primary"
+                              checked={enabledFor(channel.value, event.value)}
+                              onChange={() => toggle(channel.value, event.value)}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
-        <div className="flex items-center gap-3">
-          <Button onClick={save} disabled={saving} className="self-start">
-            {saving ? "Saving..." : "Save Preferences"}
-          </Button>
-          {saved && <span className="text-xs text-chart-5">Saved</span>}
-        </div>
+              {/* Table and Save both live inside the loaded branch
+                  deliberately. Every checkbox defaults to off, so a Save
+                  offered beside a failed read would write "all notifications
+                  disabled" from values nobody has ever seen. */}
+              <div className="flex items-center gap-3">
+                <Button onClick={save} disabled={saveAction.submitting} className="self-start">
+                  {saveAction.submitting ? "Saving..." : "Save Preferences"}
+                </Button>
+                {saved && (
+                  <span role="status" className="text-xs text-chart-5">
+                    Saved
+                  </span>
+                )}
+              </div>
+
+              {saveAction.error && (
+                <AlertBanner tone="critical" title="Couldn't save your notification preferences">
+                  {saveAction.error}
+                </AlertBanner>
+              )}
+            </div>
+          )}
+        </AsyncContent>
       </CardContent>
     </Card>
   );
@@ -586,7 +633,12 @@ function NotificationPreferencesSection() {
 
 function WorkspaceSection() {
   const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
+  // Was `try`/`finally` with no `catch`: a rejected PATCH said nothing at all
+  // and left the rejection as an unhandled promise rejection escaping the
+  // click handler. The draft itself was already preserved -- the clear sat
+  // after the await, so a rejection never reached it -- so what was missing
+  // was the failure being stated, not the edits being kept.
+  const saveAction = useWriteAction("Couldn't save this target's configuration");
   // Both the draft and the "Saved" flag are tagged with the target they
   // belong to. Switching repos then falls back to that repo's stored values
   // automatically, where the previous effect-based reset could leave one
@@ -598,7 +650,13 @@ function WorkspaceSection() {
   const { data: targetsData, refetch: reloadTargets } = useAsyncData<Target[]>(() => api.targets());
   const targets = targetsData ?? [];
   const targetId = chosenTargetId ?? targets[0]?.id ?? null;
-  const setTargetId = setChosenTargetId;
+
+  function chooseTarget(id: number) {
+    // A failure banner belongs to the target it was raised on; carrying it
+    // across a switch would accuse the next repo of a save it never ran.
+    saveAction.clearError();
+    setChosenTargetId(id);
+  }
 
   const selectedTarget = targets.find((t) => t.id === targetId) ?? null;
   const form: Partial<Target> =
@@ -613,8 +671,7 @@ function WorkspaceSection() {
 
   async function save() {
     if (targetId === null) return;
-    setSaving(true);
-    try {
+    await saveAction.run(async () => {
       const updated = await api.updateTarget(targetId, {
         default_branch: form.default_branch,
         label: form.label,
@@ -623,16 +680,14 @@ function WorkspaceSection() {
       reloadTargets();
       setDraft(null);
       setSavedTargetId(updated.id);
-    } finally {
-      setSaving(false);
-    }
+    });
   }
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h2 className="mb-3 text-sm font-medium text-foreground">Target Configuration</h2>
-        <TargetPicker targets={targets} value={targetId} onChange={setTargetId} />
+        <TargetPicker targets={targets} value={targetId} onChange={chooseTarget} />
       </div>
 
       {targetId !== null && (
@@ -690,11 +745,20 @@ function WorkspaceSection() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Button onClick={save} disabled={saving}>
-                {saving ? "Saving..." : "Save Changes"}
+              <Button onClick={save} disabled={saveAction.submitting}>
+                {saveAction.submitting ? "Saving..." : "Save Changes"}
               </Button>
-              {saved && <span className="text-xs text-chart-5">Saved</span>}
+              {saved && (
+                <span role="status" className="text-xs text-chart-5">
+                  Saved
+                </span>
+              )}
             </div>
+            {saveAction.error && (
+              <AlertBanner tone="critical" title="Couldn't save target configuration">
+                {saveAction.error}
+              </AlertBanner>
+            )}
           </CardContent>
         </Card>
       )}

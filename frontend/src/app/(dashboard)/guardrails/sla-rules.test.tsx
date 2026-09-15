@@ -158,3 +158,60 @@ describe("SlaRules, editing days-to-fix inline", () => {
     expect(updateSlaRule).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The empty state used to be reached by `!rules || rules.length === 0`, so a
+ * failed read rendered "No SLA rules yet" -- which on this surface is not a
+ * cosmetic slip. It tells an operator that no severity in this workspace has a
+ * remediation deadline, i.e. that there is a policy gap to go and fix, when
+ * the truth is only that the request did not come back.
+ */
+describe("SlaRules, a read that failed vs a workspace with no rules", () => {
+  function setupFailing(message = "sla endpoint unavailable") {
+    workspaces.mockResolvedValue([{ id: 1, name: "Acme", organization_id: 1, enforcement_mode: null }]);
+    groups.mockResolvedValue([]);
+    slaRules.mockRejectedValue(new Error(message));
+  }
+
+  it("reports the failure rather than claiming the workspace has no SLA rules", async () => {
+    setupFailing();
+    render(<SlaRules />);
+
+    expect(await screen.findByText("Couldn't load SLA rules")).toBeTruthy();
+    expect(screen.queryByText("No SLA rules yet")).toBeNull();
+  });
+
+  it("states the reason once, not twice", async () => {
+    // The inline error line and the ErrorState's description were both fed
+    // from the same load error; getByText throws on a second match, so this
+    // fails if the sentence is printed in both places.
+    setupFailing("sla endpoint unavailable");
+    render(<SlaRules />);
+
+    await screen.findByText("Couldn't load SLA rules");
+    expect(screen.getByText("sla endpoint unavailable")).toBeTruthy();
+  });
+
+  it("offers a retry that re-runs the read and shows the rules it returns", async () => {
+    workspaces.mockResolvedValue([{ id: 1, name: "Acme", organization_id: 1, enforcement_mode: null }]);
+    groups.mockResolvedValue([]);
+    slaRules.mockRejectedValueOnce(new Error("sla endpoint unavailable")).mockResolvedValue([rule()]);
+
+    render(<SlaRules />);
+    fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByLabelText("Days to fix for Critical in Workspace default")).toBeTruthy();
+    expect(screen.queryByText("Couldn't load SLA rules")).toBeNull();
+    expect(screen.queryByText("No SLA rules yet")).toBeNull();
+  });
+
+  it("still says there are none when the read succeeds and returns none", async () => {
+    // The other half of the pair: gating the empty state on a successful read
+    // must not silence it for the workspace that genuinely has no rules.
+    setup([]);
+    render(<SlaRules />);
+
+    expect(await screen.findByText("No SLA rules yet")).toBeTruthy();
+    expect(screen.queryByText("Couldn't load SLA rules")).toBeNull();
+  });
+});

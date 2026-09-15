@@ -107,6 +107,77 @@ function hostIsDotless(publicApiUrl: string): boolean {
   return !hostname.includes(".");
 }
 
+/**
+ * The webhook secret field for one GitHub App.
+ *
+ * A component per App rather than one `Record<number, string>` on the card,
+ * because the failure has to be attributable: a single shared error slot
+ * would report App A's rejected save under App B's input, and this card
+ * routinely renders several Apps.
+ *
+ * The save itself was `try`/`finally` with no `catch`. A rejected PUT
+ * re-enabled the button and said nothing, leaving the rejection to escape as
+ * an unhandled promise rejection; the typed secret did survive, since the
+ * clear sat after the await. Silence is the whole defect here, and this is
+ * the worst place on the card for it: the secret
+ * is what every webhook delivery is verified against, so the operator walked
+ * away believing real-time PR scanning was set up while GitHub's deliveries
+ * would go on being rejected, and the only visible consequence is PRs that
+ * quietly never get scanned.
+ *
+ * Success is confirmed by the status line above this field flipping to
+ * "Webhook secret set", re-read from the server rather than asserted here --
+ * the claim is about what the backend stored, so the backend is what gets to
+ * make it.
+ */
+function WebhookSecretForm({ app, onSaved }: { app: GitHubAppInstallation; onSaved: () => void }) {
+  const [secret, setSecret] = useState("");
+  const save = useWriteAction("Couldn't save the webhook secret");
+
+  async function submit() {
+    const value = secret.trim();
+    if (!value) return;
+    await save.run(async () => {
+      await api.updateWebhookSecret(value, app.id);
+      // After the await, never before: clearing the field up front is what
+      // made a rejected save look like an accepted one.
+      setSecret("");
+      onSaved();
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
+        <Input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={`Webhook secret for ${app.app_slug}`}
+          className="bg-secondary"
+          placeholder="Webhook secret (must match this App's GitHub settings)"
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={submit}
+          disabled={save.submitting || !secret.trim()}
+          className="shrink-0"
+        >
+          {save.submitting ? "Saving..." : "Save"}
+        </Button>
+      </div>
+      {save.error && (
+        <AlertBanner tone="critical" title="Couldn't save the webhook secret">
+          {save.error}
+        </AlertBanner>
+      )}
+    </div>
+  );
+}
+
 export function ConnectGithubCard() {
   const router = useRouter();
   // (#355 review) One state machine for the status read, rather than a
@@ -133,8 +204,6 @@ export function ConnectGithubCard() {
   const [syncCreated, setSyncCreated] = useState<number | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [webhookSecrets, setWebhookSecrets] = useState<Record<number, string>>({});
-  const [savingSecretFor, setSavingSecretFor] = useState<number | null>(null);
   // Deleting a registered App drops its private key/client secret and every
   // installation row under it -- same destructive-confirmation pattern as
   // workspace-roles.tsx's role removal, not a bare button with no warning.
@@ -195,19 +264,6 @@ export function ConnectGithubCard() {
       setSyncCreated(res.created);
       router.refresh();
     });
-  }
-
-  async function saveWebhookSecret(configId: number) {
-    const value = (webhookSecrets[configId] || "").trim();
-    if (!value) return;
-    setSavingSecretFor(configId);
-    try {
-      await api.updateWebhookSecret(value, configId);
-      setWebhookSecrets((prev) => ({ ...prev, [configId]: "" }));
-      refresh();
-    } finally {
-      setSavingSecretFor(null);
-    }
   }
 
   return (
@@ -357,27 +413,7 @@ export function ConnectGithubCard() {
                             blocks every PR.
                           </p>
                         )}
-                        <div className="flex gap-2">
-                          <Input
-                            type="password"
-                            autoComplete="off"
-                            spellCheck={false}
-                            aria-label={`Webhook secret for ${appEntry.app_slug}`}
-                            className="bg-secondary"
-                            placeholder="Webhook secret (must match this App's GitHub settings)"
-                            value={webhookSecrets[appEntry.id] || ""}
-                            onChange={(e) => setWebhookSecrets((prev) => ({ ...prev, [appEntry.id]: e.target.value }))}
-                          />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => saveWebhookSecret(appEntry.id)}
-                            disabled={savingSecretFor === appEntry.id || !(webhookSecrets[appEntry.id] || "").trim()}
-                            className="shrink-0"
-                          >
-                            {savingSecretFor === appEntry.id ? "Saving..." : "Save"}
-                          </Button>
-                        </div>
+                        <WebhookSecretForm app={appEntry} onSaved={refresh} />
                       </div>
                     </div>
                   ))}

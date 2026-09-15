@@ -24,6 +24,16 @@ describe("StatCard", () => {
     expect(screen.getByText("Not yet analyzed")).toBeTruthy();
   });
 
+  it("renders the unknown dash at full opacity, not a faded one", () => {
+    // It was `text-muted-foreground/60`, which puts a 2xl glyph under the
+    // contrast floor -- on a card whose only remaining information IS that
+    // the value is unknown. Any opacity modifier fails this, not just /60.
+    render(<StatCard label="Open findings" value={0} unknown unknownHint="Never scanned" />);
+    const dash = screen.getByText("—");
+    expect(dash.className).toContain("text-muted-foreground");
+    expect(dash.className).not.toContain("text-muted-foreground/");
+  });
+
   it("renders secondary hint text when provided", () => {
     render(
       <StatCard

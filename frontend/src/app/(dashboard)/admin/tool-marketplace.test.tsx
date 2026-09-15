@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ToolMarketplace } from "./tool-marketplace";
-import type { ToolRegistryEntry } from "@/lib/api";
+import type { ToolAssignment, ToolRegistryEntry } from "@/lib/api";
 
 /**
  * admin M1/M2: the marketplace's per-tool badge used to have only two
@@ -174,5 +174,76 @@ describe("ToolMarketplace workspace picker", () => {
 
     expect(await screen.findByRole("option", { name: "production" })).toBeDefined();
     expect(screen.getByRole("option", { name: "staging" })).toBeDefined();
+  });
+});
+
+
+/**
+ * The usage-assignment checkboxes used to render `checked={assignment ? ... :
+ * false}` / `disabled={!assignment}`, and `assignment` is undefined for the
+ * whole time the workspace's assignment map is in flight. So a row that had
+ * not been read yet was pixel-identical to a row that had been read and said
+ * "this scanner runs on nothing" -- which invites an admin to tick four boxes
+ * that were already ticked on the server.
+ */
+describe("ToolMarketplace usage assignment, unread vs off", () => {
+  function deferredAssignments() {
+    let resolve: (value: ToolAssignment[]) => void = () => {};
+    const promise = new Promise<ToolAssignment[]>((res) => {
+      resolve = res;
+    });
+    toolAssignments.mockReturnValue(promise);
+    return (value: ToolAssignment[]) => resolve(value);
+  }
+
+  function assignment(over: Partial<ToolAssignment> = {}): ToolAssignment {
+    return {
+      tool: "semgrep",
+      on_demand_scan: true,
+      ci_pipeline: true,
+      api_scan: false,
+      pr_guardrail: true,
+      is_default: false,
+      ...over,
+    };
+  }
+
+  it("renders no checkbox at all while the assignment map is still being read", async () => {
+    workspaces.mockResolvedValue([{ id: 1, name: "default", organization_id: 1, enforcement_mode: null }]);
+    toolsRegistry.mockResolvedValue([entry({ tool: "semgrep", display_name: "Semgrep" })]);
+    const settle = deferredAssignments();
+
+    render(<ToolMarketplace />);
+    await screen.findByText("Semgrep");
+
+    // Nothing on screen can be read as a setting yet. The surface labels are
+    // still there, so the card does not resize when the answer lands.
+    expect(screen.queryByLabelText("Semgrep enabled for On-demand scan")).toBeNull();
+    expect(screen.getByText("On-demand scan")).toBeTruthy();
+
+    settle([assignment({ tool: "semgrep", on_demand_scan: true, api_scan: false })]);
+
+    // And once it has been read, the same row says what is actually
+    // configured -- which is what the unticked box would have denied.
+    const onDemand = (await screen.findByLabelText(
+      "Semgrep enabled for On-demand scan",
+    )) as HTMLInputElement;
+    expect(onDemand.checked).toBe(true);
+    const apiScan = screen.getByLabelText("Semgrep enabled for API scan") as HTMLInputElement;
+    expect(apiScan.checked).toBe(false);
+  });
+
+  it("says the assignment could not be read rather than showing it as off", async () => {
+    workspaces.mockResolvedValue([{ id: 1, name: "default", organization_id: 1, enforcement_mode: null }]);
+    toolsRegistry.mockResolvedValue([entry({ tool: "semgrep", display_name: "Semgrep" })]);
+    toolAssignments.mockRejectedValue(new Error("assignments endpoint unavailable"));
+
+    render(<ToolMarketplace />);
+    await screen.findByText("Semgrep");
+
+    expect(
+      await screen.findByText("Usage assignment couldn't be read for this workspace."),
+    ).toBeTruthy();
+    expect(screen.queryByLabelText("Semgrep enabled for On-demand scan")).toBeNull();
   });
 });

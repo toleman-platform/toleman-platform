@@ -17,4 +17,23 @@ describe("Button", () => {
     render(<Button>Save</Button>);
     expect(screen.getByRole("button", { name: "Save" }).className).toContain("motion-reduce:transition-none");
   });
+
+  // The outline variant is the most-instantiated button in the product and it
+  // lives inside Cards, so grounding it in the page background put it UNDER
+  // its own surface -- a recessed hole rather than a raised control, in both
+  // themes. Nothing else fails when that reverts: the class is valid, every
+  // render test still passes, and the regression is only visible to someone
+  // looking at a card. Hence a test on the ground the variant asks for, with
+  // globals.css.test.ts holding the other half -- that `--control` is never
+  // darker than a surface it sits on.
+  it("does not ground the outline variant in the page background", () => {
+    render(<Button variant="outline">Export</Button>);
+    const className = screen.getByRole("button", { name: "Export" }).className;
+
+    // Matches `bg-background` bare, behind a variant (`hover:bg-background`)
+    // and with an opacity modifier (`bg-background/80`), but not a longer
+    // utility that merely starts with it.
+    expect(className).not.toMatch(/(?<![-\w])bg-background(?![-\w])/);
+    expect(className.split(/\s+/)).toContain("bg-control");
+  });
 });

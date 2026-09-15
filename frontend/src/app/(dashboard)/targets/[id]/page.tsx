@@ -16,7 +16,7 @@ import { ApiScanConfig } from "./api-scan-config";
 import { ApiScanCredential } from "./api-scan-credential";
 import { TargetLifecycle } from "./target-lifecycle";
 import { TargetScanSchedule } from "./target-scan-schedule";
-import { TargetTabs, normalizeTab } from "./target-tabs";
+import { TargetTabs, normalizeTab, vulnerabilityTabCount } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
 import { TargetHistory } from "./target-history";
@@ -171,14 +171,14 @@ export default async function TargetDetailPage({
     return `/targets/${targetId}?${params.toString()}`;
   }
 
-  // The tab badge used to read the flat list's `total`, which is null in the
-  // grouped view. Taken from the "All findings" queue count instead, so the
-  // number is the same whichever view the reader is in.
-  //
-  // `undefined` when that count failed, which makes TargetTabs omit the badge
-  // rather than render "Vulnerabilities (0)" for a target whose findings were
-  // never counted.
-  const openFindingsCount = queueCounts[QUEUES.findIndex((q) => q.id === "all")] ?? undefined;
+  // The badge on a tab labelled "Vulnerabilities" counts vulnerabilities, not
+  // every finding. It previously read the "All findings" count, so a repo with
+  // 40 open vulnerabilities and 148 licence rows announced "Vulnerabilities
+  // (188)" and then opened on a 40-row list. Which queue it reads, and why,
+  // lives with the tab itself (see target-tabs.tsx); it stays a queue count
+  // rather than the flat list's `total`, which is null in the grouped view, so
+  // the number is the same whichever view the reader is in.
+  const vulnerabilityCount = vulnerabilityTabCount(queueCounts);
 
   const queueTabs: CategoryTab[] = QUEUES.map((q, i) => ({
     id: q.id,
@@ -247,7 +247,7 @@ export default async function TargetDetailPage({
         <ScanButtons targetId={targetId} workspaceId={target.workspace_id} isActive={target.is_active !== false} />
       </div>
 
-      <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={openFindingsCount} />
+      <TargetTabs targetId={targetId} active={tab} vulnerabilityCount={vulnerabilityCount} />
 
       {tab === "overview" && (
         <TargetOverview

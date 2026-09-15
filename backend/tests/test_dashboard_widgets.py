@@ -155,6 +155,56 @@ def test_kpi_cards_counts_real_findings(engine):
     assert data["high"] == 1
     assert data["mitigated"] == 1
     assert data["targets"] == 2
+    assert data["license_open"] == 0
+
+
+def _add_license_finding(engine, target_id, dedup_hash, state=FindingState.OPEN):
+    """A Trivy licence-scan row, graded Critical the way a scanner grades a
+    copyleft licence: severe as a legal question, not a vulnerability."""
+    with Session(engine) as session:
+        session.add(
+            Finding(
+                target_id=target_id,
+                dedup_hash=dedup_hash,
+                tool="trivy-license",
+                rule_id="license:GPL-3.0",
+                title="GPL-3.0 license detected in some-package",
+                file_path="go.mod",
+                severity=Severity.CRITICAL,
+                priority_score=10,
+                state=state,
+                first_seen=utcnow(),
+            )
+        )
+        session.commit()
+
+
+def test_kpi_cards_does_not_count_licences_as_vulnerabilities(engine):
+    """The KPI cards were the one posture surface that never got #425's
+    licence exclusion, while /stats, /posture, /summary, /sla-compliance, the
+    targets summary and the security score all had it. The disagreement was
+    visible on one screen: the card read "188 Open Findings" for a workspace
+    whose Findings page put 40 in the needs-action queue and 148 under
+    Licence review, and the card's own link lands on that 40-row queue.
+
+    Seeded findings are unchanged (3 open: 2 Critical, 1 High; 1 mitigated),
+    plus three Critical licence rows, two open and one mitigated. Every
+    vulnerability count must be exactly what it was; only `license_open`
+    moves.
+    """
+    t1, _t2, _ws = _seed(engine)
+    _add_license_finding(engine, t1, "lic-1")
+    _add_license_finding(engine, t1, "lic-2")
+    _add_license_finding(engine, t1, "lic-3", state=FindingState.MITIGATED)
+
+    with Session(engine) as session:
+        data = resolve_kpi_cards(session, None, {})
+
+    assert data["open"] == 3, "two open licence rows must not inflate open findings"
+    assert data["critical"] == 2, "a licence graded Critical is not a critical vulnerability"
+    assert data["high"] == 1
+    assert data["mitigated"] == 1, "a mitigated licence row is not a mitigated vulnerability"
+    assert data["license_open"] == 2, "what was excluded is still reported, not hidden"
 
 
 def test_findings_trend_daily_snapshot(engine):
@@ -192,6 +242,43 @@ def test_sla_compliance_widget_matches_dashboard_endpoint(engine):
         data = resolve_sla_compliance(session, None, {})
     # only the two CRITICAL open findings have an SLA rule (3 days); one is
     # 5 days old (violated), one is 1 day old (within window)
+    assert data["with_sla"] == 2
+    assert data["in_violation"] == 1
+    assert data["compliant"] == 1
+
+
+def test_sla_compliance_widget_does_not_put_licences_on_a_days_to_fix_clock(engine):
+    """SlaRule is keyed on severity alone, so the workspace's "Critical: 3
+    days" rule would otherwise apply just as literally to a copyleft licence
+    a scanner graded Critical. GET /api/dashboard/sla-compliance and the
+    security score's SLA component both exclude them; this widget is
+    supposed to be the same aggregate, so it has to as well, or one
+    dashboard reports two different SLA figures.
+
+    The licence row is aged well past the 3-day window, so counting it would
+    move both `with_sla` and `in_violation`.
+    """
+    t1, _t2, _ws = _seed(engine)
+    with Session(engine) as session:
+        session.add(
+            Finding(
+                target_id=t1,
+                dedup_hash="lic-sla",
+                tool="trivy-license",
+                rule_id="license:GPL-3.0",
+                title="GPL-3.0 license detected in some-package",
+                file_path="go.mod",
+                severity=Severity.CRITICAL,
+                priority_score=10,
+                state=FindingState.OPEN,
+                first_seen=utcnow() - timedelta(days=30),
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_sla_compliance(session, None, {})
+
     assert data["with_sla"] == 2
     assert data["in_violation"] == 1
     assert data["compliant"] == 1

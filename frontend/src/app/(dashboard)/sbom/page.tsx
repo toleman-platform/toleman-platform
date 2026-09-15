@@ -8,17 +8,18 @@ import {
   type FindingGroupListResult,
   type OrgSbomComponent,
   type OrgSbomResult,
+  type SbomComponent,
 } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { useSearchParams } from "next/navigation";
 import { AiBomPanel } from "@/components/features/intelligence";
-import { ActivityPagination } from "@/components/activity-pagination";
+import { ListRow } from "@/components/ui/list-row";
+import { PaginatedList } from "@/components/ui/paginated-list";
 import { pageSizeFromParams } from "@/lib/pagination";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -56,26 +57,73 @@ const NEW_BADGE_COLOR = "border-chart-5/20 bg-chart-5/10 text-chart-5";
 
 type Tab = "components" | "vulnerabilities" | "aibom";
 
+/**
+ * One component of the per-target inventory.
+ *
+ * Every field the previous card showed is still here; what changed is which
+ * of them gets the width. The purl is the longest string in the row and the
+ * least discriminating -- it restates name, version and ecosystem in a
+ * machine-readable form -- so it is capped and truncated with the full value
+ * on hover, and the name/version pair takes the space it was using.
+ */
+function SbomComponentRow({ component, showNew }: { component: SbomComponent; showNew: boolean }) {
+  return (
+    <ListRow>
+      <div className="flex min-w-0 flex-1 items-baseline gap-2">
+        <span className="truncate font-mono text-sm text-foreground" title={component.name}>
+          {component.name}
+        </span>
+        <span className="shrink-0 font-mono text-xs text-foreground">{component.version}</span>
+        {showNew && component.is_new && (
+          <Badge
+            variant="outline"
+            className={`shrink-0 px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide ${NEW_BADGE_COLOR}`}
+          >
+            New
+          </Badge>
+        )}
+      </div>
+      {/* Fixed-width trailing columns, the same shape the grouped findings
+          list uses: a ragged right edge is what makes a long list unreadable,
+          because nothing lines up to compare down the page. */}
+      <span className="w-20 shrink-0 truncate text-xs text-muted-foreground">{component.package_type}</span>
+      {/* Provenance. The column keeps its width even with nothing in it: a
+          row written before sources were recorded has no answer, and a blank
+          slot says that more honestly than a guessed default would. */}
+      <span className="w-24 shrink-0 truncate text-xs text-muted-foreground">{component.source ?? ""}</span>
+      <span
+        className="w-64 shrink truncate font-mono text-[11px] text-muted-foreground"
+        title={component.purl}
+      >
+        {component.purl}
+      </span>
+      <span className="w-24 shrink-0 truncate text-right text-xs text-muted-foreground">
+        {formatSince(component.first_seen)}
+      </span>
+    </ListRow>
+  );
+}
+
 function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
   const [expanded, setExpanded] = useState(false);
   const repoCount = component.targets.length;
 
   return (
-    <Card className="border-border bg-card">
-      <CardContent className="flex flex-col gap-2 px-4 py-2.5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-sm text-foreground">
+    <ListRow>
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="truncate font-mono text-sm text-foreground" title={component.name}>
               {component.name}
             </span>
-            <Badge variant="outline">{component.version}</Badge>
-            <span className="text-xs text-muted-foreground">
-              {component.package_type}
-            </span>
+            <span className="shrink-0 font-mono text-xs text-foreground">{component.version}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{component.package_type}</span>
           </div>
           <button
+            type="button"
             onClick={() => setExpanded((v) => !v)}
-            className="text-xs font-medium text-muted-foreground hover:text-foreground"
+            aria-expanded={expanded}
+            className="shrink-0 text-xs font-medium text-muted-foreground hover:text-foreground"
           >
             {repoCount} repo{repoCount === 1 ? "" : "s"} {expanded ? "▴" : "▾"}
           </button>
@@ -89,8 +137,8 @@ function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
             ))}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </ListRow>
   );
 }
 
@@ -191,6 +239,18 @@ export default function SbomPage() {
   const sbomTotalPages = Math.max(1, Math.ceil((components?.length ?? 0) / sbomPageSize));
   const sbomPage = Math.min(sbomPageRaw, sbomTotalPages);
   const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
+
+  // The org-wide list pages off the same URL params. Only one of the two
+  // views is ever on screen -- the tabs below exist only for a single target
+  // -- and each clamps its page to the result set it is actually paging, so
+  // narrowing the search from page 6 lands on the last page that exists
+  // rather than on an empty one that reads as "no components".
+  const orgTotalPages = Math.max(1, Math.ceil(filteredOrgComponents.length / sbomPageSize));
+  const orgPage = Math.min(sbomPageRaw, orgTotalPages);
+  const visibleOrgComponents = filteredOrgComponents.slice(
+    (orgPage - 1) * sbomPageSize,
+    orgPage * sbomPageSize,
+  );
 
   // OSS/dependency vulnerabilities aren't a new concept -- they are ordinary
   // findings -- so this filters the existing findings API rather than standing
@@ -344,7 +404,7 @@ export default function SbomPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="SBOM & OSS Vulnerabilities"
-        description="Real dependency inventory for the target, imported from GitHub's Dependency Graph and uploaded CycloneDX/SPDX JSON documents. Results are persisted."
+        description="Every dependency recorded for this target, from GitHub's dependency graph and any SBOM documents you have uploaded."
         badge={<HelpHint topic={HELP_CONTENT.sbom} />}
       />
 
@@ -367,9 +427,9 @@ export default function SbomPage() {
                 <WhatsIncludedCard
                   key="included"
                   items={[
-                    "Components from GitHub's Dependency Graph and uploaded SBOM documents, with versions when available",
-                    "Known-vulnerable packages cross-referenced against this target's OSS Vulnerabilities tab",
-                    "Package URL (purl) and ecosystem per component",
+                    "Every dependency on file for this target, with its version where the source recorded one",
+                    "Where each component was recorded from, so an entry can be traced back to its source",
+                    "Each component's package URL (purl) and ecosystem",
                   ]}
                 />,
               ]
@@ -467,30 +527,29 @@ export default function SbomPage() {
                 className="max-w-sm"
               />
 
-              <div className="flex flex-col gap-2">
-                <p className="text-sm text-muted-foreground">
-                  {filteredOrgComponents.length} component
-                  {filteredOrgComponents.length === 1 ? "" : "s"}
-                  {orgSearch ? ` matching "${orgSearch}"` : ""}
-                </p>
-                {filteredOrgComponents.map((c) => (
-                  <OrgSbomRow
-                    key={`${c.name}@${c.version}@${c.purl}`}
-                    component={c}
-                  />
-                ))}
-                {filteredOrgComponents.length === 0 && orgSbom.components.length === 0 && (
-                  <EmptyState
-                    icon={Package}
-                    title="No SBOM data yet"
-                    description="Select a repository above and generate an SBOM to see its dependency inventory here."
-                    bare
-                  />
-                )}
-                {filteredOrgComponents.length === 0 && orgSbom.components.length > 0 && (
-                  <EmptyState icon={PackageSearch} title="No components match your search" bare />
-                )}
-              </div>
+              <PaginatedList
+                items={visibleOrgComponents}
+                total={filteredOrgComponents.length}
+                page={orgPage}
+                pageSize={sbomPageSize}
+                summary={`${filteredOrgComponents.length} component${
+                  filteredOrgComponents.length === 1 ? "" : "s"
+                }${orgSearch ? ` matching "${orgSearch}"` : ""}`}
+                getKey={(c) => `${c.name}@${c.version}@${c.purl}`}
+                renderItem={(c) => <OrgSbomRow component={c} />}
+                empty={
+                  orgSbom.components.length === 0 ? (
+                    <EmptyState
+                      icon={Package}
+                      title="No SBOM data yet"
+                      description="Select a repository above and generate an SBOM to see its dependency inventory here."
+                      bare
+                    />
+                  ) : (
+                    <EmptyState icon={PackageSearch} title="No components match your search" bare />
+                  )
+                }
+              />
             </>
           )}
         </div>
@@ -574,52 +633,28 @@ export default function SbomPage() {
           {tab === "components" && (
             <>
               {showBusy && <SkeletonList count={3} />}
+              {/* 1396 components on a real target, rendering them all was the
+                  single longest scroll in the app; the shared list shell owns
+                  the paging, the page-size control and the density-aware row
+                  stack so this surface cannot drift from the others again. */}
               {!showBusy && components && (
-                <div className="flex flex-col gap-2">
-                  <p className="text-sm text-muted-foreground">
-                    {components.length} components found
-                  </p>
-                  {/* 1396 components on a real target, rendering them all
-                      was the single longest scroll in the app. */}
-                  <ActivityPagination
-                    total={components.length}
-                    page={sbomPage}
-                    pageSize={sbomPageSize}
-                    position="top"
-                  />
-                  {visibleComponents.map((c) => (
-                    <Card key={c.id} className="border-border bg-card">
-                      <CardContent className="flex items-center justify-between px-4 py-2.5">
-                        <div className="flex items-center gap-3">
-                          <span className="font-mono text-sm text-foreground">
-                            {c.name}
-                          </span>
-                          <Badge variant="outline">{c.version}</Badge>
-                          {scanSummary && c.is_new && (
-                            <Badge
-                              variant="outline"
-                              className={`px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${NEW_BADGE_COLOR}`}
-                            >
-                              New
-                            </Badge>
-                          )}
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          {c.package_type} · {c.purl} ·{" "}
-                          {formatSince(c.first_seen)}
-                        </span>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {components.length === 0 && (
+                <PaginatedList
+                  items={visibleComponents}
+                  total={components.length}
+                  page={sbomPage}
+                  pageSize={sbomPageSize}
+                  itemNoun="component"
+                  getKey={(c) => c.id}
+                  renderItem={(c) => <SbomComponentRow component={c} showNew={scanSummary !== null} />}
+                  empty={
                     <EmptyState
                       icon={Package}
                       title="No components recorded yet"
                       description="Generate an SBOM to scan this target's dependency manifests."
                       bare
                     />
-                  )}
-                </div>
+                  }
+                />
               )}
             </>
           )}

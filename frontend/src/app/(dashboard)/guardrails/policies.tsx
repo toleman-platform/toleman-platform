@@ -23,6 +23,13 @@ import { Building2, ScrollText, ShieldAlert, Trash2 } from "lucide-react";
 // mirrors app/core/policy.py's own docstring and matching logic (the
 // mechanism actually applied server-side) rather than restating the label in
 // other words, which is how this kind of copy drifts from what the code does.
+// The exact values the PR Guardrail engine matches a BLOCK_SEVERITY policy
+// against. Must stay identical to SEVERITY_ORDER in
+// backend/app/core/pr_guardrail.py: the comparison there is `in SEVERITY_ORDER`,
+// so a casing or spelling difference produces a policy that is stored and
+// listed but never applied.
+const BLOCK_SEVERITY_VALUES = ["Critical", "High", "Medium", "Low", "Informational"] as const;
+
 const RULE_TYPES: { value: PolicyRuleType; label: string; placeholder: string; description: string }[] = [
   {
     value: "block_severity",
@@ -180,7 +187,13 @@ export function Policies() {
                   aria-label="Rule type"
                   className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
                   value={ruleType}
-                  onChange={(e) => setRuleType(e.target.value as PolicyRuleType)}
+                  onChange={(e) => {
+                    setRuleType(e.target.value as PolicyRuleType);
+                    // The value means something different per rule type; carrying
+                    // "Critical" into a rule_id field would submit a rule that
+                    // matches nothing.
+                    setValue("");
+                  }}
                 >
                   {RULE_TYPES.map((r) => (
                     <option key={r.value} value={r.value} title={r.description}>
@@ -188,12 +201,36 @@ export function Policies() {
                     </option>
                   ))}
                 </select>
-                <Input
-                  className="w-56 bg-secondary"
-                  placeholder={RULE_TYPES.find((r) => r.value === ruleType)?.placeholder}
-                  value={value}
-                  onChange={(e) => setValue(e.target.value)}
-                />
+                {ruleType === "block_severity" ? (
+                  // A threshold is matched server-side by exact, case-sensitive
+                  // membership of SEVERITY_ORDER (backend/app/core/pr_guardrail.py).
+                  // As free text this accepted "critical", saved it, listed it as
+                  // an active policy, and then silently fell back to the default
+                  // blocking set -- so the rule an admin had just written did
+                  // nothing and nothing said so. A fixed set is the only input
+                  // here that cannot express a rule the engine will ignore.
+                  <select
+                    aria-label="Block severity threshold"
+                    className="w-56 rounded-md border border-input bg-secondary px-3 py-1.5 text-sm text-foreground"
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                  >
+                    <option value="">Select a severity...</option>
+                    {BLOCK_SEVERITY_VALUES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    className="w-56 bg-secondary"
+                    aria-label={RULE_TYPES.find((r) => r.value === ruleType)?.label}
+                    placeholder={RULE_TYPES.find((r) => r.value === ruleType)?.placeholder}
+                    value={value}
+                    onChange={(e) => setValue(e.target.value)}
+                  />
+                )}
                 <Input
                   className="w-56 bg-secondary"
                   placeholder="Reason (optional)"

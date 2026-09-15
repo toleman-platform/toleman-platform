@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   ShieldAlert,
   GitBranch,
@@ -533,6 +533,60 @@ const SCORE_COMPONENT_LABEL: Record<string, string> = {
   trend: "Trend (7d) score",
 };
 
+// Render order for the breakdown, and the only place it is declared.
+const SCORE_COMPONENT_KEYS = ["findings", "sla", "coverage", "fp_rate", "trend"] as const;
+
+// One grid template, shared by the column header and by every component row,
+// so that the label, the meter and the figure each occupy a real track.
+// Each row used to be its own `justify-between` flex line, which meant a
+// row's meter started wherever that row's label happened to end, and the
+// figures never lined up into a column that could be read down.
+//
+// Label and meter are flexible in a 2:1 ratio, the figure fixed. The figure
+// has to be fixed or the numbers stop forming a column, which is the whole
+// point; the meter is flexible rather than a fixed 5rem stub so that the
+// width a wide card has spare goes into a longer bar -- easier to compare
+// five of them down a column -- instead of into a band of nothing between
+// the label and the bar.
+const SCORE_ROW_GRID = "grid grid-cols-[minmax(0,2fr)_minmax(0,1fr)_4.5rem] items-center gap-x-3";
+
+// Same select convention as the Targets and Scans filter bars.
+const SCOPE_SELECT_CLASS =
+  "h-8 w-full rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
+
+const TREND_DIRECTIONS = ["improving", "stable", "worsening"] as const;
+type TrendDirection = (typeof TREND_DIRECTIONS)[number];
+
+type ScoreComponent = SecurityScore["components"][keyof SecurityScore["components"]];
+
+// Validated rather than trusted: a component the backend could not measure
+// may carry no direction at all, and `direction` would then be whatever the
+// JSON happened to hold.
+function trendDirectionOf(c: unknown): TrendDirection | null {
+  const direction = (c as { direction?: unknown } | null | undefined)?.direction;
+  return TREND_DIRECTIONS.includes(direction as TrendDirection) ? (direction as TrendDirection) : null;
+}
+
+/**
+ * The 0-100 value of one component, or `null` when it could not be measured.
+ *
+ * AGENTS.md 1.4: an unmeasured component must never render as a confident
+ * zero -- "Trend 0/100" reads as "your posture is as bad as it gets" when
+ * what happened is that there is no prior window to compare against yet.
+ * `SecurityScoreComponent.score` is typed as a plain `number`, so the shape
+ * cannot currently express "unknown"; this reads the field defensively
+ * instead of trusting that type, and treats a null/undefined/non-finite
+ * score -- or an explicit `measurable: false` -- as unknown. Both spellings
+ * are accepted so that whichever one the score API grows, the widget already
+ * renders it correctly.
+ */
+function scoreComponentValue(c: ScoreComponent | undefined): number | null {
+  if (!c) return null;
+  if ((c as { measurable?: unknown }).measurable === false) return null;
+  const raw = (c as { score?: unknown }).score;
+  return typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : null;
+}
+
 // Real underlying metric shown alongside each 0-100 sub-score so it can't be
 // misread as a raw count (e.g. "Open findings score: 0" previously looked
 // like "0 open findings" when it actually meant "worst possible score",
@@ -540,10 +594,18 @@ const SCORE_COMPONENT_LABEL: Record<string, string> = {
 // findings component, same field the KPI Cards widget's "Open Findings"
 // count is derived from, just default-branch-scoped here vs. all-branches
 // there).
-function scoreComponentDetail(key: string, c: SecurityScore["components"][keyof SecurityScore["components"]]): string | null {
+function scoreComponentDetail(key: string, c: ScoreComponent): string | null {
   switch (key) {
-    case "findings":
-      return `${(c as SecurityScore["components"]["findings"]).open_findings} open on default branch`;
+    case "findings": {
+      // The vulnerability count, not the combined total. Licence findings
+      // carry no weight in this score, so the total put a number beside the
+      // bar that the bar was not computed from -- "13/100 (188 open)" where
+      // 148 of the 188 contributed nothing. Named separately so the smaller
+      // figure does not read as findings having gone missing.
+      const f = c as SecurityScore["components"]["findings"];
+      const excluded = f.license_findings_excluded > 0 ? ` · ${f.license_findings_excluded} licence excluded` : "";
+      return `${f.open_vulnerabilities} open on default branch${excluded}`;
+    }
     case "sla":
       return `${(c as SecurityScore["components"]["sla"]).in_violation} in violation`;
     case "coverage": {
@@ -565,6 +627,14 @@ function scoreComponentDetail(key: string, c: SecurityScore["components"][keyof 
     }
     case "fp_rate":
       return `${(c as SecurityScore["components"]["fp_rate"]).false_positives}/${(c as SecurityScore["components"]["fp_rate"]).total_findings} false positives`;
+    case "trend": {
+      // When the week-over-week comparison could not be made, the server's own
+      // wording for why, rendered rather than restated so the explanation
+      // lives in one place. Otherwise the direction in words, because the
+      // arrow beside the label is decorative and carries no accessible name.
+      const t = c as SecurityScore["components"]["trend"];
+      return t.measurable ? trendDirectionOf(c) : t.note;
+    }
     default:
       return null;
   }
@@ -576,10 +646,91 @@ function scoreScopeKey(s: ScoreScope) {
   return s.kind === "org" ? "org" : `${s.kind}:${s.id}`;
 }
 
-function TrendIcon({ direction }: { direction: "improving" | "stable" | "worsening" }) {
+// No icon is ever drawn for a direction that was never established: a flat
+// "stable" dash on a comparison that was not made would claim posture held
+// steady over a week this platform has no record of. That is guaranteed
+// upstream rather than here -- `trendDirectionOf` returns null for anything
+// outside the three real directions, and the caller only asks for an icon
+// when the component is measurable -- so this takes the narrow union.
+function TrendIcon({ direction }: { direction: TrendDirection }) {
   const Icon = direction === "improving" ? TrendingDown : direction === "worsening" ? TrendingUp : Minus;
   const cls = direction === "improving" ? "text-chart-5" : direction === "worsening" ? "text-destructive" : "text-muted-foreground";
-  return <Icon className={`ml-1 inline h-3 w-3 ${cls}`} />;
+  return <Icon className={`ml-1 inline h-3 w-3 ${cls}`} aria-hidden="true" />;
+}
+
+// One row of the breakdown: label and its underlying metric in the first
+// track, the meter in the second, the figure in the third. Split out so that
+// the measurable and unmeasurable renderings cannot drift apart in the
+// number of grid cells they emit, which is what keeps the columns square.
+function ScoreComponentRow({
+  componentKey,
+  component,
+  isWeakest,
+}: {
+  componentKey: string;
+  component: ScoreComponent;
+  isWeakest: boolean;
+}) {
+  const label = SCORE_COMPONENT_LABEL[componentKey];
+  const value = scoreComponentValue(component);
+  const detail = value === null ? null : scoreComponentDetail(componentKey, component);
+  const trendDirection = componentKey === "trend" && value !== null ? trendDirectionOf(component) : null;
+  const secondary = value === null ? "Not yet measurable" : detail;
+
+  return (
+    <div
+      data-score-component={componentKey}
+      className={`${SCORE_ROW_GRID} rounded-md px-2.5 py-1 transition-colors ${
+        isWeakest ? "bg-destructive/10" : "hover:bg-accent/20"
+      }`}
+    >
+      <span className="block min-w-0">
+        <span
+          className={`block truncate text-xs ${
+            value === null
+              ? "text-muted-foreground"
+              : isWeakest
+                ? "font-medium text-destructive"
+                : "text-foreground"
+          }`}
+        >
+          {label}
+          {trendDirection && <TrendIcon direction={trendDirection} />}
+        </span>
+        {secondary && <span className="block truncate text-meta">{secondary}</span>}
+      </span>
+
+      {value === null ? (
+        // Deliberately nothing in the meter track. A zero-length bar is a
+        // drawn claim that the value is zero; absence is the honest render.
+        <span aria-hidden="true" />
+      ) : (
+        <ProgressBar value={value} max={100} size="sm" aria-label={`${label}: ${value} out of 100`} />
+      )}
+
+      <span
+        data-score-figure=""
+        className={`text-right font-mono text-xs font-tabular ${
+          value === null
+            ? "text-muted-foreground"
+            : isWeakest
+              ? "font-semibold text-destructive"
+              : "font-medium text-foreground"
+        }`}
+      >
+        {value === null ? (
+          "—"
+        ) : (
+          <>
+            {/* Fixed-width numeral track so the slash, and therefore the
+                whole "/100", lands on the same x across every row. */}
+            <span className="inline-block w-7 text-right">{value}</span>
+            <span className="font-normal text-muted-foreground">/100</span>
+          </>
+        )}
+      </span>
+    </div>
+  );
 }
 
 // Issue #63: composite security health score gauge, with a scope selector
@@ -591,8 +742,18 @@ function TrendIcon({ direction }: { direction: "improving" | "stable" | "worseni
 // config editor yet for a saved scoped layout. Targets/groups for the
 // picker are fetched once on mount (WidgetBody only receives this widget's
 // own data, not the whole page's).
+//
+// Layout: a fixed-width headline column (gauge, grade, and the scope control
+// that says what they describe) beside a breakdown column that takes all the
+// width left over. The two used to be loose halves of a `justify-between`
+// row with a max-width cap on the list, which left a band of unclaimed space
+// between them and let the gauge float without any relationship to the rows
+// it summarises. The scope picker moved out of the top of the breakdown
+// column -- where it read as filtering those rows -- and sits under the
+// number it actually rescopes.
 function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
   const [scope, setScope] = useState<ScoreScope>({ kind: "org" });
+  const scopeSelectId = useId();
 
   const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
   const { data: groupsData } = useAsyncData<Group[]>(() => api.groups());
@@ -618,172 +779,142 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
   // previous version had to remember to write `initialData` back.
   const score = scope.kind === "org" ? initialData : (scopedScore ?? initialData);
   const error = loadError?.message ?? null;
+  const scored = score.target_count > 0;
+  const coverage = score.components.coverage as SecurityScore["components"]["coverage"] | undefined;
 
   return (
-    <div className="flex flex-col gap-3">
-      <select
-        className="self-end rounded-md border border-input bg-secondary px-2 py-1 text-xs text-foreground"
-        aria-label="Security score scope"
-        value={scoreScopeKey(scope)}
-        onChange={(e) => {
-          const [kind, id] = e.target.value.split(":");
-          if (kind === "org") setScope({ kind: "org" });
-          else if (kind === "group") setScope({ kind: "group", id: Number(id) });
-          else setScope({ kind: "target", id: Number(id) });
-        }}
-      >
-        <option value="org">All repositories (org-wide)</option>
-        {groups.length > 0 && (
-          <optgroup label="Groups">
-            {groups.map((g) => (
-              <option key={`group:${g.id}`} value={`group:${g.id}`}>
-                {g.name}
-              </option>
-            ))}
-          </optgroup>
-        )}
-        {targets.length > 0 && (
-          <optgroup label="Repositories">
-            {targets.map((t) => (
-              <option key={`target:${t.id}`} value={`target:${t.id}`}>
-                {t.name}
-              </option>
-            ))}
-          </optgroup>
-        )}
-      </select>
-
+    <div className="flex flex-col gap-4">
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {loading ? (
-        <div className="flex items-center justify-center py-6">
-          <Skeleton className="h-32 w-56" />
-        </div>
-      ) : score.target_count === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">No targets in scope.</p>
-      ) : (
-        <div className="flex w-full flex-wrap items-center justify-center gap-6 sm:justify-between sm:gap-8">
-          {/* max-w-4xl (896px), not max-w-2xl (672px): the gauge (280px) +
-              gap (32px) + score list (up to 480px) need ~792px to sit on one
-              line, and 672px was just short of that; forcing an unwanted
-              wrap on every desktop viewport instead of only the ones that
-              actually need it.
 
-              Issue #173/#224: this row used to be `justify-around`, then a
-              `justify-center` pair with a `w-full max-w-md` list; but
-              `width: 100%` on a flex child ignores the parent's centering and
-              just claims the available row width for itself, so on a wide
-              dashboard card the gauge stayed pinned to the left, the list
-              claimed a large but not-full-width slab on the right, and the
-              gap between them read as a layout bug rather than intentional
-              spacing. It was then switched to a fixed-width list gated by a
-              `sm:` breakpoint, which broke differently: `sm:flex-row` doesn't
-              know how wide THIS card actually is (that depends on the
-              sidebar + the dashboard grid, not the viewport), so on any
-              layout narrower than the gauge+list's combined ~790px but still
-              past the 640px `sm:` breakpoint, the row forced both fixed-width
-              children into a space too small for them; flexbox's default
-              shrink then compressed the gauge's box (see shrink-0 on
-              SecurityScoreGauge's own root for why that broke the arc/number
-              alignment) instead of just wrapping. `flex-wrap` here reacts to
-              the row's REAL available width instead of a viewport guess: the
-              list drops to its own line below the gauge exactly when there
-              isn't room beside it.
+      {/* `flex-wrap`, not a `sm:` breakpoint: this card's width depends on
+          the sidebar and the dashboard grid, not on the viewport, so the
+          breakdown must drop below the gauge when THIS row runs out of
+          room rather than when the window happens to be narrow. The
+          breakdown carries no max-width -- it grows to fill whatever is
+          left beside the fixed-width gauge, which is what removes the dead
+          band that used to sit between the two. */}
+      <div className="flex flex-wrap items-start gap-4 sm:gap-6">
+        <div className="flex w-60 shrink-0 flex-col items-center gap-3">
+          {loading ? (
+            <Skeleton className="h-36 w-60" />
+          ) : scored && score.score !== null ? (
+            <SecurityScoreGauge score={score.score} grade={score.grade} />
+          ) : scored ? (
+            // Every dimension came back unmeasurable, so there is no composite
+            // to draw. A gauge reading 0 with a Grade F would be a verdict on
+            // an estate nothing has been measured about yet.
+            <div className="flex h-36 w-60 items-center justify-center rounded-lg border border-dashed border-border px-4 text-center text-sm text-muted-foreground">
+              Not enough data to score this scope yet.
+            </div>
+          ) : (
+            <div className="flex h-36 w-60 items-center justify-center rounded-lg border border-dashed border-border px-4 text-center text-sm text-muted-foreground">
+              No targets in scope.
+            </div>
+          )}
 
-              The list itself must stay shrinkable (`w-full max-w-[480px]`,
-              no `shrink-0`) even though that looks backwards; this whole
-              dashboard's widget grid (dashboard-board.tsx) has no explicit
-              `grid-cols-1` below `lg:`, so its single implicit column sizes
-              itself to content rather than clamping to the viewport. Giving
-              the list a `shrink-0` + fixed pixel width once (480px) made its
-              *used* width a hard 480px regardless of how little room was
-              actually available, which the grid dutifully accommodated by
-              growing the entire page 1000+px wider than the viewport on
-              mobile instead of wrapping. Letting it shrink is what lets the
-              grid track (and the whole page) stay pinned to the real
-              viewport width; flex-wrap plus a max-width cap is enough to
-              keep it from looking cramped once there IS room.
-
-              The row no longer caps itself at `max-w-4xl` with `mx-auto`, and
-              the list grows (`flex-1 basis-[320px]`) instead of stopping dead
-              at 480px. Both caps together left a wide card centring a ~720px
-              block inside it, with a band of empty space down each side --
-              raised on review. `min-w-0` keeps the shrink behaviour the
-              paragraph above depends on: the list can still collapse rather
-              than forcing the grid track wider than the viewport, and the
-              560px cap only applies from `sm:` up, so narrow layouts wrap
-              exactly as before. */}
-          <SecurityScoreGauge score={score.score} grade={score.grade} />
-          <div className="grid w-full min-w-0 flex-1 basis-[320px] grid-cols-1 gap-2 text-xs sm:max-w-[560px]">
-            {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
-              const c = score.components[key as keyof SecurityScore["components"]];
-              const isWeakest = score.weakest_component === key;
-              const detail = scoreComponentDetail(key, c);
-              const val = Math.round(c.score);
-              return (
-                <div
-                  key={key}
-                  className={`flex items-center justify-between gap-3 rounded-md px-2.5 py-1.5 transition-colors ${
-                    isWeakest ? "bg-destructive/10" : "hover:bg-accent/20"
-                  }`}
-                >
-                  <span className={`min-w-0 truncate ${isWeakest ? "font-medium text-destructive" : "text-muted-foreground"}`}>
-                    {SCORE_COMPONENT_LABEL[key]}
-                    {key === "trend" && <TrendIcon direction={score.components.trend.direction} />}
-                    {detail && <span className="ml-1.5 text-meta text-muted-foreground">({detail})</span>}
-                  </span>
-                  <div className="flex shrink-0 items-center gap-2.5">
-                    <div className="w-16">
-                      <ProgressBar value={val} max={100} size="sm" />
-                    </div>
-                    <span className={`w-12 text-right font-mono tabular-nums ${isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}`}>
-                      {val}/100
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-            {score.weakest_component && (
-              <div className="mt-1 flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/15 px-3 py-2 text-xs text-foreground">
-                <span className="flex items-center gap-1.5">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" />
-                  <span>
-                    Score penalty: <strong className="font-semibold text-destructive">{SCORE_COMPONENT_LABEL[score.weakest_component]}</strong>
-                  </span>
-                </span>
-                {score.weakest_component === "findings" ? (
-                  <Link href="/findings?state=Open" className="font-medium text-destructive hover:underline">
-                    View open findings &rarr;
-                  </Link>
-                ) : score.weakest_component === "sla" ? (
-                  <Link href="/findings?sla_violated=true&state=Open" className="font-medium text-destructive hover:underline">
-                    View SLA violations &rarr;
-                  </Link>
-                ) : score.weakest_component === "coverage" ? (
-                  <Link href="/targets" className="font-medium text-destructive hover:underline">
-                    Manage targets &rarr;
-                  </Link>
-                ) : null}
-              </div>
-            )}
-            {/* (#273) The server's own wording, rendered rather than
-                restated, so the explanation for a suppressed coverage
-                number lives in exactly one place. Warning-toned when the
-                whole scope is deactivated: at that point the gauge reads a
-                flat 100 for an estate nothing scans, and a grey footnote is
-                not enough to carry that. Amber when some targets were
-                excluded is deliberate too -- it is a real gap in what this
-                score measures, not decoration. */}
-            {score.components.coverage.note && (
-              <p
-                className={`mt-1 text-[11px] ${
-                  score.components.coverage.total_targets === 0 ? "text-warning" : "text-muted-foreground"
-                }`}
-              >
-                Coverage: {score.components.coverage.note}.
-              </p>
-            )}
+          <div className="flex w-full flex-col gap-1">
+            <label htmlFor={scopeSelectId} className="text-micro text-muted-foreground">
+              Scope
+            </label>
+            <select
+              id={scopeSelectId}
+              className={SCOPE_SELECT_CLASS}
+              value={scoreScopeKey(scope)}
+              onChange={(e) => {
+                const [kind, id] = e.target.value.split(":");
+                if (kind === "org") setScope({ kind: "org" });
+                else if (kind === "group") setScope({ kind: "group", id: Number(id) });
+                else setScope({ kind: "target", id: Number(id) });
+              }}
+            >
+              <option value="org">All repositories (org-wide)</option>
+              {groups.length > 0 && (
+                <optgroup label="Groups">
+                  {groups.map((g) => (
+                    <option key={`group:${g.id}`} value={`group:${g.id}`}>
+                      {g.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {targets.length > 0 && (
+                <optgroup label="Repositories">
+                  {targets.map((t) => (
+                    <option key={`target:${t.id}`} value={`target:${t.id}`}>
+                      {t.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
           </div>
         </div>
+
+        <div className="min-w-0 flex-1 basis-[320px]">
+          {loading ? (
+            <div className="flex flex-col gap-2">
+              {SCORE_COMPONENT_KEYS.map((key) => (
+                <Skeleton key={key} className="h-8 w-full" />
+              ))}
+            </div>
+          ) : scored ? (
+            <div className="flex flex-col gap-0.5">
+              <div className={`${SCORE_ROW_GRID} border-b border-border px-2.5 pb-1.5 text-micro text-muted-foreground`}>
+                <span>Component</span>
+                <span aria-hidden="true" />
+                <span className="text-right">Score</span>
+              </div>
+              {SCORE_COMPONENT_KEYS.map((key) => (
+                <ScoreComponentRow
+                  key={key}
+                  componentKey={key}
+                  component={score.components[key]}
+                  isWeakest={score.weakest_component === key}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Full width under both columns: the penalty callout is about the
+          score as a whole, and squeezing it into the breakdown column left
+          it wrapping awkwardly against the gauge. */}
+      {scored && score.weakest_component && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/15 px-3 py-2 text-xs text-foreground">
+          <span className="flex items-center gap-1.5">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+            <span>
+              Score penalty: <strong className="font-semibold text-destructive">{SCORE_COMPONENT_LABEL[score.weakest_component]}</strong>
+            </span>
+          </span>
+          {score.weakest_component === "findings" ? (
+            <Link href="/findings?state=Open" className="font-medium text-destructive hover:underline">
+              View open findings &rarr;
+            </Link>
+          ) : score.weakest_component === "sla" ? (
+            <Link href="/findings?sla_violated=true&state=Open" className="font-medium text-destructive hover:underline">
+              View SLA violations &rarr;
+            </Link>
+          ) : score.weakest_component === "coverage" ? (
+            <Link href="/targets" className="font-medium text-destructive hover:underline">
+              Manage targets &rarr;
+            </Link>
+          ) : null}
+        </div>
+      )}
+
+      {/* (#273) The server's own wording, rendered rather than restated, so
+          the explanation for a suppressed coverage number lives in exactly
+          one place. Warning-toned when the whole scope is deactivated: at
+          that point the gauge reads a flat 100 for an estate nothing scans,
+          and a grey footnote is not enough to carry that. Amber when some
+          targets were excluded is deliberate too -- it is a real gap in what
+          this score measures, not decoration. */}
+      {scored && coverage?.note && (
+        <p className={`text-[11px] ${coverage.total_targets === 0 ? "text-warning" : "text-muted-foreground"}`}>
+          Coverage: {coverage.note}.
+        </p>
       )}
     </div>
   );

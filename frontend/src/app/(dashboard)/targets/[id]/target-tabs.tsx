@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { QUEUES, type QueueId } from "@/lib/findings-view";
 
 // Issue #197: sub-navigation for a target.
 //
@@ -36,6 +37,29 @@ export type TargetTab = (typeof TARGET_TABS)[number]["id"];
 export function normalizeTab(raw: string | string[] | undefined): TargetTab {
   const value = Array.isArray(raw) ? raw[0] : raw;
   return TARGET_TABS.some((t) => t.id === value) ? (value as TargetTab) : "overview";
+}
+
+/**
+ * The findings queue the Vulnerabilities badge counts.
+ *
+ * "Needs action" is open findings with the licence category excluded, which
+ * is what the word on the tab means: a copyleft obligation on a transitive
+ * dependency is a policy question for one person once a quarter, not a
+ * vulnerability. It is also the queue the tab opens on, so the badge and the
+ * list underneath it report the same number.
+ */
+export const VULNERABILITY_TAB_QUEUE: QueueId = "action";
+
+/**
+ * Picks that queue's count out of the per-queue counts, which are indexed in
+ * QUEUES order.
+ *
+ * `undefined` for a count that could not be fetched, which makes TargetTabs
+ * drop the badge rather than claim zero for a target whose findings were
+ * never counted.
+ */
+export function vulnerabilityTabCount(queueCounts: readonly (number | null)[]): number | undefined {
+  return queueCounts[QUEUES.findIndex((q) => q.id === VULNERABILITY_TAB_QUEUE)] ?? undefined;
 }
 
 export function TargetTabs({

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { ChevronRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -137,6 +138,23 @@ export function DocGenSelect({
   );
 }
 
+/**
+ * What the reader will get if they press Generate, as a disclosure that is
+ * closed until asked for.
+ *
+ * A disclosure rather than folding this into the page heading's `HelpHint`,
+ * for two reasons. The Reports call site's list is not fixed copy -- it is
+ * the sections the operator has actually ticked, plus a footnote naming the
+ * ones they excluded -- and `HelpHint` takes a static `HelpTopic` from the
+ * shared help registry, so that content has nowhere to live there. And the
+ * two answer different questions: the help hint says what this page is for,
+ * while this says what the button next to it will produce, which is why it
+ * belongs beside the button.
+ *
+ * Closed by default because the answer stops being news after the first
+ * generation, and an always-open list of three or four bullets was taking a
+ * large share of the viewport on every subsequent visit, forever.
+ */
 export function WhatsIncludedCard({
   items,
   footnote,
@@ -146,16 +164,39 @@ export function WhatsIncludedCard({
   footnote?: string;
   className?: string;
 }) {
+  const [open, setOpen] = React.useState(false);
+  const panelId = React.useId();
+
   return (
-    <Card className={cn("border-border bg-card", className)}>
-      <CardContent className="flex flex-col gap-2 px-6 py-5">
-        <h2 className="text-sm font-semibold text-foreground">What&apos;s included</h2>
-        <ul className="list-disc pl-5 text-sm text-muted-foreground">
-          {items.map((item) => (
-            <li key={item}>{item}</li>
-          ))}
-        </ul>
-        {footnote && <p className="text-xs text-muted-foreground">{footnote}</p>}
+    <Card className={cn("border-border bg-card py-0", className)}>
+      <CardContent className="flex flex-col gap-2 px-5 py-3">
+        {/* The trigger sits inside the heading rather than replacing it, so
+            the section is still a stop for heading navigation when closed. */}
+        <h2 className="text-sm font-semibold">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={open ? panelId : undefined}
+            onClick={() => setOpen((v) => !v)}
+            className="flex w-full items-center gap-1.5 text-left text-foreground hover:text-accent-strong"
+          >
+            <ChevronRight
+              aria-hidden="true"
+              className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")}
+            />
+            What&apos;s included
+          </button>
+        </h2>
+        {open && (
+          <div id={panelId} className="flex flex-col gap-2">
+            <ul className="list-disc pl-5 text-sm text-muted-foreground">
+              {items.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            {footnote && <p className="text-xs text-muted-foreground">{footnote}</p>}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

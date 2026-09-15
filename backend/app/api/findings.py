@@ -14,7 +14,7 @@ from app.core.autofix import AutofixError, Patch, find_suppression_comment, open
 from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
-from app.core.remediation import group_remediations
+from app.core.remediation import remediation_plan
 from app.core.grouping import (
     DEFAULT_SORT,
     SORT_KEYS,
@@ -1356,14 +1356,50 @@ def list_category_facets(
     return [CategoryFacet(category=c, count=counts[c]) for c in all_categories()]
 
 
+class RemediationCoverage(BaseModel):
+    """How much has actually been looked up behind a target's fix plan (#247).
+
+    An empty `plans` list is ambiguous on its own: nothing has been enriched
+    for these CVEs yet, or advisories were fetched and none names a fixed
+    version. Only the second is a statement about fixes, and a caller with
+    no way to tell them apart ends up asserting it for both. These counts are
+    what makes the distinction renderable.
+
+    Counted per finding, matching how the plans themselves count ("fixes 3
+    findings"); `distinct_cves` is the lookup-shaped number alongside.
+
+    `enriched_findings` counts enrichment rows, which is "something was
+    attempted", not "an answer came back" -- app.core.cve_enrichment caches a
+    row even when both upstream lookups fail. `findings_with_advisory` is the
+    narrower count where OSV actually returned a record.
+    """
+    cve_findings: int
+    distinct_cves: int
+    enriched_findings: int
+    findings_with_advisory: int
+    findings_with_fix_data: int
+
+
+class RemediationPlanResponse(BaseModel):
+    """(#247) A target's fix plan plus the coverage behind it.
+
+    `plans` carries the same objects this endpoint has always returned; the
+    response became an object so `coverage` could travel with them, since the
+    two have to be read together to say anything true about an empty plan.
+    """
+    plans: list[dict]
+    coverage: RemediationCoverage
+
+
 @router.get("/remediations")
 def list_remediations(
     target_id: int,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
-) -> list[dict]:
+) -> RemediationPlanResponse:
     """(#247) Open findings for a target, grouped into the upgrades that
-    would close them: "upgrade starlette to 0.40.0, fixes 3 issues".
+    would close them: "upgrade starlette to 0.40.0, fixes 3 issues", with the
+    enrichment coverage those groups were computed from.
 
     Workspace-scoped like every other read here (#57), a target id from
     another tenant returns 404, not that tenant's remediation plan.
@@ -1377,7 +1413,7 @@ def list_remediations(
         # 404 rather than 403: the existence of another tenant's target is
         # itself information.
         raise HTTPException(status_code=404, detail="target not found")
-    return group_remediations(session, target_id)
+    return RemediationPlanResponse(**remediation_plan(session, target_id))
 
 
 @router.get("/facets/environments")

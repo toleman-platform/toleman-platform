@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { ErrorState } from "@/components/ui/error-state";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
+import { ActivityPagination, pageSizeFromParams } from "@/components/ui/activity-pagination";
 import { AUTH_EVENT_COLOR, AUTH_EVENT_LABEL } from "@/lib/severity";
 import { ShieldAlert } from "lucide-react";
 import { Timestamp } from "@/components/ui/timestamp";

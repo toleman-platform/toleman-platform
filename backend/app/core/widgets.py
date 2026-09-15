@@ -23,6 +23,7 @@ from app.core.security_score import compute_security_score, resolve_target_ids_f
 from app.core.sla import compute_sla_status
 from app.core import target_lifecycle
 from app.core.time import utcnow
+from app.core.tool_registry import tools_in_category
 from app.models.models import Finding, FindingState, OPEN_FINDING_STATES as OPEN_STATES, Severity, Target
 
 WidgetResolver = Callable[[Session, "list[int] | None", dict], Any]
@@ -70,21 +71,46 @@ def _target_names(session: Session, target_ids: set[int]) -> dict[int, str]:
 
 
 def resolve_kpi_cards(session: Session, ws_ids, config: dict) -> dict:
-    """Open / critical / high / mitigated counts + targets onboarded;
-    reuses the same counting logic as GET /api/dashboard/summary and
-    /stats, just returned as one bundle for the KPI-cards widget."""
+    """Open / critical / high / mitigated vulnerability counts + targets
+    onboarded; reuses the same counting logic as GET /api/dashboard/summary
+    and /stats, just returned as one bundle for the KPI-cards widget.
+
+    License findings are excluded, which is what those two endpoints (and
+    /posture, /sla-compliance, the targets summary and the security score)
+    have done since #425; this resolver was the one posture surface that
+    never got the filter. The disagreement was visible on a single screen:
+    the card read "188 Open Findings" on a workspace whose own Findings page
+    put 40 in the needs-action queue and 148 under Licence review, and the
+    card's own link (`/findings?state=Open`) lands on that 40-row queue. A
+    copyleft licence on a transitive dependency is a quarterly policy call,
+    not something open on the security team.
+
+    `license_open` reports what was left out, so the smaller number stays
+    reconcilable against the Findings page rather than looking like findings
+    went missing.
+    """
     targets = _scoped_targets(session, ws_ids)
     findings = list(session.exec(_scoped_findings_query(ws_ids)).all())
-    open_findings = [f for f in findings if f.state in OPEN_STATES]
+    # NOT IN the License tools rather than IN `vulnerability_tools()`, for
+    # the reason spelled out at length in resolve_needs_action_queue: an
+    # "Other"-category tool (any `tool` string a CI pipeline invents when it
+    # POSTs SARIF to /api/ingest) is in neither set, and an IN-list would
+    # silently drop its findings from this count while the Findings page
+    # this card links to still lists them.
+    license_tools = set(tools_in_category("License"))
+    vulnerabilities = [f for f in findings if f.tool not in license_tools]
+    open_findings = [f for f in vulnerabilities if f.state in OPEN_STATES]
     critical = sum(1 for f in open_findings if f.severity == Severity.CRITICAL)
     high = sum(1 for f in open_findings if f.severity == Severity.HIGH)
-    mitigated = sum(1 for f in findings if f.state == FindingState.MITIGATED)
+    mitigated = sum(1 for f in vulnerabilities if f.state == FindingState.MITIGATED)
+    license_open = sum(1 for f in findings if f.tool in license_tools and f.state in OPEN_STATES)
     return {
         "open": len(open_findings),
         "critical": critical,
         "high": high,
         "mitigated": mitigated,
         "targets": len(targets),
+        "license_open": license_open,
     }
 
 
@@ -150,8 +176,20 @@ def resolve_cve_timeline(session: Session, ws_ids, config: dict) -> dict:
 
 def resolve_sla_compliance(session: Session, ws_ids, config: dict) -> dict:
     """Same aggregate as GET /api/dashboard/sla-compliance (#70), computed
-    query-time via app.core.sla.compute_sla_status."""
-    query = select(Finding).where(Finding.state.in_(OPEN_STATES))
+    query-time via app.core.sla.compute_sla_status.
+
+    Including the licence exclusion, which is what made "same aggregate"
+    true: SlaRule is keyed purely on severity with no category awareness, so
+    a workspace's "High: fix within 30 days" rule applies just as literally
+    to a copyleft licence a scanner graded High as to an exploitable
+    finding. Nobody fixes a licence on a days-to-fix clock. Both the
+    endpoint and security_score._sla_score already excluded them; this
+    resolver did not, so the same dashboard could report two different SLA
+    figures.
+    """
+    query = select(Finding).where(
+        Finding.state.in_(OPEN_STATES), Finding.tool.not_in(tools_in_category("License"))
+    )
     if ws_ids is not None:
         query = query.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
     open_findings = session.exec(query).all()
@@ -555,7 +593,7 @@ def resolve_guardrail_activity(session: Session, ws_ids, config: dict) -> dict:
 WIDGET_CATALOG: dict[str, dict[str, Any]] = {
     "kpi_cards": {
         "name": "KPI Cards",
-        "description": "Open / critical / high / mitigated counts and targets onboarded.",
+        "description": "Open / critical / high / mitigated vulnerability counts and targets onboarded. Licence findings are counted separately.",
         "resolver": resolve_kpi_cards,
         "default_config": {},
     },

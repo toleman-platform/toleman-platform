@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { CriticalityChip } from "@/components/features/targets";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
+import { ActivityPagination, pageSizeFromParams } from "@/components/ui/activity-pagination";
 import { ScanProgress, ScanHealthBadge } from "@/components/features/scans";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";

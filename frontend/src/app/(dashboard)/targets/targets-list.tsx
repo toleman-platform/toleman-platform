@@ -28,7 +28,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { ReloadButton } from "@/components/reload-button";
 import { pollUntilSettled } from "@/lib/poll";
-import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
+import { ActivityPagination, pageSizeFromParams } from "@/components/ui/activity-pagination";
 import type { TargetSort } from "./targets-filter-bar";
 import { PowerOff, Rocket, X } from "lucide-react";
 import { cn } from "@/lib/utils";

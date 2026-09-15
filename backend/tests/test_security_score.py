@@ -18,6 +18,7 @@ from app.core.security import create_session_token, hash_password
 from app.core import security_score
 from app.core.security_score import compute_security_score
 from app.core.time import utcnow
+from app.core.tool_registry import NON_VULNERABILITY_CATEGORIES
 from app.main import app
 from app.models.models import (
     Finding,
@@ -240,8 +241,14 @@ def test_findings_score_is_steep_where_it_matters(engine):
 def test_clean_target_no_findings_scores_high(engine):
     """No findings, one recent scan, no SLA rules configured anywhere ->
     findings=100 (no open findings), sla=100 (neutral, none tracked),
-    coverage=100 (scanned within window), fp_rate=100 (no findings ever),
-    trend=100 (0 == 0, stable). Composite must be a perfect 100, grade A."""
+    coverage=100 (scanned within window), fp_rate=100 (no findings ever).
+
+    The only scan is from today, so there is nothing from 7 days ago to
+    compare against and the trend component is unmeasurable; its 15 points
+    drop out and the remaining 85 are renormalized. Composite must still be
+    a perfect 100, grade A -- scoring the unmeasured component 0 over the
+    full 100 would cap this at 85 and call a spotless estate a B.
+    """
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
     _make_scan(engine, target_id)
@@ -256,7 +263,8 @@ def test_clean_target_no_findings_scores_high(engine):
     assert c["sla"]["score"] == 100.0
     assert c["coverage"]["score"] == 100.0
     assert c["fp_rate"]["score"] == 100.0
-    assert c["trend"]["score"] == 100.0
+    assert c["trend"]["measurable"] is False
+    assert c["trend"]["score"] is None
 
 
 def test_findings_component_hand_calculated(engine):
@@ -340,6 +348,47 @@ def test_findings_component_discounts_license_findings(engine):
     f = result["components"]["findings"]
     assert f["weighted_severity_sum"] == pytest.approx(0.0)
     assert f["score"] == pytest.approx(100.0)
+
+
+def test_findings_component_counts_licences_apart_from_vulnerabilities(engine):
+    """The count reported next to the score has to be the count the score was
+    computed from.
+
+    A live workspace showed "13/100 (188 open on default branch)" where 148
+    of the 188 were licence rows contributing exactly nothing to the 13,
+    which reads as though 188 findings produced that score. The total is
+    still reported, but the vulnerability count and the excluded licence
+    count are reported alongside it so the two can never be conflated:
+    1 Critical semgrep finding (weight 5) + 3 Critical trivy-license
+    findings (weight 0 each) -> weighted_sum 5, score 100*10/(5+10) = 66.7.
+    """
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, tool="semgrep")
+    for _ in range(3):
+        _make_finding(engine, target_id, severity=Severity.CRITICAL, tool="trivy-license")
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    f = result["components"]["findings"]
+    assert f["open_findings"] == 4
+    assert f["open_vulnerabilities"] == 1
+    assert f["license_findings_excluded"] == 3
+    assert f["weighted_severity_sum"] == pytest.approx(5.0)
+    assert f["score"] == 66.7
+
+
+def test_licence_zero_weighting_is_derived_from_one_definition():
+    """CATEGORY_RISK_WEIGHT is built from tool_registry's
+    NON_VULNERABILITY_CATEGORIES rather than restating the category list, so
+    the score cannot come to disagree with the counts printed beside it."""
+    for category in NON_VULNERABILITY_CATEGORIES:
+        assert security_score.CATEGORY_RISK_WEIGHT[category] == 0.0
+    # Deliberately not set-equality: the constant's own comment invites adding
+    # a category with a partial rather than zero weight, and an assertion that
+    # forbids the documented extension is a test of the test, not of the code.
+    assert set(NON_VULNERABILITY_CATEGORIES) <= set(security_score.CATEGORY_RISK_WEIGHT)
 
 
 def test_findings_component_ignores_non_default_branch(engine):
@@ -451,7 +500,77 @@ def test_trend_component_worsening_from_new_finding(engine):
     it did NOT exist 7 days ago (prior_sum contribution 0) but IS open now
     (current_sum includes its weight). prior=0, current=5 (Critical) ->
     pct_increase = 5/max(0,1) = 5.0 -> score = max(0, 100-500) = 0,
-    direction 'worsening'."""
+    direction 'worsening'.
+
+    The scan from 10 days ago is what makes that a measurement rather than a
+    guess: this platform was looking at the repo a week ago and saw nothing,
+    so "it was clean then and has a Critical now" is a real comparison.
+    Without it there would be no baseline at all (see
+    test_trend_is_unmeasurable_without_any_observation_from_the_window_ago).
+    """
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _make_scan(engine, target_id, started_at=utcnow() - timedelta(days=10))
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=2))
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    trend = result["components"]["trend"]
+    assert trend["measurable"] is True
+    assert trend["prior_weighted_sum"] == 0.0
+    assert trend["current_weighted_sum"] == 5.0
+    assert trend["direction"] == "worsening"
+    assert trend["score"] == 0.0
+
+
+def test_onboarding_repos_into_an_established_org_is_not_a_worsening_trend(engine):
+    """Adding targets must not read as posture getting worse.
+
+    An established repo scanned a fortnight ago with one open Low is the only
+    thing with a baseline. Ten repos onboarded today bring 200 Criticals
+    between them. Measuring the trend across the whole scope compared a prior
+    sum that could not include those repos against a current sum that does,
+    which scored 0/100 and raised a red penalty on the day an operator did
+    exactly what the product asks. Targets without a baseline belong on
+    neither side of the comparison.
+    """
+    ws_id = _make_workspace(engine)
+    established = _make_target(engine, ws_id)
+    _make_scan(engine, established, started_at=utcnow() - timedelta(days=14))
+    _make_finding(engine, established, severity=Severity.LOW, first_seen=utcnow() - timedelta(days=14))
+
+    target_ids = [established]
+    for _ in range(10):
+        fresh = _make_target(engine, ws_id)
+        target_ids.append(fresh)
+        for _ in range(20):
+            _make_finding(engine, fresh, severity=Severity.CRITICAL, first_seen=utcnow())
+
+    with Session(engine) as session:
+        result = compute_security_score(session, target_ids)
+
+    trend = result["components"]["trend"]
+    assert trend["measurable"] is True
+    # The established repo is unchanged across the window, so the comparison
+    # it is the only participant in is flat.
+    assert trend["direction"] != "worsening"
+    assert trend["score"] == 100.0
+    assert result["weakest_component"] != "trend"
+
+
+def test_trend_is_unmeasurable_without_any_observation_from_the_window_ago(engine):
+    """An instance younger than the trend window has no week-ago baseline,
+    and must say so rather than score 0.
+
+    Every finding's first_seen is inside the window and there is no scan
+    predating it, so `_weighted_open_sum_at(7 days ago)` returns 0 because
+    nothing had been looked at -- not because the repo was clean. Reading
+    that 0 as a baseline turned one open Critical into a 500% week-on-week
+    increase and a flat 0/100, on an instance with no 7-day history at all.
+    That is frontend/AGENTS.md 1.4: an unmeasured value is unknown, never a
+    confident zero.
+    """
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id)
     _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=2))
@@ -460,10 +579,95 @@ def test_trend_component_worsening_from_new_finding(engine):
         result = compute_security_score(session, [target_id])
 
     trend = result["components"]["trend"]
+    assert trend["measurable"] is False
+    assert trend["score"] is None, "an unmeasurable component must not report a number"
+    assert trend["prior_weighted_sum"] is None, "there was no prior observation to report"
+    assert trend["direction"] == "unknown"
+    assert trend["current_weighted_sum"] == 5.0, "what IS measurable is still reported"
+    assert trend["note"]
+
+
+def test_trend_is_measurable_from_a_clean_scan_predating_the_window(engine):
+    """A repo scanned a fortnight ago and clean ever since has a genuine
+    baseline of zero, even with no findings to date. Evidence of having
+    looked is enough; there need not be anything to have found."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _make_scan(engine, target_id, started_at=utcnow() - timedelta(days=14))
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    trend = result["components"]["trend"]
+    assert trend["measurable"] is True
     assert trend["prior_weighted_sum"] == 0.0
-    assert trend["current_weighted_sum"] == 5.0
-    assert trend["direction"] == "worsening"
-    assert trend["score"] == 0.0
+    assert trend["current_weighted_sum"] == 0.0
+    assert trend["direction"] == "stable"
+    assert trend["score"] == 100.0
+
+
+def test_composite_renormalises_over_the_measured_components_only(engine):
+    """An unmeasurable component drops out of the weighting; it is not
+    scored 0 against the full 100.
+
+    One target, criticality 1, one open Critical semgrep finding first seen
+    2 days ago, no scans and no SLA rules:
+
+        findings  100 * 10/(5 + 10)      =  66.7  (weight 35)
+        sla       no applicable rules    = 100.0  (weight 25)
+        coverage  0 of 1 scanned         =   0.0  (weight 15)
+        fp_rate   0 of 1 ever FP         = 100.0  (weight 10)
+        trend     no week-ago baseline   = unmeasurable (weight 15, dropped)
+
+        (66.7*35 + 100*25 + 0*15 + 100*10) / 85 = 5834.5 / 85 = 68.6 -> D
+
+    Scoring the trend 0 and dividing by 100 instead gives 58.3, a grade F,
+    with 15 of the missing 41.7 points charged for a measurement nobody
+    took. That is the number the live instance was showing.
+    """
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=2))
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    assert result["components"]["trend"]["measurable"] is False
+    assert result["components"]["findings"]["score"] == 66.7
+    assert result["components"]["coverage"]["score"] == 0.0
+    assert result["score"] == 68.6
+    assert result["grade"] == "D"
+
+
+def test_unmeasurable_component_is_never_named_as_the_score_penalty(engine, monkeypatch):
+    """The dashboard renders `weakest_component` as a red "Score penalty"
+    callout. A component nobody could measure is not costing score -- it was
+    renormalized out -- so naming it would send a reader off to fix a number
+    this platform never produced. Every measured component is perfect here,
+    so there is no penalty to name at all."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+
+    for name, weight in (
+        ("_findings_score", security_score.FINDINGS_WEIGHT),
+        ("_sla_score", security_score.SLA_WEIGHT),
+        ("_coverage_score", security_score.COVERAGE_WEIGHT),
+        ("_fp_rate_score", security_score.FP_WEIGHT),
+    ):
+        monkeypatch.setattr(
+            security_score, name, lambda *a, _w=weight, **k: {"score": 100.0, "weight": _w, "measurable": True}
+        )
+    monkeypatch.setattr(
+        security_score,
+        "_trend_score",
+        lambda *a, **k: {"score": None, "weight": security_score.TREND_WEIGHT, "measurable": False},
+    )
+
+    with Session(engine) as session:
+        result = compute_security_score(session, [target_id])
+
+    assert result["weakest_component"] is None
+    assert result["score"] == 100.0
 
 
 def test_trend_component_improving_after_mitigation(engine):
@@ -502,9 +706,11 @@ def test_trend_component_uses_the_same_per_finding_weight_as_findings_score(engi
     findings. A Critical (weight 5) in a criticality_weight=5 Prod target,
     first_seen 2 days ago (inside the 7-day window): current_weighted_sum
     should be 25 (5*5*1.0 category), not the flat 5 a pre-criticality-
-    weighting trend component would have reported."""
+    weighting trend component would have reported. The scan from 10 days ago
+    supplies the week-ago baseline the comparison needs."""
     ws_id = _make_workspace(engine)
     target_id = _make_target(engine, ws_id, criticality_weight=5)
+    _make_scan(engine, target_id, started_at=utcnow() - timedelta(days=10))
     _make_finding(engine, target_id, severity=Severity.CRITICAL, first_seen=utcnow() - timedelta(days=2))
 
     with Session(engine) as session:
@@ -556,7 +762,7 @@ def test_no_weakest_component_when_nothing_is_weak(engine, monkeypatch):
         ("_trend_score", security_score.TREND_WEIGHT),
     ):
         monkeypatch.setattr(
-            security_score, name, lambda *a, _w=weight, **k: {"score": 100.0, "weight": _w}
+            security_score, name, lambda *a, _w=weight, **k: {"score": 100.0, "weight": _w, "measurable": True}
         )
 
     with Session(engine) as session:
@@ -580,7 +786,7 @@ def test_weakest_component_named_when_one_is_below_perfect(engine, monkeypatch):
     }
     for name, (value, weight) in scores.items():
         monkeypatch.setattr(
-            security_score, name, lambda *a, _v=value, _w=weight, **k: {"score": _v, "weight": _w}
+            security_score, name, lambda *a, _v=value, _w=weight, **k: {"score": _v, "weight": _w, "measurable": True}
         )
 
     with Session(engine) as session:

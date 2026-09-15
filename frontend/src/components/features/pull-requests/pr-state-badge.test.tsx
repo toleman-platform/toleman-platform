@@ -67,8 +67,14 @@ describe("PrStateBadge", () => {
     const open = snapshotBadge("open");
 
     // An open PR is a steady state, not a pass, a failure or a block.
+    // Assert the colour utilities, not the substring "destructive": the Badge
+    // primitive's own base class list always carries
+    // `aria-invalid:ring-destructive/20`, a focus-ring concern with nothing to
+    // do with this state's colour, so a bare substring check fails for a badge
+    // that is styled entirely correctly.
     expect(open.className).not.toContain("chart-5");
-    expect(open.className).not.toContain("destructive");
+    expect(open.className).not.toContain("text-destructive");
+    expect(open.className).not.toContain("bg-destructive");
   });
 
   it("says nothing it does not know about a state it cannot name", () => {

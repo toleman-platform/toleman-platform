@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Trash2, UserCog } from "lucide-react";
 
@@ -31,15 +32,27 @@ export function WorkspaceRoles({ workspaceId }: { workspaceId: number | null }) 
 
   const {
     data: memberships,
+    status,
     error: loadError,
-    isInitialLoading: loading,
     refetch,
   } = useAsyncData<WorkspaceMembership[]>(() => api.workspaceMemberships(workspaceId!), {
     enabled: workspaceId != null,
     deps: [workspaceId],
   });
 
-  const error = mutationError ?? loadError?.message ?? usersError?.message ?? null;
+  // "No workspace-scoped roles assigned" is a claim about who can reach this
+  // workspace. A read that failed makes no such claim, and collapsing the two
+  // (AGENTS.md 1.4) tells an admin the access list is empty when it may be
+  // full. `useAsyncData` retains the last good data across a refetch, so
+  // `memberships !== null` below is exactly "the request has succeeded at
+  // least once" -- the gate the empty state needs -- while this flag is the
+  // narrower "it failed and there is nothing to fall back on".
+  const loadFailed = status === "error" && memberships === null;
+
+  // The failed load gets its own ErrorState with a retry below; repeating it
+  // in this line would state the same failure twice.
+  const error =
+    mutationError ?? (loadFailed ? null : loadError?.message) ?? usersError?.message ?? null;
 
   const [selectedUserId, setSelectedUserId] = useState<number | "">("");
   const [selectedRole, setSelectedRole] = useState<WorkspaceRole>("developer");
@@ -126,40 +139,58 @@ export function WorkspaceRoles({ workspaceId }: { workspaceId: number | null }) 
 
           {error && <p className="text-xs text-destructive">{error}</p>}
 
-          <div className="flex flex-col divide-y divide-border rounded-md border border-border">
-            {loading ? (
-              <div className="px-3 py-2">
-                <SkeletonList count={2} />
-              </div>
-            ) : memberships === null || memberships.length === 0 ? (
-              <EmptyState
-                icon={UserCog}
-                title="No workspace-scoped roles assigned"
-                description="For this workspace yet."
-                bare
-              />
-            ) : (
-              memberships.map((m) => (
-                <div key={m.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                  <div>
-                    <div className="text-sm font-medium text-foreground">{m.user_name}</div>
-                    <div className="text-xs text-muted-foreground">{m.user_email}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline">{m.role}</Badge>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive"
-                      onClick={() => setPendingRemoval(m)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+          {loadFailed ? (
+            <ErrorState
+              title="Couldn't load workspace roles"
+              description={loadError?.message}
+              onRetry={refetch}
+            />
+          ) : (
+            <div className="flex flex-col divide-y divide-border rounded-md border border-border">
+              {memberships === null && status === "loading" ? (
+                <div className="px-3 py-2">
+                  <SkeletonList count={2} />
                 </div>
-              ))
-            )}
-          </div>
+              ) : memberships === null ? (
+                // No request is in flight and none is coming -- there is no
+                // workspace selected to read roles for. A skeleton here spins
+                // forever waiting for something that will never arrive.
+                <EmptyState
+                  icon={UserCog}
+                  title="No workspace selected"
+                  description="Choose a workspace to see the roles assigned in it."
+                  bare
+                />
+              ) : memberships.length === 0 ? (
+                <EmptyState
+                  icon={UserCog}
+                  title="No workspace-scoped roles assigned"
+                  description="For this workspace yet."
+                  bare
+                />
+              ) : (
+                memberships.map((m) => (
+                  <div key={m.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div>
+                      <div className="text-sm font-medium text-foreground">{m.user_name}</div>
+                      <div className="text-xs text-muted-foreground">{m.user_email}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline">{m.role}</Badge>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => setPendingRemoval(m)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

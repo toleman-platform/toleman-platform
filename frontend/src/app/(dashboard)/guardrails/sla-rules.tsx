@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SeverityChip } from "@/components/ui/severity-chip";
 import { SEVERITY_ORDER } from "@/lib/severity";
@@ -129,8 +130,8 @@ export function SlaRules() {
 
   const {
     data,
+    status,
     error: loadError,
-    isInitialLoading: loading,
     refetch,
   } = useAsyncData<[SlaRule[], Group[]]>(
     () => Promise.all([api.slaRules(workspaceId!), api.groups(workspaceId!)]),
@@ -138,7 +139,23 @@ export function SlaRules() {
   );
   const [rules, groups] = data ?? [null, null];
 
-  const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
+  // "No SLA rules yet" is a statement about this workspace's policy: it says
+  // no severity has a remediation deadline. A read that failed says nothing at
+  // all, and the two must not share a rendering (AGENTS.md 1.4) -- a policy
+  // gap and an unread request call for completely different responses.
+  //
+  // `useAsyncData` keeps the last good data across a refetch, so `rules !==
+  // null` below is exactly "the request has succeeded at least once", which is
+  // what licenses the empty state. `status === "success"` on its own would
+  // blank the rows during every background refresh, and `status === "error"`
+  // on its own cannot tell a first-load failure from a failed refresh over
+  // rows that are still on screen and still worth showing.
+  const loadFailed = status === "error" && rules === null;
+
+  // A failed first load renders below as an ErrorState with its own retry;
+  // repeating the same sentence in this line would say it twice.
+  const error =
+    mutationError ?? (loadFailed ? null : loadError?.message) ?? workspacesError?.message ?? null;
 
   const [groupId, setGroupId] = useState<number | "">("");
   const [severity, setSeverity] = useState<string>(SEVERITY_ORDER[0]);
@@ -296,50 +313,58 @@ export function SlaRules() {
 
               {error && <p className="text-xs text-destructive">{error}</p>}
 
-              <div className="flex flex-col divide-y divide-border rounded-md border border-border">
-                {loading ? (
-                  <div className="px-3 py-2">
-                    <SkeletonList count={2} />
-                  </div>
-                ) : !rules || rules.length === 0 ? (
-                  <EmptyState
-                    icon={Clock}
-                    title="No SLA rules yet"
-                    description="For this workspace."
-                    bare
-                  />
-                ) : (
-                  rules
-                    .slice()
-                    .sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity))
-                    .map((r) => (
-                      <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <SeverityChip severity={r.severity} size="sm" />
-                          <span className="text-xs text-muted-foreground">{groupName(r.group_id)}</span>
+              {loadFailed ? (
+                <ErrorState
+                  title="Couldn't load SLA rules"
+                  description={loadError?.message}
+                  onRetry={refetch}
+                />
+              ) : (
+                <div className="flex flex-col divide-y divide-border rounded-md border border-border">
+                  {rules === null ? (
+                    <div className="px-3 py-2">
+                      <SkeletonList count={2} />
+                    </div>
+                  ) : rules.length === 0 ? (
+                    <EmptyState
+                      icon={Clock}
+                      title="No SLA rules yet"
+                      description="For this workspace."
+                      bare
+                    />
+                  ) : (
+                    rules
+                      .slice()
+                      .sort((a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity))
+                      .map((r) => (
+                        <div key={r.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <SeverityChip severity={r.severity} size="sm" />
+                            <span className="text-xs text-muted-foreground">{groupName(r.group_id)}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <SlaDaysEditor
+                              key={`${r.id}-${r.days_to_fix}`}
+                              rule={r}
+                              label={`${r.severity} in ${groupName(r.group_id)}`}
+                              onSave={(newDays) => updateDays(r, newDays)}
+                            />
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="shrink-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => setPendingDelete(r)}
+                              aria-label={`Delete SLA rule: ${r.severity} in ${groupName(r.group_id)}`}
+                              title="Delete rule"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <SlaDaysEditor
-                            key={`${r.id}-${r.days_to_fix}`}
-                            rule={r}
-                            label={`${r.severity} in ${groupName(r.group_id)}`}
-                            onSave={(newDays) => updateDays(r, newDays)}
-                          />
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="shrink-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => setPendingDelete(r)}
-                            aria-label={`Delete SLA rule: ${r.severity} in ${groupName(r.group_id)}`}
-                            title="Delete rule"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))
-                )}
-              </div>
+                      ))
+                  )}
+                </div>
+              )}
 
               <ConfirmDialog
                 open={pendingDelete !== null}

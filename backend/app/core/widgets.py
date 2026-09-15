@@ -243,7 +243,7 @@ def resolve_needs_action_queue(session: Session, ws_ids, config: dict) -> dict:
         representative_finding,
         severity_for_weight,
     )
-    from app.core.tool_registry import tool_category, tools_in_category, vulnerability_tools
+    from app.core.tool_registry import tool_category, tools_in_category
 
     limit = max(1, min(int(config.get("limit", 5)), 25))
 
@@ -252,12 +252,23 @@ def resolve_needs_action_queue(session: Session, ws_ids, config: dict) -> dict:
     # not an incident, and a resolved/accepted/false-positive/won't-fix
     # finding is, by definition, not something left to do -- letting either
     # kind sit in a strip a reader reasonably reads as a to-do is exactly
-    # the bug this resolver exists to fix. `vulnerability_tools()` is the
-    # same "every category except License" exclusion GET /api/dashboard's
-    # own stats/summary/sla-compliance already apply, not a second
-    # hand-rolled version of it.
+    # the bug this resolver exists to fix.
+    #
+    # The exclusion is expressed the way the real queue expresses it -- NOT IN
+    # the License tools -- rather than IN `vulnerability_tools()`, and the
+    # difference is not cosmetic. `vulnerability_tools()` is derived from
+    # `all_known_tools()`, which by design contains only tools present in
+    # TOOL_REGISTRY; an "Other"-category tool (any `tool` string a CI pipeline
+    # invents when it POSTs SARIF to /api/ingest/{target_id}) is therefore in
+    # neither set. Filtering by IN would silently drop those findings from this
+    # widget while GET /api/findings/groups?queue=action still lists them,
+    # because _apply_category excludes only the License category -- so a
+    # custom scanner's Critical would top the Findings page and be absent from
+    # the dashboard, which is precisely the disagreement this resolver exists
+    # to end. NOT IN keeps unrecognised tools in scope, and a newly integrated
+    # scanner lands here by default rather than going missing.
     base = _scoped_findings_query(ws_ids).where(
-        Finding.state.in_(OPEN_STATES), Finding.tool.in_(vulnerability_tools())
+        Finding.state.in_(OPEN_STATES), Finding.tool.not_in(tools_in_category("License"))
     )
 
     ungrouped_tools: set[str] = set()

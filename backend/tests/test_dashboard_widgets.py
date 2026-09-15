@@ -261,6 +261,40 @@ def test_needs_action_queue_excludes_license_category(engine):
     assert "license:GPL-3.0" not in [item["rule_id"] for item in data["items"]]
 
 
+def test_needs_action_queue_includes_unrecognised_tools(engine):
+    """A tool nobody registered must still reach the widget.
+
+    The exclusion has to be "NOT IN the License tools", not "IN the known
+    vulnerability tools". `all_known_tools()` contains only TOOL_REGISTRY
+    entries, so any `tool` string a CI pipeline invents when it POSTs SARIF to
+    /api/ingest/{target_id} falls in neither set. Filtering by IN would drop
+    those findings here while GET /api/findings/groups?queue=action still
+    lists them -- _apply_category excludes only the License category -- so a
+    custom scanner's Critical would top the Findings page and be missing from
+    the dashboard, which is the exact disagreement this widget was rewritten
+    to end.
+    """
+    t1, _t2, _ws_id = _seed(engine)
+    with Session(engine) as session:
+        session.add(
+            Finding(
+                target_id=t1, dedup_hash="h6", tool="my-custom-scanner", rule_id="custom-1",
+                title="Critical from an unregistered scanner", file_path="app/main.py",
+                severity=Severity.CRITICAL, priority_score=900, state=FindingState.OPEN,
+                first_seen=utcnow(),
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_needs_action_queue(session, None, {"limit": 5})
+
+    rule_ids = [item["rule_id"] for item in data["items"]]
+    assert "custom-1" in rule_ids, "an unregistered tool's finding must not vanish from the dashboard"
+    # Highest priority_score in the set, so it must also lead.
+    assert rule_ids[0] == "custom-1"
+
+
 def test_live_scan_activity_lists_running_scans_most_recent_first(engine):
     t1, t2, _ws_id = _seed(engine)
     now = utcnow()

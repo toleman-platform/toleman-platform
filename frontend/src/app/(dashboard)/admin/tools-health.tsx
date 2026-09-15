@@ -9,15 +9,28 @@ import { Button } from "@/components/ui/button";
 import { AsyncContent } from "@/components/ui/async-content";
 import { Loader2 } from "lucide-react";
 
-type Health = { tool: string; installed: boolean; version: string | null; response_ms: number | null };
+// `installed` is tri-state. null is "no process that would run this tool has
+// reported on it" -- the API container cannot see the binary and the scan
+// worker has never reported one either. That is not the same claim as false
+// ("we looked, in the place that matters, and it is not there"), and per
+// AGENTS.md 1.4 it must not render as one. `checked_in` says which process
+// the answer came from: "api", "worker", or null when nothing conclusive
+// answered.
+type Health = {
+  tool: string;
+  installed: boolean | null;
+  version: string | null;
+  response_ms: number | null;
+  checked_in?: string | null;
+};
 
 // Used only for the loading state, so each tool's name (and a "checking"
 // spinner) shows immediately instead of an anonymous skeleton until the
 // --version probes return (#326). This is deliberately NOT the full tool
 // list any more: backend/app/api/tools/health.py's VERSION_COMMANDS is now
-// derived from the registry (16 tools and growing), and hardcoding that
-// list here a second time is exactly the drift #75/#326 already burned us
-// on once. Whatever the backend actually reports (allTools below) is the
+// derived from the registry (eighteen tools and growing), and hardcoding
+// that list here a second time is exactly the drift #75/#326 already burned
+// us on once. Whatever the backend actually reports (allTools below) is the
 // real source of truth; this is just a friendlier spinner for the four
 // tools most likely to be waited on.
 const TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"] as const;
@@ -37,8 +50,8 @@ export function ToolsHealth() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Real <code className="text-foreground">--version</code> subprocess checks against the tools installed on
-          this host, not simulated status.
+          Real <code className="text-foreground">--version</code> subprocess checks, not simulated status. Tools
+          installed on the scan worker are reported from there.
         </p>
         <Button size="sm" variant="outline" onClick={refresh} disabled={checking}>
           {checking ? "Checking..." : "Recheck"}
@@ -102,8 +115,24 @@ export function ToolsHealth() {
                     </div>
                     <div className="flex items-center gap-2">
                       {h.response_ms !== null && <span className="text-xs text-muted-foreground">{h.response_ms}ms</span>}
+                      {/* The tool runs next to the scanner, not next to the
+                          web process. Say so rather than letting "healthy"
+                          imply the web process can see it -- the same
+                          wording the marketplace card uses. */}
+                      {h.installed === true && h.checked_in === "worker" && (
+                        <Badge variant="outline" className="border-muted-foreground/20 text-muted-foreground">
+                          on scan worker
+                        </Badge>
+                      )}
                       {h.installed && h.version ? (
                         <StatusBadge status="completed" label="healthy" />
+                      ) : h.installed === null ? (
+                        // Nothing that would run this tool reported on it, so
+                        // neither "healthy" nor "not installed" is a claim
+                        // this page can stand behind (AGENTS.md 1.4). Muted
+                        // unknown, matching the marketplace's wording for the
+                        // same ambiguity.
+                        <StatusBadge status="unknown" label="unverified" />
                       ) : (
                         <StatusBadge status="failed" label={h.installed ? "error" : "not installed"} />
                       )}

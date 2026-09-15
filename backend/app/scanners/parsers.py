@@ -492,6 +492,17 @@ PARSER_MAP = {
     # Issue #189: same output shape as semgrep (it *is* semgrep, just with
     # Toleman's curated LLM ruleset) so it reuses the parser verbatim.
     "semgrep-llm": parse_semgrep,
+    # Both of these are semgrep with a different --config, so the output
+    # shape is identical and the parser is reused verbatim, exactly as
+    # semgrep-llm does above.
+    #
+    # Registering them here is not bookkeeping: tool_usage.runnable_tools()
+    # is TOOL_COMMANDS intersected with this map, so a tool added to
+    # TOOL_COMMANDS alone is silently dropped from every usage surface. It
+    # does not fail, and it does not appear in scan history as skipped --
+    # it is simply never considered. That is how semgrep-core shipped inert.
+    "semgrep-core": parse_semgrep,
+    "semgrep-registry": parse_semgrep,
     "gitleaks": parse_gitleaks,
     "noseyparker": parse_noseyparker,
     "trivy": parse_trivy,

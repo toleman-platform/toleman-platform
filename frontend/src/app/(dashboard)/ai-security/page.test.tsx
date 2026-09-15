@@ -250,7 +250,26 @@ describe("AiSecurityPage - AI Bill of Materials generates and exports in place",
         branch: "main",
         generated: true,
         summary: { models: 1, datasets: 0, unpinned: 0, hosted_api_models: 0 },
-        components: [],
+        // Must line up with summary.models: 1 above -- AiBomPanel's isEmpty
+        // check is `generated && components.length === 0`, so an empty
+        // array here (despite summary.models: 1) makes the panel render its
+        // "No models or datasets found" empty state instead of the
+        // populated view this test is actually asserting on, which is what
+        // was failing before this fix (not a timing issue: the text the
+        // test waited for was never going to appear against this fixture).
+        components: [
+          {
+            id: 1,
+            name: "resnet50",
+            component_type: "machine-learning-model",
+            version: "1.0.0",
+            source: "requirements.txt",
+            evidence: "torchvision.models.resnet50",
+            unpinned: false,
+            first_seen: "2026-09-15T00:00:00Z",
+            last_seen: "2026-09-15T00:00:00Z",
+          },
+        ],
       });
 
     render(<AiSecurityPage />);

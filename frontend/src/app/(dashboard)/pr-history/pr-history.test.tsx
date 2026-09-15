@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import PrHistoryPage from "./page";
 import type { PullRequest, PrGuardrailFinding } from "@/lib/api";
 
@@ -314,5 +314,86 @@ describe("scan verdict badge distinguishes states StatusBadge already models", (
     // badge and invisible to a colourblind reviewer.
     expect(blockedLabel.parentElement?.className).toContain("destructive");
     expect(errorLabel.parentElement?.className).not.toContain("destructive");
+  });
+});
+
+// A pull request's state (open/merged/closed) used to be mapped onto the
+// async-task vocabulary StatusBadge speaks -- "open" onto "running", whose
+// rendering is a spinning Loader2 -- so every open PR in this list, which is
+// the list the page opens on, animated forever as though work were in
+// progress on it. Open is a steady state. The scan running *on* a PR is a
+// genuine phase and keeps its own badge; these pin that the two stayed
+// separated rather than swapped.
+describe("pull request state badge", () => {
+  function rowFor(title: RegExp): HTMLElement {
+    const row = screen.getByText(title).closest('[data-slot="card"]');
+    if (row === null) throw new Error(`no PR row found for ${String(title)}`);
+    return row as HTMLElement;
+  }
+
+  function prStateBadgeIn(row: HTMLElement, label: string): HTMLElement {
+    const badge = within(row).getByText(label).closest('[data-slot="badge"]');
+    if (badge === null) throw new Error(`"${label}" is not rendered inside a badge`);
+    return badge as HTMLElement;
+  }
+
+  it("renders an open PR with nothing spinning on it", async () => {
+    prsByState({ open: [pr({ number: 1, title: "still open" })] });
+
+    render(<PrHistoryPage />);
+    await screen.findByText(/still open/);
+
+    const row = rowFor(/still open/);
+    expect(row.querySelectorAll('[class*="animate-spin"]').length).toBe(0);
+    expect(prStateBadgeIn(row, "Open").querySelector('[class*="animate-spin"]')).toBeNull();
+  });
+
+  it("gives each of the three states its own label", async () => {
+    prsByState(MIXED);
+
+    render(<PrHistoryPage />);
+    await screen.findByText(/still open/);
+    fireEvent.change(screen.getByLabelText("PR state"), { target: { value: "all" } });
+    await screen.findByText(/was closed/);
+
+    const openRow = rowFor(/still open/);
+    expect(within(openRow).getByText("Open")).toBeTruthy();
+    expect(within(openRow).queryByText("Merged")).toBeNull();
+    expect(within(openRow).queryByText("Closed")).toBeNull();
+
+    const mergedRow = rowFor(/was merged/);
+    expect(within(mergedRow).getByText("Merged")).toBeTruthy();
+    expect(within(mergedRow).queryByText("Open")).toBeNull();
+
+    const closedRow = rowFor(/was closed/);
+    expect(within(closedRow).getByText("Closed")).toBeTruthy();
+    expect(within(closedRow).queryByText("Merged")).toBeNull();
+
+    // Merged and closed are different outcomes, so they cannot share a
+    // rendering either: a closed-without-merging PR shipped nothing.
+    const mergedClass = prStateBadgeIn(mergedRow, "Merged").getAttribute("class");
+    const closedClass = prStateBadgeIn(closedRow, "Closed").getAttribute("class");
+    expect(mergedClass).not.toBe(closedClass);
+    expect(mergedClass).toContain("chart-5");
+    expect(closedClass).not.toContain("chart-5");
+  });
+
+  it("still reads the PR's scan status as a scan phase, spinner included", async () => {
+    // The fix separates two vocabularies; it must not flatten the scan's own.
+    // A guardrail scan actually running on this PR is work in progress and
+    // still says so, right next to a PR state that does not.
+    prsByState({
+      open: [pr({ number: 1, title: "still open", scan_status: "running", latest_scan_id: 55 })],
+    });
+
+    render(<PrHistoryPage />);
+    const scanLabel = await screen.findByText("running");
+
+    const scanBadge = scanLabel.parentElement;
+    expect(scanBadge).not.toBeNull();
+    expect(scanBadge!.querySelector('[class*="animate-spin"]')).not.toBeNull();
+
+    const row = rowFor(/still open/);
+    expect(prStateBadgeIn(row, "Open").querySelector('[class*="animate-spin"]')).toBeNull();
   });
 });

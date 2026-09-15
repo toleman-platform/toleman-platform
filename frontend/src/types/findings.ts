@@ -298,6 +298,47 @@ export type PackageRemediation = {
 };
 
 /**
+ * (#247) How much has actually been looked up behind a fix plan.
+ *
+ * An empty `plans` array is the same value for two unrelated situations --
+ * nothing has been enriched for this target's CVEs yet, and every advisory
+ * was read and none names a fixed version -- and only the second is a
+ * statement about fixes. Rendering the second for the first is the confident
+ * negative `AGENTS.md` §1.4 forbids, so the empty state has to branch on
+ * these counts rather than on `plans.length` alone.
+ *
+ * Every count is over *open findings carrying a CVE id*, the same population
+ * the plans are built from, and each is a subset of `cve_findings`:
+ *
+ * - `enriched_findings` -- their CVE has an enrichment row. A row means a
+ *   lookup happened, NOT that it returned anything: the backend caches a row
+ *   even when both upstream sources fail.
+ * - `findings_with_advisory` -- that row came from a real OSV record. This
+ *   is the count that licenses the sentence "no fixed version is published";
+ *   without it, zero fixes is silence rather than an answer.
+ * - `findings_with_fix_data` -- that record names at least one fixed
+ *   version. Zero here is exactly when `plans` is empty.
+ */
+export type RemediationCoverage = {
+  cve_findings: number;
+  distinct_cves: number;
+  enriched_findings: number;
+  findings_with_advisory: number;
+  findings_with_fix_data: number;
+};
+
+/**
+ * (#247) The response of GET /api/findings/remediations: the plans, and the
+ * coverage they were computed from. The two are read together -- see
+ * `RemediationCoverage` for why the plans alone cannot answer the empty
+ * case honestly.
+ */
+export type RemediationPlanResponse = {
+  plans: PackageRemediation[];
+  coverage: RemediationCoverage;
+};
+
+/**
  * CVE/CWE enrichment data sourced from NVD and OSV.dev (independent of AI).
  */
 export type FindingEnrichment = {

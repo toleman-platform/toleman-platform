@@ -197,9 +197,22 @@ def test_security_engineer_can_reject_ignore(client, engine):
     _, finding_id = _make_pr_scan_and_finding(engine)
     client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
 
-    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/reject-ignore")
+    res = client.post(
+        f"/api/pr-guardrail/findings/{finding_id}/reject-ignore", json={"reason": "still a real risk in prod"}
+    )
     assert res.status_code == 200
-    assert res.json()["ignore_status"] == "rejected"
+    body = res.json()
+    assert body["ignore_status"] == "rejected"
+    assert body["reject_reason"] == "still a real risk in prod"
+    assert body["ignore_reviewed_by"] == "security_engineer@example.com"
+
+
+def test_reject_ignore_requires_reason(client, engine):
+    _, finding_id = _make_pr_scan_and_finding(engine)
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/reject-ignore", json={"reason": ""})
+    assert res.status_code == 400
 
 
 def test_admin_can_also_approve_ignore(client, engine):
@@ -238,7 +251,7 @@ def test_history_shows_approved_and_rejected_but_not_pending(client, engine):
 
     sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
     sec_client.post(f"/api/pr-guardrail/findings/{approved_id}/approve-ignore")
-    sec_client.post(f"/api/pr-guardrail/findings/{rejected_id}/reject-ignore")
+    sec_client.post(f"/api/pr-guardrail/findings/{rejected_id}/reject-ignore", json={"reason": "not exploitable here"})
 
     res = sec_client.get("/api/pr-guardrail/ignore-requests/history")
     assert res.status_code == 200

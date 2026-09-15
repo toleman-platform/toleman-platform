@@ -230,10 +230,14 @@ export function approveIgnore(findingId: number): Promise<PrGuardrailFinding> {
 }
 
 /**
- * Rejects a finding ignore request.
+ * Rejects a finding ignore request, recording why -- the security review
+ * decision the Approval Queue's History tab shows back later.
  */
-export function rejectIgnore(findingId: number): Promise<PrGuardrailFinding> {
-  return jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/reject-ignore`, { method: "POST" });
+export function rejectIgnore(findingId: number, reason: string): Promise<PrGuardrailFinding> {
+  return jsonFetch<PrGuardrailFinding>(`/api/pr-guardrail/findings/${findingId}/reject-ignore`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
 }
 
 /**

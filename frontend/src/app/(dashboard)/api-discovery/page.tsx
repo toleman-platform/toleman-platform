@@ -338,9 +338,9 @@ export default function ApiDiscoveryPage() {
                 <WhatsIncludedCard
                   key="included"
                   items={[
-                    "Every route discovered via static regex extraction (Flask/FastAPI/Express/Gin/Django/Spring patterns), grouped by method",
-                    "File:line provenance for each discovered route",
-                    "New-since-last-scan endpoints flagged",
+                    "Every route found in the source, with the file and line it came from",
+                    "Routes grouped by HTTP method, and filterable by the framework they belong to",
+                    "Endpoints that appeared since the last run, flagged as new",
                   ]}
                 />,
               ]

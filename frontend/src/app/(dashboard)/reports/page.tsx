@@ -492,8 +492,8 @@ export default function ReportsPage() {
           excludedSections.length > 0
             ? `Excluded from this report: ${excludedSections
                 .map((s) => s.label)
-                .join(", ")}. Excluded sections are named on the document itself, and the filters above are printed on it too, so a narrowed export can never be mistaken for a full one. All figures reflect each target's default branch, matching the Posture Dashboard.`
-            : "All figures reflect each target's default branch, matching the Posture Dashboard. The filters you chose are printed on the document itself."
+                .join(", ")}. The document names its excluded sections and prints the filters you chose. All figures reflect each target's default branch, matching the Posture Dashboard.`
+            : "The document prints the filters you chose. All figures reflect each target's default branch, matching the Posture Dashboard."
         }
       />
     </div>

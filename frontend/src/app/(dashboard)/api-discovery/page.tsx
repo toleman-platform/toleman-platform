@@ -318,7 +318,7 @@ export default function ApiDiscoveryPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="API Discovery"
-        description="Static route extraction over the target's source (Flask/FastAPI/Express/Gin/Django/Spring patterns), real grep matches with file:line provenance, not an inferred/mocked inventory. Results are persisted, so this view reflects the last scan even after a reload."
+        description="The HTTP routes found in this target's source, each with the file and line it came from."
         badge={<HelpHint topic={HELP_CONTENT["api-discovery"]} />}
       />
 

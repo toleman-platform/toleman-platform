@@ -536,14 +536,22 @@ const SCORE_COMPONENT_LABEL: Record<string, string> = {
 // Real underlying metric shown alongside each 0-100 sub-score so it can't be
 // misread as a raw count (e.g. "Open findings score: 0" previously looked
 // like "0 open findings" when it actually meant "worst possible score",
-// the real count (often in the hundreds) lives in c.open_findings on the
-// findings component, same field the KPI Cards widget's "Open Findings"
-// count is derived from, just default-branch-scoped here vs. all-branches
-// there).
+// the real count (often in the hundreds) lives on the findings component,
+// same figures the KPI Cards widget's counts are derived from, just
+// default-branch-scoped here vs. all-branches there).
 function scoreComponentDetail(key: string, c: SecurityScore["components"][keyof SecurityScore["components"]]): string | null {
   switch (key) {
-    case "findings":
-      return `${(c as SecurityScore["components"]["findings"]).open_findings} open on default branch`;
+    case "findings": {
+      // The vulnerability count, not the total. Licence findings carry no
+      // weight in this score, so showing the combined total here put a
+      // number next to the bar that the bar was not computed from -- "13/100
+      // (188 open on default branch)" where 148 of the 188 contributed
+      // nothing. They are named separately instead, so the smaller figure
+      // does not read as findings having gone missing.
+      const f = c as SecurityScore["components"]["findings"];
+      const excluded = f.license_findings_excluded > 0 ? ` · ${f.license_findings_excluded} licence excluded` : "";
+      return `${f.open_vulnerabilities} open on default branch${excluded}`;
+    }
     case "sla":
       return `${(c as SecurityScore["components"]["sla"]).in_violation} in violation`;
     case "coverage": {
@@ -565,6 +573,14 @@ function scoreComponentDetail(key: string, c: SecurityScore["components"][keyof 
     }
     case "fp_rate":
       return `${(c as SecurityScore["components"]["fp_rate"]).false_positives}/${(c as SecurityScore["components"]["fp_rate"]).total_findings} false positives`;
+    case "trend": {
+      // Only says anything when there is nothing to say: the server's own
+      // wording for why the week-over-week comparison could not be made,
+      // rendered rather than restated so the explanation lives in one place
+      // (the coverage note below works the same way).
+      const t = c as SecurityScore["components"]["trend"];
+      return t.measurable ? null : t.note;
+    }
     default:
       return null;
   }
@@ -576,7 +592,11 @@ function scoreScopeKey(s: ScoreScope) {
   return s.kind === "org" ? "org" : `${s.kind}:${s.id}`;
 }
 
-function TrendIcon({ direction }: { direction: "improving" | "stable" | "worsening" }) {
+// Nothing is drawn for an unknown direction. A flat "stable" dash on a
+// comparison that was never made would claim posture held steady over a week
+// this platform has no record of.
+function TrendIcon({ direction }: { direction: SecurityScore["components"]["trend"]["direction"] }) {
+  if (direction === "unknown") return null;
   const Icon = direction === "improving" ? TrendingDown : direction === "worsening" ? TrendingUp : Minus;
   const cls = direction === "improving" ? "text-chart-5" : direction === "worsening" ? "text-destructive" : "text-muted-foreground";
   return <Icon className={`ml-1 inline h-3 w-3 ${cls}`} />;
@@ -617,6 +637,9 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
   // repo was last selected; deriving here makes that automatic, where the
   // previous version had to remember to write `initialData` back.
   const score = scope.kind === "org" ? initialData : (scopedScore ?? initialData);
+  // Held in its own const so the null check below narrows it for the gauge:
+  // null means no dimension could be measured, which is not a score of zero.
+  const composite = score.score;
   const error = loadError?.message ?? null;
 
   return (
@@ -660,6 +683,13 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
         </div>
       ) : score.target_count === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">No targets in scope.</p>
+      ) : composite === null ? (
+        // Every dimension came back unmeasurable, so there is no composite to
+        // draw. A gauge reading 0 with a Grade F would be a verdict on an
+        // estate nothing has been measured about yet.
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          Not enough data to score this scope yet.
+        </p>
       ) : (
         <div className="flex w-full flex-wrap items-center justify-center gap-6 sm:justify-between sm:gap-8">
           {/* max-w-4xl (896px), not max-w-2xl (672px): the gauge (280px) +
@@ -712,13 +742,18 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
               than forcing the grid track wider than the viewport, and the
               560px cap only applies from `sm:` up, so narrow layouts wrap
               exactly as before. */}
-          <SecurityScoreGauge score={score.score} grade={score.grade} />
+          <SecurityScoreGauge score={composite} grade={score.grade} />
           <div className="grid w-full min-w-0 flex-1 basis-[320px] grid-cols-1 gap-2 text-xs sm:max-w-[560px]">
             {(Object.keys(SCORE_COMPONENT_LABEL) as (keyof typeof SCORE_COMPONENT_LABEL)[]).map((key) => {
               const c = score.components[key as keyof SecurityScore["components"]];
               const isWeakest = score.weakest_component === key;
               const detail = scoreComponentDetail(key, c);
-              const val = Math.round(c.score);
+              // `null` for a dimension this platform could not measure. It is
+              // not 0/100: the bar and the number both have to say "no
+              // reading", or an absent measurement reads as the worst
+              // possible one.
+              const raw = c.score;
+              const val = c.measurable && raw !== null ? Math.round(raw) : null;
               return (
                 <div
                   key={key}
@@ -733,10 +768,22 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
                   </span>
                   <div className="flex shrink-0 items-center gap-2.5">
                     <div className="w-16">
-                      <ProgressBar value={val} max={100} size="sm" />
+                      {val === null ? (
+                        <div className="h-1.5 w-full rounded-full bg-secondary" />
+                      ) : (
+                        <ProgressBar value={val} max={100} size="sm" aria-label={SCORE_COMPONENT_LABEL[key]} />
+                      )}
                     </div>
-                    <span className={`w-12 text-right font-mono tabular-nums ${isWeakest ? "font-semibold text-destructive" : "font-medium text-foreground"}`}>
-                      {val}/100
+                    <span
+                      className={`w-12 text-right font-mono tabular-nums ${
+                        val === null
+                          ? "text-muted-foreground"
+                          : isWeakest
+                          ? "font-semibold text-destructive"
+                          : "font-medium text-foreground"
+                      }`}
+                    >
+                      {val === null ? "—" : `${val}/100`}
                     </span>
                   </div>
                 </div>

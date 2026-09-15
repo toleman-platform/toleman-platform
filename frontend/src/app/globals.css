@@ -1,30 +1,45 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* INERT — and deliberately left that way. This is shadcn's stock variant,
-   which matches a `.dark` CLASS; this app has never used one. Theming is done
-   entirely with `data-theme="light"` on <html> (see the token comment below
-   and src/components/theme-toggle.tsx), dark being the attribute-less default,
-   so `.dark` appears nowhere in the codebase and nothing can match `&:is(.dark
-   *)`. Every `dark:` utility in src/ is therefore dead CSS: whatever the
-   non-`dark:` half of the class list says is what renders, in BOTH themes.
+/* `@custom-variant dark` below is Tailwind v4's mechanism for swapping the
+   built-in `dark:` variant (which otherwise defaults to
+   `@media (prefers-color-scheme: dark)`) for a class-based one. shadcn
+   scaffolds it as `&:is(.dark *)` — but this app has never set a `.dark`
+   class anywhere; it themes entirely via `data-theme="light"` on <html>
+   (see the token comment below and src/components/theme-toggle.tsx), dark
+   being the attribute-less default. So this variant has always matched
+   nothing, and every `dark:` utility written against it was dead CSS:
+   whatever the non-`dark:` half of a class list said is what rendered, in
+   BOTH themes, regardless of the `dark:` half.
 
    That silently produced two real contrast failures, since a `text-x-700
-   dark:text-x-400` pair collapses to its light-theme half on the dark canvas.
-   Both are fixed at the call site by switching to the `--success` /
+   dark:text-x-400` pair collapses to its light-theme half on the dark
+   canvas. Both are fixed at the call site by switching to the `--success` /
    `--warning` tokens, which flip per theme the way the dead variant was
-   supposed to (finding-row.tsx's fixability badge,
-   pr-guardrail-log.tsx's diff-scope caveat).
+   supposed to (finding-row.tsx's fixability badge, pr-guardrail-log.tsx's
+   diff-scope caveat — see those files' own comments for the contrast
+   numbers). The remaining dead `dark:` utilities were purely cosmetic
+   (badge.tsx, input.tsx: stock shadcn `aria-invalid`/`bg-input` variants
+   with no correctness issue behind them) and have been deleted outright
+   rather than folded into tokens — nothing they did was ever visible, so
+   there was nothing to preserve, and leaving them in place would keep
+   implying a `.dark`-class toggle the app does not have.
 
-   Repointing this at `:root:not([data-theme="light"])` would "fix" the variant
-   in one line, but it would also switch on ~8 remaining `dark:` utilities in
-   the stock shadcn button/input/badge recipes all at once — changing the fill
-   of every outline button, every input and the destructive badge app-wide, in
-   the DEFAULT theme, with no design review behind it. Correcting the two
-   token bugs is the smaller, verifiable change; resurrecting the variant is a
-   deliberate visual decision that deserves its own PR and a look at the
-   result. Until then: do not add new `dark:` utilities, they will not apply.
-   Use the light/dark token pairs defined below instead. */
+   The `@custom-variant dark` declaration itself is NOT deleted, and must
+   not be until every `dark:` utility in the codebase is gone. Tailwind v4
+   defines `dark:` as `@media (prefers-color-scheme: dark)` whenever nothing
+   overrides it, so removing this line would not make any surviving
+   `dark:` utility inert — it would make it LIVE, keyed to the visitor's OS
+   colour-scheme setting instead of this app's own `data-theme` state.
+   button.tsx still carries seven `dark:` utilities as of this writing
+   (owned by an in-flight PR, out of scope here); deleting this line before
+   that PR also clears them would silently make every outline/destructive
+   button's fill flip with the OS setting, independent of — and possibly
+   contradicting — whatever theme the user actually chose. Once button.tsx
+   (and anywhere else) is `dark:`-free, this line and the variant it
+   overrides can be deleted together in one change. Until then: do not add
+   new `dark:` utilities, they will not apply as written. Use the light/dark
+   token pairs defined below instead. */
 @custom-variant dark (&:is(.dark *));
 
 /* Light/dark design tokens (#115); dark is the app's original, unchanged

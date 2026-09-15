@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import AiSecurityPage from "./page";
 import type { Target } from "@/lib/api";
 
@@ -97,10 +97,12 @@ describe("AiSecurityPage - counters and repo destinations", () => {
 
     render(<AiSecurityPage />);
 
-    const repoCounterLabel = await screen.findByText("AI/ML repos");
-    const link = repoCounterLabel.closest("a");
-    expect(link).not.toBeNull();
-    expect(link!.getAttribute("href")).toBe("/targets/7");
+    // The label renders during loading too, when aiTargets is still empty and
+    // StatCard therefore has no href to wrap itself in. Waiting on the label
+    // alone asserts against the loading frame; wait for the destination.
+    await waitFor(() => {
+      expect(screen.getByText("AI/ML repos").closest("a")?.getAttribute("href")).toBe("/targets/7");
+    });
   });
 
   it("links the AI/ML repo counter to the on-page list when there is more than one", async () => {
@@ -111,9 +113,9 @@ describe("AiSecurityPage - counters and repo destinations", () => {
 
     render(<AiSecurityPage />);
 
-    const repoCounterLabel = await screen.findByText("AI/ML repos");
-    const link = repoCounterLabel.closest("a");
-    expect(link!.getAttribute("href")).toBe("#ai-flagged-repos");
+    await waitFor(() => {
+      expect(screen.getByText("AI/ML repos").closest("a")?.getAttribute("href")).toBe("#ai-flagged-repos");
+    });
   });
 
   it("links the ModelScan and LLM ruleset counters to Findings, pre-filtered and queue-matched to the count", async () => {
@@ -171,9 +173,10 @@ describe("AiSecurityPage - per-repo tool badge honesty (0 scanned-clean vs 0 nev
 
     render(<AiSecurityPage />);
 
-    await screen.findByText("scanned-clean");
-    // Scanned and found nothing: a real, measured zero.
-    expect(screen.getByText("0 ModelScan")).toBeTruthy();
+    // Wait on the badge, not the repo name: the name appears in more than one
+    // place on this page, so findByText on it throws "found multiple elements"
+    // before the assertion below is ever reached.
+    await screen.findByText("0 ModelScan");
     // Never reached by the tool: must not read as a clean zero, and must not
     // print a bare "0" at all.
     const neverScanned = screen.getByText("ModelScan not scanned");
@@ -278,7 +281,10 @@ describe("AiSecurityPage - AI Bill of Materials generates and exports in place",
 
     fireEvent.click(screen.getByRole("button", { name: "Generate AI Bill of Materials" }));
 
-    expect(await screen.findByText("Export CycloneDX 1.6")).toBeTruthy();
+    // Generation dispatches and then POLLS getSbomRun before the panel
+    // refetches, so the export button cannot appear within findByText's
+    // default 1s window -- the test's own 10s budget is for exactly this.
+    expect(await screen.findByText("Export CycloneDX 1.6", {}, { timeout: 8000 })).toBeTruthy();
     expect(generateSbomFn).toHaveBeenCalledWith(7);
     expect(aibomFn).toHaveBeenCalledTimes(2);
   }, 10000);

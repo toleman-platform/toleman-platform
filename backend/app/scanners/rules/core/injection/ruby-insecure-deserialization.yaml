@@ -1,0 +1,75 @@
+## Deserialization of untrusted data (CWE-502), Ruby on Rails.
+##
+## Validated 2026-09-12 against RailsGoat (scratchpad/railsgoat).
+##
+## `toleman-ruby-insecure-deserialization-marshal-load`: 1/1 true positive --
+## app/controllers/password_resets_controller.rb:6:
+##   user = Marshal.load(Base64.decode64(params[:user])) unless params[:user].nil?
+## `Marshal.load` reconstructs arbitrary Ruby objects from its input,
+## including ones whose `_load`/`marshal_load`/`init_with` hooks run
+## attacker-chosen code as a side effect of being instantiated -- this is
+## Rails' own well-known Marshal/YAML RCE class (the same one behind
+## CVE-2013-0156). Here the input is `params[:user]` (base64-decoded, but
+## that's an encoding, not a trust boundary) taken directly off an
+## unauthenticated request -- confirmed `skip_before_action :authenticated`
+## on line 3 of the same controller, so this is reachable pre-auth.
+##
+## Scoped generically to any Marshal.load/YAML.load call, not just ones
+## visibly touching `params` on the same line -- mirrors this pack's Python
+## `toleman-insecure-deserialization-pickle` rule, which flags pickle.load(s)
+## unconditionally on the theory that a plain Marshal.load/YAML.load call
+## on non-hardcoded input is inherently the dangerous shape; a taint-scoped
+## variant would silently miss the very common case where the tainted value
+## arrives already assigned to a variable one indirection away (as it does
+## here: params[:user] -> Base64.decode64(...) -> Marshal.load(...), three
+## calls deep on one line, which a plain pattern already reaches fine
+## without needing taint mode).
+##
+## `toleman-ruby-insecure-deserialization-yaml-load`: 0/0 on RailsGoat --
+## its app code has no `YAML.load` call at all (unlike Marshal.load).
+## Kept unproven per this pack's policy: Rails' documented CVE-2013-0156
+## class applies identically to `YAML.load` on a `Psych` >= 4 default
+## Ruby, and `YAML.safe_load` is the exact fix, so the shape is worth
+## shipping even without a same-repo hit.
+rules:
+  - id: toleman-ruby-insecure-deserialization-marshal-load
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      Marshal.load reconstructs arbitrary Ruby objects, including ones
+      whose deserialization hooks (_load/marshal_load/init_with) execute
+      code as a side effect -- a crafted payload here is remote code
+      execution, not just bad data (CWE-502). Never call Marshal.load on
+      anything that crossed a trust boundary (params/cookies/session/
+      uploaded file contents); use JSON or a schema-validated format.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - "https://guides.rubyonrails.org/security.html#unsafe-query-generation"
+        - "https://nvd.nist.gov/vuln/detail/CVE-2013-0156"
+      validated-against:
+        - "railsgoat: 1/1 true positive (app/controllers/password_resets_controller.rb:6, Marshal.load(Base64.decode64(params[:user])), reachable pre-auth)"
+    pattern-either:
+      - pattern: Marshal.load(...)
+
+  - id: toleman-ruby-insecure-deserialization-yaml-load
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      YAML.load (as opposed to YAML.safe_load) can instantiate arbitrary
+      Ruby objects from the document, the same RCE class as Marshal.load
+      (CWE-502, CVE-2013-0156). Use YAML.safe_load, or YAML.load with an
+      explicit permitted_classes: [] on modern Psych.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - "https://nvd.nist.gov/vuln/detail/CVE-2013-0156"
+      validated-against:
+        - "railsgoat: 0/0 -- unproven-by-sample, no YAML.load call in this repo's app code (only Marshal.load)"
+    pattern-either:
+      - pattern: YAML.load(...)
+      - pattern: YAML.unsafe_load(...)

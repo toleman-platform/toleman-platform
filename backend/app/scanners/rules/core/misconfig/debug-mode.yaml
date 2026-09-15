@@ -1,0 +1,105 @@
+## Debug mode left enabled in a production deployment (CWE-489).
+##
+## Validated 2026-09-12 against all 3 repos.
+##
+## toleman-django-debug-true: pygoat 2/2 TP -- pygoat/pygoat/settings.py:30
+## has a bare `DEBUG = True` at module level in the real Django settings
+## file. Confirmed against pygoat's own Solutions/solution.md line 108,
+## which documents this exact line as the intended vuln ("the developer has
+## forgotten to turn debug to false ... which resulted in showing the
+## settings.py file which has some sensitive data"). Second hit is a
+## separate, independent Django settings module for one of the dockerized
+## labs -- pygoat/dockerized_labs/sensitive_data_exposure/sensitive_data_lab/
+## settings.py:11, also a bare `DEBUG = True`, also carrying its own
+## "don't run with debug turned on in production!" comment immediately
+## above it. Both read by hand, both real module-level Django settings
+## files, not test fixtures. toleman-platform: true negative (FastAPI, no
+## Django settings module at all). dvpwa: true negative (Flask/aiohttp,
+## not Django).
+##
+## toleman-flask-run-debug-true / toleman-uvicorn-reload-true: 0/0/0 --
+## unproven-by-sample. toleman-platform's entrypoint never sets
+## reload=True (grepped main.py and the whole backend tree for
+## "reload=True", "debug=True", "app.run(" -- no hits). pygoat is Django,
+## has no app.run()/uvicorn.run() call. dvpwa is aiohttp, not Flask/FastAPI
+## -- it DOES hardcode `debug=True` but as a kwarg to aiohttp's
+## `Application(debug=True, ...)` constructor in sqli/app.py:24, a
+## different call shape than either sub-pattern below targets. Noting it
+## here rather than silently missing it: aiohttp's Application(debug=...)
+## is a real third shape this rule does not attempt, deliberately, to keep
+## the two patterns below narrowly matched to the frameworks named in the
+## brief. If aiohttp coverage is wanted later, add a third pattern for
+## `Application(..., debug=True, ...)`.
+##
+## Both run()-style patterns exclude matches inside an
+## `if __name__ == "__main__":` guard on purpose: `app.run(debug=True)`
+## written that way is the standard idiom for "only when I run this file
+## directly for local dev," not a production misconfiguration. The
+## reachable-in-production case is when debug=True/reload=True is set
+## unconditionally, e.g. inside the module-level app factory or an
+## always-executed `main()` that both `python app.py` and the WSGI/ASGI
+## server import and call.
+rules:
+  - id: toleman-django-debug-true
+    languages: [python]
+    severity: WARNING
+    confidence: MEDIUM
+    message: >-
+      Django DEBUG is hardcoded to True rather than derived from an
+      environment variable. In production this leaks full tracebacks,
+      local variable values, installed app list, and settings (including
+      secrets) to anyone who can trigger a 500 (CWE-489, CWE-215). Derive
+      this from an env var and default it to False.
+    metadata:
+      category: security
+      cwe: "CWE-489: Active Debug Code"
+      framework: django
+      validated-against:
+        - "pygoat: 2/2 TP, settings.py:30 matches Solutions/solution.md's own documented A6 misconfiguration finding; dockerized_labs/sensitive_data_exposure/sensitive_data_lab/settings.py:11 is a second, independent Django settings module with the same bug"
+        - "toleman-platform: true negative (not Django)"
+        - "dvpwa: true negative (not Django)"
+    pattern: DEBUG = True
+
+  - id: toleman-flask-run-debug-true
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      Flask app.run(debug=True) outside a `if __name__ == "__main__":`
+      guard runs with the debugger and interactive traceback evaluator
+      enabled whenever this module is imported -- not just when run
+      directly for local dev. The Werkzeug debugger's PIN-protected
+      console is still a remote-code-execution surface if the PIN can be
+      brute-forced or leaked (CWE-489, CWE-215).
+    metadata:
+      category: security
+      cwe: "CWE-489: Active Debug Code"
+      framework: flask
+      validated-against: []
+    patterns:
+      - pattern: $APP.run(..., debug=True, ...)
+      - pattern-not-inside: |
+          if __name__ == "__main__":
+              ...
+
+  - id: toleman-uvicorn-reload-true
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      uvicorn.run(..., reload=True) outside a `if __name__ == "__main__":`
+      guard enables the auto-reloader (and its more permissive error pages)
+      whenever this module is imported, not just for local dev. reload=True
+      also spawns a supervisor process that watches the filesystem --
+      wasted resources and a larger attack surface in production
+      (CWE-489).
+    metadata:
+      category: security
+      cwe: "CWE-489: Active Debug Code"
+      framework: fastapi
+      validated-against: []
+    patterns:
+      - pattern: uvicorn.run(..., reload=True, ...)
+      - pattern-not-inside: |
+          if __name__ == "__main__":
+              ...

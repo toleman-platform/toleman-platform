@@ -1,0 +1,65 @@
+## OS command injection (CWE-78), Java.
+##
+## Validated 2026-09-12 against OWASP WebGoat (scratchpad/webgoat).
+##
+## Deliberately a plain (non-taint) heuristic: "the command argument isn't a
+## string literal". WebGoat's real instance
+## (org/dummy/insecure/framework/VulnerableTaskHolder.java:66) reaches
+## Runtime.exec() with a value that arrived via deserialization (an instance
+## field set in the constructor from readObject()'s restored state), not a
+## same-function concatenation -- taint mode's pattern-sources (built for
+## "assigned-then-used in this function") wouldn't model a field populated by
+## the JVM's own deserialization machinery any better than a plain
+## not-a-literal check would, so keep this simple and low-confidence instead
+## of pretending taint mode buys precision here.
+rules:
+  - id: toleman-java-command-injection-runtime-exec
+    languages: [java]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      Runtime.exec() is called with a command that is not a fixed string
+      literal. exec(String) splits on whitespace and still hands the result
+      to the OS, so any caller-controlled content in the command changes
+      what actually runs (CWE-78). Prefer exec(String[]) with a fixed
+      executable and separately-validated arguments, or avoid shelling out
+      to attacker-influenced input entirely.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      references:
+        - "https://owasp.org/www-community/attacks/Command_Injection"
+      validated-against:
+        - "webgoat: true positive, org/dummy/insecure/framework/VulnerableTaskHolder.java:66 -- `Process p = Runtime.getRuntime().exec(taskAction);` where taskAction is restored by readObject() from an attacker-supplied serialized blob (see InsecureDeserialization lesson, which POSTs a base64 object containing this exact class); a length/prefix check (`startsWith(\"sleep\"/\"ping\")`, `length() < 22`) is present but is an allowlist-by-prefix, not a shell-metacharacter defense -- `sleep 1;touch pwned` still starts with \"sleep\" and is under 22 chars"
+    patterns:
+      - pattern-either:
+          - pattern: Runtime.getRuntime().exec($CMD)
+          - pattern: Runtime.getRuntime().exec($CMD, ...)
+      - pattern-not: Runtime.getRuntime().exec("...")
+      - pattern-not: Runtime.getRuntime().exec("...", ...)
+
+  - id: toleman-java-command-injection-processbuilder
+    languages: [java]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      ProcessBuilder is constructed with a non-literal command/argument.
+      Unlike exec(String), ProcessBuilder does not itself invoke a shell, but
+      if any element of the command list is attacker-controlled and the
+      target program is itself a shell (`sh`, `-c`, `cmd.exe`, `/c`) this is
+      still full command injection (CWE-78); even without a shell, an
+      attacker-controlled executable path or argument can still change
+      program behavior. Validate/allowlist every element before use.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      validated-against: []
+      note: >-
+        unproven-by-sample -- WebGoat's command-execution lesson uses
+        Runtime.getRuntime().exec(String), not ProcessBuilder, anywhere in
+        src/main/java. Kept per this pack's policy of shipping a rule for a
+        documented real-world shape even without a confirmed hit here.
+    patterns:
+      - pattern-either:
+          - pattern: new ProcessBuilder($CMD, ...)
+      - pattern-not: new ProcessBuilder("...", ...)

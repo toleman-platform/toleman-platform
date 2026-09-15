@@ -1,0 +1,70 @@
+## Substring-based URL/host validation used where a real boundary check
+## belongs (CWE-20). "https://good.com".startswith is also true of
+## "https://good.com.evil.com"; "good.com".endswith is also true of
+## "evil-good.com".
+##
+## Validated 2026-09-12 against toleman-platform: found the exact CodeQL
+## alert "Incomplete URL substring sanitization" at
+## backend/tests/test_github_app_manifest.py:54,111 -- and confirmed by
+## reading it that this specific instance is a false positive *in context*:
+## it's a test assertion on a manifest-builder's output, not a live
+## security check, so there's nothing here an attacker can reach. Kept in
+## the pack anyway (as LOW confidence, flag-for-triage) because the same
+## generic pattern also surfaced 2 more candidates elsewhere in the same
+## repo (backend/app/core/github.py:9, backend/app/scanners/runner.py:636)
+## that were NOT manually verified -- this rule's job is triage, and "the
+## one ground-truth instance we checked turned out benign" is itself
+## useful data for how much to trust its other hits, not a reason to drop
+## it.
+rules:
+  - id: toleman-url-startswith-check-used-as-validation
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      startswith() against a URL/host string is a substring check, not a
+      real host-boundary check -- "https://good.com" also matches
+      "https://good.com.evil.com". If this is validating trust (not just a
+      test assertion), use urlparse().netloc equality instead.
+    metadata:
+      category: security
+      cwe: "CWE-20: Improper Input Validation"
+      validated-against:
+        - "toleman-platform (self): found the real CodeQL alert; manual review found it benign in this specific instance (test assertion, not a live check) -- flag rate matches expectation for a LOW-confidence heuristic"
+    patterns:
+      - pattern: $URL.startswith($PREFIX)
+      - metavariable-regex:
+          metavariable: $PREFIX
+          regex: (?i).*://.*
+
+  - id: toleman-url-endswith-check-used-as-validation
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      endswith() against a host/domain string is a substring check, not a
+      real boundary check -- "evil-good.com" also matches
+      endswith("good.com"). Use urlparse().netloc equality or a
+      leading-dot check instead.
+    metadata:
+      category: security
+      cwe: "CWE-20: Improper Input Validation"
+      validated-against:
+        - "toleman-platform (self): 3 candidates, all manually reviewed 2026-09-15 and all false positives -- .git/.test.yaml/.go extension filters. Suffix regex anchored to real domain shapes as a result; now 0 findings here, which is the correct answer for this repo."
+    patterns:
+      - pattern: $URL.endswith($SUFFIX)
+      - metavariable-regex:
+          metavariable: $SUFFIX
+          # Anchored, and requires a label BEFORE the dot, because the
+          # unanchored ".*\..*[a-z]{2,}.*" this replaces matched any
+          # file extension: measured on this repo it reported three
+          # findings and all three were `.endswith(".git")`,
+          # `.endswith(".test.yaml")` and `.endswith(".go")` -- extension
+          # filters, not host checks, and nothing an attacker can reach.
+          #
+          # A host suffix worth warning about looks like `good.com` or
+          # `example.co.uk`: one or more labels, then an alphabetic TLD.
+          # A leading dot disqualifies it, which is what separates a
+          # domain from an extension. The optional quotes are because
+          # semgrep matches this against the literal's source text.
+          regex: ^['"]?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}['"]?$

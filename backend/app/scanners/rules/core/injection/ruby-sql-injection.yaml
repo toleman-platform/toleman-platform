@@ -1,0 +1,86 @@
+## SQL injection (CWE-89), Ruby on Rails.
+##
+## Validated 2026-09-12 against RailsGoat (https://github.com/OWASP/railsgoat,
+## cloned at scratchpad/railsgoat), the OWASP intentionally-vulnerable Rails
+## app -- the same role PyGoat/DVPWA play for the Python rules in this pack.
+##
+## `toleman-ruby-sql-injection-where-interpolation`: 1/1 true positive --
+## app/controllers/users_controller.rb:29:
+##   user = User.where("id = '#{params[:user][:id]}'")[0]
+## A raw SQL fragment built with Ruby string interpolation is passed to
+## ActiveRecord's `where`. Whatever `params[:user][:id]` contains becomes
+## part of the query text verbatim (ActiveRecord only parameterizes `?`/
+## named-placeholder forms, e.g. `where("id = ?", params[...])`, or the
+## hash form `where(id: params[...])` -- both compile to a bound parameter,
+## neither is flagged here). Confirmed by reading the line: no `?`
+## placeholder, no hash form, a live `#{}` splice straight from `params`.
+##
+## `toleman-ruby-sql-injection-find-by-sql` / `-connection-execute`: written
+## for the other two well-known raw-SQL entry points this bug class has in
+## Rails, but RailsGoat's app code doesn't happen to use `find_by_sql` or
+## `ActiveRecord::Base.connection.execute` anywhere -- 0/0 on this repo,
+## kept per this pack's policy (README.md) of shipping a rule for a
+## documented bug-class shape even with no confirmed hit yet, rather than
+## skipping the shape entirely. Confidence held at MEDIUM (not LOW) because
+## the shape itself -- any interpolation/concatenation into a raw-SQL
+## executor -- is unambiguous wherever it does occur, same reasoning as the
+## Python `toleman-sql-injection-execute-inline` rule this mirrors.
+rules:
+  - id: toleman-ruby-sql-injection-where-interpolation
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      A raw SQL fragment built with string interpolation/concatenation is
+      passed to ActiveRecord's where(...)/find_by_sql/exists?. Whatever is
+      interpolated becomes literal query text, not a bound parameter
+      (CWE-89). Use the hash form (where(col: value)) or a `?`/named
+      placeholder (where("col = ?", value)) instead.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      references:
+        - "https://guides.rubyonrails.org/security.html#sql-injection"
+      validated-against:
+        - "railsgoat: 1/1 true positive (app/controllers/users_controller.rb:29, User.where(\"id = '#{params[:user][:id]}'\"))"
+    patterns:
+      - pattern-either:
+          - pattern: $MODEL.where("...#{...}...")
+          - pattern: $MODEL.where("..." + ...)
+          - pattern: $MODEL.exists?("...#{...}...")
+
+  - id: toleman-ruby-sql-injection-find-by-sql
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      find_by_sql built with string interpolation/concatenation executes
+      whatever is spliced in as literal SQL (CWE-89). Pass bind values as a
+      second array argument (find_by_sql(["... WHERE id = ?", id])) instead.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      validated-against:
+        - "railsgoat: 0/0 -- unproven-by-sample, no find_by_sql call in this repo's app code"
+    pattern-either:
+      - pattern: $MODEL.find_by_sql("...#{...}...")
+      - pattern: $MODEL.find_by_sql("..." + ...)
+
+  - id: toleman-ruby-sql-injection-connection-execute
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      ActiveRecord::Base.connection.execute (or select_all/select_one/
+      select_value) built with string interpolation/concatenation bypasses
+      ActiveRecord entirely -- there is no placeholder binding at this
+      layer at all, so anything spliced in runs as-is (CWE-89).
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      validated-against:
+        - "railsgoat: 0/0 -- unproven-by-sample, no connection.execute call in this repo's app code"
+    pattern-either:
+      - pattern: $CONN.execute("...#{...}...")
+      - pattern: $CONN.execute("..." + ...)
+      - pattern: $CONN.select_all("...#{...}...")

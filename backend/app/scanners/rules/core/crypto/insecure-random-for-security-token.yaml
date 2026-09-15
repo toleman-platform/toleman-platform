@@ -1,0 +1,36 @@
+## Insecure randomness for security tokens (CWE-330).
+##
+## REGRESSION NOTE (2026-09-12): validated this session but never
+## persisted to this directory until now; see
+## injection/code-and-command-injection.yaml's header for the full story.
+##
+## Validated against pygoat: 1/1 true positive -- introduction/views.py:496,
+## `randint(100,999)` generating an OTP in the `Otp` view. `random` is not
+## cryptographically secure; use `secrets` for anything security-sensitive.
+## toleman/dvpwa: true negative.
+rules:
+  - id: toleman-insecure-random-for-security-token
+    languages: [python]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      The `random` module is not cryptographically secure -- its output is
+      predictable from other observed outputs (CWE-330). Use the `secrets`
+      module (secrets.token_urlsafe/token_hex/choice) for anything
+      security-sensitive: tokens, password-reset codes, session ids, OTPs.
+    metadata:
+      category: security
+      cwe: "CWE-330: Use of Insufficiently Random Values"
+      validated-against:
+        - "pygoat: 1/1 true positive (views.py:496, randint() generating an OTP)"
+    patterns:
+      - pattern-either:
+          - pattern: random.choice(...)
+          - pattern: random.randint(...)
+          - pattern: random.random()
+      - pattern-inside: |
+          def $FUNC(...):
+              ...
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: (?i).*(token|password|secret|otp|reset|session|nonce|csrf).*

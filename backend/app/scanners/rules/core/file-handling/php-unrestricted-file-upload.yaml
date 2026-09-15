@@ -1,0 +1,82 @@
+## Unrestricted file upload (CWE-434) -- PHP.
+##
+## Validated 2026-09-12 against DVWA's vulnerabilities/upload lab, "low"
+## and "medium" difficulty:
+##   vulnerabilities/upload/source/low.php:5-9 --
+##     $target_path  = DVWA_WEB_PAGE_TO_ROOT . "hackable/uploads/";
+##     $target_path .= basename( $_FILES[ 'uploaded' ][ 'name' ] );
+##     move_uploaded_file( $_FILES[ 'uploaded' ][ 'tmp_name' ], $target_path );
+##   basename() blocks path-traversal in the filename (so you can't write
+##   outside hackable/uploads/), but there is no check anywhere on the
+##   file's EXTENSION or content-type -- a "shell.php" upload lands in
+##   hackable/uploads/shell.php verbatim, and DVWA's uploads directory is
+##   web-served, so that's remote code execution. This is DVWA's own
+##   labeled "Unrestricted File Upload" challenge.
+##   vulnerabilities/upload/source/medium.php:6,9-15 -- same move_uploaded_file()
+##   call, now gated on `$_FILES['uploaded']['type'] == "image/jpeg" ||
+##   ... "image/png"` -- but that Content-Type header is attacker-supplied
+##   in the HTTP request and trivially forged, so it's still exploitable
+##   and correctly still flagged.
+##
+## mode: taint, because basename() itself does NOT stop the taint (it
+## strips directory components, it does not touch the extension), so the
+## filename value flowing into move_uploaded_file()'s destination argument
+## stays tainted straight through it -- confirmed this is the correct
+## behavior, not an oversight, by re-reading DVWA's own low.php: basename()
+## is there for a DIFFERENT bug class (path traversal) and does nothing
+## against the extension-based one this rule targets.
+##
+## Deliberately has NO pattern-sanitizers for an extension/MIME check --
+## unlike this pack's Python file-upload rule (secure_filename()/
+## os.path.basename()), there's no single well-known PHP function whose
+## mere presence proves the extension was validated (DVWA's own "medium"
+## checks $_FILES[...]['type'], a value fully attacker-controlled, and
+## still gets exploited in practice). Encoding "checks $_FILES[...]['type']
+## against a literal list" as a sanitizer would have silently suppressed
+## medium.php's real (if weaker) vulnerability. Confidence LOW and the
+## message says "make a human confirm the check is real" on purpose.
+##
+## Also checked, by hand, against the "high" tier:
+##   vulnerabilities/upload/source/high.php:20 -- validates the extension
+##   itself (strtolower(substr(...)) == "jpg"/"jpeg"/"png", not just the
+##   Content-Type header) AND calls getimagesize() on the uploaded tmp file
+##   to confirm it decodes as a real image, before move_uploaded_file().
+##   This is a real, substantially stronger check than low/medium -- still
+##   flagged because this rule has no sanitizer for "extension checked via
+##   a hand-rolled substr/strtolower comparison plus getimagesize()", and
+##   deliberately so: DVWA's own high-tier CTF writeups exploit this
+##   *chained* with the LFI lab (upload a valid PNG with embedded PHP,
+##   whose real extension is .png so it passes every check here, then
+##   `include()` it via the separate LFI vulnerability to execute the
+##   embedded code) -- so "flag it, let a human confirm whether an LFI/
+##   inclusion path exists elsewhere in this app" is the right call for a
+##   LOW-confidence heuristic, not a bug in the rule.
+rules:
+  - id: toleman-php-unrestricted-file-upload-filename
+    languages: [php]
+    severity: WARNING
+    mode: taint
+    confidence: LOW
+    message: >-
+      An uploaded file's own name ($_FILES[...]['name']) is used to build
+      the destination path for move_uploaded_file(), with no
+      extension/content-type allowlist visible in this rule's view of the
+      code (CWE-434). basename()-ing the name only stops path traversal --
+      it does nothing to the extension. If nothing upstream restricts the
+      extension to a known-safe allowlist (and a Content-Type/MIME check
+      alone is not enough -- it's attacker-controlled), an attacker can
+      upload a .php/.phtml/.php5 payload and get it executed by the web
+      server. Validate the extension against an explicit allowlist and
+      store uploads outside the webroot (or with execution disabled)
+      regardless.
+    metadata:
+      category: security
+      cwe: "CWE-434: Unrestricted Upload of File with Dangerous Type"
+      references:
+        - "https://owasp.org/www-community/vulnerabilities/Unrestricted_File_Upload"
+      validated-against:
+        - "DVWA (digininja/DVWA): 2/3 true positive -- vulnerabilities/upload/source/low.php:9 (DVWA's own Unrestricted File Upload lab, no extension check at all) and vulnerabilities/upload/source/medium.php:18 (gated only on the attacker-controlled Content-Type header, still exploitable). 1/3 reviewed, real-but-partial mitigation present -- vulnerabilities/upload/source/high.php:20 validates the extension server-side and calls getimagesize(), correctly flagged anyway per this rule's LOW-confidence 'make a human check' design since DVWA's own high-tier is documented as exploitable only by chaining with the LFI lab"
+    pattern-sources:
+      - pattern: $_FILES[...]['name']
+    pattern-sinks:
+      - pattern: move_uploaded_file($TMP, $SINK)

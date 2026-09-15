@@ -1,0 +1,131 @@
+## Go SQL injection (CWE-89), database/sql.
+##
+## Validated 2026-09-12 against two real, unmodified Go web apps found by
+## searching GitHub for intentionally-vulnerable Go apps (0c34/govwa and
+## sqreen/go-dvwa -- see this pack's README for why a maintained "PyGoat for
+## Go" doesn't really exist; these two are the closest real fit, both
+## genuine runnable handler code, not just docs):
+##
+## - govwa: vulnerability/sqli/function.go:34
+##   `getProfileSql := fmt.Sprintf(...and u.id=%s`, uid)` then
+##   `rows, err := DB.Query(getProfileSql)` two lines later, same block.
+##   uid comes straight from a cookie/form value in sqli.go's handlers.
+## - go-dvwa: vulnerable/sql.go:70
+##   `db.QueryContext(ctx, "SELECT * FROM product WHERE category='"+category+"'")`
+##   -- category is `r.FormValue("category")` in server/router.go, and the
+##   concatenation happens inline in the call argument, not via a variable.
+##
+## Two rules because the two real hits are two different shapes (inline
+## concat/Sprintf in the call argument vs. a Sprintf-built variable executed
+## later) -- same split this pack already made for Python
+## (toleman-sql-injection-execute-inline vs.
+## -fstring-var-then-execute). The var-then-query rule uses `mode: taint`
+## per this pack's own documented gotcha: a plain "$X = ...\n...\n$SINK($X)"
+## pattern only follows a variable through sibling statements in the same
+## block, and would break the moment a real codebase (unlike govwa's
+## example, which happens to keep both statements at the same depth) builds
+## the query one indent level deeper.
+rules:
+  - id: toleman-go-sql-injection-inline-concat
+    languages: [go]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      SQL built with string concatenation or fmt.Sprintf() is passed
+      directly as the query argument to a database/sql call. Any value
+      interpolated here becomes part of the query text, not a bound
+      parameter (CWE-89). Use a placeholder ($1/?/:name depending on
+      driver) and pass values as separate Query/Exec arguments instead.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      references:
+        - "https://owasp.org/www-community/attacks/SQL_Injection"
+      validated-against:
+        - "govwa: true negative for this specific rule (its hit is the var-then-query shape below, not inline) -- confirms this rule doesn't double-count the other rule's finding"
+        - "go-dvwa: 1/1 true positive (vulnerable/sql.go:70, db.QueryContext(ctx, \"...'\"+category+\"'\"))"
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: $DB.$METHOD($SQL, ...)
+              - metavariable-regex:
+                  metavariable: $METHOD
+                  regex: (?i)^(Query|Exec|QueryRow)$
+              - metavariable-pattern:
+                  metavariable: $SQL
+                  patterns:
+                    - pattern-either:
+                        - pattern: $A + $B
+                        - pattern: fmt.Sprintf(...)
+          - patterns:
+              - pattern: $DB.$METHOD($CTX, $SQL, ...)
+              - metavariable-regex:
+                  metavariable: $METHOD
+                  regex: (?i)^(QueryContext|ExecContext|QueryRowContext)$
+              - metavariable-pattern:
+                  metavariable: $SQL
+                  patterns:
+                    - pattern-either:
+                        - pattern: $A + $B
+                        - pattern: fmt.Sprintf(...)
+
+  - id: toleman-go-sql-injection-var-then-query
+    languages: [go]
+    severity: ERROR
+    mode: taint
+    confidence: MEDIUM
+    message: >-
+      SQL is built with fmt.Sprintf()/string concatenation into a variable,
+      then that variable is passed to a database/sql Query/Exec call with
+      no separate args (tracked across nested blocks/scopes, not just the
+      next line). The formatting already happened in Go, so the driver
+      never sees a placeholder to bind safely -- SQL injection (CWE-89).
+      Build the query as a literal with placeholders and pass values as
+      separate arguments instead.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      validated-against:
+        - "govwa: 1/1 true positive (vulnerability/sqli/function.go:34-36, getProfileSql := fmt.Sprintf(...) then DB.Query(getProfileSql))"
+        - "go-dvwa: true negative for this rule specifically (its hit is the inline-concat shape above, no Sprintf-into-variable-then-query shape exists in that repo)"
+    pattern-sources:
+      # Own patterns:/filter block per alternative -- this pack hit a real
+      # bug (documented in injection/sql-injection.yaml) where one shared
+      # metavariable-pattern filter across pattern-either branches silently
+      # rejected branches that never bind that metavariable.
+      - pattern: fmt.Sprintf(...)
+      - pattern: $A + $B
+        # No literal/non-literal filter on the "+" case, same reasoning as
+        # the Python rule this mirrors: a real concatenation chain's
+        # rightmost/leftmost operand is usually a closing-quote literal
+        # anyway, and over-filtering here previously cost this pack a
+        # missed finding.
+    pattern-sinks:
+      # `focus-metavariable: $SINK` matters here -- without it, semgrep taint
+      # mode treats the WHOLE matched call (including the "..." bind-param
+      # tail) as the sink, so any tainted value passed as a *bind parameter*
+      # (e.g. db.Exec("INSERT ... VALUES (?, ?, ?)", fmt.Sprintf(...), ...))
+      # falsely fires even though that's exactly the safe, parameterized
+      # pattern this rule exists to tell apart from real injection. Found
+      # this the hard way: go-dvwa's vulnerable/sql.go:39/48 -- a legitimate
+      # parameterized INSERT with fmt.Sprintf()-built bind values -- lit up
+      # before focus-metavariable was added, and went silent (correctly)
+      # after.
+      - patterns:
+          - pattern: $DB.Query($SINK, ...)
+          - focus-metavariable: $SINK
+      - patterns:
+          - pattern: $DB.Exec($SINK, ...)
+          - focus-metavariable: $SINK
+      - patterns:
+          - pattern: $DB.QueryRow($SINK, ...)
+          - focus-metavariable: $SINK
+      - patterns:
+          - pattern: $DB.QueryContext($CTX, $SINK, ...)
+          - focus-metavariable: $SINK
+      - patterns:
+          - pattern: $DB.ExecContext($CTX, $SINK, ...)
+          - focus-metavariable: $SINK
+      - patterns:
+          - pattern: $DB.QueryRowContext($CTX, $SINK, ...)
+          - focus-metavariable: $SINK

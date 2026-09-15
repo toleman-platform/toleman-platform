@@ -1,0 +1,144 @@
+## Excessive data exposure / over-fetching (CWE-213: Exposure of Sensitive
+## Information Due to Incompatible Policies; maps to OWASP API3:2023
+## "Broken Object Property Level Authorization" / the old API3:2019
+## "Excessive Data Exposure").
+##
+## Shape: a FastAPI route handler with no `response_model=` on its
+## decorator, whose body hands back a raw ORM/SQLModel row (or list of
+## rows) straight from `session.exec(...)`/`session.get(...)` instead of
+## an explicit field list. FastAPI then serializes every column the model
+## has via jsonable_encoder -- including columns the client was never
+## meant to see -- because there's no Pydantic response schema narrowing
+## the output.
+##
+## Validated 2026-09-12 against toleman-platform (FastAPI + SQLModel):
+## 23 hits total; hand-verified the highest-impact one plus a sample of
+## the rest by reading the model definitions.
+##   - backend/app/api/workspaces.py:56 `list_workspaces` (GET /api/workspaces),
+##     :84 `create_workspace` (POST), :126 `update_workspace` (PATCH), :183
+##     `bootstrap` (POST) -- all four return a raw `Workspace` object/list.
+##     `Workspace.api_key` (models.py:118) is a bearer credential used to
+##     authenticate CI scan uploads; the codebase itself treats it as
+##     separate/sensitive enough to warrant a dedicated
+##     `GET /api/workspaces/{id}/key` endpoint (workspaces.py:147) rather
+##     than exposing it via routine CRUD -- yet every list/create/update
+##     response on this router leaks it anyway to any caller who can see
+##     the workspace at all (every workspace viewer, not just whoever
+##     fetches the key deliberately). Highest-confidence, highest-impact
+##     finding this rule produced.
+##   - public_api.py:129 `get_finding` (an MCP/agent-facing "public" API,
+##     `GET /api/public/v1/findings/{id}`) returns the raw `Finding` row
+##     with no field narrowing -- lower severity than the workspace case
+##     (no credential-shaped column on Finding) but the same missing-
+##     allowlist root cause, on a route explicitly named "public".
+##   - targets.py:257 `create_target` returns a raw `Target` row after
+##     `session.refresh()`; sla_rules.py, fp_rules.py, groups.py,
+##     pipeline_templates.py, policies.py, findings.py's history endpoint,
+##     public_api.py:149 -- same shape, spot-checked, all real (no
+##     response_model on the decorator, model returned as-is), lower
+##     sensitivity per-column but same architectural gap: nothing stops
+##     the next column added to any of these models from being exposed
+##     silently.
+## False-positive check: admin.py's `list_users`/`create_user`/`update_role`
+## all return a raw `User` object too (which has `password_hash`), but
+## every one of those routes DOES set `response_model=UserOut` -- FastAPI
+## narrows the output before serializing, so those are correctly excluded
+## by this rule's `pattern-not`. Grep for `return session\.exec\(.*\)\.\(all\|first\)\(\)`
+## alone (no decorator check) would have flagged them as false positives.
+##
+## pygoat and dvpwa: 0/0 -- both are Django, not FastAPI, so this
+## decorator-shaped rule doesn't apply to either framework's route style
+## (Django views don't have `response_model`). Looked for the
+## framework-agnostic equivalents (`model_to_dict()` without `fields=`,
+## `.__dict__`, DRF `fields = "__all__"`, `serializers.serialize`) across
+## both repos and found zero occurrences of any of them -- 0 hits,
+## unproven on Django, not because the shape can't exist there but because
+## neither sample repo happened to have it. Kept the Django alternates in
+## this file anyway since the class is framework-agnostic and the FastAPI
+## shape is this ruleset's only proven shape so far.
+rules:
+  - id: toleman-orm-object-returned-without-response-model
+    languages: [python]
+    severity: WARNING
+    confidence: MEDIUM
+    message: >-
+      This route handler returns a raw ORM/SQLModel row (or list of rows)
+      with no `response_model=` narrowing the output. FastAPI will
+      serialize every column the model has, including any that were never
+      meant to leave the API (secrets, internal ids, audit fields). Add a
+      `response_model=` (or build an explicit dict/Pydantic object) that
+      lists exactly the fields safe to return.
+    metadata:
+      category: security
+      cwe: "CWE-213: Exposure of Sensitive Information Due to Incompatible Policies (Excessive Data Exposure)"
+      owasp: "API3:2019 Excessive Data Exposure"
+      validated-against:
+        - "toleman-platform: 3 confirmed TP incl. Workspace.api_key leak via GET/POST/PATCH /api/workspaces (no dedicated response_model, model has a bearer-credential field) + 4 lower-sensitivity TPs on the same shape"
+        - "toleman-platform: confirmed true-negative on admin.py's User-returning routes, which DO set response_model=UserOut"
+        - "pygoat: 0/0 (Django, decorator shape doesn't apply; framework-agnostic alternates also 0 hits)"
+        - "dvpwa: 0/0 (Django/Flask-adjacent, same as above)"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              @$ROUTER.$METHOD(...)
+              def $FUNC(...):
+                  ...
+                  return session.exec($QUERY).all()
+          - pattern: |
+              @$ROUTER.$METHOD(...)
+              def $FUNC(...):
+                  ...
+                  return session.exec($QUERY).first()
+          - pattern: |
+              @$ROUTER.$METHOD(...)
+              def $FUNC(...):
+                  ...
+                  return session.get($MODEL, $ID)
+          - pattern: |
+              @$ROUTER.$METHOD(...)
+              def $FUNC(...):
+                  ...
+                  $OBJ = session.get($MODEL, ...)
+                  ...
+                  return $OBJ
+          - pattern: |
+              @$ROUTER.$METHOD(...)
+              def $FUNC(...):
+                  ...
+                  $OBJ = $MODEL(...)
+                  ...
+                  session.commit()
+                  ...
+                  return $OBJ
+      - pattern-not: |
+          @$ROUTER.$METHOD(..., response_model=$RM, ...)
+          def $FUNC(...):
+              ...
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: (?i)^(get|post|put|patch)$
+
+  - id: toleman-django-model-to-dict-without-fields
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      model_to_dict()/vars()/__dict__ serializes every field the model has.
+      If this response goes to a client, pass an explicit `fields=[...]`
+      allowlist instead of dumping the whole object -- otherwise any new
+      column added to the model (password hashes, internal tokens, etc.)
+      is exposed automatically the next time someone runs a migration.
+    metadata:
+      category: security
+      cwe: "CWE-213: Exposure of Sensitive Information Due to Incompatible Policies (Excessive Data Exposure)"
+      owasp: "API3:2019 Excessive Data Exposure"
+      validated-against:
+        - "pygoat: 0 hits, unproven -- searched explicitly, this codebase's own sensitive-data-exposure lab (dataexposure/views.py) builds an explicit dict by hand instead of dumping the model, so it does not match this shape even though it IS a real (labeled) over-exposure bug of a different kind (explicit fields, missing authz)"
+        - "dvpwa: 0 hits, unproven"
+        - "toleman-platform: N/A, FastAPI/SQLModel codebase, no Django model_to_dict call sites"
+    patterns:
+      - pattern-either:
+          - pattern: model_to_dict($OBJ)
+          - pattern: vars($OBJ)
+          - pattern: $OBJ.__dict__
+      - pattern-not: model_to_dict($OBJ, fields=...)

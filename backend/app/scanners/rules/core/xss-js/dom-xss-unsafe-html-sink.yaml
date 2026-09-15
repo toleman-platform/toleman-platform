@@ -1,0 +1,80 @@
+## DOM-based XSS (CWE-79) -- the pack's first non-Python language.
+##
+## Semgrep runs the same engine, same sink-based method, on JS/TS as it does
+## on Python -- this rule class was previously marked "out of scope,
+## different language" in the tracker, which was a scoping shortcut for
+## this session, not a real technical limit. Nothing about the pack's
+## method (narrow sink, test against real code, verify every hit by hand)
+## is Python-specific.
+##
+## Validated 2026-09-12 against toleman-platform's real Next.js frontend --
+## the first repo in this pack with meaningful non-Python source. Two
+## hits, both correctly triaged:
+##   - frontend/src/app/layout.tsx:58 -- real dangerouslySetInnerHTML with
+##     a non-literal value. Reviewed: it's JSON.stringify()'d and has `<`
+##     neutralized immediately above, and the line already carries a
+##     `nosemgrep` comment anticipating exactly this flag. A LOW-confidence
+##     heuristic flagging a reviewed-safe case is a correct outcome, not a
+##     false positive -- same precedent as this pack's cookie-value-review
+##     and csrf-exempt rules.
+##   - frontend/.../target-id-badge.test.tsx:28 -- `.innerHTML` appeared in
+##     the file but is a PROPERTY READ inside a test assertion
+##     (`expect(...innerHTML).toContain(...)`), not an assignment. The rule
+##     is written to only match `$EL.innerHTML = $VAL` (an assignment
+##     target), so this one correctly does not fire -- confirmed by reading
+##     the line, not assumed from the pattern shape.
+## pygoat/dvpwa: not applicable, no frontend JS in either repo.
+rules:
+  - id: toleman-dom-xss-innerhtml-assignment
+    languages: [javascript, typescript]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A non-literal value is assigned to .innerHTML. If it can contain
+      caller-supplied or server-echoed text, the browser parses it as HTML
+      -- DOM-based XSS (CWE-79). Use .textContent for plain text, or a
+      sanitizer (DOMPurify) if real HTML must be rendered.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-Site Scripting"
+    patterns:
+      - pattern: $EL.innerHTML = $VAL
+      - pattern-not: $EL.innerHTML = "..."
+      - pattern-not: $EL.innerHTML = `...`
+
+  - id: toleman-dom-xss-react-dangerously-set-inner-html
+    languages: [typescript]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      React's dangerouslySetInnerHTML with a non-literal value skips
+      React's normal escaping -- if the value can contain caller-supplied
+      or server-echoed text, this is DOM-based XSS (CWE-79). Confirm the
+      value is sanitized (e.g. DOMPurify) or provably static immediately
+      before this point.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-Site Scripting"
+      validated-against:
+        - "toleman-platform: 1/1 real hit (layout.tsx:58) -- reviewed, confirmed already-escaped/reviewed-safe (JSON.stringify + `<` neutralized, pre-existing nosemgrep comment). Correct triage outcome for a LOW-confidence flag, same precedent as this pack's cookie-review rule."
+    patterns:
+      - pattern: '<$TAG ... dangerouslySetInnerHTML={{ __html: $VAL }} ... />'
+      - pattern-not: '<$TAG ... dangerouslySetInnerHTML={{ __html: "..." }} ... />'
+
+  - id: toleman-dom-xss-document-write
+    languages: [javascript, typescript]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      document.write()/writeln() with a non-literal value renders it as
+      HTML in the page -- DOM-based XSS (CWE-79) if the value can contain
+      caller-supplied text.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-Site Scripting"
+    patterns:
+      - pattern-either:
+          - pattern: document.write($VAL)
+          - pattern: document.writeln($VAL)
+      - pattern-not: document.write("...")
+      - pattern-not: document.writeln("...")

@@ -1,0 +1,112 @@
+## XML External Entity injection (CWE-611), Java XML parser factories.
+##
+## Validated 2026-09-12 against OWASP WebGoat (scratchpad/webgoat,
+## src/main/java/org/owasp/webgoat/lessons/xxe/CommentsCache.java, WebGoat's
+## actual XXE lesson).
+##
+## Real semgrep gotcha, discovered building this rule and NOT the one this
+## pack already documents: the first draft tried `pattern-not` to suppress
+## the case where a `setProperty(...)` call disabling external entities
+## already appears between the factory-creation and parse-call statements --
+## expecting (per this pack's own README gotcha #2, "ellipsis only walks
+## sibling statements in the same block") that a `setProperty` call nested
+## one level inside an `if` would NOT be reached by the pattern-not's `...`,
+## so the exclusion would correctly stay silent and the base pattern would
+## still fire. Verified empirically instead of assuming: it does NOT work
+## that way here. WebGoat's CommentsCache.parseXml() has exactly this shape
+## -- `xif.setProperty(ACCESS_EXTERNAL_DTD, ...)` nested inside
+## `if (securityEnabled) { ... }`, itself a sibling of the factory-creation
+## and parse-call statements -- and a `pattern-not` sequence
+## `$F = XMLInputFactory.newInstance(); ...; $F.setProperty(...); ...;
+## $READER = $F.createXMLStreamReader(...);` DID match this code when tested
+## in isolation (confirmed with a standalone debug rule against just this
+## method). So for a multi-statement Java pattern, semgrep's `...` gap
+## apparently CAN find a call nested inside an intervening `if`/block, not
+## just direct siblings -- the opposite of what this pack's README gotcha
+## documents for the Python case it was written against. Net effect: adding
+## the pattern-not exclusion made this rule silently return 0/1 instead of
+## the expected true positive, because WebGoat's real bug is that the guard
+## exists in the source but is permanently disabled by both real callers
+## (SimpleXXE.java / BlindSendFileAssignment.java both call
+## `parseXml(xml, false)`) -- a case the exclusion can't distinguish from a
+## properly, unconditionally-applied guard. The pattern-not was removed for
+## exactly this reason (see below); this rule is intentionally broad/LOW
+## confidence as a result, and any future edit to this pack that reaches for
+## `pattern-not`/`pattern-not-inside` to suppress a "safety call happens
+## somewhere in this function" case should re-verify the ellipsis-crosses-
+## nested-blocks behavior in Java before trusting it, rather than assuming
+## it behaves like the Python case this pack hit first.
+rules:
+  - id: toleman-java-xxe-xmlinputfactory
+    languages: [java]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      XMLInputFactory.newInstance() is used to build an XML stream reader.
+      Unless ACCESS_EXTERNAL_DTD/ACCESS_EXTERNAL_SCHEMA are set to ""
+      (or FEATURE_SECURE_PROCESSING is enabled) UNCONDITIONALLY before this
+      call, a `<!DOCTYPE ... SYSTEM "...">`/external-entity payload in the
+      parsed XML can read local files or trigger outbound requests
+      (CWE-611). This rule cannot reliably tell "no guard exists" apart from
+      "a guard exists but is behind a flag/condition that can evaluate to
+      false at a real call site" -- a human needs to check every caller.
+    metadata:
+      category: security
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      references:
+        - "https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html"
+      validated-against:
+        - "webgoat: true positive, org/owasp/webgoat/lessons/xxe/CommentsCache.java:71-79 parseXml() -- ACCESS_EXTERNAL_DTD/ACCESS_EXTERNAL_SCHEMA setProperty() calls exist but only inside `if (securityEnabled)`, and both real callers (SimpleXXE.java:53, BlindSendFileAssignment.java:75, both `comments.parseXml(commentStr, false)`) pass `false`, permanently disabling the guard -- this is WebGoat's actual, documented XXE lesson. An earlier draft of this rule with a `pattern-not` exclusion for 'setProperty called somewhere in the function' silently suppressed this true positive (see file header) -- removed for that reason, at the cost of also firing on a hypothetical file that guards unconditionally."
+    pattern: |
+      $F = XMLInputFactory.newInstance();
+      ...
+      $READER = $F.createXMLStreamReader(...);
+
+  - id: toleman-java-xxe-documentbuilderfactory
+    languages: [java]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      DocumentBuilderFactory.newInstance() is used to build a DOM parser.
+      Unless setFeature("http://apache.org/xml/features/disallow-doctype-decl",
+      true) (or the external-general/parameter-entity features) is set
+      UNCONDITIONALLY before this call, this is XXE (CWE-611). Same
+      human-verification caveat as the XMLInputFactory sibling rule in this
+      file -- a `pattern-not` for "setFeature appears somewhere in the
+      function" was tried and removed because it silently suppresses the
+      exact "guarded but the guard is always-false at the real call site"
+      shape this rule exists to catch.
+    metadata:
+      category: security
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      validated-against: []
+      note: >-
+        unproven-by-sample -- WebGoat's XXE lesson uses XMLInputFactory
+        (StAX), not DocumentBuilderFactory (DOM); no DocumentBuilderFactory
+        usage exists anywhere in src/main/java to validate this shape
+        against.
+    pattern: |
+      $F = DocumentBuilderFactory.newInstance();
+      ...
+      $BUILDER = $F.newDocumentBuilder();
+
+  - id: toleman-java-xxe-saxparserfactory
+    languages: [java]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      SAXParserFactory.newInstance() is used to build a SAX parser. Unless
+      setFeature("http://apache.org/xml/features/disallow-doctype-decl",
+      true) is set UNCONDITIONALLY before this call, this is XXE (CWE-611).
+      Same human-verification caveat as the other two rules in this file.
+    metadata:
+      category: security
+      cwe: "CWE-611: Improper Restriction of XML External Entity Reference"
+      validated-against: []
+      note: >-
+        unproven-by-sample -- no SAXParserFactory usage exists anywhere in
+        WebGoat's src/main/java to validate this shape against.
+    pattern: |
+      $F = SAXParserFactory.newInstance();
+      ...
+      $PARSER = $F.newSAXParser();

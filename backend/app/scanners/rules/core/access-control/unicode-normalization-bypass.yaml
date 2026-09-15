@@ -1,0 +1,130 @@
+## Unicode normalization bypass (CWE-178: Improper Handling of Case
+## Sensitivity / commonly filed under CWE-20 in practice -- a security
+## check compares a string straight from user input against a literal
+## allow/deny value without first normalizing it via
+## `unicodedata.normalize()`. Combining characters and confusable/
+## compatibility code points (e.g. U+0041 vs. fullwidth U+FF21, or "admin"
+## built from visually-identical codepoints) can make two strings that
+## *look* the same compare unequal, or two strings that *look* different
+## normalize to the same value -- either direction can bypass an
+## allowlist/blocklist username or role check that assumes `==` on raw
+## input is safe.
+##
+## Modeled as taint: source = raw request input (Flask/Django `request.*`
+## dict-style access), sink = that tainted value compared with `==`
+## against a string literal, sanitizer = `unicodedata.normalize(...)`
+## applied anywhere between source and sink. Chosen over a plain
+## multi-line pattern because the real hits below assign the username
+## outside an `if`/`elif` and compare it one indent level deeper inside --
+## exactly the nested-block case this pack's README already flagged as a
+## plain pattern's blind spot.
+##
+## Validated 2026-09-12: pygoat 16 raw matches (some lines match twice,
+## once per side of an `and`) collapsing to 8 distinct locations. Read
+## every one by hand:
+##   - 7/8 are genuine identity/access-decision TPs, all request-sourced
+##     and never normalized:
+##       - introduction/views.py:498 `Otp`: `if email=="admin@pygoat.com":`
+##         -- `email=request.GET.get('email')` two lines above; decides
+##         whether the response targets the admin's OTP record.
+##       - introduction/views.py:766 `a1_broken_access_lab_1`:
+##         `elif (name=='jack' and password=='jacktheripper'):` --
+##         `name = request.POST.get('name')` at line 752. Labeled A1
+##         Broken Access Control lab.
+##       - introduction/views.py:806 `a1_broken_access_lab_2`: same shape,
+##         `name = request.POST.get('name')` at line 789.
+##       - introduction/views.py:831 and :833 `a1_broken_access_lab_3`:
+##         `if username == 'John' ...` / `elif username == 'admin' ...` --
+##         `username = request.POST["username"]` at line 828.
+##       - introduction/views.py:1072 (crypto-failure lab 3):
+##         `if username == "User" and password == "P@$$w0rd":` --
+##         `username = request.POST["username"]` at line 1069.
+##       - introduction/playground/A9/api.py:17 and the byte-identical
+##         introduction/playground/A9/archive.py:17: `username =
+##         request.POST['username']` (line 14) then
+##         `if username == "admin" and password == "admin":` -- this one
+##         doubles as a login-lab file that A9's own log_function_checker
+##         (app/api.py, generated at runtime from user-submitted code) can
+##         overwrite, so it's genuinely reachable with attacker-controlled
+##         comparison logic, not just a fixed demo string.
+##   - 1/8 is a real match that is NOT a security-relevant identity check,
+##     kept as an honest noise example: introduction/views.py:423 `cmd_lab`,
+##     `if(os=='win'):` where `os=request.POST.get('os')` -- this picks
+##     `nslookup` vs. `dig` as the shell command template, not an
+##     authentication/authorization decision. A homograph bypass here just
+##     picks the other command, not a security boundary. This is exactly
+##     the kind of hit the LOW-confidence "flag for triage" framing exists
+##     for (see url-boundary-check.yaml's convention).
+##     These are toy/lab logins (hardcoded credentials, teaching content),
+##     not production auth -- but the shape (unnormalized request-sourced
+##     identity value decided by `==` against a literal) is exactly the
+##     class this rule targets, and PyGoat's own A1 (Broken Access
+##     Control) / A2 (Crypto Failure) labels confirm most of these ARE
+##     meant to model real login-check bugs, just a different bug in the
+##     same code (hardcoded creds) than the one this rule flags. No
+##     unicodedata anywhere in the repo (`grep -rl unicodedata` = 0
+##     files), so nothing here is a false sanitized-negative.
+##   - toleman-platform: 0/8 -- real role/email `==` comparisons exist
+##     (auth.py:330,365, targets.py:472 check `user.role == "admin"`;
+##     admin.py:39, auth.py:148, main.py:30 check `User.email == ...`) but
+##     every one compares a value already pulled back out of the database
+##     by SQLModel (`session.exec(select(User).where(...))`), not a value
+##     that flows straight from `request.*`/a raw form field into the
+##     comparison -- the taint source never matches, so 0 hits is the
+##     correct outcome, not a missed detection. (Also: role is an enum
+##     column, not free-text identity input, so a homograph bypass isn't
+##     the applicable risk there even if it were unnormalized.)
+##   - dvpwa: 0/0, expected (SQLi-focused sample, no allowlist-by-string
+##     login shape to find).
+rules:
+  - id: toleman-unicode-normalization-bypass-in-identity-check
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A value read straight from the request is compared with `==` against
+      a literal without ever calling unicodedata.normalize() on it first.
+      If this comparison is deciding identity, a role, or access (a
+      username/login check, an allowlist/blocklist), a combining-character
+      or compatibility-codepoint variant of the same-looking string can
+      make this comparison come out the wrong way. Normalize both sides
+      (e.g. unicodedata.normalize("NFKC", value)) before comparing.
+    metadata:
+      category: security
+      cwe: "CWE-178: Improper Handling of Case Sensitivity"
+      references:
+        - "https://owasp.org/www-community/attacks/Unicode_Encoding"
+      validated-against:
+        - "pygoat: 7/8 distinct-location TP (16 raw matches, 8 unique lines) -- introduction/views.py:498,766,806,831,833,1072, introduction/playground/A9/api.py:17, introduction/playground/A9/archive.py:17 all request-sourced identity/login values compared unnormalized in an actual auth-decision branch; 1/8 (views.py:423) is a real match on a non-security comparison, kept as documented noise"
+        - "toleman-platform: 0/8 true negatives -- role/email comparisons all use DB-fetched values, not raw request input, so the taint source correctly never matches"
+        - "dvpwa: 0/0, no applicable shape present"
+    mode: taint
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: request.POST[...]
+              - pattern: request.POST.get(...)
+              - pattern: request.GET[...]
+              - pattern: request.GET.get(...)
+              - pattern: request.form[...]
+              - pattern: request.form.get(...)
+              - pattern: request.args[...]
+              - pattern: request.args.get(...)
+              - pattern: request.json[...]
+              - pattern: request.json.get(...)
+              - pattern: request.data[...]
+              - pattern: request.data.get(...)
+              - pattern: request.values[...]
+              - pattern: request.values.get(...)
+    pattern-sanitizers:
+      - patterns:
+          - pattern-either:
+              - pattern: unicodedata.normalize(...)
+              - pattern: $X.casefold()
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $VAR == "$LIT"
+              - pattern: '"$LIT" == $VAR'
+              - pattern: $VAR != "$LIT"
+              - pattern: '"$LIT" != $VAR'

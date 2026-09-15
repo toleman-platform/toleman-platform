@@ -1,0 +1,92 @@
+## Deserialization of untrusted data (CWE-502), Java native serialization.
+##
+## Validated 2026-09-12 against OWASP WebGoat (scratchpad/webgoat,
+## src/main/java/org/owasp/webgoat/lessons/deserialization/ and
+## org/dummy/insecure/framework/VulnerableTaskHolder.java, WebGoat's actual
+## InsecureDeserialization lesson).
+##
+## All three alternatives are plain patterns, not taint: the vulnerability
+## here is the call itself (ObjectInputStream.readObject() with no
+## class-allowlist/look-ahead), not a dataflow question of "does a tainted
+## value reach a sink" -- readObject() runs attacker-supplied
+## bytecode-driving logic (readResolve/readObject overrides on whatever
+## class is encoded in the stream) the moment it's called, regardless of
+## which variable holds the stream.
+##
+## Real gotcha hit validating this: the assign-then-call alternative
+## (`$OIS = new ObjectInputStream(...); ...; $OIS.readObject();`) found
+## SerializationHelper.java's true positive but came back 0/1 on WebGoat's
+## OWN InsecureDeserialization lesson endpoint
+## (InsecureDeserializationTask.java:42-45), the more important of the two
+## hits. Root cause: that code declares the stream as a try-with-resources
+## resource (`try (ObjectInputStream ois = new ObjectInputStream(...)) { ...
+## ois.readObject(); ... }`), which is a different Java AST shape (a
+## resource-declaration inside a `try (...)` header) than a plain `$X =
+## expr;` assignment statement -- the assign-then-call pattern doesn't match
+## it no matter how the "..." gap is written, because the assignment itself
+## never appears as an ordinary statement. Added a third alternative
+## matching the try-with-resources form explicitly; re-running confirmed it
+## catches this lesson's actual endpoint. Any future rule in this pack that
+## pattern-matches "a resource is opened, then used" should include a
+## try-with-resources alternative from the start rather than assuming a
+## plain assignment covers it.
+rules:
+  - id: toleman-java-insecure-deserialization-readobject
+    languages: [java]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      ObjectInputStream.readObject() is called with no ValidatingObjectInputStream
+      / class-allowlist / look-ahead check guarding it. Java's native
+      deserialization runs the target class's readObject()/readResolve()
+      logic as part of decoding, before the caller ever gets to inspect the
+      result -- if the byte stream's origin is a network request, an HTTP
+      body, or any other caller-controlled source, a crafted stream using a
+      known gadget chain (commons-collections, etc.) achieves remote code
+      execution (CWE-502). Restrict accepted classes with an
+      ObjectInputFilter / ValidatingObjectInputStream allowlist, or avoid
+      native Java serialization for untrusted data entirely (use JSON with a
+      schema instead).
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - "https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data"
+      validated-against:
+        - "webgoat: true positive, org/owasp/webgoat/lessons/deserialization/InsecureDeserializationTask.java:41-43 -- `ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(Base64.getDecoder().decode(b64token))); ... ois.readObject();` where b64token is the raw `token` POST parameter of WebGoat's own /InsecureDeserialization/task endpoint, no allowlist anywhere in the method"
+        - "webgoat: true positive, org/owasp/webgoat/lessons/deserialization/SerializationHelper.java:20-22 -- `fromString(String s)` decodes base64 caller input straight into `new ObjectInputStream(...).readObject()`, no allowlist; used by the same lesson's server-side helper"
+    patterns:
+      - pattern-either:
+          - pattern: new ObjectInputStream(...).readObject()
+          - pattern: |
+              $OIS = new ObjectInputStream(...);
+              ...
+              $OIS.readObject();
+          - pattern: |
+              try ($T $OIS = new ObjectInputStream(...)) {
+                ...
+                $OIS.readObject();
+                ...
+              }
+
+  - id: toleman-java-insecure-deserialization-readobject-override
+    languages: [java]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A class defines its own readObject(ObjectInputStream) method (the JVM
+      serialization callback). If an instance of this class can be
+      constructed from attacker-supplied bytes (e.g. embedded in a payload
+      handled by another readObject() call elsewhere in the app) and this
+      override acts on the deserialized fields -- executing a command,
+      writing a file, etc. -- before validating them, deserializing the
+      object itself is the exploit trigger (CWE-502). This is a "make a
+      human check what this override does" heuristic: a readObject()
+      override that only calls defaultReadObject() and does field validation
+      is fine; one that reaches a sink is not.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      validated-against:
+        - "webgoat: true positive, org/dummy/insecure/framework/VulnerableTaskHolder.java:44 -- `private void readObject(ObjectInputStream stream) throws Exception` calls `stream.defaultReadObject()` and then, based only on a prefix/length check of the restored `taskAction` field, calls `Runtime.getRuntime().exec(taskAction)` -- the deserialization callback itself is the code-execution gadget, exactly the shape this rule is meant to catch"
+    pattern: private void readObject(ObjectInputStream $STREAM) throws $EXC { ... }

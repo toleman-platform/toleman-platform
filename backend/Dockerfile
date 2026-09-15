@@ -99,7 +99,26 @@ RUN set -eux; \
         arm64) GITLEAKS_ARCH=arm64; GITLEAKS_SHA256="${GITLEAKS_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/gitleaks.tar.gz \
+# --retry-all-errors, on every scanner download below: without it the
+# `--retry 5` beside it is close to decorative. curl only retries a narrow
+# set of transient HTTP responses and timeouts by default; a
+# connection-level failure -- exit 35 (SSL connect error), exit 7
+# (connection refused), a reset mid-handshake -- is not retried at all, so
+# the first blip fails the whole image build. That is not hypothetical: it
+# is what broke #503's build-backend on an unrelated change, with curl
+# exiting 35 fetching gosec while five retries stood by.
+#
+# --connect-timeout bounds the other half of the same problem: a hung
+# connect has no deadline of its own here, so it can sit until the job
+# timeout and produce a failure that looks like a slow runner rather than a
+# network fault.
+#
+# This complements #466 rather than replacing it. That change made a failed
+# download fail loudly instead of silently shipping an image without the
+# scanner; this makes the transient case not fail at all. Both matter: the
+# checksum verification below is what makes retrying safe, because a
+# truncated or substituted download still has to match its pin.
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o /tmp/gitleaks.tar.gz \
         "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GITLEAKS_ARCH}.tar.gz"; \
     echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/gitleaks.tar.gz gitleaks; \
@@ -131,7 +150,7 @@ RUN set -eux; \
         arm64) TRIVY_ASSET="Linux-ARM64"; TRIVY_SHA256="${TRIVY_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/trivy.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o /tmp/trivy.tar.gz \
         "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_ASSET}.tar.gz"; \
     echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/trivy.tar.gz trivy; \
@@ -152,7 +171,7 @@ RUN set -eux; \
         arm64) GOSEC_ARCH=arm64; GOSEC_SHA256="${GOSEC_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/gosec.tar.gz \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o /tmp/gosec.tar.gz \
         "https://github.com/securego/gosec/releases/download/v${GOSEC_VERSION}/gosec_${GOSEC_VERSION}_linux_${GOSEC_ARCH}.tar.gz"; \
     echo "${GOSEC_SHA256}  /tmp/gosec.tar.gz" | sha256sum -c -; \
     tar xz -C /usr/local/bin -f /tmp/gosec.tar.gz gosec; \
@@ -184,7 +203,7 @@ RUN set -eux; \
         arm64) TFSEC_ARCH=arm64; TFSEC_SHA256="${TFSEC_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL --retry 5 --retry-delay 2 -o /usr/local/bin/tfsec \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o /usr/local/bin/tfsec \
         "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/tfsec-linux-${TFSEC_ARCH}"; \
     echo "${TFSEC_SHA256}  /usr/local/bin/tfsec" | sha256sum -c -; \
     chmod +x /usr/local/bin/tfsec; \
@@ -209,7 +228,7 @@ RUN set -eux; \
         arm64) NUCLEI_ARCH=arm64; NUCLEI_SHA256="${NUCLEI_SHA256_ARM64}" ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL --retry 5 --retry-delay 2 -o /tmp/nuclei.zip \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o /tmp/nuclei.zip \
         "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${NUCLEI_ARCH}.zip"; \
     echo "${NUCLEI_SHA256}  /tmp/nuclei.zip" | sha256sum -c -; \
     unzip -o -j /tmp/nuclei.zip nuclei -d /usr/local/bin; \
@@ -238,10 +257,25 @@ RUN set -eux; \
 # and nothing at runtime should be able to rewrite the rules it is judged
 # against. The pruned configs built from it are written to a separate
 # writable cache (runner.REGISTRY_CONFIG_CACHE_DIR).
+# The fetch is retried for the same reason the curl downloads above are:
+# git has no --retry of its own, so a single connection-level blip here
+# fails the image build. Five attempts with a short backoff, then give up
+# loudly -- an image without these rules is one where semgrep-registry
+# raises ToolNotApplicable on every scan, which is honest but useless, so a
+# silent partial success is not an option.
 RUN set -eux; \
     git init /opt/semgrep-rules; \
     git -C /opt/semgrep-rules remote add origin https://github.com/semgrep/semgrep-rules.git; \
-    git -C /opt/semgrep-rules fetch --depth 1 --filter=blob:none origin "${SEMGREP_RULES_COMMIT}"; \
+    for attempt in 1 2 3 4 5; do \
+        if git -C /opt/semgrep-rules fetch --depth 1 --filter=blob:none origin "${SEMGREP_RULES_COMMIT}"; then \
+            break; \
+        fi; \
+        if [ "$attempt" = 5 ]; then \
+            echo "failed to fetch semgrep-rules at ${SEMGREP_RULES_COMMIT} after 5 attempts" >&2; \
+            exit 1; \
+        fi; \
+        sleep 3; \
+    done; \
     git -C /opt/semgrep-rules checkout --detach FETCH_HEAD; \
     chmod -R a+rX /opt/semgrep-rules; \
     test -d /opt/semgrep-rules/python

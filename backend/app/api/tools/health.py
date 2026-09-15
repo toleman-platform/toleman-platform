@@ -129,12 +129,12 @@ def _health_for(tool: str, cmd: list[str]) -> dict:
       container is an absence of evidence, not evidence of absence.
 
     That third case is the defect this function exists for. Reporting it as
-    `installed: False` is how a page titled "tool health" came to show four
-    present tools and fourteen missing ones while all of them were installed
-    and running scans: it published an api-container implementation detail as
-    the platform's tool status. `installed` is therefore tri-state here;
-    callers that treat None as falsy degrade to exactly the old reading,
-    and the frontend renders it as unknown rather than as a red negative.
+    `installed: False` let a page titled "tool health" present an
+    api-container implementation detail as the platform's tool status: a tool
+    installed from the marketplace, running scans on the worker, read as
+    missing here. `installed` is therefore tri-state; callers that treat None
+    as falsy degrade to exactly the old reading, and the frontend renders it
+    as unknown rather than as a red negative.
     """
     merged = _merge_worker_health(tool, _check_one(tool, cmd))
     if merged.get("installed"):
@@ -156,9 +156,12 @@ def tools_health():
     four, because VERSION_COMMANDS above is now derived from the registry
     itself.
 
-    Deliberately uncached, unlike /registry (see issue #221): this endpoint's
-    job is a fresh answer on demand, and "Recheck" has to mean recheck. It is
-    not, however, api-only any more. Probing only the process that serves the
+    The api-side probe is uncached, unlike /registry (see issue #221): this
+    endpoint's job is a fresh answer on demand, and "Recheck" has to mean
+    recheck. The worker's view is necessarily the cached one -- the api
+    process cannot run a subprocess in another container -- so a tool present
+    only on the worker is as fresh as that record. It is not, however,
+    api-only any more. Probing only the process that serves the
     request made every marketplace-installed tool read as missing here, which
     is a true statement about this container and a false one about the
     platform; `_health_for` merges in the worker's view for exactly the

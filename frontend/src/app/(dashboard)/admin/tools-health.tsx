@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "@/lib/api";
+import { api, type ToolHealth } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,20 +9,6 @@ import { Button } from "@/components/ui/button";
 import { AsyncContent } from "@/components/ui/async-content";
 import { Loader2 } from "lucide-react";
 
-// `installed` is tri-state. null is "no process that would run this tool has
-// reported on it" -- the API container cannot see the binary and the scan
-// worker has never reported one either. That is not the same claim as false
-// ("we looked, in the place that matters, and it is not there"), and per
-// AGENTS.md 1.4 it must not render as one. `checked_in` says which process
-// the answer came from: "api", "worker", or null when nothing conclusive
-// answered.
-type Health = {
-  tool: string;
-  installed: boolean | null;
-  version: string | null;
-  response_ms: number | null;
-  checked_in?: string | null;
-};
 
 // Used only for the loading state, so each tool's name (and a "checking"
 // spinner) shows immediately instead of an anonymous skeleton until the
@@ -36,7 +22,7 @@ type Health = {
 const TOOLS = ["semgrep", "gitleaks", "trivy", "gosec"] as const;
 
 export function ToolsHealth() {
-  const asyncState = useAsyncData<Health[]>(() => api.toolsHealth());
+  const asyncState = useAsyncData<ToolHealth[]>(() => api.toolsHealth());
   const { data: health, status, refetch: refresh } = asyncState;
   const checking = status === "loading";
   const byTool = new Map((health ?? []).map((h) => [h.tool, h]));

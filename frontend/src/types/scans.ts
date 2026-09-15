@@ -199,6 +199,11 @@ export type PrGuardrailFinding = {
   ignore_requested_reason: string;
   ignore_reviewed_by: string;
   ignore_reviewed_at: Nullable<string>;
+  // Why a security reviewer turned down the ignore request -- only ever
+  // set once ignore_status is "rejected"; null for every other status,
+  // including rows rejected before this field existed (never an empty
+  // string standing in for "no reason was given").
+  reject_reason: Nullable<string>;
   // (#383) Which same-location group this finding belongs to, decided
   // server-side (see _grouped_findings_out) so the grouping rule lives in one
   // place rather than being reimplemented here and drifting from what the PR

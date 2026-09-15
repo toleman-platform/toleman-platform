@@ -89,6 +89,7 @@ def _finding_out(f: PRGuardrailFinding) -> dict:
         "ignore_requested_reason": f.ignore_requested_reason,
         "ignore_reviewed_by": f.ignore_reviewed_by,
         "ignore_reviewed_at": f.ignore_reviewed_at,
+        "reject_reason": f.reject_reason,
     }
 
 
@@ -577,15 +578,30 @@ def approve_ignore(
 @router.post("/findings/{finding_id}/reject-ignore")
 def reject_ignore(
     finding_id: int,
+    body: dict,
     session: Session = Depends(get_session),
     user: User = Depends(require_security_reviewer),
 ):
+    """Turn down a developer's ignore request. `reason` is required, same as
+    `request_ignore` above and `override_pr_guardrail_scan` below: a
+    rejection is a real security decision, and this product sells the audit
+    trail of *why* those get made, not just that they were made. Unlike
+    approve/revoke, this deliberately does not sync anything back to the
+    main Findings table -- rejecting an ignore request leaves the
+    PRGuardrailFinding (and whatever it's blocking) exactly as it was; the
+    developer can still fix it or ask again."""
     finding = session.get(PRGuardrailFinding, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
+
+    reason = (body or {}).get("reason", "")
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason is required")
+
     finding.ignore_status = IgnoreStatus.REJECTED
     finding.ignore_reviewed_by = user.email
     finding.ignore_reviewed_at = utcnow()
+    finding.reject_reason = reason
     session.add(finding)
     session.commit()
     session.refresh(finding)

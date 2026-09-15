@@ -1447,6 +1447,7 @@ class ScoringSignal(str, Enum):
     INTERNET_EXPOSURE = "internet_exposure"          # Target.label / Target.environment
     BUSINESS_CRITICALITY = "business_criticality"    # Target.criticality_weight + #251 metadata
     FIXABILITY = "fixability"                        # #246: can this be closed today
+    DEPENDENCY_SCOPE = "dependency_scope"            # #500: does the package ship, or only build
 
 
 class ScoringWeight(SQLModel, table=True):

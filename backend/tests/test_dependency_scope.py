@@ -116,3 +116,87 @@ def test_trivy_is_invoked_with_the_package_list():
     assert "--list-all-pkgs" in cmd
     assert "--include-dev-deps" in cmd
     assert cmd[-1] == "/repo"
+
+
+# --- scoring (#500 item 3) -------------------------------------------
+
+from app.core.scoring import (  # noqa: E402
+    BASELINE_WEIGHTS,
+    DEPENDENCY_SCOPE_POINTS,
+    compute_priority_score,
+    compute_score_breakdown,
+)
+from app.models.models import ScoringSignal, Severity  # noqa: E402
+
+
+def _zeroed(**overrides):
+    return {**{s: 0.0 for s in ScoringSignal}, **overrides}
+
+
+def test_the_slot_ships_switched_off():
+    """House convention for every signal #201 added: configuration that
+    exists and works, not behaviour anyone gets without asking. An install
+    that configures nothing must score exactly as it did before."""
+    assert BASELINE_WEIGHTS[ScoringSignal.DEPENDENCY_SCOPE] == 0.0
+
+    with_scope = compute_priority_score(Severity.HIGH, 3, dependency_scope="runtime")
+    without = compute_priority_score(Severity.HIGH, 3)
+
+    assert with_scope == without
+
+
+def test_runtime_scope_lifts_the_score_when_the_weight_is_turned_up():
+    weights = _zeroed(**{ScoringSignal.DEPENDENCY_SCOPE: 1.0})
+
+    runtime = compute_priority_score(Severity.HIGH, 3, dependency_scope="runtime", weights=weights)
+    baseline = compute_priority_score(Severity.HIGH, 3, weights=_zeroed())
+
+    assert runtime - baseline == DEPENDENCY_SCOPE_POINTS
+
+
+def test_development_scope_gets_no_uplift_and_no_penalty():
+    """An uplift for shipping, not a penalty for not shipping. A dev
+    dependency still needs fixing -- a compromised build tool runs with
+    CI's credentials -- it just does not outrank a deployed one."""
+    weights = _zeroed(**{ScoringSignal.DEPENDENCY_SCOPE: 1.0})
+
+    development = compute_priority_score(Severity.HIGH, 3, dependency_scope="development", weights=weights)
+    baseline = compute_priority_score(Severity.HIGH, 3, weights=_zeroed())
+
+    assert development == baseline
+
+
+def test_unknown_scope_is_never_penalised():
+    """The property that makes this safe to switch on with a backlog full
+    of pre-existing findings: every row predating the column reads
+    "unknown", and unknown must land exactly where the base formula put
+    it. Otherwise turning the dial up re-ranks history on data nobody
+    collected."""
+    weights = _zeroed(**{ScoringSignal.DEPENDENCY_SCOPE: 1.0})
+
+    for value in ("unknown", None):
+        scored = compute_priority_score(Severity.HIGH, 3, dependency_scope=value, weights=weights)
+        assert scored == compute_priority_score(Severity.HIGH, 3, weights=_zeroed())
+
+
+def test_the_breakdown_explains_each_state():
+    """The Admin surface shows why a score is what it is, so "established"
+    has to distinguish "we know it is a build dependency" from "we have no
+    idea" -- both contribute zero points but they are not the same claim."""
+    weights = _zeroed(**{ScoringSignal.DEPENDENCY_SCOPE: 1.0})
+
+    def contribution(scope):
+        breakdown = compute_score_breakdown(Severity.HIGH, 3, dependency_scope=scope, weights=weights)
+        return breakdown.contribution(ScoringSignal.DEPENDENCY_SCOPE)
+
+    runtime = contribution("runtime")
+    assert runtime.established is True
+    assert runtime.points == DEPENDENCY_SCOPE_POINTS
+
+    development = contribution("development")
+    assert development.established is True
+    assert development.points == 0
+
+    unknown = contribution("unknown")
+    assert unknown.established is False
+    assert unknown.points == 0

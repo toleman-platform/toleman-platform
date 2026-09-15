@@ -239,6 +239,60 @@ export type FixVersionInfo = {
 };
 
 /**
+ * (#247) One CVE that a package's recommended upgrade actually closes.
+ * `title` is carried alongside the CVE/severity because this is the one
+ * place a fix is described without the underlying Finding row in hand.
+ */
+export type RemediationFix = {
+  cve_id: string;
+  finding_id: number;
+  severity: Finding["severity"];
+  title: string;
+};
+
+/**
+ * (#247) One CVE on the SAME package that the upgrade does NOT close --
+ * no advisory offers it a fix at all. The backend does not send a `title`
+ * here (see backend/app/core/remediation.py's second pass): only render
+ * what it actually reported, never a fabricated label, so a missing title
+ * cannot be papered over with a guess.
+ */
+export type RemediationUnresolved = {
+  cve_id: string;
+  finding_id: number;
+  severity: Finding["severity"];
+};
+
+/**
+ * (#247) One package upgrade recommendation from
+ * GET /api/findings/remediations (backend/app/core/remediation.py's
+ * group_remediations) -- the smallest set of version bumps that would close
+ * the most open, CVE-bearing findings on a target, most findings-closed
+ * first.
+ *
+ * Two properties that module's docstring calls out, both about overstating,
+ * and both the reason this type exists rather than reusing a looser shape:
+ *
+ * - `upgrade_to` is the LOWEST version that clears every CVE in `fixes`,
+ *   never the newest release. Never label it "latest" or "recommended" in
+ *   the UI -- it is specifically the smallest jump the evidence supports,
+ *   and a bigger one reads as a recommendation nobody asked for.
+ * - `unresolved` is what this SAME upgrade leaves behind. Never hide it,
+ *   never fold its length into `fixes_count`, and never render a summary
+ *   like "upgrading fixes this package" when `unresolved` is non-empty --
+ *   "fixes N of M findings" is the only claim the data supports.
+ */
+export type PackageRemediation = {
+  package: string;
+  ecosystem: Nullable<string>;
+  upgrade_to: string;
+  fixes: RemediationFix[];
+  fixes_count: number;
+  unresolved: RemediationUnresolved[];
+  highest_severity: Finding["severity"];
+};
+
+/**
  * CVE/CWE enrichment data sourced from NVD and OSV.dev (independent of AI).
  */
 export type FindingEnrichment = {

@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SeverityChip } from "@/components/ui/severity-chip";
 import { SEVERITY_ORDER } from "@/lib/severity";
-import { Building2, Clock, Timer, Trash2 } from "lucide-react";
+import { Building2, Check, Clock, Timer, Trash2, X } from "lucide-react";
 
 // Issue #70: workspace-scoped SLA (days-to-fix) rules, keyed by severity and
 // optionally a repo Group (#61); null group means "workspace default",
@@ -25,6 +25,102 @@ function isValidDays(raw: string): boolean {
   if (raw.trim() === "") return false;
   const n = Number(raw);
   return Number.isInteger(n) && n >= 1;
+}
+
+// M16: this used to be a bare `<Input defaultValue={r.days_to_fix} onBlur={...}>`
+// that committed to the server the instant the field lost focus -- clicking
+// anywhere else on the page (or tabbing to the delete button) saved whatever
+// was in the box, half-typed or not, with no confirmation and no way back.
+// A day count silently changes every open finding's SLA deadline for this
+// severity/group, so "I was still typing" is not a safe thing for a blur
+// event to interpret as "save this".
+//
+// Fixed the same way every other mutation on this page already is: nothing
+// reaches the server until an explicit action. Enter or the checkmark
+// commits; Escape or the X discards the draft and restores what is actually
+// configured. The Save/Discard pair only appears once the draft differs from
+// the committed value, so an untouched row stays exactly as quiet as before.
+//
+// `key`-remounted from the parent (`${rule.id}-${rule.days_to_fix}`, same
+// trick as risk-scoring.tsx's SignalRow) rather than synced with an effect:
+// a successful save changes `rule.days_to_fix`, which is a fresh committed
+// value this component should adopt outright, not diff against.
+function SlaDaysEditor({
+  rule,
+  label,
+  onSave,
+}: {
+  rule: SlaRule;
+  /** e.g. "Critical in production" -- disambiguates rows sharing a severity across groups. */
+  label: string;
+  onSave: (days: number) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(String(rule.days_to_fix));
+  const [saving, setSaving] = useState(false);
+  const dirty = draft !== String(rule.days_to_fix);
+  const valid = isValidDays(draft);
+
+  function discard() {
+    setDraft(String(rule.days_to_fix));
+  }
+
+  async function commit() {
+    if (!valid || saving) return;
+    setSaving(true);
+    try {
+      await onSave(Number(draft));
+      // No local reset on success: the parent's refetch changes
+      // `rule.days_to_fix`, which remounts this row via `key` and adopts the
+      // new value as the fresh committed draft.
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Input
+        type="number"
+        min={1}
+        aria-label={`Days to fix for ${label}`}
+        className="h-8 w-20 bg-secondary text-xs"
+        value={draft}
+        disabled={saving}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") discard();
+        }}
+      />
+      <span className="text-xs text-muted-foreground">days</span>
+      {dirty && (
+        <>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 text-muted-foreground hover:text-chart-5 disabled:opacity-40"
+            onClick={commit}
+            disabled={!valid || saving}
+            aria-label={`Save days to fix for ${label}`}
+            title={valid ? "Save" : "Days to fix must be a whole number of at least 1"}
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 text-muted-foreground hover:text-destructive"
+            onClick={discard}
+            disabled={saving}
+            aria-label={`Discard unsaved days to fix for ${label}`}
+            title="Discard change"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </>
+      )}
+    </div>
+  );
 }
 
 export function SlaRules() {
@@ -74,7 +170,12 @@ export function SlaRules() {
   }
 
   async function updateDays(rule: SlaRule, newDays: number) {
-    if (!workspaceId || !Number.isFinite(newDays) || newDays < 0) return;
+    // Same floor as `createRule`: a 0-day SLA is breached the instant it's
+    // saved, and `isValidDays` is the one place that rule lives. The old
+    // `newDays < 0` guard here independently allowed exactly that -- this
+    // path did not go through `isValidDays` at all, so the inline editor
+    // could create the zero-day SLA the create form was hardened against.
+    if (!workspaceId || !isValidDays(String(newDays))) return;
     try {
       await api.updateSlaRule(rule.id, { days_to_fix: newDays });
       refetch();
@@ -218,17 +319,12 @@ export function SlaRules() {
                           <span className="text-xs text-muted-foreground">{groupName(r.group_id)}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Input
-                            type="number"
-                            min={0}
-                            className="h-8 w-20 bg-secondary text-xs"
-                            defaultValue={r.days_to_fix}
-                            onBlur={(e) => {
-                              const v = Number(e.target.value);
-                              if (v !== r.days_to_fix) updateDays(r, v);
-                            }}
+                          <SlaDaysEditor
+                            key={`${r.id}-${r.days_to_fix}`}
+                            rule={r}
+                            label={`${r.severity} in ${groupName(r.group_id)}`}
+                            onSave={(newDays) => updateDays(r, newDays)}
                           />
-                          <span className="text-xs text-muted-foreground">days</span>
                           <Button
                             variant="ghost"
                             size="icon"

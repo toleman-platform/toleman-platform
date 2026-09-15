@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { api, GitHubAppInstallation } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWriteAction } from "@/hooks/use-write-action";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AsyncContent } from "@/components/ui/async-content";
+import { AlertBanner } from "@/components/ui/alert-banner";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Github, CheckCircle2, XCircle, Trash2, AlertTriangle } from "lucide-react";
 
@@ -115,8 +117,20 @@ export function ConnectGithubCard() {
   // (issue #210).
   const statusState = useAsyncData<GithubAppStatus>(() => api.githubAppStatus());
   const [org, setOrg] = useState("");
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<string | null>(null);
+  // M24: success and failure used to share one `syncResult: string | null`,
+  // rendered through the same `text-xs text-muted-foreground` paragraph --
+  // "sync failed" got the identical neutral treatment as "3 new repo(s)
+  // added as targets", so a sync that failed read, at a glance, exactly like
+  // one that worked. `useWriteAction` keeps the failure in its own `error`
+  // slot instead of a string this component would have to re-inspect to
+  // classify, and `syncCreated` (a count, not a message) is only ever set on
+  // the success path, so `AlertBanner`'s tone -- critical vs. positive, its
+  // own icon and color -- is picked from *which* state produced it rather
+  // than sniffed out of the string afterward. `null` means "no result to
+  // show yet"; `0` is a real, renderable success ("0 new repos" -- nothing
+  // new since the last sync -- is not the same as no attempt having run).
+  const syncAction = useWriteAction("Sync failed");
+  const [syncCreated, setSyncCreated] = useState<number | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [webhookSecrets, setWebhookSecrets] = useState<Record<number, string>>({});
@@ -175,17 +189,12 @@ export function ConnectGithubCard() {
   }
 
   async function sync() {
-    setSyncing(true);
-    setSyncResult(null);
-    try {
+    setSyncCreated(null);
+    await syncAction.run(async () => {
       const res = await api.githubAppSync();
-      setSyncResult(`${res.created} new repo(s) added as targets`);
+      setSyncCreated(res.created);
       router.refresh();
-    } catch (e) {
-      setSyncResult(e instanceof Error ? e.message : "sync failed");
-    } finally {
-      setSyncing(false);
-    }
+    });
   }
 
   async function saveWebhookSecret(configId: number) {
@@ -373,10 +382,18 @@ export function ConnectGithubCard() {
                     </div>
                   ))}
 
-                  <Button onClick={sync} disabled={syncing} variant="outline" className="self-start">
-                    {syncing ? "Syncing..." : "Sync Repos Now"}
+                  <Button onClick={sync} disabled={syncAction.submitting} variant="outline" className="self-start">
+                    {syncAction.submitting ? "Syncing..." : "Sync Repos Now"}
                   </Button>
-                  {syncResult && <p className="text-xs text-muted-foreground">{syncResult}</p>}
+                  {syncAction.error ? (
+                    <AlertBanner tone="critical" title="Sync failed">
+                      {syncAction.error}
+                    </AlertBanner>
+                  ) : (
+                    syncCreated !== null && (
+                      <AlertBanner tone="positive">{syncCreated} new repo(s) added as targets</AlertBanner>
+                    )
+                  )}
                 </div>
               )}
 

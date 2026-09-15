@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
@@ -8,8 +8,21 @@ import { Button } from "@/components/ui/button";
 import { ScanHealthNotice, ScanProgress } from "@/components/features/scans";
 import { useScanRun } from "@/hooks/features/use-scan-run";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
+import { AlertBanner } from "@/components/ui/alert-banner";
 
 const TOOLS = SCAN_TOOLS;
+
+/**
+ * What the last dispatched scan settled to.
+ *
+ * A discriminated union rather than the single `result` string both callbacks
+ * used to write: with one string, the only thing separating "0 findings
+ * ingested" from "clone timed out" was the words inside it, and both were
+ * printed through the same muted grey paragraph. A scan that failed is not a
+ * quieter version of a scan that worked, and the component can only render
+ * them differently if it can still tell them apart at render time.
+ */
+type ScanOutcome = { kind: "completed"; findingsCount: number } | { kind: "failed"; message: string };
 
 export function ScanButtons({
   targetId,
@@ -30,7 +43,14 @@ export function ScanButtons({
 }) {
   const router = useRouter();
   const [tool, setTool] = useState<string | null>(null);
-  const [result, setResult] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
+  // The tool the outcome on screen belongs to. Deliberately not `tool`, which
+  // is cleared the instant a run settles so the buttons re-enable: sharing one
+  // piece of state meant the failure path's `setTool(null)` unmounted
+  // ScanProgress -- and with it the `aria-live` region that had just been
+  // handed the failure message -- in the same commit that produced the
+  // message. The announcement was destroyed before it could be made.
+  const [outcomeTool, setOutcomeTool] = useState<string | null>(null);
   // (#232) on_demand_scan assignments now actually gate execution
   // server-side (POST /api/scans/run refuses a disabled tool). A button
   // that is clickable but always 400s is worse than no button, so the
@@ -63,13 +83,14 @@ export function ScanButtons({
   // countdown live in useScanRun now, so this component only decides what to
   // show and what to do when the run settles.
   //
-  // `toolRef` rather than the `tool` state: these callbacks are invoked from
-  // the poll timer, which closed over whichever render created it.
-  const toolRef = useRef<string | null>(null);
+  // These callbacks fire from the poll timer, which closed over whichever
+  // render created it, so they record only what the settled run itself
+  // reported. Which tool it was is `outcomeTool`, read at render time, where
+  // it cannot be stale.
   const { activeScans, refresh: refreshActiveScans } = useActiveScans();
   const scan = useScanRun({
     onCompleted: (findingsCount) => {
-      setResult(`${toolRef.current}: ${findingsCount} findings ingested`);
+      setOutcome({ kind: "completed", findingsCount });
       setTool(null);
       refreshActiveScans();
       // New findings only appear on a server render, so the page is
@@ -78,7 +99,7 @@ export function ScanButtons({
       router.refresh();
     },
     onFailed: (message) => {
-      setResult(`${toolRef.current}: ${message}`);
+      setOutcome({ kind: "failed", message });
       setTool(null);
       refreshActiveScans();
     },
@@ -101,8 +122,8 @@ export function ScanButtons({
 
   async function run(nextTool: string) {
     setTool(nextTool);
-    toolRef.current = nextTool;
-    setResult(null);
+    setOutcomeTool(nextTool);
+    setOutcome(null);
     scan.reset();
     try {
       const res = await api.runScan(targetId, nextTool);
@@ -146,14 +167,19 @@ export function ScanButtons({
         ))}
       </div>
 
-      {busy && scan.phase && (
+      {/* Mounted from dispatch until the next dispatch, not until the run
+          settles: its live region has to still be there to carry the settled
+          phase, which is the whole point of announcing it. The failure
+          message is deliberately NOT passed here -- the alert below owns it,
+          and rendering it in both put the same sentence in a polite region
+          and an assertive one, so a screen reader announced it twice. */}
+      {scan.phase && outcomeTool && (
         <div className="flex justify-end">
           <ScanProgress
             phase={scan.phase}
-            tool={tool ?? undefined}
+            tool={outcomeTool}
             elapsedSeconds={scan.elapsedSeconds}
             etaSeconds={scan.etaSeconds}
-            error={scan.error}
           />
         </div>
       )}
@@ -172,7 +198,20 @@ export function ScanButtons({
           looking. */}
       <ScanHealthNotice health={scan.health} note={scan.healthNote} className="text-left" />
 
-      {result && <p className="text-xs text-muted-foreground">{result}</p>}
+      {/* Failure and success are two different shapes, not two strings in one
+          paragraph: `role="alert"` and destructive colour for the one that
+          needs acting on, a polite `role="status"` line for the one that does
+          not. */}
+      {outcome?.kind === "failed" && (
+        <AlertBanner tone="critical" title={`${outcomeTool ?? "Scan"} scan failed`} className="text-left">
+          {outcome.message}
+        </AlertBanner>
+      )}
+      {outcome?.kind === "completed" && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {`${outcomeTool ?? ""}: ${outcome.findingsCount} findings ingested`}
+        </p>
+      )}
     </div>
   );
 }

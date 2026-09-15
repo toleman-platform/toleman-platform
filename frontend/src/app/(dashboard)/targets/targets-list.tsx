@@ -17,7 +17,7 @@ import {
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { ScanProgress } from "@/components/features/scans";
-import { safeHref, timeAgo } from "@/lib/utils";
+import { safeHref } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { GroupBadge } from "@/components/features/targets/group-badge";
@@ -30,7 +30,8 @@ import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pa
 import type { TargetSort } from "./targets-filter-bar";
 import { PowerOff, Rocket, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { parseServerTimestamp, serverDate } from "@/lib/format/date";
+import { parseServerTimestamp } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 import { TargetRowActions } from "./target-row-actions";
 
 function paginateSlice<T>(items: T[], page: number, pageSize: number): { items: T[]; clampedPage: number } {
@@ -178,11 +179,8 @@ function ScanFreshness({ lastScanAt, unknown = false }: { lastScanAt: string | n
   }
   const ageDays = (now - parseServerTimestamp(lastScanAt)) / 86_400_000;
   return (
-    <span
-      className={ageDays > 30 ? "text-chart-3" : undefined}
-      title={`Last scanned ${serverDate(lastScanAt).toLocaleString()}`}
-    >
-      scanned {timeAgo(lastScanAt)}
+    <span className={ageDays > 30 ? "text-chart-3" : undefined}>
+      scanned <Timestamp value={lastScanAt} mode="relative" />
     </span>
   );
 }

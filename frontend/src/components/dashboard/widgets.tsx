@@ -28,6 +28,7 @@ import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { SeverityChip } from "@/components/ui/severity-chip";
+import { Timestamp } from "@/components/ui/timestamp";
 import { LOG_STATUS_COLOR } from "@/components/features/scans/pr-guardrail-log";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
@@ -69,16 +70,6 @@ export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementT
   ai_ml_risk: { label: "AI/ML Risk", icon: Bot },
   guardrail_activity: { label: "Guardrail Activity", icon: GitPullRequest, colSpanClass: "lg:col-span-2" },
 };
-
-// Locale-independent date formatting (YYYY-MM-DD from the ISO timestamp
-// directly, no Date/toLocaleDateString); the server and the browser
-// render this same server component's HTML with potentially different
-// locales/timezone configs, and toLocaleDateString() previously produced
-// a real hydration mismatch (e.g. "13/08/2026" server-side vs
-// "8/13/2026" client-side) that broke the initial page load.
-function formatDate(iso: string): string {
-  return iso.slice(0, 10);
-}
 
 // Widget-scoped, compact variants of the shared empty/error patterns
 // (src/components/ui/empty-state.tsx, error-state.tsx); widgets need
@@ -230,7 +221,8 @@ function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
   if (data.count === 0) {
     return (
       <EmptyState>
-        No findings auto-suppressed since {formatDate(data.since)}. Rules are learned when a finding is triaged{" "}
+        No findings auto-suppressed since <Timestamp value={data.since} mode="date" />. Rules are learned when a
+        finding is triaged{" "}
         &quot;False Positive&quot;, manage them on the{" "}
         <Link href="/admin" className="text-accent-strong underline">
           Admin &rsaquo; False Positive Rules
@@ -243,7 +235,9 @@ function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
     <div className="flex items-center gap-6">
       <div>
         <p className="text-2xl font-bold text-foreground">{data.count}</p>
-        <p className="text-xs text-muted-foreground">Auto-suppressed since {formatDate(data.since)}</p>
+        <p className="text-xs text-muted-foreground">
+          Auto-suppressed since <Timestamp value={data.since} mode="date" />
+        </p>
       </div>
     </div>
   );
@@ -445,7 +439,9 @@ function CveTimelineWidget({ data }: { data: CveTimelineData }) {
               {item.kev_listed && <Badge variant="outline" className="border-destructive/40 bg-destructive/20 text-destructive">KEV</Badge>}
             </div>
             <p className="truncate text-sm text-foreground">{item.title}</p>
-            <p className="text-xs text-muted-foreground">{item.target_name ?? `target #${item.target_id}`} &middot; {formatDate(item.first_seen)}</p>
+            <p className="text-xs text-muted-foreground">
+              {item.target_name ?? `target #${item.target_id}`} &middot; <Timestamp value={item.first_seen} mode="date" />
+            </p>
           </div>
           <SeverityChip severity={item.severity} size="sm" />
         </Link>
@@ -474,7 +470,8 @@ function RecentFindingsWidget({ data }: { data: RecentFindingsData }) {
               className="text-sm text-foreground"
             />
             <p className="truncate text-xs text-muted-foreground">
-              {f.target_name ?? `target #${f.target_id}`} &middot; {f.tool} &middot; {f.file_path} &middot; {formatDate(f.first_seen)}
+              {f.target_name ?? `target #${f.target_id}`} &middot; {f.tool} &middot; {f.file_path} &middot;{" "}
+              <Timestamp value={f.first_seen} mode="date" />
               {f.sla_violated && <span className="ml-1 text-destructive">&middot; SLA violated</span>}
             </p>
           </div>

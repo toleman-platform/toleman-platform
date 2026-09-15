@@ -24,7 +24,7 @@ import { TargetPicker } from "@/components/features/targets";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/ui/page-header";
 import { cn } from "@/lib/utils";
-import { serverDate } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 
 // mcp-server/README.md's own tool table, mirrored here so a user can see
 // what a connected MCP client can actually do without leaving the app.
@@ -276,10 +276,15 @@ function ApiTokensCard() {
                         )}
                       </div>
                       <div className="mt-1 truncate text-xs text-muted-foreground">
-                        {t.token_prefix}… · created {serverDate(t.created_at).toLocaleDateString()}
-                        {t.last_used_at
-                          ? ` · last used ${serverDate(t.last_used_at).toLocaleDateString()}`
-                          : " · never used"}
+                        {t.token_prefix}… · created <Timestamp value={t.created_at} mode="date" />
+                        {t.last_used_at ? (
+                          <>
+                            {" · last used "}
+                            <Timestamp value={t.last_used_at} mode="date" />
+                          </>
+                        ) : (
+                          " · never used"
+                        )}
                       </div>
                     </div>
                     {!t.revoked_at && (

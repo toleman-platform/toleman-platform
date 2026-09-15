@@ -200,3 +200,113 @@ def test_the_breakdown_explains_each_state():
     unknown = contribution("unknown")
     assert unknown.established is False
     assert unknown.points == 0
+
+
+# --- the findings filter (#500 item 4) -------------------------------
+
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy.pool import StaticPool  # noqa: E402
+from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
+
+import app.api.deps as deps_module  # noqa: E402
+from app.api.deps import get_session  # noqa: E402
+from app.core.security import create_session_token, hash_password  # noqa: E402
+from app.main import app as fastapi_app  # noqa: E402
+from app.models.models import (  # noqa: E402
+    Finding,
+    Organization,
+    Target,
+    User,
+    UserRole,
+    Workspace,
+)
+
+
+@pytest.fixture()
+def engine():
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(eng)
+    return eng
+
+
+@pytest.fixture()
+def client(engine):
+    def override():
+        with Session(engine) as session:
+            yield session
+
+    fastapi_app.dependency_overrides[get_session] = override
+    original = deps_module.engine
+    deps_module.engine = engine
+    c = TestClient(fastapi_app)
+    yield c
+    fastapi_app.dependency_overrides.clear()
+    deps_module.engine = original
+
+
+def _seed(engine):
+    with Session(engine) as session:
+        org = Organization(name="Acme")
+        session.add(org)
+        session.commit()
+        session.refresh(org)
+        ws = Workspace(organization_id=org.id, name="ws", api_key="k")
+        session.add(ws)
+        session.commit()
+        session.refresh(ws)
+        t = Target(workspace_id=ws.id, name="t", repo_url="https://github.com/a/b")
+        session.add(t)
+        session.commit()
+        session.refresh(t)
+        for idx, scope in enumerate(("runtime", "development", "unknown")):
+            session.add(Finding(
+                target_id=t.id, dedup_hash=f"h{idx}", tool="trivy",
+                rule_id=f"CVE-{idx}", title=f"f{idx}", file_path="package-lock.json",
+                severity=Severity.HIGH, dependency_scope=scope,
+            ))
+        session.commit()
+        user = User(email="a@example.com", name="A",
+                    password_hash=hash_password("whatever123"), role=UserRole.ADMIN)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return create_session_token(user.id, user.token_version)
+
+
+def test_findings_can_be_filtered_to_runtime_only(client, engine):
+    """The click that makes the scope worth recording: during triage, show
+    only what actually ships."""
+    client.cookies.set("toleman_session", _seed(engine))
+
+    res = client.get("/api/findings?dependency_scope=runtime")
+
+    assert res.status_code == 200
+    scopes = [f["rule_id"] for f in res.json()["items"]]
+    assert scopes == ["CVE-0"]
+
+
+def test_the_filter_is_multi_select(client, engine):
+    """"runtime" plus "unknown" is the honest way to ask "anything that
+    might ship" while the backlog still holds rows that predate the
+    column."""
+    client.cookies.set("toleman_session", _seed(engine))
+
+    res = client.get("/api/findings?dependency_scope=runtime&dependency_scope=unknown")
+
+    assert sorted(f["rule_id"] for f in res.json()["items"]) == ["CVE-0", "CVE-2"]
+
+
+def test_no_filter_returns_every_scope(client, engine):
+    """Absence of the parameter must not imply a default scope."""
+    client.cookies.set("toleman_session", _seed(engine))
+
+    res = client.get("/api/findings")
+
+    assert len(res.json()["items"]) == 3
+
+
+def test_an_unknown_scope_value_is_rejected(client, engine):
+    client.cookies.set("toleman_session", _seed(engine))
+
+    assert client.get("/api/findings?dependency_scope=nonsense").status_code == 422

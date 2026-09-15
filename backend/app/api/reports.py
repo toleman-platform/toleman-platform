@@ -484,6 +484,10 @@ def build_posture_report(
         severity=filters.severity or None,
         tool=filters.tool or None,
         fixability=None,
+        # (#500) Not a report filter: the compliance export is scoped by
+        # date and severity, and adding a dependency dimension it never
+        # offered would change what an existing saved report returns.
+        dependency_scope=None,
         # (#270 x #302) _filtered_findings_query widened these to list[str]
         # when the Findings page gained multi-select facets. The report's own
         # filter is deliberately single-value -- one environment, one owner,

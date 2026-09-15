@@ -48,7 +48,7 @@ from app.models.models import (
 from app.core import target_lifecycle
 from app.core.tool_usage import tools_for_surface
 from app.core.time import utcnow
-from app.scanners import parsers, runner
+from app.scanners import parsers, runner, secret_context
 from app.scanners.discovery import discover_endpoints
 
 logger = logging.getLogger(__name__)
@@ -1885,6 +1885,13 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             # findings and every PR finding looks "net-new" even when it
             # already exists on the base branch.
             item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
+            # (#481) Same annotation the full-scan path applies, so a
+            # finding does not read differently depending on which surface
+            # surfaced it. item["tool"] and not a loop variable: parsed is
+            # one flat list across every guardrail tool, so each item
+            # carries its own -- the same reason compute_dedup_hash below
+            # reads it per finding.
+            secret_context.annotate(item, item["tool"], repo_path)
             item["dedup_hash"] = compute_dedup_hash(
                 rule_id=item["rule_id"],
                 file_path=item["file_path"],

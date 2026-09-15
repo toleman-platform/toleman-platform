@@ -33,12 +33,24 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
   const targetScore = Math.round(normalizedScore);
   const color = grade ? GRADE_COLOR[grade] ?? "var(--color-chart-1)" : "var(--color-muted-foreground)";
 
-  // Geometry: 230° arc.
-  // Center is at (120, 80) inside 240x160.
-  // Radius = 70, stroke = 10.
-  // Top of arc is at y = 5px, endpoints at y = 115px.
-  // Number is centered inside the dome at y ≈ 74px.
-  // Legend badge sits right below the arc at y = 125px (10px clean gap).
+  // Geometry. The svg is 240x125 with a 1:1 viewBox, so every number below is
+  // both an svg user unit and a CSS pixel inside the positioned wrapper, and
+  // the two coordinate systems cannot drift apart.
+  //
+  // Arc: centre (120, 80), r = 70, stroke 10, a 230 degree sweep rotated 155
+  // degrees so the gap sits symmetrically at the bottom. That puts the
+  // painted ring between y = 5 (top of the stroke) and y = 114.6 (outer edge
+  // of the two lower endpoints).
+  //
+  // Optical centring of the numeral: the ring's own bounding box is centred
+  // at y = 59.8, the circle at y = 80. A shape that is open at the bottom
+  // reads as if its middle were above the true circle centre, but not as far
+  // up as the bounding box suggests, so the numeral's ink is centred between
+  // the two, at y = 70. With `leading-none` a digit's ink centre sits
+  // essentially at its own line box centre, so a 42px line box starting at
+  // y = 49 lands the ink where it is wanted. The "out of 100" caption then
+  // hangs below it, which balances the numeral + caption pair back onto the
+  // circle centre without moving the numeral itself off the optical one.
   const radius = 70;
   const strokeWidth = 10;
   const circumference = 2 * Math.PI * radius; // ~439.82
@@ -91,86 +103,78 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
   const strokeDashoffset = hasMounted ? maxArcLength - activeLength : maxArcLength;
 
   return (
-    <div className="flex shrink-0 flex-col items-center justify-center">
-      <div className="relative flex flex-col items-center" style={{ width: 240, height: 160 }}>
-        <svg
-          width={240}
-          height={125}
-          viewBox="0 0 240 125"
-          className="overflow-visible"
-          role="img"
-          aria-label={`Security score ${targetScore} out of 100${grade ? `, grade ${grade}${GRADE_LABELS[grade] ? ` (${GRADE_LABELS[grade]})` : ""}` : ""}`}
-        >
-          {/* Background track (230° arc, rotated 155° so gap is symmetrical at bottom) */}
-          <circle
-            cx={120}
-            cy={80}
-            r={radius}
-            fill="none"
-            stroke="var(--color-secondary)"
-            strokeWidth={strokeWidth}
-            strokeDasharray={`${maxArcLength} ${circumference}`}
-            strokeLinecap="round"
-            transform="rotate(155 120 80)"
-          />
-          {/* Active progress arc animating via hardware-accelerated strokeDashoffset */}
-          <circle
-            cx={120}
-            cy={80}
-            r={radius}
-            fill="none"
-            stroke={color}
-            strokeWidth={strokeWidth}
-            strokeDasharray={`${maxArcLength} ${circumference}`}
-            strokeDashoffset={strokeDashoffset}
-            strokeLinecap="round"
-            transform="rotate(155 120 80)"
-            style={{
-              transition: "stroke-dashoffset 850ms cubic-bezier(0.16, 1, 0.3, 1)",
-            }}
-          />
-        </svg>
+    // No fixed height: the svg and the grade badge define it between them, so
+    // a gauge without a grade does not reserve a band of empty space under
+    // itself. `shrink-0` keeps the fixed-size arc out of flexbox's default
+    // shrink, which would squash the ring away from the numeral.
+    <div className="relative flex w-60 shrink-0 flex-col items-center">
+      <svg
+        width={240}
+        height={125}
+        viewBox="0 0 240 125"
+        className="overflow-visible"
+        role="img"
+        aria-label={`Security score ${targetScore} out of 100${grade ? `, grade ${grade}${GRADE_LABELS[grade] ? ` (${GRADE_LABELS[grade]})` : ""}` : ""}`}
+      >
+        {/* Background track (230 degree arc, rotated 155 so the gap is symmetrical at the bottom) */}
+        <circle
+          cx={120}
+          cy={80}
+          r={radius}
+          fill="none"
+          stroke="var(--color-secondary)"
+          strokeWidth={strokeWidth}
+          strokeDasharray={`${maxArcLength} ${circumference}`}
+          strokeLinecap="round"
+          transform="rotate(155 120 80)"
+        />
+        {/* Active progress arc animating via hardware-accelerated strokeDashoffset */}
+        <circle
+          cx={120}
+          cy={80}
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={`${maxArcLength} ${circumference}`}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          transform="rotate(155 120 80)"
+          style={{
+            transition: "stroke-dashoffset 850ms cubic-bezier(0.16, 1, 0.3, 1)",
+          }}
+        />
+      </svg>
 
-        {/* Centred on the arc's own centre (cy=80), not above it. The previous
-            `top: 24, height: 84` put this block's midpoint at y=66 -- a 14px
-            lift described as optical centring, but read on review as the
-            number sitting closer to the top of the radial bar than its middle.
-            The arc is a 230 degree sweep with its gap at the bottom, so there
-            is a case for a small lift; 14px was too much of one. Anchored to
-            cy with a 4px lift, which keeps the numeral visually inside the
-            dome without detaching it from the ring. */}
-        <div
-          className="absolute inset-x-0 flex flex-col items-center justify-center pointer-events-none"
-          style={{ top: 34, height: 84 }}
-        >
-          <span className="text-4xl sm:text-[44px] font-extrabold font-tabular tracking-tight text-foreground leading-none">
-            {animatedScore}
-          </span>
-          <span className="mt-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground font-tabular">
-            out of 100
-          </span>
-        </div>
-
-        {/* Legend badge positioned close under the arc cradle with clean ~12px spacing */}
-        {grade && (
-          <div className="mt-0.5 flex justify-center">
-            <div
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold tracking-wide shadow-2xs",
-                GRADE_STYLES[grade] ?? "border-border bg-secondary text-foreground"
-              )}
-            >
-              <span>Grade {grade}</span>
-              {GRADE_LABELS[grade] && (
-                <>
-                  <span className="opacity-40">·</span>
-                  <span className="font-medium opacity-90">{GRADE_LABELS[grade]}</span>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+      {/* `top-[49px]` and `text-[42px]` are svg-coordinate geometry, not
+          spacing or type tokens: they are derived in the comment above from
+          the arc's own centre and radius, and they have to move together
+          with it. A single fixed numeral size on purpose -- the arc is a
+          fixed 240px wide at every viewport, so a responsive size here only
+          ever shifted the number off the centre it was aligned to. */}
+      <div className="pointer-events-none absolute inset-x-0 top-[49px] flex flex-col items-center">
+        <span className="font-tabular text-[42px] leading-none font-extrabold tracking-tight text-foreground">
+          {animatedScore}
+        </span>
+        <span className="text-micro mt-0.5 font-tabular text-muted-foreground">out of 100</span>
       </div>
+
+      {grade && (
+        <div
+          className={cn(
+            "mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold tracking-wide",
+            GRADE_STYLES[grade] ?? "border-border bg-secondary text-foreground"
+          )}
+        >
+          <span>Grade {grade}</span>
+          {GRADE_LABELS[grade] && (
+            <>
+              <span className="opacity-40">&middot;</span>
+              <span className="font-medium opacity-90">{GRADE_LABELS[grade]}</span>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

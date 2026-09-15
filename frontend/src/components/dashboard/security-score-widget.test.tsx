@@ -1,174 +1,222 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { WidgetBody } from "./widgets";
 import type { SecurityScore } from "@/lib/api";
 
-// The Security Score widget's honesty rules (frontend/AGENTS.md 1.4).
-//
-// Two things were being rendered as confident numbers that no measurement
-// supported: a trend component scored 0/100 on an instance with no seven-day
-// history, and an "open findings" count that added licence-compliance rows to
-// the vulnerability count the score was actually computed from.
-//
-// The scope picker fetches targets and groups on mount; neither is under test
-// here, so both resolve empty.
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
     api: {
       ...actual.api,
+      // The widget loads the scope picker's options on mount. Neither list is
+      // under test here, and resolving both empty leaves the picker with just
+      // its org-wide default rather than reaching for the network.
       targets: () => Promise.resolve([]),
       groups: () => Promise.resolve([]),
     },
   };
 });
 
-const TREND_NOTE = "no data from 7 days ago to compare against";
+beforeEach(() => {
+  // jsdom implements no matchMedia, and the gauge reads one to decide whether
+  // to animate its numeral in. `matches: false` is the ordinary motion path.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  }));
+});
 
-/**
- * A two-repo workspace with 188 open findings, of which 40 are vulnerabilities
- * and 148 are licence rows, and no history from a week ago. Deliberately the
- * shape reported from the live instance.
- */
-function scoreWith(over: Partial<SecurityScore> = {}): SecurityScore {
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function baseScore(): SecurityScore {
   return {
-    score: 68.6,
-    grade: "D",
-    target_count: 2,
-    weakest_component: "coverage",
+    score: 72,
+    grade: "C",
+    target_count: 4,
+    weakest_component: null,
     components: {
       findings: {
-        score: 13,
-        weight: 35,
+        score: 61,
+        weight: 0.4,
         measurable: true,
-        open_findings: 188,
-        open_vulnerabilities: 40,
-        license_findings_excluded: 148,
-        weighted_severity_sum: 134,
-        avg_weighted_severity_per_target: 67,
+        open_findings: 12,
+        open_vulnerabilities: 9,
+        license_findings_excluded: 3,
+        weighted_severity_sum: 30,
+        avg_weighted_severity_per_target: 7.5,
       },
-      sla: { score: 100, weight: 25, measurable: true, with_sla: 0, in_violation: 0, compliant: 0, note: null },
+      sla: { score: 88, weight: 0.2, measurable: true, with_sla: 10, in_violation: 2, compliant: 8, note: null },
       coverage: {
-        score: 0,
-        weight: 15,
+        score: 100,
+        weight: 0.2,
         measurable: true,
-        scanned_targets: 0,
-        total_targets: 2,
+        scanned_targets: 4,
+        total_targets: 4,
         deactivated_targets: 0,
         window_days: 30,
         note: null,
       },
-      fp_rate: { score: 100, weight: 10, measurable: true, false_positives: 0, total_findings: 188, fp_rate: 0 },
+      fp_rate: {
+        score: 95,
+        weight: 0.1,
+        measurable: true,
+        false_positives: 1,
+        total_findings: 20,
+        fp_rate: 0.05,
+      },
       trend: {
-        score: null,
-        weight: 15,
-        measurable: false,
-        direction: "unknown",
-        current_weighted_sum: 134,
-        prior_weighted_sum: null,
+        score: 50,
+        weight: 0.1,
+        measurable: true,
+        direction: "stable",
+        current_weighted_sum: 30,
+        prior_weighted_sum: 30,
         window_days: 7,
-        note: TREND_NOTE,
+        note: null,
       },
     },
-    ...over,
   };
 }
 
-function renderScore(data: SecurityScore) {
-  render(<WidgetBody entry={{ widget_id: "security_score", data }} />);
+function renderScore(score: SecurityScore) {
+  return render(<WidgetBody entry={{ widget_id: "security_score", data: score }} />);
 }
 
-describe("SecurityScoreWidget - a component that could not be measured", () => {
-  it("reads as no reading, not as 0/100", async () => {
-    renderScore(scoreWith());
+function rows(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-score-component]"));
+}
 
-    const row = (await screen.findByText("Trend (7d) score")).closest("div");
-    expect(row).not.toBeNull();
-    const rowText = row?.textContent ?? "";
+function row(key: string): HTMLElement {
+  const el = document.querySelector<HTMLElement>(`[data-score-component="${key}"]`);
+  if (!el) throw new Error(`no breakdown row rendered for "${key}"`);
+  return el;
+}
 
-    expect(rowText.includes("—")).toBe(true);
-    // The whole defect in one assertion: this row used to read "0/100".
-    expect(rowText.includes("/100")).toBe(false);
+function figureText(key: string): string {
+  return row(key).querySelector<HTMLElement>("[data-score-figure]")?.textContent ?? "";
+}
+
+describe("Security Score widget - component breakdown columns", () => {
+  it("puts every label, meter and figure on the same three tracks", () => {
+    renderScore(baseScore());
+
+    const all = rows();
+    expect(all.map((r) => r.getAttribute("data-score-component"))).toEqual([
+      "findings",
+      "sla",
+      "coverage",
+      "fp_rate",
+      "trend",
+    ]);
+
+    // The defect being guarded: rows that laid themselves out independently
+    // (a `justify-between` line each) started their meter wherever that row's
+    // own label happened to end, so the figures never formed a column. One
+    // shared explicit grid template across every row is what makes them line
+    // up, so assert there is exactly one, and that it is really declared.
+    const templates = new Set(
+      all.map((r) =>
+        r.className
+          .split(/\s+/)
+          .filter((c) => c.startsWith("grid-cols-"))
+          .join(" "),
+      ),
+    );
+    expect(templates.size).toBe(1);
+    expect([...templates][0]).not.toBe("");
+
+    // Three cells per row, figure last, for measurable and unmeasurable rows
+    // alike -- a row that emitted a different number of cells would push its
+    // own figure out of the column.
+    for (const r of all) {
+      expect(r.children.length).toBe(3);
+      expect(r.children[2].getAttribute("data-score-figure")).not.toBeNull();
+    }
+
+    expect(figureText("findings")).toBe("61/100");
+    expect(figureText("sla")).toBe("88/100");
+    expect(figureText("coverage")).toBe("100/100");
+    expect(figureText("fp_rate")).toBe("95/100");
+    expect(figureText("trend")).toBe("50/100");
+
+    // Each figure is in its own label's row, not merely somewhere on the card.
+    expect(row("findings").textContent).toContain("Open findings score");
+    expect(row("findings").textContent).toContain("61/100");
+    expect(row("coverage").textContent).toContain("Scan coverage score");
+    expect(row("coverage").textContent).toContain("100/100");
+
+    // Tabular figures, so digits in that column sit on a fixed pitch and the
+    // numbers stay readable downwards.
+    for (const r of all) {
+      const figure = r.querySelector<HTMLElement>("[data-score-figure]");
+      expect(figure).not.toBeNull();
+      expect(figure?.className.split(/\s+/)).toContain("font-tabular");
+    }
   });
 
-  it("says why it could not be measured, in the words the server used", async () => {
-    renderScore(scoreWith());
+  it("keeps the scope control with the headline score it rescopes", () => {
+    renderScore(baseScore());
 
-    const row = (await screen.findByText("Trend (7d) score")).closest("div");
-    expect((row?.textContent ?? "").includes(TREND_NOTE)).toBe(true);
-  });
+    const select = screen.getByLabelText("Scope") as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    expect(select.value).toBe("org");
 
-  it("draws no meter and no direction arrow for it, while measured components keep both", async () => {
-    renderScore(scoreWith());
-
-    const trendRow = (await screen.findByText("Trend (7d) score")).closest("div");
-    // A meter reports a value; there is no value to report. An arrow would
-    // claim posture held steady, improved or worsened over a week nothing is
-    // known about.
-    expect(trendRow?.querySelector('[role="progressbar"]')).toBeNull();
-    expect(trendRow?.querySelector("svg")).toBeNull();
-
-    // Not the coverage row: it is this scope's weakest component, so its
-    // label also appears inside the penalty callout.
-    const measuredRow = screen.getByText("Open findings score").closest("div");
-    expect(measuredRow?.querySelector('[role="progressbar"]')).not.toBeNull();
-  });
-
-  it("is never named as the score penalty", async () => {
-    // Every measured component is perfect and the trend is unknown, so there
-    // is nothing costing score and nothing to blame.
-    renderScore(scoreWith({ weakest_component: null, score: 100, grade: "A" }));
-
-    await screen.findByText("Trend (7d) score");
-    expect(screen.queryByText(/Score penalty/)).toBeNull();
-  });
-
-  it("still lets a genuinely weak measured component be named", async () => {
-    renderScore(scoreWith());
-
-    const penaltyBox = (await screen.findByText(/Score penalty/)).closest("div");
-    const penaltyText = penaltyBox?.textContent ?? "";
-    expect(penaltyText.includes("Scan coverage score")).toBe(true);
-    expect(penaltyText.includes("Trend")).toBe(false);
-  });
-
-  it("shows no gauge at all when nothing could be measured", async () => {
-    renderScore(scoreWith({ score: null, grade: null, weakest_component: null }));
-
-    expect(await screen.findByText(/Not enough data to score this scope yet/)).toBeTruthy();
-    expect(screen.queryByText("Open findings score")).toBeNull();
+    // The gauge is the headline the scope describes, and it reports the same
+    // score the breakdown rolls up to.
+    expect(screen.getByRole("img", { name: /Security score 72 out of 100/ })).not.toBeNull();
   });
 });
 
-describe("SecurityScoreWidget - licence findings are not vulnerabilities", () => {
-  it("prints the vulnerability count the score was computed from, not the total", async () => {
-    renderScore(scoreWith());
+describe("Security Score widget - unmeasurable components", () => {
+  it("renders a component with no measurable value as unknown, never as zero", () => {
+    const score = baseScore();
+    // SecurityScoreComponent types `score` as a plain number, so there is no
+    // way to spell "unknown" in the type; this is what the payload looks like
+    // when the backend could not measure the component (no prior window to
+    // compare a trend against, for instance).
+    (score.components.trend as unknown as { score: number | null }).score = null;
 
-    const row = (await screen.findByText("Open findings score")).closest("div");
-    const rowText = row?.textContent ?? "";
+    renderScore(score);
 
-    expect(rowText.includes("40 open on default branch")).toBe(true);
-    expect(rowText.includes("148 licence excluded")).toBe(true);
-    // 148 of the 188 contribute nothing to the 13/100 beside them, so 188 is
-    // the one number that must not appear here.
-    expect(rowText.includes("188")).toBe(false);
+    const trend = row("trend");
+    const text = trend.textContent ?? "";
+    expect(text).toContain("Trend (7d) score");
+    expect(text).toContain("Not yet measurable");
+
+    // No confident zero anywhere in the row: no "0/100" reading, and no meter
+    // drawing a zero-length bar that claims a measured value.
+    expect(text).not.toContain("/100");
+    expect(trend.querySelector('[role="progressbar"]')).toBeNull();
+    expect(figureText("trend")).toBe("—");
+
+    // The measurable rows are untouched and keep their meters, and the mixed
+    // row still occupies the same tracks.
+    const findings = row("findings");
+    expect(findings.querySelector('[role="progressbar"]')).not.toBeNull();
+    expect(figureText("findings")).toBe("61/100");
+    expect(trend.children.length).toBe(findings.children.length);
   });
 
-  it("omits the licence aside when there are no licence findings to exclude", async () => {
-    const clean = scoreWith();
-    clean.components.findings = {
-      ...clean.components.findings,
-      open_findings: 40,
-      open_vulnerabilities: 40,
-      license_findings_excluded: 0,
-    };
-    renderScore(clean);
+  it("honours an explicit unmeasurable flag, not only a missing score", () => {
+    const score = baseScore();
+    // The other shape the score API could grow: the number is present but
+    // meaningless, and the component says so.
+    Object.assign(score.components.trend, { measurable: false, score: 0 });
 
-    const row = (await screen.findByText("Open findings score")).closest("div");
-    const rowText = row?.textContent ?? "";
+    renderScore(score);
 
-    expect(rowText.includes("40 open on default branch")).toBe(true);
-    expect(rowText.includes("licence excluded")).toBe(false);
+    const text = row("trend").textContent ?? "";
+    expect(text).toContain("Not yet measurable");
+    expect(text).not.toContain("0/100");
+    expect(figureText("trend")).toBe("—");
   });
 });

@@ -15,24 +15,38 @@ export type Summary = {
 
 /**
  * Individual score dimension within the composite security score.
+ *
+ * `measurable` is false when this platform had no data to compute the
+ * dimension from. Such a component carries `score: null` and is left out of
+ * the composite entirely (the remaining weights are renormalised server
+ * side) rather than counted as a zero, which would be indistinguishable
+ * from a measured worst case.
  */
 export type SecurityScoreComponent = {
-  score: number;
+  score: Nullable<number>;
   weight: number;
+  measurable: boolean;
   [key: string]: unknown;
 };
 
 /**
  * Composite 0-100 security health score, letter grade, and breakdown.
+ *
+ * `score` is null only if no dimension at all could be measured; with no
+ * targets in scope it is 0 and `grade` is null.
  */
 export type SecurityScore = {
-  score: number;
+  score: Nullable<number>;
   grade: Nullable<"A" | "B" | "C" | "D" | "F">;
   target_count: number;
   weakest_component: Nullable<"findings" | "sla" | "coverage" | "fp_rate" | "trend">;
   components: {
     findings: SecurityScoreComponent & {
+      /** Every open default-branch finding, licence rows included. */
       open_findings: number;
+      /** The subset that carries weight in this dimension's score. */
+      open_vulnerabilities: number;
+      license_findings_excluded: number;
       weighted_severity_sum: number;
       avg_weighted_severity_per_target: number;
     };
@@ -60,11 +74,15 @@ export type SecurityScore = {
       total_findings: number;
       fp_rate: number;
     };
+    // `direction` is "unknown" and `prior_weighted_sum` null when there is
+    // no observation from `window_days` ago to compare against; `note` then
+    // says so in the server's own words.
     trend: SecurityScoreComponent & {
-      direction: "improving" | "stable" | "worsening";
+      direction: "improving" | "stable" | "worsening" | "unknown";
       current_weighted_sum: number;
-      prior_weighted_sum: number;
+      prior_weighted_sum: Nullable<number>;
       window_days: number;
+      note: Nullable<string>;
     };
   };
 };
@@ -110,12 +128,19 @@ export type DashboardLayoutOut = {
   widgets: LayoutWidget[];
 };
 
+/**
+ * Counts behind the KPI cards. `open`, `critical`, `high` and `mitigated`
+ * count vulnerabilities only; licence-compliance findings are reported
+ * separately as `license_open` so the two are never added together.
+ */
 export type KpiCardsData = {
   open: number;
   critical: number;
   high: number;
   mitigated: number;
   targets: number;
+  /** Optional: absent from a payload served by a backend predating it. */
+  license_open?: number;
 };
 
 export type FindingsTrendData = {

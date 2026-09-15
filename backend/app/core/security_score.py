@@ -52,7 +52,16 @@ Every input is queried live from real data; no fabricated/mocked inputs
     findings_score, so a worsening trend and a dropping findings_score
     can't tell contradictory stories about the same findings. Stable or
     improving -> 100; worsening -> penalized proportionally to the percent
-    increase, capped at 0.
+    increase, capped at 0. On a scope this platform had not yet observed
+    TREND_WINDOW_DAYS ago there is no comparison point at all, and the
+    component reports itself *unmeasurable* rather than scoring 0 (see
+    `_trend_score`).
+
+Every component reports a `measurable` flag. A component that could not be
+measured carries `score: None` and drops out of the weighted total
+entirely, which is then renormalized over the components that *were*
+measured -- rather than being scored 0, which would be indistinguishable
+from a measured worst case. See `compute_security_score`.
 
 Combined via the *_WEIGHT constants (sum to 100) into a 0-100 composite,
 then a letter grade via GRADE_THRESHOLDS (documented below).
@@ -112,19 +121,26 @@ FINDINGS_SCORE_HALF_LIFE = 10.0
 # Per-category multiplier on a finding's contribution to findings_score/
 # trend_score: severity already says how bad a finding is *within* its
 # category, this says how much a category's worst case should move a
-# security *posture* score at all. Deliberately narrow -- only License is
-# called out, at zero weight, because it's a legal/compliance signal (a
+# security *posture* score at all. Deliberately narrow -- only the
+# compliance/legal categories are called out, at zero weight, because a
 # scanner can grade a copyleft license "Critical" for licensing reasons
-# that have nothing to do with exploitability) rather than a security risk
+# that have nothing to do with exploitability, which is not a security risk
 # in the same sense as an exploitable code vuln, a leaked secret, or a
 # vulnerable dependency -- it should never move this score, not just move
 # it less. Every other category (including ones added to the registry
 # later) defaults to DEFAULT_CATEGORY_RISK_WEIGHT via `.get`, so severity
 # alone keeps doing the differentiating work there, unchanged from before
 # this multiplier existed.
-CATEGORY_RISK_WEIGHT = {
-    "License": 0.0,
-}
+#
+# Derived from tool_registry.NON_VULNERABILITY_CATEGORIES rather than
+# restating "License" a second time: that frozenset is what every other
+# "open vulnerability" surface filters on (dashboard stats/posture/summary,
+# targets summary, SLA compliance, the Findings page's Needs-action queue),
+# and two hand-maintained copies of the same list are how the score comes
+# to disagree with the counts printed beside it. A category needing a
+# partial rather than zero weight can still be added to this dict
+# explicitly.
+CATEGORY_RISK_WEIGHT: dict[str, float] = {category: 0.0 for category in NON_VULNERABILITY_CATEGORIES}
 DEFAULT_CATEGORY_RISK_WEIGHT = 1.0
 
 # "Scanned recently" window for coverage.
@@ -132,6 +148,12 @@ COVERAGE_WINDOW_DAYS = 30
 
 # Week-over-week trend comparison window.
 TREND_WINDOW_DAYS = 7
+
+# What the trend component says when it has no comparison point. Kept next
+# to the window it refers to and returned as the component's `note`, so the
+# dashboard renders the server's own wording rather than restating it (the
+# coverage component's note works the same way).
+TREND_UNMEASURABLE_NOTE = f"no data from {TREND_WINDOW_DAYS} days ago to compare against"
 
 FINDINGS_WEIGHT = 35
 SLA_WEIGHT = 25
@@ -187,10 +209,26 @@ def _findings_score(open_default_branch: list[Finding], targets_by_id: dict[int,
     weighted_sum = sum(_finding_risk_weight(f, targets_by_id.get(f.target_id)) for f in open_default_branch)
     avg_per_target = weighted_sum / max(1, total_criticality)
     score = 100.0 * FINDINGS_SCORE_HALF_LIFE / (avg_per_target + FINDINGS_SCORE_HALF_LIFE)
+
+    # `open_findings` is every open default-branch finding, License rows
+    # included; `open_vulnerabilities` is the subset that actually carries
+    # weight in the number above. Both are reported because only one of them
+    # explains this score, and it is not the bigger one: a workspace whose
+    # 188 open findings are 40 vulnerabilities and 148 license rows was
+    # being shown "13/100 (188 open on default branch)", which reads as
+    # though 188 findings produced the 13 when 148 of them contributed
+    # exactly nothing. The count printed next to a score has to be the count
+    # the score was computed from.
+    license_excluded = sum(
+        1 for f in open_default_branch if tool_category(f.tool) in NON_VULNERABILITY_CATEGORIES
+    )
     return {
         "score": round(score, 1),
         "weight": FINDINGS_WEIGHT,
+        "measurable": True,
         "open_findings": len(open_default_branch),
+        "open_vulnerabilities": len(open_default_branch) - license_excluded,
+        "license_findings_excluded": license_excluded,
         "weighted_severity_sum": round(weighted_sum, 2),
         "avg_weighted_severity_per_target": round(avg_per_target, 2),
     }
@@ -224,6 +262,7 @@ def _sla_score(session: Session, open_default_branch: list[Finding]) -> dict:
     return {
         "score": round(score, 1),
         "weight": SLA_WEIGHT,
+        "measurable": True,
         "with_sla": with_sla,
         "in_violation": in_violation,
         "compliant": with_sla - in_violation,
@@ -250,7 +289,8 @@ def _coverage_score(session: Session, target_ids: list[int], targets_by_id: dict
     """
     if not target_ids:
         return {
-            "score": 0.0, "weight": COVERAGE_WEIGHT, "scanned_targets": 0, "total_targets": 0,
+            "score": 0.0, "weight": COVERAGE_WEIGHT, "measurable": True,
+            "scanned_targets": 0, "total_targets": 0,
             "deactivated_targets": 0, "window_days": COVERAGE_WINDOW_DAYS, "note": None,
         }
 
@@ -271,7 +311,8 @@ def _coverage_score(session: Session, target_ids: list[int], targets_by_id: dict
         # neutral-100 matches _sla_score's own "nothing in scope" handling
         # rather than inventing a third convention.
         return {
-            "score": 100.0, "weight": COVERAGE_WEIGHT, "scanned_targets": 0, "total_targets": 0,
+            "score": 100.0, "weight": COVERAGE_WEIGHT, "measurable": True,
+            "scanned_targets": 0, "total_targets": 0,
             "deactivated_targets": deactivated, "window_days": COVERAGE_WINDOW_DAYS,
             "note": "every target in scope is deactivated, treated as neutral 100",
         }
@@ -288,6 +329,7 @@ def _coverage_score(session: Session, target_ids: list[int], targets_by_id: dict
     return {
         "score": round(score, 1),
         "weight": COVERAGE_WEIGHT,
+        "measurable": True,
         "scanned_targets": scanned,
         "total_targets": total,
         "deactivated_targets": deactivated,
@@ -302,7 +344,10 @@ def _coverage_score(session: Session, target_ids: list[int], targets_by_id: dict
 
 def _fp_rate_score(session: Session, target_ids: list[int]) -> dict:
     if not target_ids:
-        return {"score": 100.0, "weight": FP_WEIGHT, "false_positives": 0, "total_findings": 0, "fp_rate": 0.0}
+        return {
+            "score": 100.0, "weight": FP_WEIGHT, "measurable": True,
+            "false_positives": 0, "total_findings": 0, "fp_rate": 0.0,
+        }
 
     total = session.exec(select(Finding).where(Finding.target_id.in_(target_ids))).all()
     total_count = len(total)
@@ -312,6 +357,7 @@ def _fp_rate_score(session: Session, target_ids: list[int]) -> dict:
     return {
         "score": round(score, 1),
         "weight": FP_WEIGHT,
+        "measurable": True,
         "false_positives": fp_count,
         "total_findings": total_count,
         "fp_rate": round(fp_rate, 4),
@@ -355,9 +401,51 @@ def _weighted_open_sum_at(
     return total
 
 
+def _observed_before(session: Session, target_ids: list[int], findings: list[Finding], as_of: datetime) -> bool:
+    """Whether this platform had actually looked at this scope on or before
+    `as_of` -- the precondition for `_weighted_open_sum_at(as_of, ...)`
+    being a measurement rather than a placeholder.
+
+    Two independent kinds of evidence, either sufficient:
+
+      * a Finding whose `first_seen` is at or before `as_of` (something was
+        definitely known about this scope by then), and
+      * a Scan started at or before `as_of` (this scope was looked at by
+        then, whatever the scan found, including nothing). Any tool, any
+        branch, any status, the same "has this been scanned at all"
+        convention `_coverage_score` uses.
+
+    Either alone settles it, and both checks are kept because neither alone
+    covers the estate: a repo scanned clean a month ago has no old findings
+    but a genuine baseline of zero, and findings pushed through
+    `POST /api/ingest/{target_id}` by a CI pipeline arrive without this
+    platform having run a Scan of its own.
+    """
+    if any(f.first_seen <= as_of for f in findings):
+        return True
+    return bool(
+        session.exec(
+            select(Scan.id).where(Scan.target_id.in_(target_ids), Scan.started_at <= as_of).limit(1)
+        ).all()
+    )
+
+
+def _unmeasurable_trend(current_sum: float) -> dict:
+    return {
+        "score": None,
+        "weight": TREND_WEIGHT,
+        "measurable": False,
+        "direction": "unknown",
+        "current_weighted_sum": round(current_sum, 1),
+        "prior_weighted_sum": None,
+        "window_days": TREND_WINDOW_DAYS,
+        "note": TREND_UNMEASURABLE_NOTE,
+    }
+
+
 def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[int, Target]) -> dict:
     if not target_ids:
-        return {"score": 100.0, "weight": TREND_WEIGHT, "direction": "stable", "current_weighted_sum": 0.0, "prior_weighted_sum": 0.0, "window_days": TREND_WINDOW_DAYS}
+        return _unmeasurable_trend(0.0)
 
     # All findings that could plausibly have been open within the trend
     # window (created before now, i.e. all of them; first_seen is always
@@ -375,6 +463,19 @@ def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[in
     prior_as_of = now - timedelta(days=TREND_WINDOW_DAYS)
 
     current_sum = _weighted_open_sum_at(now, findings, logs_by_finding, targets_by_id)
+
+    # `_weighted_open_sum_at` returns 0.0 both for "nothing was open then"
+    # and for "this platform had never looked", and those are not the same
+    # claim. On an instance younger than the window every finding's
+    # first_seen is inside it, so the prior sum came back 0, every finding
+    # open today read as a week-on-week increase of several thousand
+    # percent, and the component reported a flat 0/100 with a red "Score
+    # penalty" callout naming a trend nobody had the history to compute.
+    # A measurement that cannot be taken is unknown, not zero, so it drops
+    # out of the weighting instead (see compute_security_score).
+    if not _observed_before(session, target_ids, findings, prior_as_of):
+        return _unmeasurable_trend(current_sum)
+
     prior_sum = _weighted_open_sum_at(prior_as_of, findings, logs_by_finding, targets_by_id)
 
     if current_sum <= prior_sum:
@@ -388,10 +489,12 @@ def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[in
     return {
         "score": round(score, 1),
         "weight": TREND_WEIGHT,
+        "measurable": True,
         "direction": direction,
         "current_weighted_sum": round(current_sum, 1),
         "prior_weighted_sum": round(prior_sum, 1),
         "window_days": TREND_WINDOW_DAYS,
+        "note": None,
     }
 
 
@@ -401,8 +504,13 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     checks happen at the API layer, same separation as the rest of
     app.core). `target_ids` may be empty (e.g. a group with no targets, or a
     caller with no accessible workspaces); every component degrades to a
-    real, documented neutral/zero value rather than raising or fabricating
-    a number."""
+    real, documented neutral value or to an explicit "unmeasurable", rather
+    than raising or fabricating a number.
+
+    Each component carries `measurable`. The composite is the weighted mean
+    over the measurable ones only, renormalized by their summed weight, so
+    an unmeasurable component is genuinely absent from the total rather than
+    counted as a zero."""
     targets_by_id: dict[int, Target] = {}
     if target_ids:
         # (#273) Soft-deleted targets don't resolve, so they fall out of
@@ -429,10 +537,27 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
         "trend": _trend_score(session, target_ids, targets_by_id),
     }
 
+    # A component that could not be measured contributes neither a score nor
+    # its weight; the remaining weights are renormalized so they still sum to
+    # the whole. Scoring an unmeasurable component 0 and dividing by the full
+    # 100 would charge the composite for a measurement nobody took -- on a
+    # fresh instance that silently capped the total at 85 and turned a clean
+    # estate into a Grade B. Renormalizing keeps a perfect-but-unmeasurable
+    # scope at 100 and a half-bad one at exactly the number its measured
+    # components say.
+    measured = [c for c in components.values() if c["measurable"]]
+    measured_weight = sum(c["weight"] for c in measured)
+
     if not target_ids:
         composite = 0.0
+    elif measured_weight == 0:
+        # Not reachable today (the four present-tense components are always
+        # computable for a non-empty scope), but the alternative to this
+        # branch is a ZeroDivisionError or an invented number, and `None`
+        # is what the rest of this module already means by "unknown".
+        composite = None
     else:
-        composite = sum(c["score"] * c["weight"] for c in components.values()) / 100.0
+        composite = sum(c["score"] * c["weight"] for c in measured) / measured_weight
 
     # A penalty has to name something that is actually costing score. An
     # unconditional min() always returns a component, so an instance where
@@ -446,15 +571,21 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     # Ties are left to dict order deliberately. When several components share
     # the lowest score they are equally responsible, and picking a different
     # one per request would make the callout flicker between them on reload.
+    #
+    # Unmeasured components are not candidates: they are not costing score
+    # (they were renormalized out), and naming one would send a reader off to
+    # fix a number this platform never produced.
     weakest = None
     if target_ids:
-        candidate, detail = min(components.items(), key=lambda kv: kv[1]["score"])
-        if detail["score"] < 100:
-            weakest = candidate
+        measured_items = [(key, detail) for key, detail in components.items() if detail["measurable"]]
+        if measured_items:
+            candidate, detail = min(measured_items, key=lambda kv: kv[1]["score"])
+            if detail["score"] < 100:
+                weakest = candidate
 
     return {
-        "score": round(composite, 1),
-        "grade": _grade(composite) if target_ids else None,
+        "score": round(composite, 1) if composite is not None else None,
+        "grade": _grade(composite) if target_ids and composite is not None else None,
         "target_count": len(target_ids),
         "weakest_component": weakest,
         "components": components,

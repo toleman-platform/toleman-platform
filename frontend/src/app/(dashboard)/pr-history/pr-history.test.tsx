@@ -112,6 +112,71 @@ const MIXED = {
   ],
 };
 
+describe("PR list paging", () => {
+  // Twelve tests covered this page's scan verdicts and state filter and not
+  // one covered the list mechanics, so the page shipped with only a top
+  // pager -- which hides itself at a single page -- and no bottom one, while
+  // every other paginated list in the app renders both.
+  function manyPrs(n: number) {
+    return Array.from({ length: n }, (_, i) => pr({ number: i + 1, title: `pr ${i + 1}` }));
+  }
+
+  it("pages a list longer than one page instead of rendering all of it", async () => {
+    prsByState({ open: manyPrs(60) });
+
+    render(<PrHistoryPage />);
+    await screen.findByText(/#1 pr 1/);
+
+    // 25 is the default page size, so the 26th row belongs to page two.
+    expect(screen.queryByText(/#25 pr 25/)).not.toBeNull();
+    expect(screen.queryByText(/#26 pr 26/)).toBeNull();
+  });
+
+  it("puts a pager below the rows, not only above them", async () => {
+    prsByState({ open: manyPrs(60) });
+
+    render(<PrHistoryPage />);
+    await screen.findByText(/#1 pr 1/);
+
+    // Two controls: one before the rows and one after. A reader who has
+    // scrolled a full page should not have to go back to the top to advance.
+    expect(screen.getAllByRole("button", { name: /next/i }).length).toBe(2);
+  });
+
+  it("still offers a pager when everything fits on one page", async () => {
+    // The top pager deliberately hides at a single page; the bottom one is
+    // what keeps the page-size control reachable, so a reader can widen the
+    // page rather than concluding this is all there is.
+    prsByState({ open: manyPrs(10) });
+
+    render(<PrHistoryPage />);
+    await screen.findByText(/#1 pr 1/);
+
+    expect(screen.getAllByRole("button", { name: /next/i }).length).toBe(1);
+  });
+
+  it("says so when the history was truncated by the fetch", async () => {
+    // A full page back from GitHub means there are probably older PRs that
+    // were never fetched. Without saying so the pager reads as the whole
+    // history of the repository.
+    prsByState({ open: manyPrs(100) });
+
+    render(<PrHistoryPage />);
+    await screen.findByText(/#1 pr 1/);
+
+    expect(screen.queryByText(/Showing the 100 most recent pull requests/)).not.toBeNull();
+  });
+
+  it("claims no truncation when the fetch came back short", async () => {
+    prsByState({ open: manyPrs(99) });
+
+    render(<PrHistoryPage />);
+    await screen.findByText(/#1 pr 1/);
+
+    expect(screen.queryByText(/most recent pull requests/)).toBeNull();
+  });
+});
+
 describe("PR state filter", () => {
   it("opens on the open PRs only", async () => {
     prsByState(MIXED);

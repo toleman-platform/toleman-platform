@@ -21,6 +21,11 @@ import { ChevronDown, ChevronRight, GitPullRequest } from "lucide-react";
 import { SEVERITY_COLOR } from "@/lib/severity";
 import { PageHeader } from "@/components/ui/page-header";
 import { ActivityPagination } from "@/components/ui/activity-pagination";
+
+// Mirrors PR_LIST_PAGE_SIZE in backend/app/api/github.py: the number of pull
+// requests that endpoint asks GitHub for in one page. A full page back is the
+// only signal available here that the history is truncated.
+const PR_LIST_PAGE_SIZE = 100;
 import { pageSizeFromParams } from "@/lib/pagination";
 import { Timestamp } from "@/components/ui/timestamp";
 
@@ -352,6 +357,11 @@ export default function PrHistoryPage() {
               {/* PR History rendered every PR the GitHub API returned, with no
                   pager. On an active repo that is an unbounded list. Paged
                   client-side because the PRs are already fetched here. */}
+              {/* The top pager hides itself at a single page, by design. The
+                  bottom one always renders when there is anything to page, so
+                  a reader who has scrolled a hundred rows has the control
+                  where they are rather than back at the top -- which is what
+                  every other paginated list in this app does. */}
               <ActivityPagination total={prs.length} page={prPage} pageSize={prPageSize} position="top" />
               {visiblePrs.map((pr) => (
                 <PrRow
@@ -370,6 +380,18 @@ export default function PrHistoryPage() {
                   }
                 />
               ))}
+              {prs.length > 0 && (
+                <ActivityPagination total={prs.length} page={prPage} pageSize={prPageSize} />
+              )}
+              {prs.length === PR_LIST_PAGE_SIZE && (
+                // GitHub is asked for one page of this size, so a full page
+                // back means there are probably more that were never fetched.
+                // Without this the pager reads as the whole history.
+                <p className="text-xs text-muted-foreground">
+                  Showing the {PR_LIST_PAGE_SIZE} most recent pull requests for this state. Older ones are
+                  not fetched.
+                </p>
+              )}
               {prs.length === 0 && targetId !== null && (
                 <EmptyState
                   icon={GitPullRequest}

@@ -35,6 +35,7 @@ afterEach(() => {
   githubAppStatus.mockReset();
   githubAppManifestData.mockReset();
   githubAppSync.mockReset();
+  updateWebhookSecret.mockReset();
 });
 
 type StatusOverrides = Partial<{
@@ -333,5 +334,65 @@ describe("ConnectGithubCard, when the status read fails", () => {
 
     expect(await screen.findByRole("button", { name: "Connect GitHub" })).toBeDefined();
     expect(githubAppStatus).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The webhook secret save was the last `try`/`finally` with no `catch` on this
+// card, and the most costly one: it cleared the field and re-enabled the
+// button whether or not the secret was stored, so a refused save looked
+// exactly like an accepted one while GitHub's deliveries went on being
+// rejected and PRs quietly stopped being scanned.
+describe("ConnectGithubCard, saving a webhook secret", () => {
+  const secretField = () =>
+    screen.getByLabelText("Webhook secret for toleman-devsecops-abc") as HTMLInputElement;
+
+  it("keeps the typed secret and says why, when the save is refused", async () => {
+    githubAppStatus.mockResolvedValue(statusPayload({ apps: [appEntry({ webhook_secret_set: false })] }));
+    updateWebhookSecret.mockRejectedValue(new Error("secret must be at least 16 characters"));
+
+    render(<ConnectGithubCard />);
+
+    await screen.findByLabelText("Webhook secret for toleman-devsecops-abc");
+    fireEvent.change(secretField(), { target: { value: "too-short" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    const banner = await screen.findByRole("alert");
+    expect(banner.textContent).toContain("secret must be at least 16 characters");
+    expect(banner.className).toContain("destructive");
+    // The field is the only copy of what was typed; clearing it is what made
+    // the failure indistinguishable from a success.
+    expect(secretField().value).toBe("too-short");
+    // And nothing on the card may claim the App is now verified.
+    expect(screen.queryByText(/real-time PR scanning active/)).toBeNull();
+    expect(screen.getByText(/No webhook secret set/)).toBeTruthy();
+  });
+
+  it("clears the field and re-reads the App's own state once the save returns", async () => {
+    githubAppStatus.mockResolvedValueOnce(statusPayload({ apps: [appEntry({ webhook_secret_set: false })] }));
+    githubAppStatus.mockResolvedValue(statusPayload({ apps: [appEntry({ webhook_secret_set: true })] }));
+    updateWebhookSecret.mockResolvedValue({ webhook_secret_set: true });
+
+    render(<ConnectGithubCard />);
+
+    await screen.findByLabelText("Webhook secret for toleman-devsecops-abc");
+    fireEvent.change(secretField(), { target: { value: "a-properly-long-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    // Success is the backend saying the secret is set, re-read after the
+    // write, rather than this component asserting it locally.
+    expect(await screen.findByText(/real-time PR scanning active/)).toBeTruthy();
+    expect(secretField().value).toBe("");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(updateWebhookSecret).toHaveBeenCalledWith("a-properly-long-secret", 1);
+  });
+
+  it("does not send an empty secret", async () => {
+    githubAppStatus.mockResolvedValue(statusPayload({ apps: [appEntry({ webhook_secret_set: false })] }));
+
+    render(<ConnectGithubCard />);
+
+    await screen.findByLabelText("Webhook secret for toleman-devsecops-abc");
+    expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(updateWebhookSecret).not.toHaveBeenCalled();
   });
 });

@@ -147,10 +147,20 @@ export function WorkspaceRoles({ workspaceId }: { workspaceId: number | null }) 
             />
           ) : (
             <div className="flex flex-col divide-y divide-border rounded-md border border-border">
-              {memberships === null ? (
+              {memberships === null && status === "loading" ? (
                 <div className="px-3 py-2">
                   <SkeletonList count={2} />
                 </div>
+              ) : memberships === null ? (
+                // No request is in flight and none is coming -- there is no
+                // workspace selected to read roles for. A skeleton here spins
+                // forever waiting for something that will never arrive.
+                <EmptyState
+                  icon={UserCog}
+                  title="No workspace selected"
+                  description="Choose a workspace to see the roles assigned in it."
+                  bare
+                />
               ) : memberships.length === 0 ? (
                 <EmptyState
                   icon={UserCog}

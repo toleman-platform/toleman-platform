@@ -368,9 +368,15 @@ export function ToolMarketplace() {
                       )}
                       {assignmentState === "unknown" ? (
                         <p className="text-[11px] text-muted-foreground">
-                          {workspaceId == null
-                            ? "No workspace selected, so usage assignment is unknown."
-                            : "Usage assignment couldn't be read for this workspace."}
+                          {workspacesError !== null
+                            ? // The workspace list itself failed, so there is
+                              // nothing to select from. Saying "no workspace
+                              // selected" would blame the reader for a failed
+                              // request.
+                              "Workspaces couldn't be loaded, so usage assignment is unknown."
+                            : workspaceId == null
+                              ? "No workspace selected, so usage assignment is unknown."
+                              : "Usage assignment couldn't be read for this workspace."}
                         </p>
                       ) : assignmentState === "pending" ? (
                         // Keeps the checkbox layout so the card does not

@@ -82,7 +82,13 @@ export function StatCard({
         <div
           className={cn(
             "truncate font-mono text-2xl font-bold tabular-nums tracking-tight",
-            unknown ? "text-muted-foreground/60" : TONE_CLASS[tone],
+            // Full-opacity muted, not `/60`. The unknown dash is already the
+            // quietest thing in the card by virtue of being a dash; fading it
+            // further put a 2xl glyph under the 4.5:1 contrast floor, and the
+            // one piece of information the card still carries is that the
+            // value is unknown. targets-list.tsx renders its own unknown dash
+            // at the same full-opacity token.
+            unknown ? "text-muted-foreground" : TONE_CLASS[tone],
           )}
         >
           {unknown ? "—" : value}

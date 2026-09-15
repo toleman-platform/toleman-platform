@@ -139,6 +139,14 @@ export default async function TargetsPage({
             targetSummaryFailed={targetSummaryFailed}
           />
         )}
+        {/* The `installed: false` in the settledOr fallback above is a
+            placeholder, not a reading. Branching the copy on it sent an admin
+            whose GitHub App was working fine off to reconnect it, on the
+            strength of a status request that merely failed -- the same
+            fabricated negative this page fixed for IntegrationSummary and then
+            reintroduced one element lower. When the status is unknown, say so
+            and offer the retry, rather than naming a next step that depends on
+            knowing it. */}
         {!targetsFailed && targetsList.length === 0 && (
           <EmptyState
             icon={GitBranch}
@@ -146,10 +154,13 @@ export default async function TargetsPage({
             description={
               group_id
                 ? "Add a target to this group, or clear the group filter."
-                : githubStatus.installed
-                  ? 'Expand "GitHub App connected" above to sync repos now, or add one manually below.'
-                  : "Expand the connection summary above to connect GitHub, or add one manually below."
+                : githubStatusFailed
+                  ? "The GitHub connection status couldn't be read, so whether repos can be synced is unknown. Add a target manually below, or try again."
+                  : githubStatus.installed
+                    ? 'Expand "GitHub App connected" above to sync repos now, or add one manually below.'
+                    : "Expand the connection summary above to connect GitHub, or add one manually below."
             }
+            action={!group_id && githubStatusFailed ? <ReloadButton /> : undefined}
           />
         )}
       </div>

@@ -397,3 +397,32 @@ describe("pull request state badge", () => {
     expect(prStateBadgeIn(row, "Open").querySelector('[class*="animate-spin"]')).toBeNull();
   });
 });
+
+
+/**
+ * `prs` falls back to `[]` so the pager has a length, and the empty state was
+ * reached straight off that fallback -- so a failed GitHub read rendered "No
+ * open pull requests" (plus a pager reading 0 of 0) directly beneath the error
+ * banner saying the read had failed. Three claims, one unanswered request.
+ */
+describe("a PR list read that failed", () => {
+  it("reports the failure instead of also claiming the repo has nothing open", async () => {
+    prs.mockRejectedValue(new Error("github is unavailable"));
+
+    render(<PrHistoryPage />);
+
+    expect(await screen.findByText("github is unavailable")).toBeTruthy();
+    expect(screen.queryByText("No open pull requests")).toBeNull();
+  });
+
+  it("still reports an empty repo when the read succeeds and returns none", async () => {
+    // The other half of the pair: gating the empty state on a successful read
+    // must not silence it for the repo that genuinely has nothing open.
+    prsByState({ open: [] });
+
+    render(<PrHistoryPage />);
+
+    expect(await screen.findByText("No open pull requests")).toBeTruthy();
+    expect(screen.queryByText("github is unavailable")).toBeNull();
+  });
+});

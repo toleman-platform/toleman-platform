@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ErrorState } from "@/components/ui/error-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Ban, Building2, RotateCcw, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
 
@@ -24,8 +25,8 @@ export function FpRules() {
 
   const {
     data,
+    status,
     error: loadError,
-    isInitialLoading: loading,
     refetch,
   } = useAsyncData<[FalsePositiveRule[], FpRuleStats]>(
     () => Promise.all([api.fpRules(workspaceId!), api.fpRuleStats(workspaceId!)]),
@@ -33,9 +34,26 @@ export function FpRules() {
   );
   const [rules, stats] = data ?? [null, null];
 
+  // "No false-positive rules learned yet" claims nothing in this workspace is
+  // being auto-suppressed. A read that failed claims nothing at all, and on
+  // this surface the difference decides whether an operator goes looking for
+  // findings that a rule is quietly swallowing. Per AGENTS.md 1.4 the two get
+  // separate renderings.
+  //
+  // `useAsyncData` retains the last good data across a refetch, so `rules !==
+  // null` below is exactly "the request has succeeded at least once", which is
+  // what licenses the empty state. `status === "success"` alone would blank
+  // the rows on every background refresh, and `status === "error"` alone
+  // cannot separate a first-load failure from a failed refresh over rows that
+  // are still on screen and still worth showing.
+  const loadFailed = status === "error" && rules === null;
+
   // The workspace list failing is worth surfacing on its own: without it an
-  // empty picker reads as "this deployment has no workspaces".
-  const error = mutationError ?? loadError?.message ?? workspacesError?.message ?? null;
+  // empty picker reads as "this deployment has no workspaces". A failed first
+  // load of the rules themselves is left out here because it gets its own
+  // ErrorState with a retry below, and would otherwise be stated twice.
+  const error =
+    mutationError ?? (loadFailed ? null : loadError?.message) ?? workspacesError?.message ?? null;
 
   // Returns whether the mutation actually landed, so a caller holding a
   // confirmation dialog open can keep it open on failure rather than closing
@@ -135,13 +153,21 @@ export function FpRules() {
 
           {error && <p className="text-xs text-destructive">{error}</p>}
 
-          {workspaceId != null && (
+          {workspaceId != null && loadFailed && (
+            <ErrorState
+              title="Couldn't load false-positive rules"
+              description={loadError?.message}
+              onRetry={refetch}
+            />
+          )}
+
+          {workspaceId != null && !loadFailed && (
             <div className="flex flex-col divide-y divide-border rounded-md border border-border">
-              {loading ? (
+              {rules === null ? (
                 <div className="px-3 py-2">
                   <SkeletonList count={2} />
                 </div>
-              ) : !rules || rules.length === 0 ? (
+              ) : rules.length === 0 ? (
                 <EmptyState
                   icon={ShieldOff}
                   title="No false-positive rules learned yet"

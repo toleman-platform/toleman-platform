@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
-import { SkeletonList } from "@/components/ui/skeleton";
+import { Skeleton, SkeletonList } from "@/components/ui/skeleton";
 import { Download, ExternalLink, Loader2 } from "lucide-react";
 
 const USAGE_SURFACES = [
@@ -55,12 +55,39 @@ export function ToolMarketplace() {
 
   const {
     data: assignments,
+    status: assignmentsStatus,
     error: assignmentsError,
     refetch: refreshAssignments,
   } = useAsyncData<Record<string, ToolAssignment>>(
     () => api.toolAssignments(workspaceId!).then((list) => Object.fromEntries(list.map((a) => [a.tool, a]))),
     { enabled: workspaceId != null, deps: [workspaceId] },
   );
+
+  // An unticked checkbox is a statement: "this scanner runs on nothing in this
+  // workspace". Until the assignment map has actually been read that is not a
+  // statement anyone can make, and an admin who reads it as one re-ticks
+  // surfaces that were already enabled. So there are three answers here, not
+  // two (AGENTS.md 1.4):
+  //
+  //   known   - render the boxes.
+  //   pending - a request is in flight; render the wait, with nothing in it
+  //             that can be read as a setting.
+  //   unknown - nothing will answer this until something else changes (the
+  //             read failed, or there is no workspace to ask about). A
+  //             skeleton here would pulse forever promising an answer.
+  //
+  // `useAsyncData` retains the last good map across a refetch, so `assignments
+  // !== null` is exactly "read successfully at least once", which keeps the
+  // boxes on screen during a background refresh instead of flicking back to
+  // skeletons after every toggle.
+  const assignmentState: "known" | "pending" | "unknown" =
+    assignments !== null
+      ? "known"
+      : assignmentsStatus === "error" ||
+          workspacesError !== null ||
+          (workspaces !== null && workspaceId == null)
+        ? "unknown"
+        : "pending";
 
   const error =
     mutationError ??
@@ -339,21 +366,41 @@ export function ToolMarketplace() {
                           Catalogued for visibility only, Toleman cannot execute this tool yet, so these have no effect.
                         </p>
                       )}
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                        {USAGE_SURFACES.map((s) => (
-                          <label key={s.key} className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <input
-                              type="checkbox"
-                              aria-label={`${t.display_name} enabled for ${s.label}`}
-                              className="h-3.5 w-3.5 accent-primary"
-                              checked={assignment ? assignment[s.key] && t.integrated : false}
-                              disabled={!assignment || savingTool === t.tool || !t.integrated}
-                              onChange={() => toggleSurface(t.tool, s.key)}
-                            />
-                            {s.label}
-                          </label>
-                        ))}
-                      </div>
+                      {assignmentState === "unknown" ? (
+                        <p className="text-[11px] text-muted-foreground">
+                          {workspaceId == null
+                            ? "No workspace selected, so usage assignment is unknown."
+                            : "Usage assignment couldn't be read for this workspace."}
+                        </p>
+                      ) : assignmentState === "pending" ? (
+                        // Keeps the checkbox layout so the card does not
+                        // resize when the answer lands, with nothing in it
+                        // that can be read as a setting.
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1" aria-busy="true">
+                          {USAGE_SURFACES.map((s) => (
+                            <div key={s.key} className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Skeleton className="h-3.5 w-3.5 shrink-0 rounded-sm" />
+                              {s.label}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                          {USAGE_SURFACES.map((s) => (
+                            <label key={s.key} className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                aria-label={`${t.display_name} enabled for ${s.label}`}
+                                className="h-3.5 w-3.5 accent-primary"
+                                checked={assignment ? assignment[s.key] && t.integrated : false}
+                                disabled={!assignment || savingTool === t.tool || !t.integrated}
+                                onChange={() => toggleSurface(t.tool, s.key)}
+                              />
+                              {s.label}
+                            </label>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

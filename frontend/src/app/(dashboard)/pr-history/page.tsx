@@ -270,6 +270,7 @@ export default function PrHistoryPage() {
   // log below (issue #64).
   const {
     data: prsData,
+    status: prsStatus,
     error: loadError,
     isInitialLoading: loading,
     refetch: loadPrs,
@@ -281,6 +282,16 @@ export default function PrHistoryPage() {
   // here instead would report "no open pull requests" on any repo that closes
   // PRs faster than a page of them is opened.
   const prs = isOrgWide ? [] : (prsData ?? []);
+
+  // The `?? []` above exists so the pager has a length, not because an unread
+  // list is an empty one. Rendering "No open pull requests" off the back of it
+  // told a reviewer a repo had nothing in flight when the request had simply
+  // failed -- and did so directly beneath the error banner saying otherwise.
+  // `useAsyncData` retains the last good data across a refetch, so `prsData
+  // !== null` is exactly "this list has been read successfully at least
+  // once", which is the gate the empty state needs.
+  const prsRead = !isOrgWide && prsData !== null;
+  const listFailed = prsStatus === "error" && prsData === null;
 
   // A 401 is not a page error; it means the GitHub session lapsed, and the
   // page has a dedicated reconnect affordance for it.
@@ -347,7 +358,10 @@ export default function PrHistoryPage() {
 
           {!sessionExpired && loading && <SkeletonList count={4} />}
 
-          {!sessionExpired && !loading && (
+          {/* The failure above is the whole answer when nothing was read: a
+              pager reading "0 of 0" and an empty state beneath a retry button
+              are three different claims about one unanswered request. */}
+          {!sessionExpired && !loading && !listFailed && (
             <div className="flex flex-col gap-2">
               {/* PR History rendered every PR the GitHub API returned, with no
                   pager. On an active repo that is an unbounded list. Paged
@@ -370,7 +384,7 @@ export default function PrHistoryPage() {
                   }
                 />
               ))}
-              {prs.length === 0 && targetId !== null && (
+              {prsRead && prs.length === 0 && targetId !== null && (
                 <EmptyState
                   icon={GitPullRequest}
                   title={prState === "all" ? "No pull requests found" : `No ${prState} pull requests`}

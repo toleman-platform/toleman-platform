@@ -69,7 +69,46 @@ DEFAULT_REGISTRY_ROOT = os.environ.get("SEMGREP_RULES_REGISTRY_ROOT", "/opt/semg
 # which folders are walked. Cached configs built by an older version are
 # discarded rather than silently reused, which is the whole reason this is
 # a constant and not just a comment.
-REGISTRY_CONFIG_SCHEMA_VERSION = 2
+REGISTRY_CONFIG_SCHEMA_VERSION = 3
+
+# Registry rule ids to drop from the pruned config, by exact id.
+#
+# The only lever available for the public registry's rules: we do not own
+# them and cannot fix their precision, so excluding one is the sole way to
+# act on a rule that does not earn its keep.
+#
+# Deliberately EMPTY. The measurement that prompted building it did not
+# justify using it. Scored against OWASP BenchmarkJava's 2740 labelled
+# cases, per-rule precision for every registry rule with 20 or more
+# attributed findings:
+#
+#   weak-random                        218 TP    0 FP   1.000
+#   use-of-sha1                         85 TP    0 FP   1.000
+#   cookie-missing-secure-flag          36 TP    0 FP   1.000
+#   use-of-md5                          28 TP    0 FP   1.000
+#   tainted-session-from-http-request   43 TP   18 FP   0.705
+#   no-direct-response-writer          202 TP  108 FP   0.652
+#   tainted-sql-from-http-request      238 TP  150 FP   0.613
+#   tainted-cmd-from-http-request      121 TP  100 FP   0.548
+#   jdbc-sqli                           97 TP   81 FP   0.545
+#   httpservlet-path-traversal         152 TP  136 FP   0.528
+#   command-injection-process-builder   33 TP   30 FP   0.524
+#   tainted-xpath-from-http-request     14 TP   13 FP   0.519
+#   tainted-ldapi-from-http-request     26 TP   28 FP   0.481
+#
+# Exactly one rule sits below 0.5, and removing it is a wash: dropping
+# tainted-ldapi-from-http-request loses 26 true findings to remove 28 false
+# ones, moving the aggregate Youden score from 0.374 to 0.376 while costing
+# 0.018 recall. Twenty-six real LDAP injections are not worth trading for
+# twenty-eight false ones, so it stays.
+#
+# The table is here rather than in a commit message because of the mistake
+# it is meant to prevent. The rules with the largest raw FP counts --
+# tainted-sql-from-http-request at 150, httpservlet-path-traversal at 136 --
+# are also among the highest earners, at 238 and 152 true findings. Ranking
+# by FP count and deleting the top of the list would strip out most of the
+# pack's actual recall. Judge a candidate on precision, and re-measure.
+REGISTRY_RULE_DENYLIST: frozenset[str] = frozenset()
 
 # A detected language does not always map to exactly one registry folder.
 # semgrep-rules keeps 169 security rules under javascript/ and only a
@@ -397,6 +436,10 @@ def build_registry_config(
             and meta.get("schema_version") == REGISTRY_CONFIG_SCHEMA_VERSION
             and meta.get("fingerprint") == fingerprint
             and meta.get("technologies") == sorted(folders)
+            # Without this, editing the denylist would leave every
+            # already-built config in place and the change would appear to
+            # do nothing until the registry clone happened to move.
+            and meta.get("denylist", []) == sorted(REGISTRY_RULE_DENYLIST)
         ):
             return PrunedRegistryConfig(
                 language=language,
@@ -429,6 +472,8 @@ def build_registry_config(
                     rule_id = rule.get("id")
                     if not rule_id or rule_id in seen_ids:
                         continue
+                    if rule_id in REGISTRY_RULE_DENYLIST:
+                        continue
                     seen_ids.add(rule_id)
                     all_rules.append(rule)
 
@@ -442,6 +487,7 @@ def build_registry_config(
                 "fingerprint": fingerprint,
                 "technologies": sorted(folders),
                 "language_roots": [os.path.basename(r) for r in lang_roots],
+                "denylist": sorted(REGISTRY_RULE_DENYLIST),
                 "rule_count": len(all_rules),
             },
             fh,

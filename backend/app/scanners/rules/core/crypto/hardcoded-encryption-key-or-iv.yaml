@@ -1,0 +1,108 @@
+## Hardcoded cryptographic key or IV (CWE-321/CWE-798).
+##
+## Validated 2026-09-12: toleman-platform (true negative, as expected --
+## app/core/crypto.py's Fernet key always comes from
+## settings.platform_encryption_key, never a literal; app/core/config.py's
+## Settings(BaseSettings) fields -- session_secret, workspace_api_key,
+## admin_password, platform_encryption_key -- are all correctly excluded by
+## the pattern-not-inside/DEFAULT_ guards below, confirmed by re-running
+## with those guards temporarily removed, which did produce 4 hits on
+## config.py's dev-default fields before the guards went back in). pygoat:
+## 2/2 true positive -- pygoat/pygoat/settings.py:25
+## (SECRET_KEY = 'lr66%-a!$km5ed@n5ug!tya5bv!0(yqwa1tn!q%0%3m2nh%oml', a
+## real hardcoded Django signing key, not a placeholder) and
+## pygoat/pygoat/settings.py:171 (SECRET_COOKIE_KEY = "PYGOAT", weaker but
+## same class of finding -- a guessable literal, not a real secret).
+## dvpwa: true negative (no encryption-key material in that repo at all --
+## its focus is SQLi; expected, not a miss).
+##
+## This rule exists because an earlier, broader "any string assigned to a
+## secret-ish name" rule this session had a 100% false-positive rate (7/7)
+## on toleman-platform: it flagged every Settings(BaseSettings) field
+## default (session_secret, admin_password, workspace_api_key), which are
+## documented, deliberate dev-only defaults meant to be overridden by env
+## vars in production (see config.py's own module docstring and
+## validate_production_secrets()), not real hardcoded secrets. The
+## exclusions below (BaseSettings class bodies, DEFAULT_-prefixed
+## constants, empty-string sentinels like platform_encryption_key's `""`)
+## are baked in from that lesson, not discovered again the hard way here.
+##
+## Scoped to *encryption* keys/IVs specifically (key/iv/secret_key naming),
+## not general app secrets (session tokens, API tokens) -- that broader
+## surface is exactly what caused the FP above and is out of scope for this
+## rule on purpose.
+rules:
+  - id: toleman-hardcoded-encryption-key-or-iv-assignment
+    languages: [python]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      A string/bytes literal is assigned to a variable whose name suggests
+      it's used as an encryption key or IV (CWE-321). A cryptographic key
+      or IV hardcoded in source is readable by anyone with repo access and
+      can't be rotated without a code change or redeploy. Load it from an
+      environment variable or a secrets manager instead, and generate IVs
+      fresh per-encryption with os.urandom, never a fixed literal.
+    metadata:
+      category: security
+      cwe: "CWE-321: Use of Hard-coded Cryptographic Key"
+      references:
+        - "https://cwe.mitre.org/data/definitions/798.html"
+      validated-against:
+        - "toleman-platform (self): true negative (key always loaded from settings; BaseSettings/DEFAULT_/empty-string guards confirmed necessary and working)"
+        - "pygoat: 2/2 true positive (pygoat/settings.py:25 SECRET_KEY, :171 SECRET_COOKIE_KEY)"
+        - "dvpwa: true negative (no encryption-key surface in that repo)"
+    patterns:
+      - pattern-either:
+          - pattern: $VAR = "..."
+          - pattern: $VAR = b"..."
+      - metavariable-regex:
+          metavariable: $VAR
+          # Substring match, case-insensitive -- note the .* wrapper:
+          # semgrep's metavariable-regex anchors like re.match, so an
+          # unwrapped alternation only matches from position 0 and silently
+          # misses anything not at the very start of the identifier
+          # (learned the hard way earlier this session). Boundaries are
+          # spelled out explicitly with _/^/$ rather than \b, because \b
+          # does not treat "_" as a word-break in Python identifiers --
+          # \bkey\b would NOT match "encryption_key".
+          regex: (?i).*(^key$|_key$|^iv$|_iv$|^iv_|initiali[sz]ation_vector|secret_key|encryption_key|enc_key|aes_key|des_key|cipher_key|crypto_key).*
+      - pattern-not: $VAR = ""
+      - pattern-not: $VAR = b""
+      - pattern-not-inside: |
+          class $CLS(BaseSettings):
+              ...
+      - metavariable-regex:
+          metavariable: $VAR
+          # Excludes DEFAULT_-prefixed constants (e.g. DEFAULT_SESSION_SECRET
+          # in config.py) -- this codebase's documented convention for a
+          # dev-only fallback that's explicitly meant to be overridden, not
+          # a real hardcoded secret. Negative-lookahead anchored at true
+          # start (see the .* -> anchor note above: .* backtracks to empty
+          # so ^(?!...) still checks position 0).
+          regex: (?i)^(?!default_).*
+
+  - id: toleman-hardcoded-key-literal-in-cipher-call
+    languages: [python]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      A string/bytes literal is passed directly as the key/IV argument to a
+      symmetric-cipher constructor (CWE-321). Anyone with source access can
+      decrypt anything ever encrypted with this key. Load the key from an
+      environment variable or secrets manager, and generate the IV fresh
+      per-encryption with os.urandom.
+    metadata:
+      category: security
+      cwe: "CWE-321: Use of Hard-coded Cryptographic Key"
+      validated-against:
+        - "0 hits on toleman-platform, pygoat, or dvpwa -- unproven. None of the 3 validation repos call AES.new/DES.new/Fernet/Cipher with a literal argument; kept in the pack as a name-independent complement to the assignment-based rule above (which needs a suggestive variable name), not deleted, but don't cite this one as validated against real code yet."
+    pattern-either:
+      - pattern: Fernet("...")
+      - pattern: Fernet(b"...")
+      - pattern: AES.new("...", ...)
+      - pattern: AES.new(b"...", ...)
+      - pattern: DES.new("...", ...)
+      - pattern: DES.new(b"...", ...)
+      - pattern: algorithms.AES(b"...")
+      - pattern: algorithms.AES("...")

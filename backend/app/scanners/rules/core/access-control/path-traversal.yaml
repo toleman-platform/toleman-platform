@@ -1,0 +1,35 @@
+## Path traversal (CWE-22).
+##
+## Written 2026-09-12, not yet matched on any of the 3 repos used to
+## validate the rest of this pack (toleman-platform, pygoat, dvpwa) --
+## none of them happen to have this exact vulnerable shape in their Flask/
+## Django request-handling code. Keep confidence LOW and re-validate
+## against a repo with real file-serving endpoints before trusting this
+## one the way the SSRF/crypto/injection rules in this pack are trusted.
+rules:
+  - id: toleman-path-traversal-open-from-request
+    languages: [python]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      A file path built from request input (path/query/form/POST/GET/args)
+      reaches open()/send_file() with no basename()/allowlist check nearby.
+      "../../etc/passwd"-style traversal (CWE-22).
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      references:
+        - "https://owasp.org/www-community/attacks/Path_Traversal"
+      validated-against: []
+    patterns:
+      - pattern-either:
+          - pattern: open($PATH, ...)
+          - pattern: send_file($PATH, ...)
+          - pattern: send_from_directory($DIR, $PATH, ...)
+      - metavariable-pattern:
+          metavariable: $PATH
+          patterns:
+            - pattern-either:
+                - pattern: request.$ATTR[...]
+                - pattern: request.$ATTR.get(...)
+                - pattern: request.$ATTR["..."]

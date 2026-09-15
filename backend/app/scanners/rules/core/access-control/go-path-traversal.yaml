@@ -1,0 +1,88 @@
+## Go path traversal (CWE-22), stdlib file APIs.
+##
+## Written 2026-09-12. NOT matched on any of the 3 real repos checked
+## (govwa, go-dvwa, go-test-bench) -- honest miss, not hidden:
+##
+## - go-test-bench's internal/pathtraversal/path-traversal.go has the real
+##   vulnerable *sinks* (os.Open(payload), os.ReadFile(payload)), but
+##   `payload` there is a plain function parameter -- the actual
+##   request-input extraction (r.URL.Query().Get(...)/r.FormValue(...))
+##   happens in a completely different file (internal/common/input.go),
+##   wired together through the framework's generic sink-registration
+##   abstraction, not a same-file/same-function call chain. Neither a
+##   same-function taint rule nor this direct-argument-shape rule can
+##   bridge that gap without cross-file (interfile) analysis, which is out
+##   of scope for a standalone `semgrep scan --config=<file>` rule.
+## - govwa and go-dvwa don't serve any file from request-controlled path
+##   input at all (go-dvwa's only os.Open call is in a unit test opening a
+##   fixed temp file it just created itself).
+##
+## Kept in the pack rather than deleted -- this is exactly the same
+## "unproven-by-sample" situation this pack already documents for its
+## Python path-traversal rule (access-control/path-traversal.yaml), which
+## also never matched any of its 3 validation repos. Validated instead
+## against hand-written synthetic positive/negative files, per this pack's
+## documented fallback for when no real fixture exercises a shape:
+## /private/tmp/claude-501/-Users-geekshiv-Documents-OSP/d4c9fad0-390e-4d5f-be2d-4dc93cc45f90/scratchpad/gotest/path_traversal_vulnerable.go
+## (fires on all 3 sink/source combinations) and
+## .../gotest/path_traversal_safe.go (silent once filepath.Clean +
+## containment check or a hardcoded path is used). Confidence LOW: keep
+## treating any match as "make a human check this", not a confirmed bug --
+## same reasoning as the Python rule it mirrors.
+rules:
+  - id: toleman-go-path-traversal-file-open
+    languages: [go]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A file path built directly from request input (URL query, form
+      value, or router param) reaches os.Open/os.ReadFile/ioutil.ReadFile
+      with no filepath.Clean()/containment check visible in the same
+      expression. "../../etc/passwd"-style traversal (CWE-22). Clean the
+      path and verify it stays inside an intended base directory before
+      opening it.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      references:
+        - "https://owasp.org/www-community/attacks/Path_Traversal"
+      validated-against:
+        - "govwa: unproven-by-sample (no file-serving-from-request-path code in the repo)"
+        - "go-dvwa: unproven-by-sample (only os.Open call is in a unit test opening its own temp file, not request input)"
+        - "go-test-bench: unproven-by-sample (real vulnerable sink exists, but the request-input extraction happens in a different file than the sink call, so this direct-argument-shape rule can't bridge them -- see file header)"
+        - "synthetic: 3/3 true positive (gotest/path_traversal_vulnerable.go:12 os.Open(r.URL.Query().Get(...)), :21 os.ReadFile(r.FormValue(...)), :30 ioutil.ReadFile(mux.Vars(r)[...])); gotest/path_traversal_safe.go: true negative (silent on filepath.Clean()+prefix-check, and on a hardcoded path) -- note the rule only catches this one-hop inline shape, so the safe file's own os.Open(cleaned) is silent for the RIGHT reason (Clean+check happened) but the rule would equally miss an unsafe two-hop version (name := r.URL.Query().Get(...); os.Open(name)) since it only matches the source call inlined directly as the sink argument, same scope limitation as this pack's Python path-traversal rule"
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: os.Open($PATH)
+              - metavariable-pattern:
+                  metavariable: $PATH
+                  patterns:
+                    - pattern-either:
+                        - pattern: $R.URL.Query().Get(...)
+                        - pattern: $R.FormValue(...)
+                        - pattern: $R.PostFormValue(...)
+                        - pattern: mux.Vars($R)[...]
+                        - pattern: chi.URLParam($R, ...)
+          - patterns:
+              - pattern: os.ReadFile($PATH)
+              - metavariable-pattern:
+                  metavariable: $PATH
+                  patterns:
+                    - pattern-either:
+                        - pattern: $R.URL.Query().Get(...)
+                        - pattern: $R.FormValue(...)
+                        - pattern: $R.PostFormValue(...)
+                        - pattern: mux.Vars($R)[...]
+                        - pattern: chi.URLParam($R, ...)
+          - patterns:
+              - pattern: ioutil.ReadFile($PATH)
+              - metavariable-pattern:
+                  metavariable: $PATH
+                  patterns:
+                    - pattern-either:
+                        - pattern: $R.URL.Query().Get(...)
+                        - pattern: $R.FormValue(...)
+                        - pattern: $R.PostFormValue(...)
+                        - pattern: mux.Vars($R)[...]
+                        - pattern: chi.URLParam($R, ...)

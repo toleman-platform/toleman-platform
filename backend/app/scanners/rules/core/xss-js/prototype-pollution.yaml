@@ -1,0 +1,39 @@
+## Prototype pollution via caller-controlled key (CWE-1321).
+##
+## Written 2026-09-12, unproven-by-sample: toleman-platform has no
+## Object.assign/merge/deep-copy helper taking an externally-controlled key
+## set (confirmed by grep for Object.assign/__proto__/lodash.merge/
+## deepmerge before writing this rule -- one hit was a test file's object
+## spread in an assertion, not a merge of external input). pygoat/dvpwa
+## have no meaningful application JS. Kept LOW confidence and honest about
+## having zero real validation.
+rules:
+  - id: toleman-prototype-pollution-bracket-assignment-from-json
+    languages: [javascript, typescript]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A property is assigned via bracket notation using a key taken from
+      parsed JSON/request input, with no visible check excluding
+      "__proto__"/"constructor"/"prototype". If the key is caller-controlled,
+      this can pollute Object.prototype for every object in the process
+      (CWE-1321).
+    metadata:
+      category: security
+      cwe: "CWE-1321: Prototype Pollution"
+      validated-against: []
+    patterns:
+      - pattern: $OBJ[$KEY] = $VAL
+      - pattern-not: $OBJ["..."] = $VAL
+      - pattern-inside: |
+          for ($KEY in $SRC) {
+            ...
+          }
+      - metavariable-pattern:
+          metavariable: $SRC
+          patterns:
+            - pattern-either:
+                - pattern: JSON.parse(...)
+                - pattern: req.body
+                - pattern: req.query
+                - pattern: request.body

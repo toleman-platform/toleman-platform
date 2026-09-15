@@ -1,0 +1,58 @@
+## Information exposure through an exception message (CWE-209).
+##
+## Validated 2026-09-12 against toleman-platform: matches 4 of the real
+## CodeQL "Information exposure through an exception" alerts exactly --
+## backend/app/api/pr_guardrail.py:154 (raw exc interpolated into detail),
+## backend/app/api/config.py:170/193/212 (an external-call helper's raw
+## response/exception text passed straight through as detail). Also
+## surfaced 3 unverified candidates in sbom.py and ai_provider.py that
+## CodeQL's alert list didn't separately list -- possibly the same
+## underlying bug class CodeQL missed, possibly noise; not manually
+## checked. Framework-coupled by construction (keys off FastAPI's
+## HTTPException) -- a Flask/Django equivalent needs its own sink pattern
+## (abort()/JsonResponse(status=500, ...) etc.), this file doesn't attempt
+## that.
+rules:
+  - id: toleman-exception-str-interpolated-into-http-detail
+    languages: [python]
+    severity: WARNING
+    confidence: MEDIUM
+    message: >-
+      Raw exception text is interpolated directly into an HTTPException
+      "detail" string, which goes straight to the API caller. Confirm the
+      caller is trusted/admin-only, or wrap with a generic message and log
+      the real exception server-side instead.
+    metadata:
+      category: security
+      cwe: "CWE-209: Generation of Error Message Containing Sensitive Information"
+      framework: fastapi
+      validated-against:
+        - "toleman-platform (self): 1/1 exact match to a real CodeQL alert, plus 3 unverified bonus candidates"
+    patterns:
+      - pattern: raise HTTPException(..., detail=f"...{$EXC}...")
+      - pattern-inside: |
+          try:
+              ...
+          except $EXCTYPE as $EXC:
+              ...
+
+  - id: toleman-external-call-result-into-http-detail
+    languages: [python]
+    severity: WARNING
+    confidence: MEDIUM
+    message: >-
+      A message returned from an external-call helper (ok/message tuple) is
+      passed straight through as an HTTPException detail. If that helper's
+      "message" is the raw response/exception text of a third-party call,
+      this leaks that party's raw output to the API caller.
+    metadata:
+      category: security
+      cwe: "CWE-209: Generation of Error Message Containing Sensitive Information"
+      framework: fastapi
+      validated-against:
+        - "toleman-platform (self): 3/3 exact match to real CodeQL alerts"
+    patterns:
+      - pattern: |
+          $OK, $MSG = $FUNC(...)
+          ...
+          raise HTTPException(..., detail=$MSG)

@@ -1,0 +1,101 @@
+## Reflected XSS (CWE-79) -- PHP, server-side echo/concatenation into
+## HTML output.
+##
+## Validated 2026-09-12 against DVWA's vulnerabilities/xss_r ("Reflected
+## Cross Site Scripting") lab, "low" difficulty:
+##   vulnerabilities/xss_r/source/low.php:6-9 --
+##     if( array_key_exists( "name", $_GET ) && $_GET[ 'name' ] != NULL ) {
+##         $html .= '<pre>Hello ' . $_GET[ 'name' ] . '</pre>';
+##     }
+##   This is DVWA's own labeled Reflected XSS challenge.
+##
+## Written against DVWA's ACTUAL shape rather than the literal
+## `echo $_GET[...]` this rule class is often described as: DVWA (like a
+## lot of real PHP apps that build a page in stages) never calls
+## echo/print directly in this file -- it appends the unescaped value into
+## an accumulator variable ($html) with `.=`, which a later, different
+## piece of code (dvwaHtmlEcho() in dvwa/includes/dvwaPage.inc.php, a
+## different file) echoes to the response with no escaping applied.
+## Concatenating tainted request data into an HTML-output accumulator is
+## exactly as exploitable as an inline echo -- the browser sees the same
+## bytes either way -- so this rule treats `"..." . $_GET[...] . "..."`
+## concatenated into a `.=`/`=` target as an equally valid sink alongside
+## a literal echo/print, rather than missing DVWA's real shape by only
+## matching the textbook one. Deliberately does NOT flag a bare
+## `$VAR = $_GET[...]` with no concatenation -- that's just capturing
+## input (extremely common, not itself the vulnerability) and flagging it
+## would swamp real hits in noise.
+##
+## Checked and confirmed by hand (grep across the whole DVWA tree) that no
+## lab in this app actually calls `echo $_GET[...]`/`print $_GET[...]`
+## directly -- so the echo/print alternatives are unproven-by-sample on
+## DVWA specifically; they're kept because that IS the literal shape most
+## textbooks/scanners describe, and because DVWA's Stored XSS lab
+## (vulnerabilities/xss_s) similarly never echoes tainted data in the same
+## file it's read in (it goes through the DB first), so no PHP app in this
+## validation set happens to use the plain echo/print form -- not because
+## the pattern is wrong.
+##
+## The `.=`-concatenation alternative found 4 MORE real hits beyond the
+## xss_r lab it was written against, in a completely different lab
+## (vulnerabilities/csp, "Content Security Policy"):
+##   csp/source/low.php:15 -- `$page['body'] .= "<script src='" .
+##     $_POST['include'] . "'></script>";` -- reflects into a script `src`
+##     attribute, unescaped.
+##   csp/source/medium.php:16, high.php:10, impossible.php:11 -- all three
+##     use the exact same `$page['body'] .= "\n\t" . $_POST['include'] .
+##     "\n";` shape, reflecting the value directly into the HTML body.
+## Read all four by hand: this lab's actual security control is its CSP
+## header (progressively tightened from low to impossible -- see each
+## file's own `$headerCSP`), not output encoding -- htmlspecialchars() is
+## never called on `$_POST['include']` at ANY difficulty tier, including
+## impossible.php. That means this rule is correctly describing the code
+## pattern (unescaped reflection) at every tier; whether it's actually
+## exploitable in a given tier depends on whether the CSP header blocks
+## the resulting injection, which is a different control this rule does
+## not and cannot evaluate. Flagged as real findings, with that caveat
+## made explicit rather than silently treating a strict CSP header as
+## reason to suppress the underlying code-level finding.
+rules:
+  - id: toleman-php-reflected-xss-unescaped-request-echo
+    languages: [php]
+    severity: WARNING
+    confidence: MEDIUM
+    message: >-
+      $_GET/$_POST/$_REQUEST is written directly into an echo/print
+      statement, or concatenated into a variable that accumulates HTML
+      output, with no htmlspecialchars()/htmlentities() wrapping visible
+      here (CWE-79). If this value (or the variable it's concatenated
+      into) ever reaches the response body unescaped, an attacker-supplied
+      `<script>` tag or event-handler attribute in the request executes in
+      the victim's browser. Wrap the value in
+      htmlspecialchars($X, ENT_QUOTES, 'UTF-8') before it's ever placed
+      into HTML.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-Site Scripting"
+      references:
+        - "https://owasp.org/www-community/attacks/xss/"
+      validated-against:
+        - "DVWA (digininja/DVWA): 5/5 true positive on the `.=`-into-output-accumulator alternative, all hand-confirmed -- vulnerabilities/xss_r/source/low.php:8 (DVWA's own Reflected XSS lab) plus vulnerabilities/csp/source/low.php:15, medium.php:16, high.php:10, impossible.php:11 (the Content Security Policy lab -- htmlspecialchars() is never applied to $_POST['include'] at any of its 4 tiers; its actual mitigation is a CSP header, a different control this rule doesn't evaluate). The echo/print alternatives are unproven-by-sample: no lab in this app happens to call echo/print on request data directly in the same file -- kept as the textbook shape, not because confirmed here."
+    patterns:
+      - pattern-either:
+          - pattern: echo $_GET[...];
+          - pattern: echo $_POST[...];
+          - pattern: echo $_REQUEST[...];
+          - pattern: print $_GET[...];
+          - pattern: print $_POST[...];
+          - pattern: print $_REQUEST[...];
+          - pattern: echo "...", $_GET[...], ...;
+          - pattern: echo "...", $_POST[...], ...;
+          - pattern: echo "...", $_REQUEST[...], ...;
+          - pattern: '$VAR .= "..." . $_GET[...] . "...";'
+          - pattern: '$VAR .= "..." . $_POST[...] . "...";'
+          - pattern: '$VAR .= "..." . $_REQUEST[...] . "...";'
+          - pattern: '$VAR = "..." . $_GET[...] . "...";'
+          - pattern: '$VAR = "..." . $_POST[...] . "...";'
+          - pattern: '$VAR = "..." . $_REQUEST[...] . "...";'
+      - pattern-not: echo htmlspecialchars(...);
+      - pattern-not: echo htmlentities(...);
+      - pattern-not: $VAR .= htmlspecialchars(...);
+      - pattern-not: $VAR = htmlspecialchars(...);

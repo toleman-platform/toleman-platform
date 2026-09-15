@@ -1,0 +1,79 @@
+## Path traversal (CWE-22), Java file APIs.
+##
+## Validated 2026-09-12 against OWASP WebGoat (scratchpad/webgoat,
+## src/main/java/org/owasp/webgoat/lessons/pathtraversal/, WebGoat's actual
+## PathTraversal lesson).
+##
+## `mode: taint`, same reasoning as this pack's other Java rules: the `new
+## File(base, userInput)` construction and the write/read call that actually
+## touches disk are not always the very next line in the same block (e.g.
+## ProfileZipSlip's zip-entry loop nests the read inside a `while`), so a
+## plain statement-sequence pattern would be one gotcha away from silently
+## missing it. Kept as taint from the start rather than relearning that
+## lesson a third time.
+##
+## Note on WebGoat's ProfileUploadBase specifically: it DOES call
+## getCanonicalPath() and compare it to the expected directory
+## (attemptWasMade()) -- but only *after* FileCopyUtils.copy() has already
+## written the file to disk. That's the real bug this rule is built to
+## catch: a containment check that exists in the file but runs after the
+## write, not before it, so it detects the attack for scoring purposes
+## without actually preventing it.
+##
+## Honest false-positive note: `new File($BASE, $INPUT)` is used as the
+## taint source unconditionally -- it doesn't check whether $INPUT actually
+## originates from a request. Running this rule across the whole
+## pathtraversal package produced 2 additional hits in
+## ProfileUploadRetrieval.java (line 64's `new File(catPicturesDirectory, i
+## + ".jpg")` inside a fixed `for (int i = 1; i <= 10; i++)` seed loop, and
+## the Files.writeString() call a few lines later whose path derives from
+## `catPicturesDirectory`'s own constructor call) that, read by hand, are
+## NOT real bugs: `i` is a loop counter, and the directory in question is
+## built from `webGoatHomeDirectory` (server config) concatenated with a
+## fixed string literal, not from any caller input. Kept the rule's
+## broad-by-design source (matching this pack's own precedent of
+## intentionally over-broad heuristics elsewhere, e.g. the Python weak-hash
+## rule) rather than trying to add a "the second File() arg must reference a
+## method parameter/request value" filter, which would need real dataflow
+## into the *source* pattern itself (taint mode's pattern-sources are
+## matched structurally, not filtered by their own provenance) -- flagging
+## this MEDIUM confidence only on the strength of the 2 confirmed real
+## hits below, and noting a human still has to rule out cases like these
+## two before trusting any single hit from this rule.
+rules:
+  - id: toleman-java-path-traversal-file-write-taint
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    confidence: MEDIUM
+    message: >-
+      A File is constructed by joining a base directory with a
+      variable-derived path segment, then used to write/copy data to disk
+      before any canonicalization + containment check runs. A path segment
+      containing "../" escapes the intended base directory (CWE-22). Resolve
+      to a canonical path and verify it still starts with the base
+      directory's canonical path BEFORE writing, not after.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      references:
+        - "https://owasp.org/www-community/attacks/Path_Traversal"
+      validated-against:
+        - "webgoat: true positive, ProfileUploadBase.java:51-53 -- `var uploadedFile = new File(uploadDirectory, fullName); uploadedFile.createNewFile(); FileCopyUtils.copy(file.getBytes(), uploadedFile);` where fullName is the caller-supplied profile display name (POSTed form field), written to disk before attemptWasMade()'s getCanonicalPath() containment check runs a few lines later"
+        - "webgoat: true positive, ProfileZipSlip.java:76-81 (classic zip-slip) -- `File f = new File(tmpZipDirectory.toFile(), e.getName()); InputStream is = zip.getInputStream(e); Files.copy(is, f.toPath(), StandardCopyOption.REPLACE_EXISTING);` inside the zip-entry loop, e.getName() is attacker-controlled (comes from the uploaded zip file itself) and is never checked for '../' before the copy"
+        - "webgoat: 2 false-positive-shaped hits on manual review, ProfileUploadRetrieval.java:64 and :71-73 -- see honest false-positive note below; both derive from a loop counter and server-config-built directory, not caller input"
+        - "webgoat: true positive (found by a full-src/main/java scan, not just the pathtraversal lesson package), org/owasp/webgoat/webwolf/FileServer.java:82,88-90 -- `var destinationDir = new File(fileLocation, username); ... var destinationFile = destinationDir.toPath().resolve(multipartFile.getOriginalFilename()); Files.deleteIfExists(destinationFile); Files.copy(is, destinationFile);` where multipartFile.getOriginalFilename() is the client-supplied upload filename, resolved onto disk with no '../' check anywhere in the method -- WebWolf is WebGoat's companion attack-support server, not a labeled lesson itself, but this is a real, unmitigated path-traversal-shaped file write in shipped code"
+    pattern-sources:
+      - pattern: new File($BASE, $INPUT)
+      - pattern: Paths.get($INPUT)
+    pattern-sinks:
+      - pattern: $F.createNewFile()
+      - pattern: FileCopyUtils.copy($DATA, $F)
+      - pattern: new FileInputStream($F)
+      - pattern: new FileOutputStream($F)
+      - pattern: Files.copy($IS, $F.toPath(), ...)
+      - pattern: Files.copy($IS, $PATH, ...)
+      - pattern: Files.newInputStream($PATH)
+      - pattern: Files.newOutputStream($PATH)
+      - pattern: Files.write($PATH, ...)
+      - pattern: Files.writeString($PATH, ...)

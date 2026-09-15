@@ -1,0 +1,108 @@
+## SQL injection (CWE-89), Java/JDBC + JPA/Hibernate.
+##
+## Validated 2026-09-12 against OWASP WebGoat
+## (scratchpad/webgoat, src/main/java/org/owasp/webgoat/lessons/sqlinjection/).
+##
+## `toleman-java-sql-injection-statement-concat-taint` needed `mode: taint`
+## from the start (same lesson this pack already learned from the Python
+## fstring-var-then-execute rule): WebGoat's own SqlInjectionLesson8.java
+## builds `query` by concatenation, then calls `statement.executeQuery(query)`
+## a few lines later *inside a nested inner try block*, one level deeper than
+## the assignment. A plain "$Q = ...; ...; $STMT.executeQuery($Q)" sequence
+## pattern only walks sibling statements in the same block and would have
+## silently missed this -- taint mode found it immediately.
+##
+## `toleman-java-sql-injection-statement-concat-inline` (no taint needed,
+## concatenation happens directly in the call argument) is 0/0 on WebGoat --
+## checked by hand, not assumed: every SQLi lesson in this app builds the
+## query into a named variable first (even SqlInjectionChallenge.java, whose
+## `checkUserQuery` is built two lines above its `executeQuery(checkUserQuery)`
+## call, is caught by the taint rule above, not this one) and none pass a
+## `"..." + ...` expression directly as the call argument. Kept per this
+## pack's policy of shipping a rule for a documented real-world shape (this
+## exact inline form is common in smaller/non-WebGoat codebases) even
+## without a confirmed hit in the validation material at hand.
+##
+## `toleman-java-sql-injection-jpa-concat` (createQuery/createNativeQuery with
+## concatenated JPQL/SQL) is unproven-by-sample: WebGoat has no JPA/Hibernate
+## code anywhere in src/main/java (grep for createQuery/createNativeQuery
+## returns nothing) -- it's raw JDBC (java.sql.Statement) throughout. Kept
+## per this pack's policy of shipping a rule for a documented real-world
+## shape even without a confirmed hit in the validation material at hand.
+rules:
+  - id: toleman-java-sql-injection-statement-concat-taint
+    languages: [java]
+    severity: ERROR
+    mode: taint
+    confidence: MEDIUM
+    message: >-
+      SQL is built with string concatenation into a variable, then that
+      variable is passed to Statement.execute()/executeQuery()/executeUpdate()
+      (tracked across nested blocks, not just the next sibling line). The
+      concatenation already happened in Java before the driver ever sees the
+      string, so there is no placeholder for the driver to bind safely --
+      SQL injection (CWE-89). Use a PreparedStatement with `?` placeholders
+      and setString()/setInt()/etc. instead of Statement + concatenation.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      references:
+        - "https://owasp.org/www-community/attacks/SQL_Injection"
+      validated-against:
+        - "webgoat: true positive, SqlInjectionLesson8.java:49-56 (query built from `name`/`auth_tan` request params via +) then :62 `statement.executeQuery(query)` one nested try block deeper"
+        - "webgoat: true positive, SqlInjectionLesson8.java:137-141 log() helper (logQuery built from `time`/`action` via +) then :142 `statement.executeUpdate(logQuery)`"
+        - "webgoat: true positive, SqlInjectionLesson9.java (queryInjection built via +, executed via statement.execute(queryInjection) inside the try block)"
+        - "webgoat: true positive, SqlInjectionLesson6a.java/6b.java (query built via + in injectableQuery(), executed one call deeper in executeSqlInjection())"
+    pattern-sources:
+      # Kept as its own alternative, not folded into a shared filter, per
+      # this pack's metavariable-pattern-on-unbound-metavariable gotcha.
+      - pattern: "$A + $B"
+    pattern-sinks:
+      - pattern: $STMT.executeQuery($SINK)
+      - pattern: $STMT.executeUpdate($SINK)
+      - pattern: $STMT.execute($SINK)
+
+  - id: toleman-java-sql-injection-statement-concat-inline
+    languages: [java]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      SQL built with string concatenation is passed directly as the
+      argument to Statement.execute()/executeQuery()/executeUpdate() (CWE-89).
+      Use a PreparedStatement with `?` placeholders instead.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      validated-against: []
+      note: >-
+        0/0 on webgoat -- unproven-by-sample. See file header: WebGoat
+        always names the concatenated query first (caught by the taint rule
+        above instead), never inlines the concatenation into the call
+        argument itself.
+    patterns:
+      - pattern-either:
+          - pattern: $STMT.executeQuery("..." + ...)
+          - pattern: $STMT.executeUpdate("..." + ...)
+          - pattern: $STMT.execute("..." + ...)
+
+  - id: toleman-java-sql-injection-jpa-concat
+    languages: [java]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      JPQL/native SQL built with string concatenation is passed to
+      EntityManager.createQuery()/createNativeQuery() (CWE-89). Use a named
+      or positional parameter (:name / ?1) and setParameter() instead of
+      concatenating values into the query string.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      validated-against: []
+      note: >-
+        unproven-by-sample -- WebGoat's app code is raw JDBC only, no
+        JPA/Hibernate EntityManager usage exists anywhere in src/main/java
+        to validate this shape against.
+    patterns:
+      - pattern-either:
+          - pattern: $EM.createQuery("..." + ...)
+          - pattern: $EM.createNativeQuery("..." + ...)

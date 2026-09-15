@@ -1,0 +1,76 @@
+## Cross-site scripting via raw/html_safe (CWE-79), Ruby on Rails.
+##
+## Rails' ERB auto-escapes every interpolated value by default -- this is
+## the framework's baked-in XSS defense. `.html_safe` and `raw(...)` are
+## the two ways app code opts a string back OUT of that escaping; calling
+## either on a string that embeds user input defeats the framework's
+## protection on exactly that value. This is Rails' direct equivalent of
+## Django's `|safe` template filter, which this pack's Python rules already
+## treat the same way.
+##
+## Validated 2026-09-12 against RailsGoat (scratchpad/railsgoat).
+##
+## `toleman-ruby-xss-html-safe-on-interpolated-param`: 1/1 true positive --
+## app/controllers/password_resets_controller.rb:36:
+##   flash[:error] = "There was an issue sending password reset email to #{params[:email]}".html_safe unless params[:email].nil?
+## `params[:email]` is spliced into the string with no escaping, and
+## `.html_safe` then tells Rails' view layer to render that string
+## verbatim -- a value like `<script>...</script>` in the `email` query
+## param round-trips straight into the rendered flash partial. Confirmed
+## by reading the controller: this is a flash message rendered by the
+## layout's `<%= flash[:error] %>` (implicitly escaped only when NOT
+## html_safe), and no sanitization happens between the params read and the
+## html_safe call.
+##
+## Plain pattern match, not taint -- the interpolation and the html_safe
+## call are both on this one line, no cross-statement tracking needed. A
+## broader taint-mode variant (any params-derived value reaching raw()/
+## .html_safe anywhere in the method) was considered but produced no
+## additional RailsGoat hits and risks flagging html_safe calls on values
+## that were already sanitized upstream (e.g. re-marking a value the app
+## itself generated, like the two ".json".inspect.html_safe route-URL
+## constructions elsewhere in this repo's views, which are not
+## user-controlled and are correct true negatives this narrower rule
+## avoids flagging).
+rules:
+  - id: toleman-ruby-xss-html-safe-on-interpolated-param
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      User input (params/cookies) is interpolated into a string that is
+      then marked .html_safe/raw(...), which disables Rails' automatic ERB
+      escaping for that value (CWE-79). If this string is ever rendered in
+      a view or flash message, an attacker-controlled <script> tag runs in
+      the victim's browser. Drop .html_safe/raw() and let Rails escape the
+      value, or explicitly sanitize with sanitize(...) first.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-Site Scripting"
+      references:
+        - "https://guides.rubyonrails.org/security.html#cross-site-scripting-xss"
+      validated-against:
+        - "railsgoat: 1/1 true positive (app/controllers/password_resets_controller.rb:36, \"...#{params[:email]}\".html_safe)"
+    patterns:
+      - pattern-either:
+          - pattern: "\"...#{params[...]}...\".html_safe"
+          - pattern: "raw(\"...#{params[...]}...\")"
+
+  - id: toleman-ruby-xss-html-safe-on-cookie
+    languages: [ruby]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      A cookie value (attacker-controllable via a Set-Cookie the app
+      doesn't own, or by anyone sharing the browser/device) is interpolated
+      into a string then marked .html_safe/raw(...), disabling Rails'
+      automatic escaping for it (CWE-79).
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-Site Scripting"
+      validated-against:
+        - "railsgoat: 0/0 -- unproven-by-sample, no cookies.$X interpolated into an html_safe/raw string in this repo"
+    patterns:
+      - pattern-either:
+          - pattern: "\"...#{cookies[...]}...\".html_safe"
+          - pattern: "raw(\"...#{cookies[...]}...\")"

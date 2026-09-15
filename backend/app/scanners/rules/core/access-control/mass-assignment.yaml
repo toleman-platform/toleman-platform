@@ -1,0 +1,181 @@
+## Mass assignment (CWE-915: Improperly Controlled Modification of
+## Dynamically-Determined Object Attributes).
+##
+## Written 2026-09-12. Two sub-patterns, validated separately:
+##
+## `toleman-mass-assignment-raw-request-dict-to-model`: flags
+## $MODEL(**raw_request_dict) / $MODEL.objects.create(**raw_request_dict) /
+## a setattr loop over a raw request dict -- i.e. an ORM constructor fed
+## directly from request.POST/request.GET/request.data/request.json()/
+## request.form/json.loads(...) with no schema class in between to act as
+## an allowlist. Deliberately does NOT flag `Model(**payload.dict())` /
+## `Model(**payload.model_dump())` where `payload` is a typed request
+## parameter (a Pydantic/marshmallow/DRF-serializer-validated schema) --
+## that is idiomatic FastAPI/typed-request-body code, not mass assignment,
+## because the schema class itself is the allowlist. Confirmed this
+## distinction against a real example: toleman-platform's own
+## backend/app/api/targets.py:267 (`Target(**payload.model_dump())`) and
+## :313 (`setattr(target, field, value)` looping
+## `payload.model_dump(exclude_unset=True)`) are BOTH this safe shape --
+## `payload` is `CreateTargetRequest`/`UpdateTargetRequest`, hand-written
+## Pydantic classes in the same file that only declare the fields meant to
+## be client-settable (e.g. `UpdateTargetRequest` has no `workspace_id`,
+## so a target can't be reassigned to another workspace this way). This
+## rule correctly does NOT match either line -- verified by running it and
+## confirming zero hits there, not just by reading the pattern.
+##
+## Third semgrep gotcha hit writing this one, not yet in the README: a
+## `patterns:` list with a `pattern-either` of two *differently-shaped*
+## alternatives (a constructor call binding $RAW, a for-loop binding
+## $RAWITEMS) plus one `metavariable-pattern` per metavariable silently
+## matched NOTHING -- because every match only binds one of the two
+## metavariables, and an unbound metavariable in a required
+## `metavariable-pattern` makes the whole condition false rather than
+## vacuous-true. Caught it by testing a synthetic positive file (a bare
+## `User(**request.POST)`) and getting zero hits, then bisecting the rule
+## down to the single `metavariable-pattern` block by removing pieces
+## until it fired. Fixed by switching to `mode: taint` (source:
+## request.POST/GET/data/json()/get_json()/form/dict(request.X); sink:
+## $MODEL(**$X), $MODEL.objects.create(**$X), setattr($OBJ, $K, $X)) --
+## which also fixes the same variable-indirection gap the README's
+## SQL-injection rule hit (`data = request.json(); Model(**data)` needs
+## taint to connect them, a plain pattern or metavariable-pattern won't).
+## Confirmed against 3 synthetic positive cases (literal-inline unpack,
+## unpack-via-intermediate-variable, and the setattr-loop form) and 2
+## synthetic negative cases (payload.model_dump() literal and
+## variable-indirected) before running on the real repos.
+##
+## Result: 0 hits on all 3 validation repos (toleman-platform, pygoat,
+## dvpwa). toleman-platform's mutating endpoints consistently go through
+## hand-rolled Pydantic request schemas (checked api/admin.py,
+## api/admin_workspace_roles.py, api/groups.py, api/workspaces.py,
+## api/tools/assignments.py, api/targets.py -- every `setattr` loop and
+## every `Model(**...)` construction in the whole api/ tree feeds off a
+## `payload.model_dump()`/`payload.dict()` call, never a raw request
+## object), so this is a genuine true negative, not a blind spot. pygoat
+## has no DRF and its one Django ModelForm (introduction/forms.py's
+## NewUserForm) declares an explicit `fields = (...)` tuple -- also a
+## correct true negative. dvpwa has no ORM at all (raw asyncpg SQL via
+## sqli/dao/*.py), so the pattern shape doesn't apply there. Unproven-by-
+## sample: kept in the pack per the same policy as path-traversal.yaml /
+## open-redirect.yaml, but don't cite it as validated until it catches a
+## real instance.
+##
+## `toleman-mass-assignment-modelform-no-allowlist`: flags a Django
+## ModelForm/DRF ModelSerializer whose `Meta` either sets
+## `fields = "__all__"` or declares neither `fields` nor `exclude` --
+## the framework then generates a form/serializer that accepts every
+## column on the model, including ones an attacker should never be able
+## to set directly (role, is_staff, is_admin, balance, owner_id, ...).
+## Also 0 hits on all 3 repos -- toleman-platform is FastAPI (no
+## ModelForm/DRF), dvpwa is Flask (no ModelForm/DRF, and its one
+## sqli/schema/forms.py form is a plain WTForm, not a ModelForm), and
+## pygoat's only ModelForm (see above) already declares an explicit
+## allowlist. Unproven-by-sample for the same reason.
+rules:
+  - id: toleman-mass-assignment-raw-request-dict-to-model
+    languages: [python]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      An ORM object is constructed or updated directly from a raw
+      request dict (request.POST/GET/data/json()/form, or json.loads on
+      request input) with no schema/form class acting as a field
+      allowlist in between. A client can set any column the model has,
+      including ones like role/is_admin/owner_id/price that were never
+      meant to be client-settable (CWE-915). If a typed schema
+      (Pydantic/marshmallow/DRF serializer) already validates this data
+      before it reaches here, that's the fix -- construct the model from
+      the validated schema object's fields, not the raw request dict.
+    metadata:
+      category: security
+      cwe: "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes"
+      references:
+        - "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+      validated-against:
+        - "toleman-platform: 0 hits -- confirmed true negative, every Model(**...)/setattr-loop site in api/ goes through a hand-written Pydantic request schema instead of a raw request dict (checked targets.py, groups.py, workspaces.py, tools/assignments.py, admin.py, admin_workspace_roles.py)"
+        - "pygoat: 0 hits -- no Model(**request.X) shape found in introduction/ or challenge/ (all ORM .objects.create() calls there use explicit kwargs)"
+        - "dvpwa: 0 hits -- no ORM (raw asyncpg SQL), pattern shape does not apply"
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.POST
+          - pattern: request.GET
+          - pattern: request.data
+          - pattern: request.json()
+          - pattern: request.get_json()
+          - pattern: request.form
+          - pattern: dict(request.$ATTR)
+          - pattern: json.loads(...)
+    pattern-sinks:
+      - pattern: $MODEL(**$SINK)
+      - pattern: $MODEL.objects.create(**$SINK)
+      - pattern: setattr($OBJ, $K, $SINK)
+
+  - id: toleman-mass-assignment-modelform-no-allowlist
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A ModelForm/ModelSerializer with no explicit fields=/exclude=
+      allowlist (or fields = "__all__") exposes every column on the
+      underlying model to mass assignment from request input, including
+      any privileged column added to the model later. Declare an
+      explicit `fields = (...)` tuple naming only the columns a client
+      should be able to set (CWE-915).
+    metadata:
+      category: security
+      cwe: "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes"
+      references:
+        - "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+        - "https://docs.djangoproject.com/en/stable/topics/forms/modelforms/#selecting-the-fields-to-use"
+      validated-against:
+        - "toleman-platform: not applicable -- FastAPI, no ModelForm/DRF in the codebase"
+        - "pygoat: 0 hits -- its one ModelForm (introduction/forms.py NewUserForm) declares an explicit fields tuple; correct true negative"
+        - "dvpwa: not applicable -- Flask/WTForms, no ModelForm/DRF"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              class $FORM($BASE):
+                  ...
+                  class Meta:
+                      model = $MODEL
+                      fields = "__all__"
+                      ...
+          - pattern: |
+              class $FORM($BASE):
+                  ...
+                  class Meta:
+                      model = $MODEL
+                      ...
+      - metavariable-regex:
+          metavariable: $BASE
+          regex: .*(ModelForm|ModelSerializer).*
+      - pattern-not: |
+          class $FORM($BASE):
+              ...
+              class Meta:
+                  model = $MODEL
+                  fields = [...]
+                  ...
+      - pattern-not: |
+          class $FORM($BASE):
+              ...
+              class Meta:
+                  model = $MODEL
+                  fields = (...)
+                  ...
+      - pattern-not: |
+          class $FORM($BASE):
+              ...
+              class Meta:
+                  model = $MODEL
+                  exclude = [...]
+                  ...
+      - pattern-not: |
+          class $FORM($BASE):
+              ...
+              class Meta:
+                  model = $MODEL
+                  exclude = (...)
+                  ...

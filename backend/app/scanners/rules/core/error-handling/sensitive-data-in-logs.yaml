@@ -1,0 +1,117 @@
+## Secrets/PII written to application logs (CWE-532).
+##
+## Scoped deliberately narrow, after the hardcoded-secret-assignment
+## false-positive lesson (see ../README.md and misconfig/default-credentials.yaml's
+## header): matching "a sensitive-sounding name exists somewhere near a
+## logger call" produced 7/7 false positives there. This rule instead
+## requires the sensitive-named variable to be the *actual value
+## interpolated into the log message* (an f-string `{...}` slot or a
+## `%s`-style positional arg), not merely present in the same function.
+## That distinction is exactly what kept it a true negative on
+## toleman-platform: see below.
+##
+## Receiver is constrained to `logger`/`logging`/`log` (bare or via
+## `self.`) -- real Python logging-module usage, per the brief. It does
+## NOT chase arbitrary `.info()`/`.error()` calls on any other object.
+##
+## Validated 2026-09-12:
+##
+## toleman-sensitive-variable-logged:
+## - toleman-platform: true negative, and a meaningful one. This codebase
+##   has several logger.warning/error calls inside token-handling functions
+##   (app/core/github_token.py:55,62,79,86 and app/api/github_token.py:141)
+##   that a naive "logger call inside a function about tokens" heuristic
+##   WOULD flag -- in fact a generic community rule already does, each
+##   site carries a `# nosemgrep:
+##   python.lang.security.audit.logging.python-logger-credential-disclosure`
+##   suppression. Read all 5 by hand: none of them interpolate the token
+##   itself, only workspace_id/slug/the exception object
+##   (e.g. `logger.warning("Failed to mint installation token for %s: %s",
+##   slug, exc)`). Because this rule binds $VAR to the actual interpolated
+##   metavariable and regexes *that*, `slug`/`exc`/`workspace_id` never
+##   match the sensitive-name list and none of these 5 fire. Correct
+##   outcome, and the reason this rule doesn't just grep for "token" near
+##   "logger".
+## - pygoat: true negative for this specific rule shape. pygoat's one real
+##   analogue -- introduction/playground/A9/api.py:16,
+##   `L.info(f"POST request with username {username} and password
+##   {password}")` -- genuinely does interpolate a variable named
+##   `password` into a log call. It does NOT match here because the
+##   receiver is `L` (a locally-defined no-op `Log` class from
+##   playground/A9/main.py, not the stdlib `logging` module or a
+##   conventionally-named `logger`/`log` object), which this rule
+##   intentionally does not chase (see header above). Recording this as a
+##   known, deliberate miss rather than silently claiming a clean scan:
+##   grep for `\.info(f".*password` etc. if auditing code that uses
+##   nonstandard logger variable names.
+## - dvpwa: true negative. Its two real `log.$METHOD` call sites
+##   (run.py:17, middlewares.py:33) interpolate a hostname/port and a URL
+##   respectively -- neither is sensitive.
+##
+## toleman-request-object-logged-unredacted: 0/0/0, unproven-by-sample.
+## Grepped all three repos for a logger call with request.POST / .body /
+## .headers / .META anywhere in the call -- none exists in any of them.
+## Kept because dumping a whole request object into a log line is a real,
+## common pattern this rule pack doesn't otherwise cover; just not one any
+## of the 3 validation repos happens to contain.
+rules:
+  - id: toleman-sensitive-variable-logged
+    languages: [python]
+    severity: WARNING
+    confidence: MEDIUM
+    message: >-
+      A variable named like a secret or PII field (password/token/secret/
+      ssn/credit card) is interpolated directly into a log message. Log
+      aggregators and log files are typically readable by a much wider
+      audience than the API response would be -- this is the same
+      information-exposure risk as CWE-532, just to a different sink.
+      Log an identifier (user id, workspace id) instead of the value, or
+      redact it.
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+      validated-against:
+        - "toleman-platform: true negative -- correctly did not re-flag 5 existing nosemgrep-suppressed token-handling log calls, see header"
+        - "pygoat: known miss (nonstandard logger variable name), see header"
+        - "dvpwa: true negative"
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.$METHOD(f"...{$VAR}...")
+          - pattern: $LOG.$METHOD("...%s...", $VAR)
+          - pattern: $LOG.$METHOD(..., $VAR=$VAR, ...)
+      - metavariable-regex:
+          metavariable: $LOG
+          regex: (?i)^(self\.)?(logger|logging|log)$
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(info|debug|warning|warn|error|exception|critical)$
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i)^.*(password|passwd|pwd|token|secret|ssn|credit_card|creditcard|api_key|apikey)[a-z0-9_]*$
+
+  - id: toleman-request-object-logged-unredacted
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      An entire request object (POST body / raw body / headers) is passed
+      straight into a log call with no redaction. These commonly carry
+      passwords, auth tokens, cookies, or PII -- once logged, they live in
+      plaintext in every place the log is shipped to (CWE-532).
+    metadata:
+      category: security
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+      validated-against: []
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.$METHOD(f"...{$REQ}...")
+          - pattern: $LOG.$METHOD(..., $REQ, ...)
+      - metavariable-regex:
+          metavariable: $LOG
+          regex: (?i)^(self\.)?(logger|logging|log)$
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(info|debug|warning|warn|error|exception|critical)$
+      - metavariable-regex:
+          metavariable: $REQ
+          regex: (?i)^.*request\.(POST|body|headers|META)$

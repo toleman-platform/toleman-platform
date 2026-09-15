@@ -1,0 +1,44 @@
+## Path traversal (CWE-22), Ruby on Rails.
+##
+## Validated 2026-09-12 against RailsGoat (scratchpad/railsgoat).
+##
+## `toleman-ruby-path-traversal-param-to-file-sink`: taint-tracked --
+## source params[...], sink File.open/File.read/File.binread/send_file/
+## send_data-with-filename, with File.expand_path treated as a sanitizer
+## (matches this pack's Python path-traversal rule's own "no
+## expand_path+containment check nearby" framing). Needed mode: taint, not
+## a plain pattern: the tainted value crosses two indirections before
+## reaching the sink (see finding below).
+rules:
+  - id: toleman-ruby-path-traversal-param-to-file-sink
+    languages: [ruby]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      A file path/name built from params reaches File.open/File.read/
+      send_file with no File.expand_path + containment check in between.
+      "../../etc/passwd"-style traversal, or (for send_file) direct
+      disclosure of any file the app process can read (CWE-22). Resolve
+      with File.expand_path and verify the result stays inside the
+      intended base directory before touching the filesystem.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      references:
+        - "https://owasp.org/www-community/attacks/Path_Traversal"
+      validated-against:
+        - "railsgoat: 1/1 true positive (app/controllers/benefit_forms_controller.rb:11-13, download action: path = params[:name]; file = params[:type].constantize.new(path); send_file file -- no expand_path/containment check anywhere in the method, and params[:type] additionally lets the caller pick which class .new(path) instantiates)"
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: params[...]
+          - pattern: params.require(...)
+          - pattern: params.permit(...)
+    pattern-sanitizers:
+      - pattern: File.expand_path(...)
+    pattern-sinks:
+      - pattern: File.open($SINK, ...)
+      - pattern: File.read($SINK)
+      - pattern: File.binread($SINK)
+      - pattern: File.new($SINK, ...)
+      - pattern: send_file($SINK, ...)

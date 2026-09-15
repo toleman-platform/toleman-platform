@@ -1,0 +1,42 @@
+## postMessage listener with no origin check (CWE-346).
+##
+## Written 2026-09-12, unproven-by-sample: toleman-platform has zero
+## `addEventListener("message", ...)` usage anywhere in its frontend
+## (confirmed by grep before writing this rule), and pygoat/dvpwa have no
+## meaningful application-authored frontend JS at all. Kept LOW confidence.
+rules:
+  - id: toleman-postmessage-listener-missing-origin-check
+    languages: [javascript, typescript]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A "message" event listener has no visible check of event.origin. Any
+      website can send this page a postMessage, and without an origin
+      check the handler will act on a message from an attacker-controlled
+      page just as readily as from the intended sender (CWE-346).
+    metadata:
+      category: security
+      cwe: "CWE-346: Origin Validation Error"
+      validated-against: []
+    patterns:
+      - pattern-either:
+          - pattern: |
+              window.addEventListener("message", function ($EVT) {
+                ...
+              })
+          - pattern: |
+              window.addEventListener("message", ($EVT) => {
+                ...
+              })
+      - pattern-not: |
+          window.addEventListener("message", function ($EVT) {
+            ...
+            if ($EVT.origin !== ...) { ... }
+            ...
+          })
+      - pattern-not: |
+          window.addEventListener("message", ($EVT) => {
+            ...
+            if ($EVT.origin !== ...) { ... }
+            ...
+          })

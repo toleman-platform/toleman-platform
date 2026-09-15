@@ -163,10 +163,45 @@ def parse_noseyparker(raw: list) -> list[dict]:
     return out
 
 
+# Dependency scope values. "unknown" is a real state, not a placeholder:
+# every finding that predates this, and every ecosystem whose manifest
+# cannot express the distinction, genuinely has no answer. Defaulting those
+# to "runtime" would misrank the entire existing backlog in the opposite
+# direction from the bug this fixes.
+SCOPE_RUNTIME = "runtime"
+SCOPE_DEVELOPMENT = "development"
+SCOPE_UNKNOWN = "unknown"
+
+
+def _dependency_scopes(result: dict) -> dict[str, str]:
+    """Package ID -> scope, from one trivy Result.
+
+    trivy puts the dev/runtime flag on Package entries and NOT on
+    Vulnerability entries, so a vulnerability's scope has to be resolved by
+    correlating its PkgID against the package list. That list is only
+    present when trivy is invoked with --list-all-pkgs, which is why
+    TOOL_COMMANDS passes it; without it this map is empty and every
+    finding is honestly reported as unknown rather than guessed at.
+
+    The `Dev` key is omitted rather than set false for runtime packages, so
+    presence-and-truthy is the test. Verified against trivy 0.73.0 on this
+    repo's own frontend/package-lock.json: 635 packages, 507 flagged Dev,
+    and all 8 vulnerabilities resolved to a package -- matching GitHub
+    Dependabot's `scope: development` on the same lockfile exactly.
+    """
+    scopes = {}
+    for package in result.get("Packages") or []:
+        package_id = package.get("ID")
+        if package_id:
+            scopes[package_id] = SCOPE_DEVELOPMENT if package.get("Dev") else SCOPE_RUNTIME
+    return scopes
+
+
 def parse_trivy(raw: dict) -> list[dict]:
     out = []
     for result in raw.get("Results", []):
         target = result.get("Target", "")
+        scopes = _dependency_scopes(result)
         for v in result.get("Vulnerabilities", []) or []:
             out.append({
                 "rule_id": v.get("VulnerabilityID", "unknown"),
@@ -178,6 +213,7 @@ def parse_trivy(raw: dict) -> list[dict]:
                 "severity": _map_severity(v.get("Severity", "")),
                 "snippet": f"{v.get('PkgName','')}@{v.get('InstalledVersion','')}",
                 "cve_id": v.get("VulnerabilityID"),
+                "dependency_scope": scopes.get(v.get("PkgID"), SCOPE_UNKNOWN),
             })
         for m in result.get("Misconfigurations", []) or []:
             out.append({

@@ -317,6 +317,10 @@ def ingest_findings(
             line_end=item.get("line_end"),
             severity=severity,
             priority_score=score_for(severity, finding_cve_id, epss_score, kev_listed),
+            # (#500) Absent for every tool that is not trivy, and for trivy
+            # findings whose package could not be resolved; the column's
+            # default says "unknown" for both, which is the honest answer.
+            dependency_scope=item.get("dependency_scope", "unknown"),
             branch=branch,
             cve_id=finding_cve_id,
             epss_score=epss_score,

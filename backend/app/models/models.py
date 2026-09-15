@@ -573,6 +573,22 @@ class Finding(SQLModel, table=True):
     severity: Severity
     priority_score: int = Field(default=0, index=True)
 
+    # (#500) Whether the vulnerable dependency ships to production or only
+    # builds it. "unknown" rather than None-means-runtime: every row that
+    # predates this genuinely has no answer, and so does every ecosystem
+    # whose manifest cannot express the distinction, so calling those
+    # runtime would misrank the whole existing backlog in the opposite
+    # direction from the bug this exists to fix.
+    #
+    # A critical CVE in a test runner is reachable by someone who can
+    # already run the build; the same CVE in a shipped library is reachable
+    # by anyone who can reach the deployed service. Both are worth
+    # reporting -- #488 exists because the dev half was being dropped
+    # silently -- but ranking them identically makes the queue stop being a
+    # ranking. Indexed because filtering triage to runtime-only is the
+    # point.
+    dependency_scope: str = Field(default="unknown", index=True)
+
     branch: str = Field(default="main", index=True)
     state: FindingState = Field(default=FindingState.OPEN, index=True)
     state_reason: str = ""

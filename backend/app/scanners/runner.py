@@ -159,8 +159,14 @@ TOOL_COMMANDS = {
     # compromised test runner executes with the credentials of CI, and
     # "nobody looked" is not the same answer as "nothing there". Reporting
     # them and letting an operator judge scope beats silently dropping them.
+    # --list-all-pkgs (#500): trivy reports the dev/runtime flag on Package
+    # entries and not on Vulnerability entries, so a finding's scope can
+    # only be resolved by correlating its PkgID against the package list --
+    # and that list is omitted unless this flag is passed. Without it every
+    # dependency finding is scope "unknown", which is honest but useless
+    # for ranking a test-runner CVE against a shipped-library one.
     "trivy": lambda path: [
-        "trivy", "fs", "--scanners", "vuln", "--include-dev-deps",
+        "trivy", "fs", "--scanners", "vuln", "--include-dev-deps", "--list-all-pkgs",
         "--format", "json", "--quiet", path,
     ],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],

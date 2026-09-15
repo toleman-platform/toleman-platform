@@ -205,3 +205,71 @@ def test_no_timings_at_all_renders_exactly_as_before():
     unaffected."""
     assert _render_tools_run(["a", "b"], None) == "a, b"
     assert _render_tools_run(["a", "b"], {}) == "a, b"
+
+
+# --- the persisted per-tool log (#501) -------------------------------
+
+from app.core.pr_guardrail_executor import build_tool_log, parse_tool_log  # noqa: E402
+
+
+def test_the_log_records_every_tool_including_the_ones_that_did_not_run():
+    """tools_run/tools_failed/tools_skipped are name lists. "ran for 80
+    seconds then errored" and "was never applicable" are the two answers a
+    reviewer most needs, and neither was recoverable from names alone."""
+    raw = build_tool_log(
+        tools=["semgrep-core", "trivy", "gitleaks"],
+        durations={"semgrep-core": 81.64, "trivy": 8.0, "gitleaks": 0.4},
+        counts={"semgrep-core": 38, "gitleaks": 1},
+        failed=["trivy"],
+        skipped={},
+    )
+    entries = {e["tool"]: e for e in parse_tool_log(raw)}
+
+    assert entries["semgrep-core"]["status"] == "ran"
+    assert entries["semgrep-core"]["seconds"] == 81.6
+    assert entries["semgrep-core"]["findings"] == 38
+    assert entries["trivy"]["status"] == "failed"
+    assert entries["trivy"]["seconds"] == 8.0, "a failed tool's time is the interesting part"
+
+
+def test_a_skipped_tool_carries_the_reason():
+    """The executor computes this reason and tools_skipped dropped it,
+    leaving "not run" with no explanation."""
+    raw = build_tool_log(
+        tools=["trivy"], durations={"trivy": 0.2}, counts={},
+        failed=[], skipped={"trivy": "no manifest changed in this PR"},
+    )
+
+    entry = parse_tool_log(raw)[0]
+    assert entry["status"] == "skipped"
+    assert entry["detail"] == "no manifest changed in this PR"
+
+
+def test_an_unmeasured_tool_reports_null_not_zero():
+    """Zero reads as instant, which is a different claim from
+    unmeasured."""
+    raw = build_tool_log(tools=["x"], durations={}, counts={}, failed=[], skipped={})
+
+    assert parse_tool_log(raw)[0]["seconds"] is None
+
+
+def test_the_tool_order_is_the_order_they_ran():
+    raw = build_tool_log(
+        tools=["a", "b", "c"], durations={"a": 1.0, "b": 2.0, "c": 3.0},
+        counts={}, failed=[], skipped={},
+    )
+
+    assert [e["tool"] for e in parse_tool_log(raw)] == ["a", "b", "c"]
+
+
+def test_a_scan_predating_the_column_reads_as_an_empty_log():
+    """Must not fail a page render. The view then says it has no
+    breakdown, which is true."""
+    assert parse_tool_log("") == []
+
+
+def test_unparseable_or_unexpected_content_reads_as_an_empty_log():
+    """A row written by a future version, or corrupted, still has to
+    render."""
+    assert parse_tool_log("{not json") == []
+    assert parse_tool_log('{"tool": "x"}') == [], "an object is not a log"

@@ -29,6 +29,14 @@ function isSessionError(e: unknown): boolean {
 // approval" contract as every other ignore-request entry point.
 export const LINK_IGNORE_REASON = "Requested via PR comment link";
 
+// (#501) A failed tool is the one worth noticing in a scan log; a skipped
+// one is ordinary (a manifest tool on a PR that changed no manifest).
+const TOOL_STATUS_COLOR: Record<string, string> = {
+  ran: "text-muted-foreground",
+  failed: "text-destructive",
+  skipped: "text-muted-foreground",
+};
+
 export const LOG_STATUS_COLOR: Record<string, string> = {
   running: "border-chart-1/20 bg-chart-1/10 text-chart-1",
   passed: "border-chart-5/20 bg-chart-5/10 text-chart-5",
@@ -773,10 +781,40 @@ export function PrGuardrailLog({
                         Not run: {entry.tools_skipped!.join(", ")}
                       </div>
                     )}
-                    {entry.tools_run?.length > 0 && (
+                    {entry.tools_run?.length > 0 && (entry.tool_log?.length ?? 0) === 0 && (
                       <div className="mt-1 truncate text-xs text-muted-foreground">
                         Scanned with: {entry.tools_run.join(", ")}
                       </div>
+                    )}
+                    {(entry.tool_log?.length ?? 0) > 0 && (
+                      // (#501) Replaces the bare "Scanned with" line above
+                      // when a breakdown exists, rather than sitting beside
+                      // it: the two would list the same tools twice. Older
+                      // scans have no tool_log and keep the plain line.
+                      //
+                      // Collapsed by default. The breakdown matters when a
+                      // check was slow or something failed, not on every row
+                      // of a healthy history.
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-xs text-muted-foreground">
+                          Scan log ({entry.tool_log!.length} tool
+                          {entry.tool_log!.length === 1 ? "" : "s"})
+                        </summary>
+                        <ul className="mt-1 space-y-0.5">
+                          {entry.tool_log!.map((t) => (
+                            <li key={t.tool} className="text-xs text-muted-foreground">
+                              <span className="font-mono">{t.tool}</span>
+                              {" · "}
+                              <span className={TOOL_STATUS_COLOR[t.status]}>{t.status}</span>
+                              {/* null, not 0: an unmeasured tool must not read as instant. */}
+                              {t.seconds !== null && t.seconds !== undefined && ` · ${t.seconds}s`}
+                              {t.findings !== null && t.findings !== undefined &&
+                                ` · ${t.findings} finding${t.findings === 1 ? "" : "s"}`}
+                              {t.detail && ` — ${t.detail}`}
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
                     )}
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">

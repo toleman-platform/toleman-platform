@@ -6,6 +6,7 @@ app/api/pr_guardrail.py so both the on-demand API route and the
 webhook-driven (real-time, PR opened/synchronize) path call the exact same
 logic instead of two copies drifting apart.
 """
+import json
 import logging
 import re
 import subprocess
@@ -91,6 +92,7 @@ def _resolve_guardrail_tools(session: Session, target: Target) -> list[str]:
 def _run_guardrail_tools(
     tools: list[str], repo_path, paths: list[str] | None = None,
     durations: dict[str, float] | None = None,
+    counts: dict[str, int] | None = None,
 ) -> tuple[list[dict], list[str], dict[str, str]]:
     """Run every assigned tool over the PR checkout.
 
@@ -180,6 +182,8 @@ def _run_guardrail_tools(
             "pr guardrail tool %s finished in %.1fs with %d finding(s)",
             tool, elapsed, len(parsed),
         )
+        if counts is not None:
+            counts[tool] = len(parsed)
         for item in parsed:
             item["tool"] = tool
         findings.extend(parsed)
@@ -1103,6 +1107,60 @@ def _staleness_footer(scanned_at: datetime | None) -> str | None:
     )
 
 
+def build_tool_log(
+    tools: list[str],
+    durations: dict[str, float],
+    counts: dict[str, int],
+    failed: list[str],
+    skipped: dict[str, str],
+) -> str:
+    """The per-tool record for one scan, as JSON for PRGuardrailScan.tool_log.
+
+    One entry per assigned tool, in the order they ran, each with what it
+    cost and what came of it. Every tool appears -- including failed and
+    skipped ones, with the reason -- because "ran for 80 seconds and then
+    errored" and "was never applicable" are the two answers a reviewer
+    most needs and neither was recoverable before.
+
+    `seconds` is None rather than 0 for a tool with no recorded time: zero
+    reads as instant, which is a different claim from unmeasured.
+    """
+    entries = []
+    for tool in tools:
+        if tool in failed:
+            status, detail = "failed", "the tool raised; see the scan logs"
+        elif tool in skipped:
+            status, detail = "skipped", skipped[tool]
+        else:
+            status, detail = "ran", ""
+        seconds = durations.get(tool)
+        entries.append({
+            "tool": tool,
+            "status": status,
+            "seconds": round(seconds, 1) if seconds is not None else None,
+            "findings": counts.get(tool),
+            "detail": detail,
+        })
+    return json.dumps(entries)
+
+
+def parse_tool_log(raw: str) -> list[dict]:
+    """Read tool_log back, tolerating anything that is not a JSON array.
+
+    A row predating the column holds "", and a row written by a future
+    version might hold something this one does not expect. Neither should
+    fail a page render, so both come back as an empty log -- the view then
+    says it has no breakdown, which is true.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
 def _render_tools_run(tools_run: list[str], tool_durations: dict[str, float] | None) -> str:
     """The "Scanned with" line, with each tool's wall-clock time when known.
 
@@ -1922,8 +1980,16 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
                 changed_lines.setdefault(path, WHOLE_FILE)
 
         tool_durations: dict[str, float] = {}
+        tool_counts: dict[str, int] = {}
         parsed, failed_tools, skipped_tools = _run_guardrail_tools(
-            guardrail_tools, repo_path, paths=scan_paths, durations=tool_durations
+            guardrail_tools, repo_path, paths=scan_paths,
+            durations=tool_durations, counts=tool_counts,
+        )
+        # (#501) Persisted so the PR History view can show what the scan
+        # actually did. Built here, where the skip reasons still exist --
+        # tools_skipped keeps only names.
+        pr_scan.tool_log = build_tool_log(
+            guardrail_tools, tool_durations, tool_counts, failed_tools, skipped_tools
         )
         pr_scan.scan_scope = "diff" if scan_paths is not None else "full"
         pr_scan.files_scanned = len(scan_paths) if scan_paths is not None else 0

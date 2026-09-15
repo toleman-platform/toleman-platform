@@ -233,6 +233,20 @@ export type PrGuardrailFinding = {
 /**
  * Audit log entry recording a PR Guardrail decision and commit status sync.
  */
+/**
+ * One tool's participation in a PR Guardrail scan (#501).
+ *
+ * `seconds` is null rather than 0 when the duration was not recorded: zero
+ * reads as instant, which is a different claim from unmeasured.
+ */
+export type PrScanToolEntry = {
+  tool: string;
+  status: "ran" | "failed" | "skipped";
+  seconds: Nullable<number>;
+  findings: Nullable<number>;
+  detail: string;
+};
+
 export type PrGuardrailLogEntry = {
   id: number;
   pr_number: number;
@@ -245,6 +259,13 @@ export type PrGuardrailLogEntry = {
   tools_run: string[];
   tools_failed: string[];
   tools_skipped?: string[];
+  /**
+   * Per-tool breakdown for this scan (#501): what each tool cost, how many
+   * findings it produced, and why a skipped one was skipped. `tools_run`
+   * and friends are name lists only, so a slow or failed check offered
+   * nothing to act on. Absent or empty for scans predating the column.
+   */
+  tool_log?: PrScanToolEntry[];
   scan_scope?: "full" | "diff";
   files_scanned?: number;
   blast_radius_files?: number;

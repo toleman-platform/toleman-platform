@@ -13,7 +13,7 @@ import { AlertTriangle, BrainCircuit, CheckCircle2, Eye, EyeOff, Key, MessageSqu
 import { ConnectGithubCard } from "@/components/features/integrations";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
-import { serverDate } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 
 const PROVIDERS: { value: AiProvider; label: string }[] = [
   { value: "anthropic", label: "Anthropic (Claude)" },
@@ -564,10 +564,20 @@ export function GlobalIntegrations() {
             githubTokenView?.token_set && (
               <div className="flex items-center gap-2 text-sm text-chart-5">
                 <CheckCircle2 className="h-4 w-4" />
-                Configured
-                {githubTokenView.expires_at
-                  ? ` · auto-purges ${serverDate(githubTokenView.expires_at).toLocaleString()}`
-                  : " · never expires"}
+                {/* One span, not loose text plus a sibling <time>: in a flex
+                    row each would become its own flex item and pick up the
+                    container's gap mid-sentence. */}
+                <span>
+                  Configured
+                  {githubTokenView.expires_at ? (
+                    <>
+                      {" · auto-purges "}
+                      <Timestamp value={githubTokenView.expires_at} />
+                    </>
+                  ) : (
+                    " · never expires"
+                  )}
+                </span>
               </div>
             )
           )}

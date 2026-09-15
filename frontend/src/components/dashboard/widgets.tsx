@@ -35,6 +35,7 @@ import { SeverityChip } from "@/components/ui/severity-chip";
 // independently-invented one here is how "Reopened" ends up meaning a
 // different color on two pages that both claim to show it.
 import { STATE_COLOR } from "@/lib/severity";
+import { Timestamp } from "@/components/ui/timestamp";
 import { LOG_STATUS_COLOR } from "@/components/features/scans/pr-guardrail-log";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
@@ -80,16 +81,6 @@ export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementT
   ai_ml_risk: { label: "AI/ML Risk", icon: Bot },
   guardrail_activity: { label: "Guardrail Activity", icon: GitPullRequest, colSpanClass: "lg:col-span-2" },
 };
-
-// Locale-independent date formatting (YYYY-MM-DD from the ISO timestamp
-// directly, no Date/toLocaleDateString); the server and the browser
-// render this same server component's HTML with potentially different
-// locales/timezone configs, and toLocaleDateString() previously produced
-// a real hydration mismatch (e.g. "13/08/2026" server-side vs
-// "8/13/2026" client-side) that broke the initial page load.
-function formatDate(iso: string): string {
-  return iso.slice(0, 10);
-}
 
 // Widget-scoped, compact variants of the shared empty/error patterns
 // (src/components/ui/empty-state.tsx, error-state.tsx); widgets need
@@ -241,7 +232,8 @@ function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
   if (data.count === 0) {
     return (
       <EmptyState>
-        No findings auto-suppressed since {formatDate(data.since)}. Rules are learned when a finding is triaged{" "}
+        No findings auto-suppressed since <Timestamp value={data.since} mode="date" />. Rules are learned when a
+        finding is triaged{" "}
         &quot;False Positive&quot;, manage them on the{" "}
         <Link href="/admin" className="text-accent-strong underline">
           Admin &rsaquo; False Positive Rules
@@ -254,7 +246,9 @@ function FpAutoSuppressionsWidget({ data }: { data: FpAutoSuppressionsData }) {
     <div className="flex items-center gap-6">
       <div>
         <p className="text-2xl font-bold text-foreground">{data.count}</p>
-        <p className="text-xs text-muted-foreground">Auto-suppressed since {formatDate(data.since)}</p>
+        <p className="text-xs text-muted-foreground">
+          Auto-suppressed since <Timestamp value={data.since} mode="date" />
+        </p>
       </div>
     </div>
   );
@@ -456,7 +450,9 @@ function CveTimelineWidget({ data }: { data: CveTimelineData }) {
               {item.kev_listed && <Badge variant="outline" className="border-destructive/40 bg-destructive/20 text-destructive">KEV</Badge>}
             </div>
             <p className="truncate text-sm text-foreground">{item.title}</p>
-            <p className="text-xs text-muted-foreground">{item.target_name ?? `target #${item.target_id}`} &middot; {formatDate(item.first_seen)}</p>
+            <p className="text-xs text-muted-foreground">
+              {item.target_name ?? `target #${item.target_id}`} &middot; <Timestamp value={item.first_seen} mode="date" />
+            </p>
           </div>
           <SeverityChip severity={item.severity} size="sm" />
         </Link>
@@ -510,7 +506,7 @@ function NeedsActionQueueWidget({ data }: { data: NeedsActionQueueData }) {
             </div>
             <p className="truncate text-xs text-muted-foreground">
               {item.target_name ?? `target #${item.representative_target_id}`} &middot; {item.tool} &middot;{" "}
-              {formatDate(item.first_seen)}
+              <Timestamp value={item.first_seen} mode="date" />
               {/* The representative member's real triage state, always
                   "Open" or "Reopened" -- the resolver's query already
                   excludes every resolved state -- shown explicitly rather

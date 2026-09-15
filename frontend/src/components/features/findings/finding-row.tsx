@@ -35,7 +35,8 @@ import { useWriteAction } from "@/hooks/use-write-action";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { CriticalityChip } from "@/components/features/targets";
-import { parseServerTimestamp, serverDate } from "@/lib/format/date";
+import { parseServerTimestamp } from "@/lib/format/date";
+import { useAbsoluteTimestamp } from "@/components/ui/timestamp";
 
 // Issue #117: the risk/priority score was a bare number (360, 320, 240...)
 // with no explanation of what it meant.
@@ -97,13 +98,18 @@ function RiskScore({ score }: { score: number }) {
  */
 function FirstSeenAge({ finding }: { finding: Finding }) {
   const [now] = useState(() => Date.now());
+  // A `title` is part of the server-rendered HTML too, so a bare
+  // `toLocaleDateString()` in one mismatches on hydration exactly as a
+  // rendered one does. This reads UTC until the viewer's own locale is the
+  // one available, then carries both.
+  const firstSeenLabel = useAbsoluteTimestamp(finding.first_seen);
   const then = parseServerTimestamp(finding.first_seen);
   const days = Number.isNaN(then) ? 0 : Math.max(0, Math.floor((now - then) / (24 * 60 * 60 * 1000)));
   return (
     <div className="flex flex-col items-end">
       <span
         className="font-mono text-sm font-bold tabular-nums text-foreground"
-        title={`First seen ${serverDate(finding.first_seen).toLocaleDateString()}`}
+        title={`First seen ${firstSeenLabel}`}
       >
         {days}d
       </span>
@@ -167,6 +173,9 @@ function FixabilityBadge({ finding }: { finding: Finding }) {
 
 function SlaBadge({ finding }: { finding: Finding }) {
   const [now] = useState(() => Date.now());
+  // Same hydration hazard as FirstSeenAge above: a `title` is server-rendered
+  // HTML, so it needs the same server-stable-then-local treatment.
+  const firstSeenLabel = useAbsoluteTimestamp(finding.first_seen);
   if (finding.sla_days === null || finding.sla_days === undefined) return null;
 
   const firstSeen = parseServerTimestamp(finding.first_seen);
@@ -182,7 +191,7 @@ function SlaBadge({ finding }: { finding: Finding }) {
     return (
       <Badge
         variant="outline"
-        title={`SLA: ${finding.sla_days}d to fix, first seen ${serverDate(finding.first_seen).toLocaleDateString()}`}
+        title={`SLA: ${finding.sla_days}d to fix, first seen ${firstSeenLabel}`}
         className="shrink-0 border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
       >
         Overdue by {daysLeft}d

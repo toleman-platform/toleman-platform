@@ -132,12 +132,12 @@ describe("formatSince", () => {
     // time it would be the 1st in both, so this pins the parse rather than
     // just the formatting.
     process.env.TZ = "America/New_York";
-    expect(formatSince("2026-01-01T02:00:00")).toBe(
-      `since ${new Date(Date.UTC(2026, 0, 1, 2)).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      })}`
-    );
+    // A literal, not a toLocaleDateString mirror of the implementation: the
+    // old expectation recomputed the answer the same way the code did, so it
+    // pinned the parse but would have accepted any formatting at all. "Jan 1"
+    // is the UTC calendar day, which is what both the server and the browser
+    // now render regardless of where either one is.
+    expect(formatSince("2026-01-01T02:00:00")).toBe("since Jan 1");
   });
 
   it("falls back to the raw string rather than rendering Invalid Date", () => {

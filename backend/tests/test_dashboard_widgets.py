@@ -220,6 +220,22 @@ def test_findings_trend_daily_snapshot(engine):
     assert dates == sorted(dates)
 
 
+def test_findings_trend_counts_vulnerabilities_not_licences(engine):
+    """The trend line sits directly beneath a counter that already drops
+    licence findings. Counting them here made the two disagree by the whole
+    licence population -- a chart reading 190 under a card reading 40."""
+    t1, _t2, _ws = _seed(engine)
+    _add_license_finding(engine, t1, "trend-lic-1")
+    _add_license_finding(engine, t1, "trend-lic-2")
+
+    with Session(engine) as session:
+        data = resolve_findings_trend(session, None, {"days": 7})
+
+    # Same 3 as the snapshot test: the two licence rows added above must not
+    # move the line.
+    assert data["points"][-1]["open"] == 3
+
+
 def test_findings_trend_clamps_days(engine):
     _seed(engine)
     with Session(engine) as session:

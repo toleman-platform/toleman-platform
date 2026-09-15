@@ -1,50 +1,189 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Bot, Boxes, Radar, ShieldOff } from "lucide-react";
-import { api, type Target } from "@/lib/api";
+import { Bot, Boxes, Radar } from "lucide-react";
+import { api, type Target, type ScanSummary } from "@/lib/api";
+import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWriteAction } from "@/hooks/use-write-action";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
+import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
+import { TargetPicker } from "@/components/features/targets";
+import { AiBomPanel } from "@/components/features/intelligence";
 
 // Issue #224: AI/ML repo detection (#185), ModelScan (#186) and the LLM
 // SAST ruleset (#189) shipped with zero dedicated frontend surface; the
 // only way to see any of it was to already know to look at a target's
-// Vulnerabilities tab and filter by tool by hand. This page is the missing
-// entry point: which repos got flagged, what those two AI-specific scanners
-// found in them, and an honest "not yet available" for garak (#191) rather
-// than pretending LLM red-teaming exists.
+// Vulnerabilities tab and filter by tool by hand. This page is the entry
+// point: which repos got flagged, what those two AI-specific scanners
+// found in them, and a way to pull the AI Bill of Materials without a
+// detour through the SBOM page.
+//
+// A later pass (this one) removed the "not yet available" placeholder that
+// used to sit under this: a visible dead section is a confidence problem on
+// a page whose whole job is establishing AI/ML posture, and every other
+// element here now actually goes somewhere. garak (#191) still has no
+// TOOL_COMMANDS entry -- it needs a live model endpoint to probe, not a repo
+// checkout -- so LLM red-teaming stays absent from this page rather than
+// asserted and then apologized for.
 type AiTool = "modelscan" | "semgrep-llm";
 
+const TOOL_LABEL: Record<AiTool, string> = {
+  modelscan: "ModelScan",
+  "semgrep-llm": "LLM rules",
+};
+
 export default function AiSecurityPage() {
-  const { data: targets, error: targetsError, isInitialLoading: targetsLoading } = useAsyncData<Target[]>(
-    () => api.targets()
-  );
+  const {
+    data: targets,
+    error: targetsError,
+    isInitialLoading: targetsLoading,
+    refetch: refetchTargets,
+  } = useAsyncData<Target[]>(() => api.targets());
+
+  // Per-target "which tools have ever run" (backend/app/api/scans.py's
+  // scans_summary: one row per (target, tool) EVER completed, not just the
+  // latest run). This is the only way to tell a repo ModelScan hasn't
+  // reached yet from one it reached and cleared -- both currently produce
+  // "0 ModelScan findings" from the findings fetch below, and those are not
+  // the same fact.
+  const {
+    data: scanSummary,
+    error: scanSummaryError,
+    isInitialLoading: scanSummaryLoading,
+    refetch: refetchScanSummary,
+  } = useAsyncData<ScanSummary>(() => api.scanSummary());
 
   // Two org-wide queries, one per AI-specific tool, then grouped by target
   // client-side; the same shape sbom/page.tsx already uses for its OSS
   // Vulnerabilities tab (fetchFindings({ tool, page_size: 500 })). No
   // dedicated aggregate endpoint exists yet, and these two tools only ever
   // run against the handful of AI-flagged repos, so this stays cheap.
-  const { data: modelscanFindings, isInitialLoading: modelscanLoading } = useAsyncData(
-    () => api.findings({ tool: "modelscan", page_size: 500 }).then((r) => r.items)
+  //
+  // `resolved: false` is deliberate, not a default: every badge and counter
+  // below links straight into /findings, and that page's queues (see
+  // lib/findings-view.ts) only ever narrow to open or to resolved, never
+  // both at once. Counting open+resolved here while the destination shows
+  // open-only is exactly the "number and the list behind it disagree" bug
+  // this page exists to not have.
+  const {
+    data: modelscanFindings,
+    error: modelscanError,
+    isInitialLoading: modelscanLoading,
+    refetch: refetchModelscan,
+  } = useAsyncData(
+    () => api.findings({ tool: "modelscan", resolved: false, page_size: 500 }).then((r) => r.items)
   );
-  const { data: semgrepLlmFindings, isInitialLoading: semgrepLlmLoading } = useAsyncData(
-    () => api.findings({ tool: "semgrep-llm", page_size: 500 }).then((r) => r.items)
+  const {
+    data: semgrepLlmFindings,
+    error: semgrepLlmError,
+    isInitialLoading: semgrepLlmLoading,
+    refetch: refetchSemgrepLlm,
+  } = useAsyncData(
+    () => api.findings({ tool: "semgrep-llm", resolved: false, page_size: 500 }).then((r) => r.items)
   );
 
-  const loading = targetsLoading || modelscanLoading || semgrepLlmLoading;
+  const loading = targetsLoading || modelscanLoading || semgrepLlmLoading || scanSummaryLoading;
   const aiTargets = (targets ?? []).filter((t) => t.is_ai_repo_effective);
 
   function countFor(tool: AiTool, targetId: number): number {
     const findings = tool === "modelscan" ? modelscanFindings : semgrepLlmFindings;
     return (findings ?? []).filter((f) => f.target_id === targetId).length;
   }
+
+  // `scanSummary[id]` is only absent because the target was never scanned
+  // by anything, or because the fetch itself failed -- see
+  // target-overview.tsx's identical `countsUnknown`/`scanUnknown` split. Only
+  // trust an absence once the fetch is known to have actually succeeded.
+  const scanSummaryReady = scanSummary !== null && !scanSummaryError;
+  function everScanned(tool: AiTool, targetId: number): boolean {
+    return (scanSummary?.[String(targetId)]?.tools ?? []).includes(tool);
+  }
+
+  function aggregateUnknownHint(tool: AiTool, count: number): string | undefined {
+    if (count > 0) return undefined; // a positive count is proof the tool ran; nothing to caveat.
+    const scannedCount = aiTargets.filter((t) => everScanned(tool, t.id)).length;
+    if (scanSummaryReady && aiTargets.length > 0 && scannedCount === 0) {
+      return `no AI/ML repo has been scanned by ${TOOL_LABEL[tool]} yet`;
+    }
+    return undefined;
+  }
+
+  function aggregateHint(tool: AiTool, count: number, base: string): string {
+    if (count > 0 || !scanSummaryReady || aiTargets.length === 0) return base;
+    const scannedCount = aiTargets.filter((t) => everScanned(tool, t.id)).length;
+    // Zero across some, but not all, AI repos is a real measurement, just a
+    // partial one; say so rather than let a bare "0" imply full coverage.
+    if (scannedCount > 0 && scannedCount < aiTargets.length) {
+      return `${base} - measured across ${scannedCount} of ${aiTargets.length} AI/ML repos scanned`;
+    }
+    return base;
+  }
+
+  // AI Bill of Materials: which AI-flagged target the panel below shows.
+  // Falls back to the first AI target rather than tracking "unset" as a
+  // separate state -- with 0 AI targets this is never read (the section
+  // renders its own empty state first), and with exactly 1 there is nothing
+  // to pick.
+  const [aibomTargetId, setAibomTargetId] = useState<number | null>(null);
+  const aibomTarget = aiTargets.find((t) => t.id === aibomTargetId) ?? aiTargets[0] ?? null;
+  // Bumped on a completed generation to force AiBomPanel to remount and
+  // refetch -- its own useAsyncData only keys off targetId, which does not
+  // change when the user regenerates the same repo's AIBOM.
+  const [aibomGeneration, setAibomGeneration] = useState(0);
+  const cancelPollRef = useRef<(() => void) | null>(null);
+  const generateAction = useWriteAction("AI Bill of Materials generation failed");
+
+  // Same unmount guard as sbom/page.tsx's `run()`: a poll left running past
+  // navigation would resolve/reject into a component that no longer exists.
+  useEffect(() => {
+    return () => {
+      cancelPollRef.current?.();
+    };
+  }, []);
+
+  async function generateAiBom() {
+    if (!aibomTarget) return;
+    const targetId = aibomTarget.id;
+    await generateAction.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          // Same dispatch-then-poll shape as sbom/page.tsx's `run()`: POST
+          // /api/sbom/{id} returns immediately with a run id, and the AIBOM
+          // rows are upserted server-side as part of that same task (see
+          // backend/app/tasks/sbom_tasks.py's extract_ai_components call) --
+          // there is no separate "generate AIBOM" endpoint to call instead.
+          api
+            .generateSbom(targetId)
+            .then((dispatch) => {
+              cancelPollRef.current?.();
+              cancelPollRef.current = pollUntilSettled(
+                () => api.getSbomRun(targetId, dispatch.run_id),
+                (run) => {
+                  if (run.status === "completed") {
+                    setAibomGeneration((g) => g + 1);
+                    resolve();
+                  } else if (run.status === "failed") {
+                    reject(new Error(run.error || "AI Bill of Materials generation failed"));
+                  }
+                },
+                { onError: reject },
+              );
+            })
+            .catch(reject);
+        }),
+    );
+  }
+
+  const aibomTargetDeactivated = aibomTarget?.is_active === false;
 
   return (
     <div className="flex flex-col gap-6">
@@ -53,7 +192,44 @@ export default function AiSecurityPage() {
         description="Repositories detected as using AI/ML, and vulnerability findings from ModelScan and LLM rulesets."
       />
 
-      {targetsError && <AlertBanner tone="critical">{targetsError.message}</AlertBanner>}
+      <PartialFailureBanner
+        sources={[
+          {
+            label: "AI/ML repo list",
+            failed: !!targetsError,
+            consequence: "The repo count and list below, and the AI Bill of Materials repository picker, may be missing repos.",
+          },
+          {
+            label: "Scan history",
+            failed: !!scanSummaryError,
+            consequence: "A 0 finding count cannot be told apart from a repo that was never scanned.",
+          },
+          {
+            label: "ModelScan findings",
+            failed: !!modelscanError,
+            consequence: "The ModelScan counter and per-repo badges are not shown.",
+          },
+          {
+            label: "LLM ruleset findings",
+            failed: !!semgrepLlmError,
+            consequence: "The LLM ruleset counter and per-repo badges are not shown.",
+          },
+        ]}
+        action={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              refetchTargets();
+              refetchScanSummary();
+              refetchModelscan();
+              refetchSemgrepLlm();
+            }}
+          >
+            Try again
+          </Button>
+        }
+      />
 
       <StatGrid columns={3}>
         <StatCard
@@ -61,27 +237,43 @@ export default function AiSecurityPage() {
           value={aiTargets.length}
           hint="detected via dependency manifests (#185)"
           icon={Bot}
-          unknown={targetsLoading}
+          unknown={targetsLoading || !!targetsError}
+          unknownHint={targetsError ? "repo list unavailable" : undefined}
+          // A single flagged repo IS the answer to "which one" -- send the
+          // click straight there instead of down to a one-row list. With
+          // more than one, the destination is the list this same page
+          // already renders below.
+          href={
+            aiTargets.length === 1
+              ? `/targets/${aiTargets[0].id}`
+              : aiTargets.length > 1
+                ? "#ai-flagged-repos"
+                : undefined
+          }
         />
         <StatCard
           label="ModelScan findings"
           value={(modelscanFindings ?? []).length}
-          hint="unsafe deserialization in serialized model files"
+          hint={aggregateHint("modelscan", (modelscanFindings ?? []).length, "unsafe deserialization in serialized model files")}
           icon={Boxes}
           tone={(modelscanFindings ?? []).length > 0 ? "attention" : "default"}
-          unknown={modelscanLoading}
+          unknown={modelscanLoading || !!modelscanError || !!aggregateUnknownHint("modelscan", (modelscanFindings ?? []).length)}
+          unknownHint={modelscanError ? "ModelScan findings unavailable" : aggregateUnknownHint("modelscan", (modelscanFindings ?? []).length)}
+          href="/findings?tool=modelscan&queue=all"
         />
         <StatCard
           label="LLM ruleset findings"
           value={(semgrepLlmFindings ?? []).length}
-          hint="OWASP LLM Top 10 (unsafe eval/shell sinks, unpinned models)"
+          hint={aggregateHint("semgrep-llm", (semgrepLlmFindings ?? []).length, "OWASP LLM Top 10 (unsafe eval/shell sinks, unpinned models)")}
           icon={Radar}
           tone={(semgrepLlmFindings ?? []).length > 0 ? "attention" : "default"}
-          unknown={semgrepLlmLoading}
+          unknown={semgrepLlmLoading || !!semgrepLlmError || !!aggregateUnknownHint("semgrep-llm", (semgrepLlmFindings ?? []).length)}
+          unknownHint={semgrepLlmError ? "LLM ruleset findings unavailable" : aggregateUnknownHint("semgrep-llm", (semgrepLlmFindings ?? []).length)}
+          href="/findings?tool=semgrep-llm&queue=all"
         />
       </StatGrid>
 
-      <div className="flex flex-col gap-3">
+      <div id="ai-flagged-repos" className="flex flex-col gap-3 scroll-mt-4">
         <h2 className="text-sm font-medium text-foreground">AI/ML-flagged repos</h2>
 
         {loading && <SkeletonList count={3} />}
@@ -95,81 +287,160 @@ export default function AiSecurityPage() {
         )}
 
         {!loading &&
-          aiTargets.map((t) => {
-            const modelscanCount = countFor("modelscan", t.id);
-            const semgrepLlmCount = countFor("semgrep-llm", t.id);
-            return (
-              <Card key={t.id} className="border-border bg-card">
-                <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Link href={`/targets/${t.id}`} className="truncate font-medium text-foreground hover:underline">
-                        {t.name}
-                      </Link>
-                      <Badge variant="outline" className="shrink-0 text-[10px]">
-                        AI/ML
-                      </Badge>
-                    </div>
-                    {t.is_ai_repo_signals && (
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.is_ai_repo_signals}</p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2 text-xs">
-                    <Link
-                      href={`/findings?tool=modelscan&target_id=${t.id}`}
-                      className={
-                        modelscanCount > 0
-                          ? "rounded border border-warning/30 bg-warning/10 px-2 py-1 text-warning hover:underline"
-                          : "rounded border border-border px-2 py-1 text-muted-foreground hover:text-foreground hover:underline"
-                      }
-                    >
-                      {modelscanCount} ModelScan
+          aiTargets.map((t) => (
+            <Card key={t.id} className="border-border bg-card">
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Link href={`/targets/${t.id}`} className="truncate font-medium text-foreground hover:underline">
+                      {t.name}
                     </Link>
-                    <Link
-                      href={`/findings?tool=semgrep-llm&target_id=${t.id}`}
-                      className={
-                        semgrepLlmCount > 0
-                          ? "rounded border border-warning/30 bg-warning/10 px-2 py-1 text-warning hover:underline"
-                          : "rounded border border-border px-2 py-1 text-muted-foreground hover:text-foreground hover:underline"
-                      }
-                    >
-                      {semgrepLlmCount} LLM rules
-                    </Link>
+                    <Badge variant="outline" className="shrink-0 text-[10px]">
+                      AI/ML
+                    </Badge>
                   </div>
-                </CardContent>
-              </Card>
-            );
-          })}
+                  {t.is_ai_repo_signals && (
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.is_ai_repo_signals}</p>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-2 text-xs">
+                  <ToolBadge tool="modelscan" target={t} count={countFor("modelscan", t.id)} scanned={everScanned("modelscan", t.id)} scanSummaryReady={scanSummaryReady} />
+                  <ToolBadge tool="semgrep-llm" target={t} count={countFor("semgrep-llm", t.id)} scanned={everScanned("semgrep-llm", t.id)} scanSummaryReady={scanSummaryReady} />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
       </div>
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-foreground">AI Bill of Materials</h2>
-        <Card className="border-border bg-card">
-          <CardContent className="flex items-center justify-between gap-3 px-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              Models and datasets a target depends on, extracted during SBOM generation. Pick a repo on the SBOM
-              page and open its &quot;AI Bill of Materials&quot; tab.
-            </p>
-            <Link href="/sbom" className="shrink-0 text-xs text-accent-strong underline">
-              Go to SBOM &amp; OSS Vulns
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-medium text-foreground">AI Bill of Materials</h2>
+          {aiTargets.length > 1 && (
+            <TargetPicker
+              targets={aiTargets}
+              value={aibomTarget?.id ?? null}
+              onChange={setAibomTargetId}
+              label="AI/ML repository"
+            />
+          )}
+        </div>
 
-      {/* Issue #191: garak needs a live model endpoint to probe rather than a
-          repo checkout, so it never got a TOOL_COMMANDS entry; it's
-          catalog-only (visible in Tool Marketplace for install/health, not
-          runnable). Rendering nothing here would silently claim LLM
-          red-teaming exists; this says plainly that it doesn't yet. */}
-      <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-foreground">LLM red-teaming</h2>
-        <EmptyState
-          icon={ShieldOff}
-          title="Not yet available"
-          description="garak (prompt injection, jailbreaks, data leakage probes) needs a live model endpoint to run against, not a repo checkout; it's registered in the Tool Marketplace for visibility, but isn't wired into scanning yet."
-        />
+        {targetsLoading ? (
+          // Gated on the repo fetch specifically, not `loading`: this
+          // section only needs to know which targets are AI-flagged, and
+          // waiting on the two findings queries too would hold a working
+          // generate button hostage to an unrelated request.
+          <SkeletonList count={1} />
+        ) : aiTargets.length === 0 ? (
+          <EmptyState
+            icon={Boxes}
+            title="No AI/ML repos to bill yet"
+            description="Once a repo is flagged as AI/ML, its models and datasets can be extracted and exported here."
+          />
+        ) : (
+          aibomTarget && (
+            <Card className="border-border bg-card">
+              <CardContent className="flex flex-col gap-3 px-4 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">
+                    Models and datasets {aibomTarget.name} depends on, extracted from the same checkout as its
+                    SBOM (#190). Generating refreshes both.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 shrink-0 text-xs"
+                    onClick={generateAiBom}
+                    disabled={generateAction.submitting || aibomTargetDeactivated}
+                    title={
+                      aibomTargetDeactivated
+                        ? "This target is deactivated; scanning is off. Reactivate it on the target page."
+                        : undefined
+                    }
+                  >
+                    {generateAction.submitting ? "Generating..." : "Generate AI Bill of Materials"}
+                  </Button>
+                </div>
+
+                {aibomTargetDeactivated && (
+                  <p className="text-xs text-warning">
+                    This target is deactivated; scanning is off, so generating a new AI Bill of Materials is
+                    disabled. The one already on file stays readable and exportable.
+                  </p>
+                )}
+
+                {generateAction.error && <AlertBanner tone="critical">{generateAction.error}</AlertBanner>}
+
+                <AiBomPanel key={`${aibomTarget.id}-${aibomGeneration}`} targetId={aibomTarget.id} targetName={aibomTarget.name} />
+              </CardContent>
+            </Card>
+          )
+        )}
       </div>
     </div>
+  );
+}
+
+// One badge per (AI-specific tool, repo). Three states, not two, per
+// AGENTS.md #4 and the honesty rule this page was specifically asked to
+// check: a positive count is unambiguous (the tool ran and found
+// something), but "0" is not, by itself, a claim this codebase lets stand --
+// it has to say whether it means "ran, clean" or "hasn't run".
+function ToolBadge({
+  tool,
+  target,
+  count,
+  scanned,
+  scanSummaryReady,
+}: {
+  tool: AiTool;
+  target: Target;
+  count: number;
+  scanned: boolean;
+  scanSummaryReady: boolean;
+}) {
+  const label = TOOL_LABEL[tool];
+  const href = `/findings?tool=${tool}&target_id=${target.id}&queue=all`;
+
+  if (count > 0) {
+    return (
+      <Link href={href} className="rounded border border-warning/30 bg-warning/10 px-2 py-1 text-warning hover:underline">
+        {count} {label}
+      </Link>
+    );
+  }
+
+  // count === 0 and the scan-history fetch failed: cannot tell "clean" from
+  // "never reached", so say neither. Still links through -- the findings
+  // list underneath will genuinely show zero, matching this badge.
+  if (!scanSummaryReady) {
+    return (
+      <Link
+        href={href}
+        title="Scan history is unavailable, so it is not known whether this tool has run against this repo."
+        className="rounded border border-border px-2 py-1 text-muted-foreground hover:text-foreground hover:underline"
+      >
+        {label}: unknown
+      </Link>
+    );
+  }
+
+  if (!scanned) {
+    return (
+      <Link
+        href={href}
+        title={`${label} has not run against this repo yet.`}
+        className="rounded border border-dashed border-border/70 px-2 py-1 text-muted-foreground/70 hover:text-foreground hover:underline"
+      >
+        {label} not scanned
+      </Link>
+    );
+  }
+
+  // count === 0 and scanned: a real, measured zero.
+  return (
+    <Link href={href} className="rounded border border-border px-2 py-1 text-muted-foreground hover:text-foreground hover:underline">
+      0 {label}
+    </Link>
   );
 }

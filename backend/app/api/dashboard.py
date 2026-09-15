@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
-from app.api.auth import accessible_workspace_ids, current_user
+from app.api.auth import accessible_workspace_ids, current_user, narrow_workspace_scope
 from app.api.deps import get_session
 from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
@@ -29,13 +29,17 @@ def _scoped_targets_query(ws_ids: list[int] | None):
 
 
 @router.get("/stats")
-def stats(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def stats(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Aggregate counts for dashboard charts. Default-branch, Open findings
     only, scoped to the caller's workspaces (issue #57: admins still see
     everything). License findings are excluded -- a legal/compliance signal,
     not a vulnerability count (see app.core.tool_registry.NON_VULNERABILITY_CATEGORIES
     and the same exclusion in security_score/targets summary)."""
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return {"open": 0, "by_severity": {}, "by_tool": {}}
 
@@ -68,11 +72,15 @@ def stats(session: Session = Depends(get_session), user: User = Depends(current_
 
 
 @router.get("/posture")
-def posture(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def posture(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Main Posture Dashboard: org health, default branches only, scoped to
     the caller's workspaces (issue #57). License findings are excluded, same
     reasoning as GET /stats above."""
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return []
 
@@ -96,10 +104,14 @@ def posture(session: Session = Depends(get_session), user: User = Depends(curren
 
 
 @router.get("/summary")
-def summary(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def summary(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Scoped to the caller's workspaces (issue #57). License findings are
     excluded, same reasoning as GET /stats above."""
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return {"total": 0, "open": 0, "mitigated": 0}
 
@@ -119,7 +131,11 @@ def summary(session: Session = Depends(get_session), user: User = Depends(curren
 
 
 @router.get("/sla-compliance")
-def sla_compliance(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def sla_compliance(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """SLA compliance summary (issue #70): among OPEN (and Reopened, still
     unresolved) findings that a real SlaRule actually applies to, how many
     are past their days-to-fix window. Computed live via
@@ -129,7 +145,7 @@ def sla_compliance(session: Session = Depends(get_session), user: User = Depends
     awareness, so a workspace's severity-based rule would otherwise apply
     just as literally to a license flagged e.g. High as to an actually
     exploitable finding -- same reasoning as security_score._sla_score."""
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return {"with_sla": 0, "in_violation": 0, "compliant": 0}
 
@@ -161,6 +177,10 @@ def sla_compliance(session: Session = Depends(get_session), user: User = Depends
 def security_score(
     target_id: int | None = None,
     group_id: int | None = None,
+    # (#506) Only applies when neither of the two explicit, more specific
+    # scopes above is given -- a target_id/group_id is a deliberate narrower
+    # scope than "the active workspace" and must not be overridden by it.
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -175,7 +195,10 @@ def security_score(
     same scope resolution backs the `security_score` widget
     (app.core.widgets) so the dashboard-widget and standalone-endpoint
     numbers for the same scope always agree."""
-    ws_ids = accessible_workspace_ids(session, user)
+    if target_id is not None or group_id is not None:
+        ws_ids = accessible_workspace_ids(session, user)
+    else:
+        ws_ids = narrow_workspace_scope(session, user, workspace_id)
     target_ids = resolve_target_ids_for_scope(session, ws_ids, target_id, group_id)
     return compute_security_score(session, target_ids)
 
@@ -246,7 +269,11 @@ def put_layout(
 
 
 @router.get("/widget-data")
-def widget_data(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def widget_data(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Batch data fetch (issue #69); one round-trip for every widget
     currently in the caller's layout (or the default set if unsaved),
     rather than the frontend making one request per widget. Each widget's
@@ -254,7 +281,7 @@ def widget_data(session: Session = Depends(get_session), user: User = Depends(cu
     duplicated here. A single widget instance's resolver failing (e.g. a
     malformed config) doesn't take the rest of the dashboard down with it;
     it surfaces as {"error": ...} for just that instance."""
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     row = session.exec(select(DashboardLayout).where(DashboardLayout.user_id == user.id)).first()
     widgets = row.widgets if row and row.widgets else build_default_layout()
 

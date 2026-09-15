@@ -371,6 +371,25 @@ def accessible_workspace_ids(session: Session, user: User) -> list[int] | None:
     )
 
 
+def narrow_workspace_scope(
+    session: Session, user: User, workspace_id: int | None
+) -> list[int] | None:
+    """Issue #506: the global workspace switcher's `workspace_id` query
+    param, layered on top of accessible_workspace_ids rather than replacing
+    it. `workspace_id=None` (the switcher's "All workspaces" option) is
+    every existing caller's behavior, unchanged -- returns the caller's full
+    accessible scope. A specific `workspace_id` narrows a GET/list route to
+    just that one workspace, 403ing if it isn't one the caller can already
+    see (an admin's `accessible_workspace_ids` is always None, so this never
+    rejects them)."""
+    ws_ids = accessible_workspace_ids(session, user)
+    if workspace_id is None:
+        return ws_ids
+    if ws_ids is not None and workspace_id not in ws_ids:
+        raise HTTPException(status_code=403, detail="workspace not accessible")
+    return [workspace_id]
+
+
 def require_workspace_role(min_role: WorkspaceRole):
     """Dependency factory for routes that operate on one workspace's
     resources. FastAPI binds sub-dependency parameters to the request's

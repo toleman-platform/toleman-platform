@@ -311,3 +311,55 @@ def test_posture_report_for_other_workspace_target_returns_404(client, engine):
 
     res = client.get("/api/reports/posture", params={"target_id": target_b, "format": "csv"})
     assert res.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# workspace_id narrowing param (#506 part 1's backend prereq: the switcher's
+# "view just this one workspace" mode, layered on top of the
+# accessible_workspace_ids scope every route above already enforces).
+# ---------------------------------------------------------------------------
+
+
+def test_workspace_id_param_narrows_admin_view(client, engine):
+    ws_a, ws_b, target_a, target_b, finding_a, finding_b = _two_workspace_setup(engine)
+    client, _uid = _login(client, engine, role=UserRole.ADMIN)
+
+    res_all = client.get("/api/findings")
+    assert res_all.json()["total"] == 2
+
+    res_a = client.get("/api/findings", params={"workspace_id": ws_a})
+    assert {f["id"] for f in res_a.json()["items"]} == {finding_a}
+
+    res_b = client.get("/api/targets", params={"workspace_id": ws_b})
+    assert {t["id"] for t in res_b.json()} == {target_b}
+
+
+def test_workspace_id_param_rejects_workspace_outside_membership(client, engine):
+    ws_a, ws_b, target_a, target_b, _fa, _fb = _two_workspace_setup(engine)
+    client, uid = _login(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a)
+
+    res = client.get("/api/findings", params={"workspace_id": ws_b})
+    assert res.status_code == 403
+
+    res2 = client.get("/api/targets", params={"workspace_id": ws_b})
+    assert res2.status_code == 403
+
+
+def test_workspace_id_param_narrows_for_member_of_both_workspaces(client, engine):
+    ws_a, ws_b, target_a, target_b, finding_a, finding_b = _two_workspace_setup(engine)
+    client, uid = _login(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a)
+    _assign(engine, uid, ws_b)
+
+    res_all = client.get("/api/dashboard/summary")
+    assert res_all.json()["total"] == 2
+
+    res_a = client.get("/api/dashboard/summary", params={"workspace_id": ws_a})
+    assert res_a.json()["total"] == 1
+
+    summary_all = client.get("/api/targets/summary").json()
+    assert set(summary_all.keys()) == {str(target_a), str(target_b)}
+
+    summary_a = client.get("/api/targets/summary", params={"workspace_id": ws_a}).json()
+    assert set(summary_a.keys()) == {str(target_a)}

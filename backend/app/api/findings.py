@@ -8,7 +8,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, and_, func, or_, select
 
-from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
+from app.api.auth import (
+    accessible_workspace_ids,
+    current_user,
+    enforce_workspace_role,
+    narrow_workspace_scope,
+    require_workspace_role,
+)
 from app.api.deps import get_session
 from app.core.autofix import AutofixError, Patch, find_suppression_comment, open_fix_pr, suggest_fix
 from app.core.cve_enrichment import get_cve_enrichment
@@ -598,14 +604,19 @@ def list_findings(
     sort: Literal["exploitability", "severity", "age", "recent"] = DEFAULT_SORT,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
+    # (#506) The global workspace switcher's narrowing param -- None (its
+    # "All workspaces" option) preserves the accessible-scope default every
+    # caller has always gotten.
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ) -> FindingListResponse:
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
         severity=severity, tool=tool, fixability=fixability, dependency_scope=dependency_scope,
         environment=environment, owner=owner, search=search,
-        rule_id=rule_id, new_since_days=new_since_days,
+        rule_id=rule_id, new_since_days=new_since_days, ws_ids=ws_ids,
     )
     if query is None:
         # Issue #57: caller has zero workspace memberships -- an empty page,
@@ -765,6 +776,7 @@ def list_finding_groups(
     sort: Literal["exploitability", "severity", "blast_radius", "age", "recent"] = DEFAULT_SORT,
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ) -> FindingGroupListResponse:
@@ -774,11 +786,12 @@ def list_finding_groups(
     the same thing in both views and switching between them cannot change
     which findings are in scope -- only how many rows they are drawn as.
     """
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
         severity=severity, tool=tool, fixability=fixability, dependency_scope=dependency_scope,
         environment=environment, owner=owner, search=search,
-        rule_id=rule_id, new_since_days=new_since_days,
+        rule_id=rule_id, new_since_days=new_since_days, ws_ids=ws_ids,
     )
     if query is None:
         return FindingGroupListResponse(items=[], total=0, total_findings=0, truncated=False)
@@ -1167,6 +1180,7 @@ def list_finding_facets(
     owner: list[str] | None = Query(default=None),
     search: str | None = None,
     new_since_days: int | None = None,
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ) -> FindingFacets:
@@ -1220,8 +1234,9 @@ def list_finding_facets(
     # Resolved once, then handed to every query below. It is constant within
     # a request, and this endpoint builds eleven scoped queries for one page
     # load; re-deriving the caller's memberships eleven times is ten round
-    # trips spent re-learning the same thing.
-    ws_ids = accessible_workspace_ids(session, user)
+    # trips spent re-learning the same thing. (#506) workspace_id narrows it
+    # to the switcher's active workspace; None keeps the full accessible set.
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
 
     def scoped_query(dimension: str | None):
         """The filtered query one dimension's counts are measured over:
@@ -1288,12 +1303,16 @@ def list_finding_facets(
 
 
 @router.get("/facets/tools")
-def list_tool_facets(session: Session = Depends(get_session), user: User = Depends(current_user)) -> list[str]:
+def list_tool_facets(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> list[str]:
     """Distinct tool names across findings visible to the caller (issue #57),
     for populating the tool filter. Still here, unchanged, alongside the
     richer GET /facets (#270): it's the cheapest possible answer to "what
     tools exist", which is all some callers want."""
-    return _visible_tools(session, user)
+    return _visible_tools(session, user, narrow_workspace_scope(session, user, workspace_id))
 
 
 def _visible_tools(session: Session, user: User, ws_ids=_RESOLVE_SCOPE) -> list[str]:

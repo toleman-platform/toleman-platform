@@ -63,6 +63,8 @@ export type FindingGroupSort = FindingSort | "blast_radius";
 export type FindingsQuery = {
   target_id?: number | number[];
   group_id?: number;
+  /** The global workspace switcher's active workspace; omitted (or null) means every accessible workspace. */
+  workspace_id?: number | null;
   state?: string | string[];
   severity?: string | string[];
   tool?: string | string[];

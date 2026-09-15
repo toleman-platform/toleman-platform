@@ -10,34 +10,43 @@ import type {
 } from "@/types";
 
 /**
- * High-level counts of total, open, and mitigated findings.
+ * High-level counts of total, open, and mitigated findings, optionally
+ * narrowed to the global workspace switcher's active workspace.
  */
-export function summary(): Promise<Summary> {
-  return jsonFetch<Summary>("/api/dashboard/summary");
+export function summary(workspaceId?: number | null): Promise<Summary> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  return jsonFetch<Summary>(`/api/dashboard/summary${qs}`);
 }
 
 /**
- * Breakdown of open findings categorized by severity and scanner tool.
+ * Breakdown of open findings categorized by severity and scanner tool,
+ * optionally narrowed to the global workspace switcher's active workspace.
  */
-export function stats(): Promise<{
+export function stats(workspaceId?: number | null): Promise<{
   open: number;
   by_severity: Record<string, number>;
   by_tool: Record<string, number>;
 }> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
   return jsonFetch<{
     open: number;
     by_severity: Record<string, number>;
     by_tool: Record<string, number>;
-  }>("/api/dashboard/stats");
+  }>(`/api/dashboard/stats${qs}`);
 }
 
 /**
- * Retrieves the composite security score (org-wide, or scoped to a target or group).
+ * Retrieves the composite security score (org-wide, or scoped to a target,
+ * group, or the workspace switcher's active workspace -- targetId/groupId
+ * take precedence over workspaceId server-side when more than one is given).
  */
-export function securityScore(scope: { targetId?: number; groupId?: number } = {}): Promise<SecurityScore> {
+export function securityScore(
+  scope: { targetId?: number; groupId?: number; workspaceId?: number | null } = {},
+): Promise<SecurityScore> {
   const params = new URLSearchParams();
   if (scope.targetId) params.set("target_id", String(scope.targetId));
   if (scope.groupId) params.set("group_id", String(scope.groupId));
+  if (scope.workspaceId != null) params.set("workspace_id", String(scope.workspaceId));
   const qs = params.toString();
   return jsonFetch<SecurityScore>(`/api/dashboard/security-score${qs ? `?${qs}` : ""}`);
 }
@@ -67,17 +76,25 @@ export function saveDashboardLayout(widgets: LayoutWidget[]): Promise<DashboardL
 }
 
 /**
- * Batched data retrieval for all active widgets currently in the caller's layout.
+ * Batched data retrieval for all active widgets currently in the caller's
+ * layout, optionally narrowed to the global workspace switcher's active
+ * workspace.
  */
-export function dashboardWidgetData(): Promise<WidgetDataResponse> {
-  return jsonFetch<WidgetDataResponse>("/api/dashboard/widget-data");
+export function dashboardWidgetData(workspaceId?: number | null): Promise<WidgetDataResponse> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  return jsonFetch<WidgetDataResponse>(`/api/dashboard/widget-data${qs}`);
 }
 
 /**
- * Retrieves security posture metrics and breakdowns for all monitored targets.
+ * Retrieves security posture metrics and breakdowns for all monitored
+ * targets, optionally narrowed to the global workspace switcher's active
+ * workspace.
  */
-export function posture(): Promise<{ target: Target; breakdown: Record<string, Record<string, number>> }[]> {
+export function posture(
+  workspaceId?: number | null,
+): Promise<{ target: Target; breakdown: Record<string, Record<string, number>> }[]> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
   return jsonFetch<{ target: Target; breakdown: Record<string, Record<string, number>> }[]>(
-    "/api/dashboard/posture",
+    `/api/dashboard/posture${qs}`,
   );
 }

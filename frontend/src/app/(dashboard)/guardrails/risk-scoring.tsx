@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { api, ScoringWeight, ScoringWeights, workspaceDisplayName } from "@/lib/api";
+import { api, ScoringWeight, ScoringWeights } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -135,7 +135,10 @@ function SignalRow({
 }
 
 export function RiskScoring() {
-  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  // (#506) Follows the global workspace switcher; scoring weights are
+  // per-workspace, so a null activeWorkspaceId ("All workspaces") renders a
+  // prompt below rather than fetching anything.
+  const { activeWorkspaceId: workspaceId, error: workspacesError } = useWorkspaceContext();
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<ScoringWeights | null>(null);
@@ -190,27 +193,13 @@ export function RiskScoring() {
             </div>
           </div>
 
-          {workspaces === null ? (
-            <SkeletonList count={1} />
-          ) : workspaces.length === 0 ? (
+          {workspaceId == null && (
             <EmptyState
               icon={Building2}
-              title="No workspaces yet"
-              description="Connect a target first to create a workspace."
+              title="Pick a workspace"
+              description="Scoring weights are per-workspace; choose one from the switcher in the sidebar to view them."
               bare
             />
-          ) : (
-            <select
-              className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
-              value={workspaceId ?? ""}
-              onChange={(e) => setWorkspaceId(Number(e.target.value))}
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {workspaceDisplayName(w, workspaces)}
-                </option>
-              ))}
-            </select>
           )}
 
           {error && <p className="text-xs text-destructive">{error}</p>}

@@ -150,7 +150,8 @@ export default function SbomPage() {
   const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
   const targets = targetsData ?? [];
   // Derived rather than seeded in an effect, same reasoning as
-  // useWorkspacePicker: the user's choice wins and a reload cannot move them.
+  // WorkspaceContext's activeWorkspaceId: the user's choice wins and a
+  // reload cannot move them.
   const targetId = chosenTargetId ?? targets[0]?.id ?? null;
   const setTargetId = setChosenTargetId;
   // Only meaningful relative to a scan just triggered in this session; the

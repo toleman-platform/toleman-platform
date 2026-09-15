@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { api, PolicyRule, PolicyRuleType, workspaceDisplayName } from "@/lib/api";
+import { api, PolicyRule, PolicyRuleType } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -66,14 +66,10 @@ function ruleLabel(t: PolicyRuleType) {
 }
 
 export function Policies() {
-  // Issue #118: this used to derive its workspace list from `targets`
-  // (labeling each as `Workspace ${id} (${target.name})`, a raw,
-  // target-name-based label unlike every other admin tab's clean
-  // `workspace.name`). Switched to the same `api.workspaces()` source the
-  // other 5 workspace pickers use, so the label format (and the duplicate-
-  // "default"-workspace disambiguation via `workspaceDisplayName`) matches
-  // everywhere.
-  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  // (#506) Follows the global workspace switcher instead of owning its own
+  // picker; policy rules are per-workspace, so a null activeWorkspaceId
+  // ("All workspaces") renders a prompt below rather than fetching anything.
+  const { activeWorkspaceId: workspaceId, error: workspacesError } = useWorkspaceContext();
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const [ruleType, setRuleType] = useState<PolicyRuleType>("block_severity");
@@ -148,31 +144,13 @@ export function Policies() {
             </div>
           </div>
 
-          {/* Loading is its own branch: before the migration a still-loading
-              list hit the `length === 0` path and announced "No workspaces
-              yet", which is a claim the page had not yet earned. */}
-          {workspaces === null ? (
-            <SkeletonList count={1} />
-          ) : workspaces.length === 0 ? (
+          {workspaceId == null && (
             <EmptyState
               icon={Building2}
-              title="No workspaces yet"
-              description="Connect a target first to create a workspace."
+              title="Pick a workspace"
+              description="Policy rules are per-workspace; choose one from the switcher in the sidebar to view them."
               bare
             />
-          ) : (
-            <select
-              aria-label="Workspace"
-              className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
-              value={workspaceId ?? ""}
-              onChange={(e) => setWorkspaceId(Number(e.target.value))}
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {workspaceDisplayName(w, workspaces)}
-                </option>
-              ))}
-            </select>
           )}
 
           {/* Outside the workspaceId guard on purpose: if the workspace list

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { FpRules } from "./fp-rules";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * The rule list's empty state used to be reached by `!rules || rules.length
@@ -63,7 +64,7 @@ describe("FpRules, a read that failed vs a workspace with no learned rules", () 
     withWorkspace();
     fpRules.mockRejectedValue(new Error("fp-rules endpoint unavailable"));
 
-    render(<FpRules />);
+    renderWithWorkspace(<FpRules />);
 
     expect(await screen.findByText("Couldn't load false-positive rules")).toBeTruthy();
     expect(screen.queryByText("No false-positive rules learned yet")).toBeNull();
@@ -76,7 +77,7 @@ describe("FpRules, a read that failed vs a workspace with no learned rules", () 
     withWorkspace();
     fpRules.mockRejectedValue(new Error("fp-rules endpoint unavailable"));
 
-    render(<FpRules />);
+    renderWithWorkspace(<FpRules />);
 
     await screen.findByText("Couldn't load false-positive rules");
     expect(screen.getByText("fp-rules endpoint unavailable")).toBeTruthy();
@@ -88,7 +89,7 @@ describe("FpRules, a read that failed vs a workspace with no learned rules", () 
       .mockRejectedValueOnce(new Error("fp-rules endpoint unavailable"))
       .mockResolvedValue([fpRule()]);
 
-    render(<FpRules />);
+    renderWithWorkspace(<FpRules />);
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
 
     expect(await screen.findByText("python.lang.security.audit.exec-detected")).toBeTruthy();
@@ -102,7 +103,7 @@ describe("FpRules, a read that failed vs a workspace with no learned rules", () 
     withWorkspace();
     fpRules.mockResolvedValue([]);
 
-    render(<FpRules />);
+    renderWithWorkspace(<FpRules />);
 
     expect(await screen.findByText("No false-positive rules learned yet")).toBeTruthy();
     expect(screen.queryByText("Couldn't load false-positive rules")).toBeNull();

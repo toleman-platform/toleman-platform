@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Building2, Check, Pencil, Plus, X } from "lucide-react";
 import { api, workspaceDisplayName } from "@/lib/api";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -187,7 +187,23 @@ function CreateWorkspaceForm({
 }
 
 export default function WorkspacesPage() {
-  const { workspaces, workspaceId, setWorkspaceId, isLoading, error, reload } = useWorkspacePicker();
+  const { workspaces, activeWorkspaceId, isLoading, error, reload } = useWorkspaceContext();
+  // (#506) Which workspace this page is *administering* is deliberately its
+  // own, page-local selection, not the global active workspace: picking a
+  // workspace to rename or manage roles for here must not silently flip
+  // every other tab's data view to it. It starts on the global active
+  // workspace as a sensible default (seeded once, via the same "adjust
+  // state during render" pattern sidebar.tsx uses for `lastPathname`) but
+  // never writes back to it.
+  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
+  const [seeded, setSeeded] = useState(false);
+  if (!seeded && workspaces !== null) {
+    setSeeded(true);
+    // Global "All workspaces" (null) has no meaning here -- this page always
+    // administers exactly one workspace -- so fall back to the first one,
+    // same default the old page-local picker used.
+    setWorkspaceId(activeWorkspaceId ?? workspaces[0]?.id ?? null);
+  }
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
 
   function handleCreated(newWorkspaceId: number) {

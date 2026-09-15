@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WorkspacesPage from "./page";
-import type { UseWorkspacePickerResult } from "@/hooks/features/use-workspace-picker";
+import type { WorkspaceContextValue } from "@/contexts/workspace-context";
 import type { WorkspaceSummary } from "@/lib/api";
 
 /**
@@ -21,9 +21,9 @@ vi.mock("@/lib/api", () => ({
   workspaceDisplayName: (w: { name: string }) => w.name,
 }));
 
-const picker = vi.hoisted(() => ({ value: null as unknown as UseWorkspacePickerResult }));
-vi.mock("@/hooks/features/use-workspace-picker", () => ({
-  useWorkspacePicker: () => picker.value,
+const picker = vi.hoisted(() => ({ value: null as unknown as WorkspaceContextValue }));
+vi.mock("@/contexts/workspace-context", () => ({
+  useWorkspaceContext: () => picker.value,
 }));
 
 // The key card and the roles panel each own their own fetching and are
@@ -31,17 +31,18 @@ vi.mock("@/hooks/features/use-workspace-picker", () => ({
 vi.mock("./workspace-key-card", () => ({ WorkspaceKeyCard: () => <div data-testid="key-card" /> }));
 vi.mock("./workspace-roles", () => ({ WorkspaceRoles: () => <div data-testid="roles" /> }));
 
-// `useWorkspacePicker` exposes the same request twice: flattened fields for a
-// caller that only decorates a <select>, and the whole `state` for one handing
-// it to <AsyncContent>. This page reads the flattened fields, but a mock that
-// omits `state` does not satisfy the hook's return type -- so build both from
-// one source here rather than letting the two halves describe different loads.
-function loadedPicker(workspaces: WorkspaceSummary[]): UseWorkspacePickerResult {
+// `useWorkspaceContext` exposes the same request twice: flattened fields for
+// a caller that only decorates a <select>, and the whole `state` for one
+// handing it to <AsyncContent>. This page reads the flattened fields, but a
+// mock that omits `state` does not satisfy the hook's return type -- so
+// build both from one source here rather than letting the two halves
+// describe different loads.
+function loadedContext(workspaces: WorkspaceSummary[]): WorkspaceContextValue {
   const refetch = vi.fn();
   return {
     workspaces,
-    workspaceId: workspaces[0]?.id ?? null,
-    setWorkspaceId: vi.fn(),
+    activeWorkspaceId: workspaces[0]?.id ?? null,
+    setActiveWorkspaceId: vi.fn(),
     isLoading: false,
     error: null,
     reload: refetch,
@@ -61,7 +62,7 @@ beforeEach(() => {
   updateWorkspace.mockReset();
   createWorkspace.mockReset();
   updateWorkspace.mockResolvedValue({ id: 1, name: "renamed" });
-  picker.value = loadedPicker([
+  picker.value = loadedContext([
     { id: 1, name: "production", organization_id: 1, enforcement_mode: null },
     { id: 2, name: "staging", organization_id: 1, enforcement_mode: null },
   ]);

@@ -33,6 +33,7 @@ function findingFilterParams(query: FindingFacetsQuery): URLSearchParams {
   const params = new URLSearchParams();
   appendMulti(params, "target_id", query.target_id);
   if (query.group_id) params.set("group_id", String(query.group_id));
+  if (query.workspace_id != null) params.set("workspace_id", String(query.workspace_id));
   appendMulti(params, "state", query.state);
   appendMulti(params, "severity", query.severity);
   appendMulti(params, "tool", query.tool);
@@ -238,10 +239,12 @@ export function deleteSlaRule(id: number): Promise<{ ok: boolean }> {
 }
 
 /**
- * Fetches aggregate organization-level SLA compliance metrics.
+ * Fetches aggregate SLA compliance metrics, optionally narrowed to the
+ * global workspace switcher's active workspace.
  */
-export function slaCompliance(): Promise<SlaComplianceData> {
-  return jsonFetch<SlaComplianceData>("/api/dashboard/sla-compliance");
+export function slaCompliance(workspaceId?: number | null): Promise<SlaComplianceData> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  return jsonFetch<SlaComplianceData>(`/api/dashboard/sla-compliance${qs}`);
 }
 
 // (#201) Workspace-scoped risk-scoring weights. All three return the full

@@ -7,7 +7,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 from sqlmodel import Session, func, select
 
-from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_workspace_role
+from app.api.auth import (
+    accessible_workspace_ids,
+    current_user,
+    enforce_workspace_role,
+    narrow_workspace_scope,
+    require_workspace_role,
+)
 from app.api.deps import get_session
 from app.core.auth_audit import log_auth_event
 from app.core.config import settings
@@ -224,12 +230,15 @@ def _live_target(session: Session, target_id: int) -> Target | None:
 @router.get("")
 def list_targets(
     group_id: int | None = None,
+    # (#506) Global workspace switcher's narrowing param; None (its "All
+    # workspaces" option) preserves the accessible-scope default below.
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
     # Issue #57: scope to workspaces the caller is a member of (None = admin,
     # no filter; [] = no memberships yet -> empty list, not everything).
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return []
     # (#273) Soft-deleted targets are gone as far as the product is
@@ -252,6 +261,7 @@ def list_targets(
 
 @router.get("/summary")
 def targets_summary(
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -273,7 +283,7 @@ def targets_summary(
     Declared before /{target_id} so "summary" isn't captured as a target id.
     One query for findings plus one for targets, not N+1.
     """
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return {}
 

@@ -34,6 +34,7 @@ import { canSeeAdminOnly } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 import { api, AuthUser, BuildInfo } from "@/lib/api";
 import { GlobalSearch } from "@/components/global-search";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { DensityToggle } from "@/components/density-toggle";
 import { ThemeToggle, Theme } from "@/components/theme-toggle";
 import { BrandLockup } from "@/components/brand-mark";
@@ -281,8 +282,9 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
           )}
         </div>
 
-        <div className={cn("border-b border-sidebar-border p-2", iconRail && "flex justify-center")}>
+        <div className={cn("flex flex-col gap-2 border-b border-sidebar-border p-2", iconRail && "items-center")}>
           <GlobalSearch collapsed={iconRail} />
+          <WorkspaceSwitcher collapsed={iconRail} />
         </div>
 
         {/* The nav scrolls, but macOS overlay scrollbars stay invisible until

@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { api, ScanScheduleType, ScanSchedulePatch, WorkspaceScanSchedules, workspaceDisplayName } from "@/lib/api";
+import { api, ScanScheduleType, ScanSchedulePatch, WorkspaceScanSchedules } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -20,7 +20,10 @@ import { Building2, CalendarClock } from "lucide-react";
 // Whatever is set here applies to every target in the workspace that has not
 // overridden it on its own detail page; a target-level setting always wins.
 export function ScanSchedules() {
-  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  // (#506) Follows the global workspace switcher; scan schedules are
+  // per-workspace, so a null activeWorkspaceId ("All workspaces") renders a
+  // prompt below rather than fetching anything.
+  const { activeWorkspaceId: workspaceId, error: workspacesError } = useWorkspaceContext();
   const [saving, setSaving] = useState<ScanScheduleType | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -64,27 +67,13 @@ export function ScanSchedules() {
             </div>
           </div>
 
-          {workspaces === null ? (
-            <SkeletonList count={1} />
-          ) : workspaces.length === 0 ? (
+          {workspaceId == null && (
             <EmptyState
               icon={Building2}
-              title="No workspaces yet"
-              description="Connect a target first to create a workspace."
+              title="Pick a workspace"
+              description="Scan schedules are per-workspace; choose one from the switcher in the sidebar to view them."
               bare
             />
-          ) : (
-            <select
-              className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
-              value={workspaceId ?? ""}
-              onChange={(e) => setWorkspaceId(Number(e.target.value))}
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {workspaceDisplayName(w, workspaces)}
-                </option>
-              ))}
-            </select>
           )}
 
           {workspaceId != null && (

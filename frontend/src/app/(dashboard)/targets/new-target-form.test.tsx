@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { NewTargetForm } from "./new-target-form";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 // Issue #356: the workspace was typed into a number input defaulting to a
 // hardcoded `1`. On a fresh deployment that default is a lie, and submitting
@@ -39,7 +40,7 @@ describe("NewTargetForm workspace picker", () => {
       { id: 9, name: "staging" },
     ]);
     createTarget.mockResolvedValue({ id: 1 });
-    render(<NewTargetForm isAdmin={true} />);
+    renderWithWorkspace(<NewTargetForm isAdmin={true} />);
 
     const picker = await screen.findByLabelText("Workspace");
     // The regression itself: a free-text/number workspace id.
@@ -63,7 +64,7 @@ describe("NewTargetForm workspace picker", () => {
   it("defaults to the only workspace when there is exactly one", async () => {
     workspaces.mockResolvedValue([{ id: 4, name: "default" }]);
     createTarget.mockResolvedValue({ id: 1 });
-    render(<NewTargetForm isAdmin={true} />);
+    renderWithWorkspace(<NewTargetForm isAdmin={true} />);
 
     await screen.findByLabelText("Workspace");
     fireEvent.change(screen.getByPlaceholderText(/Target name/), { target: { value: "repo" } });
@@ -86,7 +87,7 @@ describe("NewTargetForm empty workspace list", () => {
   // and none of these three states can flash into another.
   it("offers an admin the create flow, because for them empty means none exist", async () => {
     workspaces.mockResolvedValue([]);
-    render(<NewTargetForm isAdmin={true} />);
+    renderWithWorkspace(<NewTargetForm isAdmin={true} />);
 
     const link = await screen.findByRole("link", { name: "Create a workspace" });
     // Plain attribute check: this project does not load jest-dom matchers.
@@ -102,7 +103,7 @@ describe("NewTargetForm empty workspace list", () => {
     // end. Same confident-but-wrong empty state the picker itself avoids,
     // one level up.
     workspaces.mockResolvedValue([]);
-    render(<NewTargetForm isAdmin={false} />);
+    renderWithWorkspace(<NewTargetForm isAdmin={false} />);
 
     await screen.findByText(/not a member of any/);
     expect(screen.queryByRole("link", { name: "Create a workspace" })).toBeNull();
@@ -114,7 +115,7 @@ describe("NewTargetForm empty workspace list", () => {
     // a membership the page never established is what would be wrong, and it
     // would be wrong in front of the one person who could fix the situation.
     workspaces.mockResolvedValue([]);
-    render(<NewTargetForm isAdmin={null} />);
+    renderWithWorkspace(<NewTargetForm isAdmin={null} />);
 
     await screen.findByText("No workspaces available");
     expect(screen.queryByText(/not a member of any/)).toBeNull();
@@ -125,7 +126,7 @@ describe("NewTargetForm empty workspace list", () => {
 describe("NewTargetForm failed workspace list", () => {
   it("says the list failed rather than claiming there are none", async () => {
     workspaces.mockRejectedValue(new Error("503"));
-    render(<NewTargetForm isAdmin={true} />);
+    renderWithWorkspace(<NewTargetForm isAdmin={true} />);
 
     await screen.findByText("Couldn't load workspaces");
     expect(screen.getByText("503")).toBeTruthy();
@@ -139,7 +140,7 @@ describe("NewTargetForm failed workspace list", () => {
     // way back short of reloading the page. AsyncContent's retry is the point
     // of routing this through it rather than hand-rolling the ladder.
     workspaces.mockRejectedValueOnce(new Error("503")).mockResolvedValue([{ id: 3, name: "prod" }]);
-    render(<NewTargetForm isAdmin={true} />);
+    renderWithWorkspace(<NewTargetForm isAdmin={true} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
 

@@ -16,11 +16,15 @@ import type {
 import type { Nullable } from "@/std-lib";
 
 /**
- * Lists all target repositories, optionally filtered by group ID.
+ * Lists all target repositories, optionally filtered by group ID and/or the
+ * global workspace switcher's active workspace.
  */
-export function targets(query: { group_id?: number } = {}): Promise<Target[]> {
+export function targets(
+  query: { group_id?: number; workspace_id?: number | null } = {},
+): Promise<Target[]> {
   const params = new URLSearchParams();
   if (query.group_id) params.set("group_id", String(query.group_id));
+  if (query.workspace_id != null) params.set("workspace_id", String(query.workspace_id));
   const qs = params.toString();
   return jsonFetch<Target[]>(`/api/targets${qs ? `?${qs}` : ""}`);
 }
@@ -98,10 +102,12 @@ export function saveCloneCredentials(
 }
 
 /**
- * Returns open-finding counts by severity across all targets.
+ * Returns open-finding counts by severity across all targets, optionally
+ * narrowed to the global workspace switcher's active workspace.
  */
-export function targetsSummary(): Promise<TargetSummary> {
-  return jsonFetch<TargetSummary>("/api/targets/summary");
+export function targetsSummary(workspaceId?: number | null): Promise<TargetSummary> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  return jsonFetch<TargetSummary>(`/api/targets/summary${qs}`);
 }
 
 /**

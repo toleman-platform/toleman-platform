@@ -228,7 +228,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
       {/* Scrim behind the open mobile drawer. */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          className="fixed inset-0 z-40 bg-overlay md:hidden"
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
         />

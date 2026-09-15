@@ -8,7 +8,7 @@ const badgeVariants = cva(
   // `dark:` utilities removed here (was `dark:aria-invalid:ring-destructive/40`
   // below, `dark:focus-visible:ring-destructive/40 dark:bg-destructive/60` on
   // the destructive variant): dead code, matching a `.dark` class this app
-  // never sets. See globals.css for why the variant declaration itself stays.
+  // never sets. See globals.css for the variant's own history.
   'inline-flex items-center justify-center rounded-md border px-2 py-0.5 text-xs font-medium w-fit whitespace-nowrap shrink-0 [&>svg]:size-3 gap-1 [&>svg]:pointer-events-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive transition-[color,box-shadow] overflow-hidden',
   {
     variants: {
@@ -18,7 +18,7 @@ const badgeVariants = cva(
         secondary:
           'border-transparent bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90',
         destructive:
-          'border-transparent bg-destructive text-white [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20',
+          'border-transparent bg-destructive text-destructive-foreground [a&]:hover:bg-destructive/90 focus-visible:ring-destructive/20',
         outline:
           'text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground',
         success:

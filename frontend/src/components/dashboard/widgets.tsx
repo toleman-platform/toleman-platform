@@ -480,12 +480,13 @@ function NeedsActionQueueWidget({ data }: { data: NeedsActionQueueData }) {
           // one gitleaks rule, and `tool:rule_id` alone would collide them
           // into the same React key.
           key={`${item.tool}:${item.rule_id}:${item.representative_id}`}
-          // The flat Findings list's `search` filter already matches
-          // rule_id (app/api/findings.py's _apply_filters), so this lands
-          // the reader on exactly this decision's members inside the same
-          // "Needs action" queue -- not a member's own detail page, since a
-          // grouped row stands for one decision, not one detection.
-          href={`/findings?search=${encodeURIComponent(item.rule_id)}&queue=action`}
+          // `tool` + `rule_id` is the group key (backend/app/core/grouping.py),
+          // so this lands on exactly this decision and nothing else -- not a
+          // member's own detail page, since a grouped row stands for one
+          // decision rather than one detection. Deliberately not `search`:
+          // that matches title, file path, CVE and target name too, so a rule
+          // id quoted inside an unrelated finding's title came along with it.
+          href={`/findings?tool=${encodeURIComponent(item.tool)}&rule_id=${encodeURIComponent(item.rule_id)}&queue=action`}
           className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2 hover:bg-accent/40"
         >
           <div className="min-w-0">

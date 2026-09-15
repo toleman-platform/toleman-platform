@@ -139,24 +139,14 @@ export function DashboardBoard({
   // Precedence: this visit's changes, then what this browser has stored for
   // this user, then the default for their role. `resolveHiddenWidgets` is
   // also what guarantees the last of those can never empty the board.
-  const hidden: ReadonlySet<WidgetId> = (() => {
-    const base =
-      sessionHidden !== null
-        ? new Set(sessionHidden)
-        : resolveHiddenWidgets(
-            storedVisibility.preference,
-            role,
-            widgets.map((w) => w.widget_id),
-          );
-    // Adding a widget in Edit Dashboard is an explicit request to see it, so
-    // it can never come back hidden. Without this, a widget outside the
-    // reader's role profile is added, saved, and immediately disappears --
-    // because the profile is re-resolved over the new layout and does not
-    // name it. The user's own action outranks a guess made from their role.
-    const loadedTypes = new Set(initialWidgets.map((w) => w.widget_id));
-    for (const w of widgets) if (!loadedTypes.has(w.widget_id)) base.delete(w.widget_id);
-    return base;
-  })();
+  const hidden: ReadonlySet<WidgetId> =
+    sessionHidden !== null
+      ? new Set(sessionHidden)
+      : resolveHiddenWidgets(
+          storedVisibility.preference,
+          role,
+          widgets.map((w) => w.widget_id),
+        );
 
   // One row per widget type, in layout order. A layout could in principle
   // hold two instances of the same widget; visibility is a property of the
@@ -207,6 +197,20 @@ export function DashboardBoard({
   const addWidget = (widgetId: WidgetId) => {
     setWidgets((prev) => [...prev, { id: makeInstanceId(), widget_id: widgetId, config: {} }]);
     setShowAddPicker(false);
+    // Adding a widget is an explicit request to see it, and the role default
+    // would otherwise be re-resolved over the new layout, not name it, and
+    // hide the thing that was just added. Record the choice here rather than
+    // exempting it at render time: an exemption derived from the layout the
+    // page loaded with applies on every later render too, so the visibility
+    // checkbox could never hide it again during the visit, and it would not
+    // survive a reload either. Writing the whole materialised set is what
+    // `toggleWidget` already does, for the same reason -- once the user has
+    // made a choice, that choice answers for every widget.
+    const next = new Set(hidden);
+    next.delete(widgetId);
+    const nextHidden = [...next];
+    setSessionHidden(nextHidden);
+    setSaveFailed(!writeWidgetVisibility(userId, nextHidden));
   };
 
   const save = () => {

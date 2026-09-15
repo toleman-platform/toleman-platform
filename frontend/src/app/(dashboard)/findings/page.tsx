@@ -33,6 +33,7 @@ export default async function FindingsPage({
     fixability,
     state,
     search,
+    rule_id,
     environment,
     owner,
     targetIdRaw,
@@ -64,6 +65,7 @@ export default async function FindingsPage({
     target_id,
     group_id,
     search,
+    rule_id,
     new_since_days,
     exclude_category: queued.exclude_category,
   };

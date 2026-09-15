@@ -183,6 +183,27 @@ describe("AiSecurityPage - per-repo tool badge honesty (0 scanned-clean vs 0 nev
     expect(neverScanned.textContent).not.toContain("0");
   });
 
+  it("shows unknown rather than a clean zero when the findings query itself fails", async () => {
+    // Scan history is fine here; it is the findings query that failed. The
+    // count defaults to 0, and without this the badge renders "0 ModelScan"
+    // -- a measurement that was never taken.
+    targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
+    scanSummaryFn.mockResolvedValue({
+      "7": { last_scan_at: "2026-09-01T00:00:00Z", tools: ["modelscan"], suspect_tools: [] },
+    });
+    findingsFn.mockImplementation((query: { tool: string }) =>
+      query.tool === "modelscan"
+        ? Promise.reject(new Error("findings unavailable"))
+        : Promise.resolve({ items: [], total: 0 }),
+    );
+
+    render(<AiSecurityPage />);
+
+    const badge = await screen.findByText("ModelScan: unknown");
+    expect(badge.getAttribute("title")).toMatch(/could not be loaded/i);
+    expect(screen.queryByText("0 ModelScan")).toBeNull();
+  });
+
   it("shows an explicit unknown badge, not a clean zero, when scan history fails to load", async () => {
     targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
     scanSummaryFn.mockRejectedValue(new Error("scan history down"));

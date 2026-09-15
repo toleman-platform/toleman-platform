@@ -89,10 +89,15 @@ export type FindingsQuery = {
 
 /**
  * Query parameters for the grouped findings list. Identical filters to
- * FindingsQuery, minus the ones that only make sense on a single detection
- * (`rule_id` selects a group's members, so it cannot also select groups).
+ * FindingsQuery, with its own sort vocabulary.
+ *
+ * `rule_id` used to be excluded here on the reasoning that it selects a
+ * group's *members*. Since the group key is `(tool, rule_id)`, filtering the
+ * grouped list by it selects that group and nothing else -- which is what a
+ * caller linking to one specific decision needs, and what `search` cannot
+ * express, since search also matches title, file path, CVE and target name.
  */
-export type FindingGroupsQuery = Omit<FindingsQuery, "rule_id" | "sort"> & {
+export type FindingGroupsQuery = Omit<FindingsQuery, "sort"> & {
   sort?: FindingGroupSort;
 };
 

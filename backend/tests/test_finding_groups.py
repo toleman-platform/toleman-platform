@@ -164,6 +164,30 @@ def test_different_licences_are_different_groups(client, engine):
     assert {g["rule_id"] for g in body["items"]} == {"license:LGPL-3.0-or-later", "license:LGPL-3.0-only"}
 
 
+def test_rule_id_selects_exactly_one_group_where_search_would_not(client, engine):
+    """The dashboard queue links to one specific grouped row. `search` matches
+    title, file path, rule id, CVE and target name, so a rule id that appears
+    inside another finding's title drags that finding along; `rule_id` is an
+    exact filter and does not."""
+    target_id = _make_target(engine)
+    _login(client, engine)
+    _make_finding(engine, target_id, rule_id="license:LGPL-3.0-only", title="LGPL-3.0-only in psycopg")
+    # A different rule whose TITLE happens to contain the first rule's id.
+    _make_finding(
+        engine,
+        target_id,
+        rule_id="license:MPL-2.0",
+        title="MPL-2.0 detected, superseding license:LGPL-3.0-only in vendored copy",
+    )
+
+    by_search = client.get("/api/findings/groups", params={"search": "license:LGPL-3.0-only"}).json()
+    assert by_search["total"] == 2, "search is a substring match, so it pulls in the unrelated rule"
+
+    by_rule = client.get("/api/findings/groups", params={"rule_id": "license:LGPL-3.0-only"}).json()
+    assert by_rule["total"] == 1
+    assert by_rule["items"][0]["rule_id"] == "license:LGPL-3.0-only"
+
+
 def test_secrets_are_never_grouped(client, engine):
     """One leaked credential is one incident, not an instance of a rule."""
     target_id = _make_target(engine)

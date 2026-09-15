@@ -578,7 +578,10 @@ def approve_ignore(
 @router.post("/findings/{finding_id}/reject-ignore")
 def reject_ignore(
     finding_id: int,
-    body: dict,
+    # Optional so an omitted body reaches the handler: FastAPI treats a bare
+    # `dict` as required and answers 422 before any of this runs, which is a
+    # different contract from the documented "reason is required" 400 below.
+    body: dict | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(require_security_reviewer),
 ):

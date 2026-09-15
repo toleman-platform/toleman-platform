@@ -307,8 +307,8 @@ export default function AiSecurityPage() {
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-2 text-xs">
-                  <ToolBadge tool="modelscan" target={t} count={countFor("modelscan", t.id)} scanned={everScanned("modelscan", t.id)} scanSummaryReady={scanSummaryReady} />
-                  <ToolBadge tool="semgrep-llm" target={t} count={countFor("semgrep-llm", t.id)} scanned={everScanned("semgrep-llm", t.id)} scanSummaryReady={scanSummaryReady} />
+                  <ToolBadge tool="modelscan" target={t} count={countFor("modelscan", t.id)} scanned={everScanned("modelscan", t.id)} scanSummaryReady={scanSummaryReady} findingsFailed={!!modelscanError} />
+                  <ToolBadge tool="semgrep-llm" target={t} count={countFor("semgrep-llm", t.id)} scanned={everScanned("semgrep-llm", t.id)} scanSummaryReady={scanSummaryReady} findingsFailed={!!semgrepLlmError} />
                 </div>
               </CardContent>
             </Card>
@@ -395,15 +395,36 @@ function ToolBadge({
   count,
   scanned,
   scanSummaryReady,
+  findingsFailed,
 }: {
   tool: AiTool;
   target: Target;
   count: number;
   scanned: boolean;
   scanSummaryReady: boolean;
+  /** The findings query for this tool failed, so `count` is not a measurement. */
+  findingsFailed: boolean;
 }) {
   const label = TOOL_LABEL[tool];
   const href = `/findings?tool=${tool}&target_id=${target.id}&queue=all`;
+
+  // A failed findings query leaves `count` at 0, which is not the same claim
+  // as "scanned and clean" -- and the scan-history branches below would go on
+  // to render "0 <tool>" or "<tool> not scanned" from it, both of which state
+  // a measurement that was never taken. The aggregate cards at the top of
+  // this page already treat their own query error this way; this is the same
+  // rule applied per repo (AGENTS.md 1.4).
+  if (findingsFailed) {
+    return (
+      <Link
+        href={href}
+        title={`${label} findings could not be loaded, so the count for this repo is not known.`}
+        className="rounded border border-border px-2 py-1 text-muted-foreground hover:text-foreground hover:underline"
+      >
+        {label}: unknown
+      </Link>
+    );
+  }
 
   if (count > 0) {
     return (

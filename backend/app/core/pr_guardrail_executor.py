@@ -1616,6 +1616,11 @@ def submit_ignore_request(session: Session, finding: PRGuardrailFinding, request
     finding.ignore_requested_reason = reason
     finding.ignore_reviewed_by = ""
     finding.ignore_reviewed_at = None
+    # A finding can be rejected and then asked about again. The reviewer's
+    # rejection reason belongs to that closed decision, not to the new
+    # pending request, and leaving it set makes the History tab show a
+    # pending request already carrying a reason someone was turned down for.
+    finding.reject_reason = None
     session.add(finding)
     session.commit()
     session.refresh(finding)

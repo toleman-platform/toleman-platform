@@ -26,16 +26,18 @@ function renderBoard({
   userId = 7,
   profileFailed = false,
   widgets = LAYOUT,
+  catalog = CATALOG,
 }: {
   role: string | null;
   userId?: number | null;
   profileFailed?: boolean;
   widgets?: LayoutWidget[];
+  catalog?: WidgetCatalogEntry[];
 }) {
   return render(
     <DashboardBoard
       initialWidgets={widgets}
-      catalog={CATALOG}
+      catalog={catalog}
       initialData={{ widgets: {} }}
       layoutFailed={false}
       catalogFailed={false}
@@ -142,6 +144,44 @@ describe("turning widgets on and off", () => {
 
     expect(screen.queryByText("SLA Compliance")).toBeNull();
     expect(screen.queryByText("Security Posture")).not.toBeNull();
+  });
+
+  it("records the visibility choice when a widget is added, rather than exempting it every render", () => {
+    // The first version of this fix compared against the immutable
+    // initialWidgets prop at render time. That exemption re-applied on every
+    // later render, so the checkbox could never hide the widget during the
+    // visit, and because nothing was stored a reload handed it straight back
+    // to the role default. The choice has to be recorded when it is made.
+    const catalog = [
+      ...CATALOG,
+      { widget_id: "security_score" as const, name: "Security Score", description: "Posture" },
+    ];
+    renderBoard({ role: "developer", catalog });
+
+    fireEvent.click(screen.getByRole("button", { name: /Edit Dashboard/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Add widget/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Security Score/ }));
+
+    const stored = window.localStorage.getItem(STORAGE_KEY_USER_7);
+    expect(stored).not.toBeNull();
+    expect(JSON.parse(stored!).hidden).not.toContain("security_score");
+  });
+
+  it("can still hide a widget that a previous visit added", () => {
+    // The other half of the same defect: once added, the widget must behave
+    // like any other -- a render-time exemption made it permanently
+    // unhideable.
+    renderBoard({
+      role: "developer",
+      widgets: [...LAYOUT, { id: "w-score", widget_id: "security_score", config: {} }],
+    });
+    expect(screen.queryByText("Security Score")).not.toBeNull();
+
+    openWidgetMenu();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Security Score" }));
+    openWidgetMenu();
+
+    expect(screen.queryByText("Security Score")).toBeNull();
   });
 
   it("turns a widget the role default hid back on, and keeps it on", () => {

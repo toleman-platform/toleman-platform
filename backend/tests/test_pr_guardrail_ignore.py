@@ -9,7 +9,12 @@ import app.api.deps as deps_module
 import app.api.pr_guardrail as pr_guardrail_api
 from app.api.deps import get_session
 import app.core.pr_guardrail_executor as pr_guardrail_executor
-from app.core.pr_guardrail_executor import _severity_str, recompute_pr_scan_status, render_comment
+from app.core.pr_guardrail_executor import (
+    _severity_str,
+    recompute_pr_scan_status,
+    render_comment,
+    submit_ignore_request,
+)
 from app.core.security import create_session_token, hash_password
 from app.main import app
 from app.models.models import (
@@ -213,6 +218,43 @@ def test_reject_ignore_requires_reason(client, engine):
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/reject-ignore", json={"reason": ""})
     assert res.status_code == 400
+
+
+def test_reject_ignore_requires_reason_even_with_no_body_at_all(client, engine):
+    """An omitted body must answer the same documented 400 as an empty reason.
+    With `body: dict` FastAPI treats the body as required and answers 422
+    before the handler runs, so the stated contract only held for callers who
+    happened to send *something*."""
+    _, finding_id = _make_pr_scan_and_finding(engine)
+    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+
+    res = client.post(f"/api/pr-guardrail/findings/{finding_id}/reject-ignore")
+    assert res.status_code == 400
+    assert res.json()["detail"] == "reason is required"
+
+
+def test_re_requesting_an_ignore_clears_the_previous_rejection_reason(client, engine):
+    """A rejection reason belongs to the decision that closed, not to the next
+    request. Without clearing it, a pending request renders carrying the
+    reason someone was previously turned down for, which reads as though the
+    reviewer had already ruled on this one."""
+    _, finding_id = _make_pr_scan_and_finding(engine)
+    reviewer = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    res = reviewer.post(
+        f"/api/pr-guardrail/findings/{finding_id}/reject-ignore",
+        json={"reason": "still a real risk in prod"},
+    )
+    assert res.status_code == 200
+    assert res.json()["reject_reason"] == "still a real risk in prod"
+
+    with Session(engine) as session:
+        finding = session.get(PRGuardrailFinding, finding_id)
+        submit_ignore_request(session, finding, requested_by="dev@example.com", reason="mitigated upstream now")
+
+    with Session(engine) as session:
+        finding = session.get(PRGuardrailFinding, finding_id)
+        assert finding.ignore_status == IgnoreStatus.REQUESTED
+        assert finding.reject_reason is None
 
 
 def test_admin_can_also_approve_ignore(client, engine):

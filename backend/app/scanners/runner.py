@@ -147,7 +147,22 @@ TOOL_COMMANDS = {
     # (getsentry/sentry), identical Vulnerabilities output both times --
     # Misconfigurations was empty before and stays empty after, since that
     # scanner still isn't enabled. Zero behavior change to parsed findings.
-    "trivy": lambda path: ["trivy", "fs", "--scanners", "vuln", "--format", "json", "--quiet", path],
+    # --include-dev-deps: trivy skips npm devDependencies by default, and
+    # that default hid every npm CVE this repo had. Measured against its own
+    # frontend/package-lock.json: 0 findings without the flag, 8 with it (1
+    # critical, 2 high, 5 medium), matching GitHub Dependabot's open alerts
+    # for the same lockfile exactly.
+    #
+    # Dev dependencies do not ship to production, which is the argument for
+    # the default. It is the wrong default for a security product: build-time
+    # tooling is precisely what supply-chain attacks target, a malicious or
+    # compromised test runner executes with the credentials of CI, and
+    # "nobody looked" is not the same answer as "nothing there". Reporting
+    # them and letting an operator judge scope beats silently dropping them.
+    "trivy": lambda path: [
+        "trivy", "fs", "--scanners", "vuln", "--include-dev-deps",
+        "--format", "json", "--quiet", path,
+    ],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],
     "gosec": lambda path: ["gosec", "-fmt=json", "-quiet", "./..."],
     # IaC scanners (issue #75). `--soft-fail`/exit-code-0-on-findings

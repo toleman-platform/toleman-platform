@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
-import { ActivityPagination } from "@/components/activity-pagination";
+import { ActivityPagination } from "@/components/ui/activity-pagination";
 import { Timestamp } from "@/components/ui/timestamp";
 
 export function GithubOrgLogsList({

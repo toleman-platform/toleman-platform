@@ -20,7 +20,7 @@ import { DocumentGeneratorPanel, DocGenStep } from "@/components/features/intell
 import { ChevronDown, ChevronRight, GitPullRequest } from "lucide-react";
 import { SEVERITY_COLOR } from "@/lib/severity";
 import { PageHeader } from "@/components/ui/page-header";
-import { ActivityPagination } from "@/components/activity-pagination";
+import { ActivityPagination } from "@/components/ui/activity-pagination";
 import { pageSizeFromParams } from "@/lib/pagination";
 import { Timestamp } from "@/components/ui/timestamp";
 

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { IGNORE_STATUS_COLOR } from "@/lib/severity";
-import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
+import { ActivityPagination, pageSizeFromParams } from "@/components/ui/activity-pagination";
 import { cn } from "@/lib/utils";
 import { SeverityChip } from "@/components/ui/severity-chip";
 import { AlertBanner } from "@/components/ui/alert-banner";

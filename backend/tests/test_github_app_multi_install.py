@@ -9,6 +9,7 @@ Covers:
 """
 import hashlib
 import hmac
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,13 +17,23 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.deps as deps_module
+import app.api.github_app as github_app_api
 from app.api.deps import get_session
 from app.api.webhooks import _candidate_configs, _verify_signature
 from app.core.crypto import encrypt_secret
 from app.core.github_app import resolve_config_for_installation, resolve_installation_for_repo
 from app.core.security import create_session_token, hash_password
 from app.main import app
-from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, User, UserRole, Workspace
+from app.models.models import (
+    GitHubAppConfig,
+    GitHubInstallation,
+    Organization,
+    User,
+    UserRole,
+    Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
+)
 
 
 @pytest.fixture()
@@ -59,6 +70,28 @@ def _login(client, engine):
     return client
 
 
+def _login_as(client, engine, role=UserRole.USER, email=None):
+    """(#506) Non-admin login, for the per-config authorization tests --
+    _login above always creates a global admin, which bypasses every
+    per-config gate under test here."""
+    email = email or f"{role.value}-{id(object())}@example.com"
+    with Session(engine) as session:
+        user = User(email=email, name="Test", password_hash=hash_password("whatever123"), role=role)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        uid = user.id
+        token = create_session_token(user.id, user.token_version)
+    client.cookies.set("toleman_session", token)
+    return client, uid
+
+
+def _assign(engine, user_id: int, workspace_id: int, role: WorkspaceRole = WorkspaceRole.VIEWER):
+    with Session(engine) as session:
+        session.add(WorkspaceMembership(user_id=user_id, workspace_id=workspace_id, role=role))
+        session.commit()
+
+
 def _make_workspace(session) -> Workspace:
     org = Organization(name="default")
     session.add(org)
@@ -72,7 +105,8 @@ def _make_workspace(session) -> Workspace:
 
 
 def _make_config(
-    session, app_id, slug, webhook_secret="", setup_token=None, owner_login=None, owner_type=None
+    session, app_id, slug, webhook_secret="", setup_token=None, owner_login=None, owner_type=None,
+    workspace_id=None,
 ) -> GitHubAppConfig:
     cfg = GitHubAppConfig(
         app_id=app_id, slug=slug, client_id="cid", client_secret="csecret",
@@ -81,6 +115,7 @@ def _make_config(
         setup_token=setup_token,
         owner_login=owner_login,
         owner_type=owner_type,
+        workspace_id=workspace_id,
     )
     session.add(cfg)
     session.commit()
@@ -296,3 +331,238 @@ def test_candidate_configs_narrows_to_the_owning_app(engine):
 
         candidates = _candidate_configs(session, 222)
         assert [c.id for c in candidates] == [cfg_b.id]
+
+
+# --- Issue #506: per-workspace GitHub App -------------------------------
+
+
+def test_resolve_config_for_installation_prefers_workspace_match_over_platform_default(engine):
+    """An unlinked legacy installation resolves to its own workspace's App
+    ahead of the platform-default one, when both exist."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        platform_default = _make_config(session, "1", "platform-app", workspace_id=None)
+        ws_scoped = _make_config(session, "2", "ws-app", workspace_id=ws.id)
+        inst = _make_installation(session, ws.id, 111, "org-a", config_id=None)
+
+        resolved = resolve_config_for_installation(session, inst)
+        assert resolved.id == ws_scoped.id
+        assert resolved.id != platform_default.id
+
+
+def test_resolve_config_for_installation_falls_back_to_platform_default(engine):
+    """No config scoped to this installation's own workspace, but exactly
+    one platform-default config exists -- that's the safe fallback."""
+    with Session(engine) as session:
+        ws_a = _make_workspace(session)
+        ws_b = _make_workspace(session)
+        platform_default = _make_config(session, "1", "platform-app", workspace_id=None)
+        _make_config(session, "2", "ws-b-app", workspace_id=ws_b.id)
+        inst = _make_installation(session, ws_a.id, 111, "org-a", config_id=None)
+
+        resolved = resolve_config_for_installation(session, inst)
+        assert resolved.id == platform_default.id
+
+
+def test_status_filters_to_platform_default_and_accessible_workspaces(client, engine):
+    """A non-admin sees the platform-default App plus only the workspace-
+    scoped Apps for workspaces they belong to -- previously /status
+    returned every App platform-wide to any authenticated viewer."""
+    with Session(engine) as session:
+        ws_a = _make_workspace(session)
+        ws_b = _make_workspace(session)
+        ws_a_id, ws_b_id = ws_a.id, ws_b.id
+        _make_config(session, "1", "platform-app", workspace_id=None)
+        _make_config(session, "2", "ws-a-app", workspace_id=ws_a_id)
+        _make_config(session, "3", "ws-b-app", workspace_id=ws_b_id)
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a_id)
+
+    res = client.get("/api/github-app/status")
+    assert res.status_code == 200
+    slugs = {a["app_slug"] for a in res.json()["apps"]}
+    assert slugs == {"platform-app", "ws-a-app"}
+
+
+def test_status_admin_sees_every_app(client, engine):
+    with Session(engine) as session:
+        ws_a = _make_workspace(session)
+        ws_b = _make_workspace(session)
+        _make_config(session, "1", "platform-app", workspace_id=None)
+        _make_config(session, "2", "ws-a-app", workspace_id=ws_a.id)
+        _make_config(session, "3", "ws-b-app", workspace_id=ws_b.id)
+
+    _login(client, engine)
+    res = client.get("/api/github-app/status")
+    slugs = {a["app_slug"] for a in res.json()["apps"]}
+    assert slugs == {"platform-app", "ws-a-app", "ws-b-app"}
+
+
+def test_manifest_data_requires_admin_for_platform_default_app(client, engine):
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    res = client.get("/api/github-app/manifest-data")
+    assert res.status_code == 403
+
+
+def test_manifest_data_requires_workspace_role_for_scoped_app(client, engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    # No membership at all yet -- must be refused, not silently treated as
+    # the platform-default (admin-only) path.
+    res = client.get("/api/github-app/manifest-data", params={"workspace_id": ws.id})
+    assert res.status_code == 403
+
+    _assign(engine, uid, ws.id, role=WorkspaceRole.SECURITY_ENGINEER)
+    res = client.get("/api/github-app/manifest-data", params={"workspace_id": ws.id})
+    assert res.status_code == 200
+
+
+def test_manifest_callback_round_trip_sets_workspace_id(client, engine, monkeypatch):
+    """manifest-data mints a state carrying workspace_id; callback reads it
+    back off _pending_states and sets it on the row it creates."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws.id, role=WorkspaceRole.SECURITY_ENGINEER)
+
+    res = client.get("/api/github-app/manifest-data", params={"workspace_id": ws.id})
+    assert res.status_code == 200
+    post_url = res.json()["post_url"]
+    state = post_url.split("state=")[1]
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = lambda: None
+    fake_response.json = lambda: {
+        "id": 555,
+        "slug": "toleman-devsecops-xyz",
+        "client_id": "cid",
+        "client_secret": "csecret",
+        "pem": "test-fixture-not-a-real-key",
+        "webhook_secret": "whsec",
+        "html_url": "https://github.com/apps/toleman-devsecops-xyz",
+        "owner": {"login": "acme-corp", "type": "Organization"},
+    }
+    monkeypatch.setattr(github_app_api.httpx, "post", lambda *a, **kw: fake_response)
+
+    cb = client.get("/api/github-app/callback", params={"code": "onetime", "state": state}, follow_redirects=False)
+    assert cb.status_code in (302, 307)
+
+    with Session(engine) as session:
+        config = session.exec(select(GitHubAppConfig).where(GitHubAppConfig.setup_token == state)).first()
+        assert config is not None
+        assert config.workspace_id == ws.id
+
+
+def test_update_webhook_secret_workspace_security_engineer_can_manage_own_config(client, engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        ws_id = ws.id
+        cfg = _make_config(session, "1", "ws-app", workspace_id=ws_id)
+        cfg_id = cfg.id
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_id, role=WorkspaceRole.SECURITY_ENGINEER)
+
+    res = client.patch(
+        "/api/github-app/webhook-secret",
+        json={"webhook_secret": "new-secret", "config_id": cfg_id},
+    )
+    assert res.status_code == 200
+    assert res.json()["webhook_secret_set"] is True
+
+
+def test_update_webhook_secret_refused_for_other_workspaces_config(client, engine):
+    with Session(engine) as session:
+        ws_a = _make_workspace(session)
+        ws_b = _make_workspace(session)
+        ws_a_id = ws_a.id
+        cfg_b = _make_config(session, "1", "ws-b-app", workspace_id=ws_b.id)
+        cfg_b_id = cfg_b.id
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a_id, role=WorkspaceRole.SECURITY_ENGINEER)
+
+    res = client.patch(
+        "/api/github-app/webhook-secret",
+        json={"webhook_secret": "new-secret", "config_id": cfg_b_id},
+    )
+    assert res.status_code == 403
+
+
+def test_update_webhook_secret_refused_for_non_admin_on_platform_default(client, engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        ws_id = ws.id
+        cfg = _make_config(session, "1", "platform-app", workspace_id=None)
+        cfg_id = cfg.id
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    # Even a security engineer of a real workspace can't touch the
+    # platform-default config -- only a global admin can.
+    _assign(engine, uid, ws_id, role=WorkspaceRole.SECURITY_ENGINEER)
+
+    res = client.patch(
+        "/api/github-app/webhook-secret",
+        json={"webhook_secret": "new-secret", "config_id": cfg_id},
+    )
+    assert res.status_code == 403
+
+
+def test_delete_app_config_workspace_security_engineer_can_delete_own_config(client, engine):
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        ws_id = ws.id
+        cfg = _make_config(session, "1", "ws-app", workspace_id=ws_id)
+        cfg_id = cfg.id
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_id, role=WorkspaceRole.SECURITY_ENGINEER)
+
+    res = client.delete(f"/api/github-app/{cfg_id}")
+    assert res.status_code == 200
+
+    with Session(engine) as session:
+        assert session.get(GitHubAppConfig, cfg_id) is None
+
+
+def test_delete_app_config_refused_for_other_workspaces_config(client, engine):
+    with Session(engine) as session:
+        ws_a = _make_workspace(session)
+        ws_b = _make_workspace(session)
+        ws_a_id = ws_a.id
+        cfg_b = _make_config(session, "1", "ws-b-app", workspace_id=ws_b.id)
+        cfg_b_id = cfg_b.id
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+    _assign(engine, uid, ws_a_id, role=WorkspaceRole.SECURITY_ENGINEER)
+
+    res = client.delete(f"/api/github-app/{cfg_b_id}")
+    assert res.status_code == 403
+
+    with Session(engine) as session:
+        assert session.get(GitHubAppConfig, cfg_b_id) is not None
+
+
+def test_delete_app_config_refused_for_non_admin_on_platform_default(client, engine):
+    with Session(engine) as session:
+        cfg = _make_config(session, "1", "platform-app", workspace_id=None)
+        cfg_id = cfg.id
+
+    client, uid = _login_as(client, engine, role=UserRole.VIEWER)
+
+    res = client.delete(f"/api/github-app/{cfg_id}")
+    assert res.status_code == 403
+
+
+def test_delete_app_config_admin_can_delete_platform_default(client, engine):
+    with Session(engine) as session:
+        cfg = _make_config(session, "1", "platform-app", workspace_id=None)
+        cfg_id = cfg.id
+
+    _login(client, engine)
+    res = client.delete(f"/api/github-app/{cfg_id}")
+    assert res.status_code == 200

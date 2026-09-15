@@ -95,7 +95,16 @@ def _candidate_configs(session: Session, payload_installation_id: int | None) ->
     installation's own App config when present (correct even with multiple
     Apps/installations). Falls back to trying every configured App's secret
     when the id is missing/unresolvable, so a delivery isn't rejected just
-    because we can't pin down which App it came from up front."""
+    because we can't pin down which App it came from up front.
+
+    (#506) Deliberately not narrowed to a workspace even after per-workspace
+    Apps: this fallback is a verification step, not a data read, and HMAC
+    comparison against each candidate's own secret is the actual security
+    boundary -- a delivery only verifies against the one workspace-scoped
+    (or platform-default) App whose real secret it was signed with,
+    regardless of how many secrets happen to get tried along the way. No
+    narrowing signal exists here to prefer one workspace's App over
+    another's when the installation id itself doesn't resolve."""
     if payload_installation_id is not None:
         installation = session.exec(
             select(GitHubInstallation).where(GitHubInstallation.installation_id == payload_installation_id)

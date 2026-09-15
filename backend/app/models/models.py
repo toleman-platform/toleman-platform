@@ -762,6 +762,15 @@ class GitHubAppConfig(SQLModel, table=True):
     for rows created before this column existed (pre-#34); those are
     resolved via the single-config fallback in
     app/core/github_app.py:resolve_config_for_installation.
+
+    ``workspace_id`` (#506): NULL means this is the platform-level default
+    App, shared by every workspace that hasn't registered its own -- the
+    only place in this file a nullable workspace_id means a real third
+    state rather than a legacy-row backfill marker (contrast
+    GitHubInstallation.github_app_config_id above, which is exactly that
+    kind of backfill nullable). A workspace-scoped App (workspace_id set)
+    is a separate App identity and webhook secret, so two workspaces never
+    share the credential their webhook deliveries are verified against.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     app_id: str
@@ -772,6 +781,7 @@ class GitHubAppConfig(SQLModel, table=True):
     webhook_secret: str
     html_url: str
     setup_token: Optional[str] = Field(default=None, unique=True, index=True)
+    workspace_id: Optional[int] = Field(default=None, foreign_key="workspace.id", index=True)
     # Which GitHub account owns this App -- "User" (github.com/settings/apps/
     # {slug}) or "Organization" (github.com/organizations/{owner_login}/
     # settings/apps/{slug}). GitHub's manifest-conversion response includes

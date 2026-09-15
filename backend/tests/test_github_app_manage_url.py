@@ -118,7 +118,7 @@ def test_fetch_app_owner_returns_none_on_github_error(monkeypatch):
 
 def test_callback_persists_owner_login_and_type(client, engine, monkeypatch):
     state = "test-state-123"
-    github_app_api._pending_states.add(state)
+    github_app_api._pending_states[state] = None
 
     fake_response = MagicMock()
     fake_response.raise_for_status = lambda: None
@@ -154,7 +154,7 @@ def test_callback_persists_none_owner_fields_when_github_omits_it(client, engine
     until a later backfill (or never, if it truly has no owner, which
     shouldn't happen for a real App but the code must not assume)."""
     state = "test-state-456"
-    github_app_api._pending_states.add(state)
+    github_app_api._pending_states[state] = None
 
     fake_response = MagicMock()
     fake_response.raise_for_status = lambda: None

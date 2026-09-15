@@ -13,7 +13,7 @@ from app.core import target_lifecycle
 from app.core.time import utcnow
 from app.core.tool_usage import tools_for_surface
 from app.models.models import NotificationEventType, Scan, Target
-from app.scanners import parsers, runner
+from app.scanners import parsers, runner, secret_context
 from app.tasks.celery_app import celery_app
 
 PARSER_MAP = parsers.PARSER_MAP
@@ -187,6 +187,10 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             parsed = PARSER_MAP[tool](raw)
             for item in parsed:
                 item["file_path"] = runner.normalize_file_path(item.get("file_path", ""), repo_path)
+                # (#481) After normalisation, because it reads the file at
+                # that path. No-op for every tool that is not a secrets
+                # scanner.
+                secret_context.annotate(item, tool, repo_path)
             if not health.healthy:
                 logger.warning(
                     "scan %s (%s on target %s) is not authoritative: %s",

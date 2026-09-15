@@ -50,6 +50,37 @@ REGISTRY_CONFIG_CACHE_DIR = os.environ.get(
     "SEMGREP_REGISTRY_CACHE_DIR", os.path.join(tempfile.gettempdir(), "toleman-semgrep-registry")
 )
 
+def core_config_path() -> str:
+    """The consolidated core pack if it can be built, else the directory.
+
+    The pack is authored as 62 separate files, which is the right shape for
+    maintaining it -- each carries the validation trail for its rules -- and
+    the wrong shape for loading it. Measured on this repo with three changed
+    files, the shape of a PR Guardrail scan: 81.6s from the directory
+    against 17.2s from one consolidated file, identical rules and findings.
+
+    Falling back to the directory on any failure is deliberate. A slower
+    scan is a cost; a scan that does not run is a false all-clear, and this
+    codebase treats those differently.
+    """
+    consolidated = rule_selector_module().build_core_config(
+        str(CORE_RULES_DIR), REGISTRY_CONFIG_CACHE_DIR
+    )
+    if consolidated:
+        return consolidated
+    logger.warning("could not consolidate the core rule pack; falling back to the slower directory config")
+    return str(CORE_RULES_DIR)
+
+
+def rule_selector_module():
+    """Imported lazily so runner keeps importing without app.scanners.rule_selector
+    on the path during partial-install scenarios, matching how
+    registry_configs_for defers it."""
+    from app.scanners import rule_selector
+
+    return rule_selector
+
+
 def registry_configs_for(repo_path: str) -> list[str]:
     """Pruned registry config paths for whatever languages this repo
     actually contains, newest-cache-first. Empty list when the vendored
@@ -111,7 +142,7 @@ TOOL_COMMANDS = {
     # coverage, usage assignment and triage can tell Toleman's narrow,
     # app-specific rules apart from the registry's broad generic ones.
     "semgrep-core": lambda path: [
-        "semgrep", "scan", f"--config={CORE_RULES_DIR}", "--disable-nosem", "--json", "--quiet", path
+        "semgrep", "scan", f"--config={core_config_path()}", "--disable-nosem", "--json", "--quiet", path
     ],
     # The public semgrep-rules registry, pruned to this repo's actual
     # languages and frameworks and consolidated one file per language (see
@@ -159,8 +190,14 @@ TOOL_COMMANDS = {
     # compromised test runner executes with the credentials of CI, and
     # "nobody looked" is not the same answer as "nothing there". Reporting
     # them and letting an operator judge scope beats silently dropping them.
+    # --list-all-pkgs (#500): trivy reports the dev/runtime flag on Package
+    # entries and not on Vulnerability entries, so a finding's scope can
+    # only be resolved by correlating its PkgID against the package list --
+    # and that list is omitted unless this flag is passed. Without it every
+    # dependency finding is scope "unknown", which is honest but useless
+    # for ranking a test-runner CVE against a shipped-library one.
     "trivy": lambda path: [
-        "trivy", "fs", "--scanners", "vuln", "--include-dev-deps",
+        "trivy", "fs", "--scanners", "vuln", "--include-dev-deps", "--list-all-pkgs",
         "--format", "json", "--quiet", path,
     ],
     "trivy-license": lambda path: ["trivy", "fs", "--scanners", "license", "--format", "json", "--quiet", path],

@@ -346,6 +346,11 @@ def _filtered_findings_query(
     owner: list[str] | None,
     search: str | None,
     rule_id: list[str] | None = None,
+    # (#500) Defaulted, following how rule_id and the date range were
+    # added: the explicit block above is the filter set every caller has
+    # always passed, and a later addition that every one of them must be
+    # edited to pass is how an unrelated caller breaks.
+    dependency_scope: list[Literal["runtime", "development", "unknown"]] | None = None,
     new_since_days: int | None = None,
     # (#302) Finding-window date range, used by the compliance report export
     # (`app/api/reports.py`). Defaulted, like the two above, so the
@@ -458,6 +463,14 @@ def _filtered_findings_query(
         # below at 1 so `?new_since_days=0` cannot mean "nothing ever".
         cutoff = utcnow() - timedelta(days=max(1, new_since_days))
         query = query.where(Finding.first_seen >= cutoff)
+    if dependency_scope:
+        # (#500) Straight column filter, no join: the value lives on
+        # Finding because it is a property of the finding's package, not of
+        # the target. Multi-select, so "runtime" + "unknown" together means
+        # "anything that might ship" -- which is the honest way to ask that
+        # question while the backlog still contains rows predating the
+        # column.
+        query = query.where(Finding.dependency_scope.in_(dependency_scope))
     if environment or owner:
         # (#251) Filter findings by the owning target's metadata. Needs the
         # Target join, which only happens above when ws_ids is not None (an
@@ -572,6 +585,10 @@ def list_findings(
     category: str | None = None,
     exclude_category: list[str] | None = Query(default=None),
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
+    # (#500) "Show me runtime only" in one click. Multi-select like the
+    # rest, and a column filter rather than a derived one -- the value is
+    # on Finding, so this needs no join.
+    dependency_scope: list[Literal["runtime", "development", "unknown"]] | None = Query(default=None),
     environment: list[str] | None = Query(default=None),
     owner: list[str] | None = Query(default=None),
     search: str | None = None,
@@ -586,7 +603,8 @@ def list_findings(
 ) -> FindingListResponse:
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
-        severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
+        severity=severity, tool=tool, fixability=fixability, dependency_scope=dependency_scope,
+        environment=environment, owner=owner, search=search,
         rule_id=rule_id, new_since_days=new_since_days,
     )
     if query is None:
@@ -729,6 +747,11 @@ def list_finding_groups(
     category: str | None = None,
     exclude_category: list[str] | None = Query(default=None),
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
+    # (#500) Same filter as the findings list, so a scope selection
+    # narrows these counts the way every other active filter does --
+    # a facet count that ignored it would disagree with the list it
+    # labels.
+    dependency_scope: list[Literal["runtime", "development", "unknown"]] | None = Query(default=None),
     environment: list[str] | None = Query(default=None),
     owner: list[str] | None = Query(default=None),
     search: str | None = None,
@@ -753,7 +776,8 @@ def list_finding_groups(
     """
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
-        severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
+        severity=severity, tool=tool, fixability=fixability, dependency_scope=dependency_scope,
+        environment=environment, owner=owner, search=search,
         rule_id=rule_id, new_since_days=new_since_days,
     )
     if query is None:
@@ -1325,6 +1349,11 @@ def list_category_facets(
     severity: list[Severity] | None = Query(default=None),
     tool: list[str] | None = Query(default=None),
     fixability: list[Literal["fixable", "no_known_fix", "unknown"]] | None = Query(default=None),
+    # (#500) Same filter as the findings list, so a scope selection
+    # narrows these counts the way every other active filter does --
+    # a facet count that ignored it would disagree with the list it
+    # labels.
+    dependency_scope: list[Literal["runtime", "development", "unknown"]] | None = Query(default=None),
     environment: list[str] | None = Query(default=None),
     owner: list[str] | None = Query(default=None),
     search: str | None = None,
@@ -1350,7 +1379,8 @@ def list_category_facets(
     only this, and anything already pointing here keeps working."""
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
-        severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
+        severity=severity, tool=tool, fixability=fixability, dependency_scope=dependency_scope,
+        environment=environment, owner=owner, search=search,
     )
     counts = _category_counts(session, query)
     return [CategoryFacet(category=c, count=counts[c]) for c in all_categories()]

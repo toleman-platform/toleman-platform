@@ -235,7 +235,7 @@ def ingest_findings(
     #     separately; it never lowers a score, only withholds an uplift.
     enrichments = enrichment_map(session, cve_ids)
 
-    def score_for(severity, finding_cve_id, epss_score, kev_listed) -> int:
+    def score_for(severity, finding_cve_id, epss_score, kev_listed, dependency_scope="unknown") -> int:
         """One finding's priority, from this run's weights and signals.
 
         Shared by the create and the re-score paths below so a finding
@@ -254,6 +254,7 @@ def ingest_findings(
             target_environment=target.environment,
             target_owner=target.owner,
             fixability=fixability_for_enrichment(enrichment) if finding_cve_id else UNKNOWN,
+            dependency_scope=dependency_scope,
             weights=weights,
         )
 
@@ -316,7 +317,14 @@ def ingest_findings(
             line_start=item.get("line_start"),
             line_end=item.get("line_end"),
             severity=severity,
-            priority_score=score_for(severity, finding_cve_id, epss_score, kev_listed),
+            priority_score=score_for(
+                severity, finding_cve_id, epss_score, kev_listed,
+                dependency_scope=item.get("dependency_scope", "unknown"),
+            ),
+            # (#500) Absent for every tool that is not trivy, and for trivy
+            # findings whose package could not be resolved; the column's
+            # default says "unknown" for both, which is the honest answer.
+            dependency_scope=item.get("dependency_scope", "unknown"),
             branch=branch,
             cve_id=finding_cve_id,
             epss_score=epss_score,

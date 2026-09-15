@@ -21,6 +21,7 @@ from app.core.github_token import resolve_github_token
 from app.core.pr_guardrail_executor import (
     execute_pr_guardrail_scan,
     group_findings_by_location,
+    parse_tool_log,
     recompute_pr_scan_status,
     revoke_finding_status_in_pr_comment,
     set_commit_status,
@@ -266,6 +267,10 @@ def _scan_out(
         # to the diff. Separate from tools_run for the same reason
         # tools_failed is: it did not check anything, so it is not evidence.
         "tools_skipped": [t for t in s.tools_skipped.split(",") if t],
+        # (#501) The per-tool breakdown: duration, finding count, and the
+        # skip reason that tools_skipped above drops. Empty for scans that
+        # predate the column.
+        "tool_log": parse_tool_log(s.tool_log),
         "scan_scope": s.scan_scope,
         "files_scanned": s.files_scanned,
         # (#244) How many of files_scanned the import graph pulled in rather
@@ -701,6 +706,7 @@ def override_pr_guardrail_scan(
         "tools_run": [t for t in pr_scan.tools_run.split(",") if t],
         "tools_failed": [t for t in pr_scan.tools_failed.split(",") if t],
         "tools_skipped": [t for t in pr_scan.tools_skipped.split(",") if t],
+        "tool_log": parse_tool_log(pr_scan.tool_log),
         "scan_scope": pr_scan.scan_scope,
         "files_scanned": pr_scan.files_scanned,
         "blast_radius_files": pr_scan.blast_radius_files,

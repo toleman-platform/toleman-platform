@@ -12,10 +12,46 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Building2, ScrollText, ShieldAlert, Trash2 } from "lucide-react";
 
-const RULE_TYPES: { value: PolicyRuleType; label: string; placeholder: string }[] = [
-  { value: "block_severity", label: "Block severity threshold", placeholder: "Critical / High / Medium / Low" },
-  { value: "suppress_rule", label: "Suppress rule", placeholder: "rule_id (exact or substring)" },
-  { value: "suppress_license", label: "Suppress license", placeholder: "e.g. MIT" },
+// M14: the three rule types used to be a bare `<select>` of their own
+// labels ("Block severity threshold", "Suppress rule", "Suppress license")
+// with nothing said about what picking one actually does. That matters here
+// specifically because the three behave nothing alike -- one changes a
+// *threshold* (findings stay visible; PR Guardrail's blocking line moves)
+// and two *remove findings from every scan in the workspace outright* -- and
+// a reader guessing wrong picks the kind of rule that quietly hides a class
+// of finding when they meant to only stop blocking PRs on it. `description`
+// mirrors app/core/policy.py's own docstring and matching logic (the
+// mechanism actually applied server-side) rather than restating the label in
+// other words, which is how this kind of copy drifts from what the code does.
+const RULE_TYPES: { value: PolicyRuleType; label: string; placeholder: string; description: string }[] = [
+  {
+    value: "block_severity",
+    label: "Block severity threshold",
+    placeholder: "Critical / High / Medium / Low",
+    description:
+      "Findings stay visible either way -- this only moves the bar for which severities make PR " +
+      "Guardrail block a pull request. Set to Medium and Medium/High/Critical all block; Low and " +
+      "everything blocks. With more than one active rule, the lowest (most permissive-to-block) wins.",
+  },
+  {
+    value: "suppress_rule",
+    label: "Suppress rule",
+    placeholder: "rule_id (exact or substring)",
+    description:
+      "Removes every finding whose rule_id matches this value (exact match, or a substring match in " +
+      "either direction) from every scan in the workspace, not just this PR. Use it for a specific check " +
+      "that's wrong for this codebase; a suppressed finding stops surfacing anywhere until this rule is " +
+      "deleted, so there's no per-finding undo.",
+  },
+  {
+    value: "suppress_license",
+    label: "Suppress license",
+    placeholder: "e.g. MIT",
+    description:
+      "Same effect as Suppress rule, scoped to a license name instead of a rule_id: allow-lists a " +
+      "license (e.g. MIT) the team has already reviewed, removing its findings workspace-wide rather " +
+      "than only from this PR.",
+  },
 ];
 
 function ruleLabel(t: PolicyRuleType) {
@@ -141,12 +177,13 @@ export function Policies() {
             <>
               <div className="flex flex-wrap items-end gap-2">
                 <select
+                  aria-label="Rule type"
                   className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
                   value={ruleType}
                   onChange={(e) => setRuleType(e.target.value as PolicyRuleType)}
                 >
                   {RULE_TYPES.map((r) => (
-                    <option key={r.value} value={r.value}>
+                    <option key={r.value} value={r.value} title={r.description}>
                       {r.label}
                     </option>
                   ))}
@@ -167,6 +204,11 @@ export function Policies() {
                   {saving ? "Adding..." : "Add rule"}
                 </Button>
               </div>
+              {/* M14: says what the *selected* type does, not just its name --
+                  see RULE_TYPES above for why that distinction matters here. */}
+              <p className="max-w-prose text-xs text-muted-foreground">
+                {RULE_TYPES.find((r) => r.value === ruleType)?.description}
+              </p>
 
               <div className="flex flex-col divide-y divide-border rounded-md border border-border">
                 {loading ? (

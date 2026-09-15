@@ -169,7 +169,10 @@ export function ScanButtons({
 
       {/* Mounted from dispatch until the next dispatch, not until the run
           settles: its live region has to still be there to carry the settled
-          phase, which is the whole point of announcing it. */}
+          phase, which is the whole point of announcing it. The failure
+          message is deliberately NOT passed here -- the alert below owns it,
+          and rendering it in both put the same sentence in a polite region
+          and an assertive one, so a screen reader announced it twice. */}
       {scan.phase && outcomeTool && (
         <div className="flex justify-end">
           <ScanProgress
@@ -177,7 +180,6 @@ export function ScanButtons({
             tool={outcomeTool}
             elapsedSeconds={scan.elapsedSeconds}
             etaSeconds={scan.etaSeconds}
-            error={scan.error}
           />
         </div>
       )}

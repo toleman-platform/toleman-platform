@@ -359,8 +359,9 @@ describe("ConnectGithubCard, saving a webhook secret", () => {
     const banner = await screen.findByRole("alert");
     expect(banner.textContent).toContain("secret must be at least 16 characters");
     expect(banner.className).toContain("destructive");
-    // The field is the only copy of what was typed; clearing it is what made
-    // the failure indistinguishable from a success.
+    // Pre-existing behaviour, pinned rather than introduced: the clear sits
+    // after the await, so a rejected PUT never reached it. The field is the
+    // only copy of what was typed, so a guard is worth having.
     expect(secretField().value).toBe("too-short");
     // And nothing on the card may claim the App is now verified.
     expect(screen.queryByText(/real-time PR scanning active/)).toBeNull();

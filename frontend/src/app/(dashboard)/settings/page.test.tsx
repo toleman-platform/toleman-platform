@@ -229,8 +229,10 @@ describe("Settings, saving a target's configuration", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("branch 'release' does not exist");
     expect(screen.queryByText("Saved")).toBeNull();
-    // Dropping the draft here would repaint the server's "main" under a
-    // failed save, which is exactly what a successful save looks like.
+    // Pre-existing behaviour, pinned rather than introduced: the clear sits
+    // after the await, so a rejection never reached it. Worth a guard because
+    // moving that line above the await would silently discard the user's
+    // edits under a failed save.
     expect(screen.getByDisplayValue("release")).toBeTruthy();
   });
 

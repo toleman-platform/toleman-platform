@@ -100,9 +100,14 @@ describe("ScanButtons, a scan that failed", () => {
     await settleMount();
     await runSemgrep();
 
-    // The live region was previously removed in the same commit that set its
-    // text, so a screen reader had nothing to announce.
-    expect(screen.getByRole("status").textContent).toContain("clone timed out after 300s");
+    // The live region used to be unmounted the moment the run settled, so the
+    // settled phase had nowhere to be announced from. It stays mounted now.
+    expect(screen.queryByRole("status")).not.toBeNull();
+    // The failure text lives in the alert and only there: rendering it in the
+    // polite region as well had a screen reader announce the same sentence
+    // twice, once politely and once assertively.
+    expect(screen.getByRole("alert").textContent).toContain("clone timed out after 300s");
+    expect(screen.getByRole("status").textContent).not.toContain("clone timed out after 300s");
     // ...and the buttons still come back, which is why the two were split.
     expect((screen.getByRole("button", { name: "Run semgrep" }) as HTMLButtonElement).disabled).toBe(false);
   });

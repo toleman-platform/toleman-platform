@@ -115,9 +115,11 @@ function hostIsDotless(publicApiUrl: string): boolean {
  * would report App A's rejected save under App B's input, and this card
  * routinely renders several Apps.
  *
- * The save itself was `try`/`finally` with no `catch`. A rejected PUT cleared
- * the field, re-enabled the button and said nothing -- pixel-identical to a
- * save that worked. This is the worst place on the card for that: the secret
+ * The save itself was `try`/`finally` with no `catch`. A rejected PUT
+ * re-enabled the button and said nothing, leaving the rejection to escape as
+ * an unhandled promise rejection; the typed secret did survive, since the
+ * clear sat after the await. Silence is the whole defect here, and this is
+ * the worst place on the card for it: the secret
  * is what every webhook delivery is verified against, so the operator walked
  * away believing real-time PR scanning was set up while GitHub's deliveries
  * would go on being rejected, and the only visible consequence is PRs that

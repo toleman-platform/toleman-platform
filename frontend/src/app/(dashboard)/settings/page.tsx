@@ -633,10 +633,11 @@ function NotificationPreferencesSection() {
 
 function WorkspaceSection() {
   const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
-  // Was `try`/`finally` with no `catch`, and the success path cleared the
-  // draft: a rejected PATCH threw the user's edits away and left the form
-  // showing the server's old values, which is what a save that worked also
-  // looks like. Everything below now runs only after the await returns.
+  // Was `try`/`finally` with no `catch`: a rejected PATCH said nothing at all
+  // and left the rejection as an unhandled promise rejection escaping the
+  // click handler. The draft itself was already preserved -- the clear sat
+  // after the await, so a rejection never reached it -- so what was missing
+  // was the failure being stated, not the edits being kept.
   const saveAction = useWriteAction("Couldn't save this target's configuration");
   // Both the draft and the "Saved" flag are tagged with the target they
   // belong to. Switching repos then falls back to that repo's stored values

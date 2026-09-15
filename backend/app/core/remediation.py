@@ -16,6 +16,18 @@ Two properties this must not get wrong, both about overstating:
 * `unresolved` is reported explicitly. If three of five CVEs on a package
   have a fix and two do not, "upgrade to X fixes 3 issues" is true and
   "upgrading fixes this package" is not. Never round up.
+
+The same rule applies to the *empty* answer, which is why
+`enrichment_coverage` exists alongside the grouping. An empty plan has at
+least two unrelated causes -- nothing has been looked up for these CVEs yet,
+or advisories were looked up and none of them names a fixed version -- and
+only the second is a statement about fixes. A caller that cannot tell them
+apart can only guess, and the guess that gets rendered is invariably the
+confident one ("no upgrade resolves these"), asserted over data that was
+never measured. So the plan is returned with the counts behind it:
+how many CVE-bearing open findings there are, how many have an enrichment
+row at all, how many of those rows came from an advisory record, and how
+many carry any fixed-version data.
 """
 
 import json
@@ -57,6 +69,109 @@ def _fixes_by_package(row: CveEnrichment) -> dict[str, list[str]]:
     return out
 
 
+def _open_cve_findings(session: Session, target_id: int) -> list[Finding]:
+    """This target's open findings that carry a CVE id.
+
+    The whole feature is keyed off `Finding.cve_id`, so a finding without one
+    (SAST, secrets, IaC, licence) is invisible to it by construction. That is
+    also why the coverage counts start from this population rather than from
+    every open finding: "no fix plan" on a target whose findings are all SAST
+    is a different fact from "no fix plan" on 40 open CVEs.
+    """
+    return list(
+        session.exec(
+            select(Finding).where(
+                Finding.target_id == target_id,
+                Finding.state == FindingState.OPEN,
+                Finding.cve_id.is_not(None),
+            )
+        ).all()
+    )
+
+
+def _enrichment_by_cve(session: Session, findings: list[Finding]) -> dict[str, CveEnrichment]:
+    """Cached enrichment rows for the CVEs these findings name, by CVE id.
+
+    A CVE with no row here has never been looked up. That absence is exactly
+    what `enrichment_coverage` reports: a missing row is *unmeasured*, and
+    must never be read as "this CVE has no fix".
+    """
+    if not findings:
+        return {}
+    rows = session.exec(
+        select(CveEnrichment).where(CveEnrichment.cve_id.in_({f.cve_id for f in findings}))
+    ).all()
+    return {r.cve_id: r for r in rows}
+
+
+def enrichment_coverage(findings: list[Finding], by_cve: dict[str, CveEnrichment]) -> dict:
+    """How much is actually known about the CVEs an empty plan came from.
+
+    Returns::
+
+        {"cve_findings": 40,            # open findings carrying a CVE id
+         "distinct_cves": 31,           # distinct CVE ids among them
+         "enriched_findings": 12,       # ...whose CVE has an enrichment row
+         "findings_with_advisory": 9,   # ...whose row came from an OSV record
+         "findings_with_fix_data": 0}   # ...whose row names a fixed version
+
+    Counted per finding rather than per CVE because the plan is counted per
+    finding too ("fixes 3 findings"), so the two sets of numbers are directly
+    comparable; `distinct_cves` is carried alongside for the lookup-shaped
+    question ("how many CVEs would have to be fetched").
+
+    `enriched_findings` counts rows, not answers. `get_cve_enrichment` caches
+    a both-sources-not-found row when an upstream lookup fails, so a row is
+    proof that something was attempted, and `findings_with_advisory` is the
+    narrower claim that OSV actually returned a record for that CVE. Only
+    `findings_with_fix_data == 0` *with* `findings_with_advisory > 0` is a
+    measured "no fixed version is published"; the other zeroes are silence.
+    """
+    enriched = 0
+    with_advisory = 0
+    with_fix_data = 0
+    for finding in findings:
+        row = by_cve.get(finding.cve_id)
+        if row is None:
+            continue
+        enriched += 1
+        if row.osv_found:
+            with_advisory += 1
+        # Same parse the grouping uses, so "has fix data" here cannot drift
+        # from "produced a plan" there: a row whose JSON is unparseable, or
+        # whose entries carry no `fixed`, counts as no fix data in both.
+        if _fixes_by_package(row):
+            with_fix_data += 1
+    return {
+        "cve_findings": len(findings),
+        "distinct_cves": len({f.cve_id for f in findings}),
+        "enriched_findings": enriched,
+        "findings_with_advisory": with_advisory,
+        "findings_with_fix_data": with_fix_data,
+    }
+
+
+def remediation_plan(session: Session, target_id: int) -> dict:
+    """The per-package upgrades for a target, plus the coverage behind them.
+
+    ``{"plans": [...], "coverage": {...}}`` -- `plans` is exactly what
+    `group_remediations` returns, `coverage` is `enrichment_coverage`. Both
+    are derived from a single pass over the same findings and enrichment
+    rows, so the counts always describe the plan they ship with.
+
+    `plans == []` and `coverage["findings_with_fix_data"] == 0` are the same
+    condition by construction: a finding with parseable fix data always
+    produces a bucket, and a bucket with anything in `fixed` always produces
+    a plan.
+    """
+    findings = _open_cve_findings(session, target_id)
+    by_cve = _enrichment_by_cve(session, findings)
+    return {
+        "plans": _group_by_package(findings, by_cve),
+        "coverage": enrichment_coverage(findings, by_cve),
+    }
+
+
 def group_remediations(session: Session, target_id: int) -> list[dict]:
     """Open findings for a target, grouped into per-package upgrades.
 
@@ -74,20 +189,14 @@ def group_remediations(session: Session, target_id: int) -> list[dict]:
     a package where nothing is fixable is not a remediation, it is just bad
     news, and belongs in the findings list rather than an action card.
     """
-    findings = session.exec(
-        select(Finding).where(
-            Finding.target_id == target_id,
-            Finding.state == FindingState.OPEN,
-            Finding.cve_id.is_not(None),
-        )
-    ).all()
+    findings = _open_cve_findings(session, target_id)
+    return _group_by_package(findings, _enrichment_by_cve(session, findings))
+
+
+def _group_by_package(findings: list[Finding], by_cve: dict[str, CveEnrichment]) -> list[dict]:
+    """The grouping itself, over findings and enrichment rows already loaded."""
     if not findings:
         return []
-
-    rows = session.exec(
-        select(CveEnrichment).where(CveEnrichment.cve_id.in_({f.cve_id for f in findings}))
-    ).all()
-    by_cve = {r.cve_id: r for r in rows}
 
     # package -> {"fixed": [(finding, [versions])], "unfixed": [finding]}
     buckets: dict[str, dict] = defaultdict(lambda: {"fixed": [], "unfixed": [], "ecosystem": None})

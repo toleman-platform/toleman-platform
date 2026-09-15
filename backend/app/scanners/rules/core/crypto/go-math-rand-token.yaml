@@ -1,0 +1,98 @@
+## math/rand used to generate a security-relevant token (CWE-338), Go.
+##
+## NOT matched as a true positive on any of the 3 real repos checked
+## (govwa, go-dvwa, go-test-bench) -- none of them generate a session
+## token/reset code/API key with math/rand anywhere. Validated instead
+## against hand-written synthetic positive/negative files:
+## /private/tmp/claude-501/-Users-geekshiv-Documents-OSP/d4c9fad0-390e-4d5f-be2d-4dc93cc45f90/scratchpad/gotest/math_rand_vulnerable.go
+## and .../gotest/math_rand_safe.go, per this pack's documented fallback
+## for a real Go-specific bug class with no available vulnerable-by-design
+## fixture.
+##
+## One real, useful signal did come out of go-dvwa though: vulnerable/sql.go
+## calls `rand.Intn(500)` (math/rand) to generate a fake product price --
+## genuinely math/rand, genuinely no crypto/rand in sight, but not a
+## security bug, because a price isn't a token. This rule correctly does
+## NOT flag it, and not only because of the naming filter below -- the
+## call isn't even assigned to a variable (`rand.Intn(500)` is passed
+## straight into fmt.Sprintf's varargs), so the `$VAR := rand.Intn(...)`
+## assignment shape this rule looks for doesn't structurally match at all.
+## That's a true negative worth taking at face value: this rule is
+## deliberately narrow (assignment-only, name-filtered), which trades away
+## catching `return rand.Intn(...)` or `sendToken(rand.Intn(...))` shapes
+## for not flagging every incidental math/rand call in a codebase.
+##
+## Go-specific bug, not a generic "weak randomness" heuristic: math/rand's
+## Intn/Read are deterministic from a seed (and pre-Go-1.20, often
+## seeded from a predictable source like time.Now()), unlike crypto/rand's
+## Read, which is drawn from the OS CSPRNG. Using the former for a
+## session id, password-reset code, or API key means an attacker who can
+## guess/observe the seed (or brute-force a small keyspace, since Intn's
+## output is bounded) can predict every token the process ever issues.
+##
+## A 4th real semgrep-Go gotcha found writing THIS rule, not in this pack's
+## README yet: crypto/rand and math/rand both declare `package rand`
+## (that's their actual Go package name, independent of import path), and
+## semgrep's Go call-pattern matching resolves a bare `rand.Read($VAR)`
+## pattern against the RESOLVED package identity, not the import alias
+## text in the source. Concretely: `import cryptorand "crypto/rand"` then
+## calling `cryptorand.Read(x)` still matches a `pattern: rand.Read($VAR)`
+## rule, because semgrep sees through the alias to the package's real name.
+## First proven with a 2-line probe file (aliased crypto/rand import,
+## nothing named "rand" anywhere in the source) that still matched
+## `rand.Read(...)`, then confirmed as a real false positive on this
+## rule's own math_rand_safe.go fixture: cryptorand.Read(sessionToken) --
+## the textbook CORRECT code -- fired the rule before this note's fix
+## went in, purely because the file also imports unaliased "math/rand"
+## for the unrelated dice-roll function below it. The
+## `pattern-not-inside: import "crypto/rand"` guard added to the rule
+## below closes this: unlike call-expression patterns, semgrep matches
+## an import spec by its literal path string, not resolved package
+## identity, so this guard reliably excludes any file that imports
+## crypto/rand anywhere, even under an alias -- at the cost of also
+## silencing the rule for any *other*, unrelated math/rand misuse
+## elsewhere in that same file. Accepted trade-off for a LOW-confidence
+## heuristic: false negative on a file mixing both imports, rather than
+## risk flagging the one call shape (aliased crypto/rand) that's actually
+## doing this correctly.
+rules:
+  - id: toleman-go-math-rand-for-security-token
+    languages: [go]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      math/rand's Intn/Read is used to generate a value assigned to a
+      variable named like a token, session id, password-reset code, or
+      similar secret. math/rand is deterministic from its seed and is NOT
+      a cryptographically secure random source (CWE-338/CWE-330) -- an
+      attacker who can guess or observe the seed can predict every value
+      this generates. Use crypto/rand instead (crypto/rand.Read, or
+      encode its bytes with encoding/base64 or encoding/hex for a
+      string token).
+    metadata:
+      category: security
+      cwe: "CWE-338: Use of Cryptographically Weak PRNG"
+      references:
+        - "https://owasp.org/www-community/vulnerabilities/Insecure_Randomness"
+      validated-against:
+        - "synthetic (gotest/math_rand_vulnerable.go): fires on rand.Intn()-derived sessionToken and rand.Read() into a resetCode buffer, both under a math/rand import, no crypto/rand import in the file"
+        - "synthetic (gotest/math_rand_safe.go): initially a FALSE POSITIVE on cryptorand.Read(sessionToken) -- see the package-identity-aliasing gotcha in the file header -- fixed with the pattern-not-inside guard below; after the fix, correctly silent on that line, and separately silent on the file's math/rand.Intn() call because it's assigned to a non-secret-named variable (diceRoll)"
+        - "go-dvwa: true negative -- its only math/rand call (vulnerable/sql.go, rand.Intn(500) for a fake price) doesn't match: not assigned to a variable at all, so the assignment shape below never even applies, independent of the naming filter"
+        - "govwa, go-test-bench: true negative (no math/rand usage in either repo)"
+    patterns:
+      - pattern-either:
+          - pattern: $VAR := rand.Intn(...)
+          - pattern: $VAR = rand.Intn(...)
+          - pattern: rand.Read($VAR)
+      - metavariable-regex:
+          metavariable: $VAR
+          # Substring match, case-insensitive, .* wrapper required --
+          # metavariable-regex anchors like re.match not re.search (this
+          # pack's documented gotcha).
+          regex: (?i).*(token|session|secret|password|passwd|otp|reset|nonce|apikey|api_key|resetcode|reset_code).*
+      - pattern-inside: |
+          import "math/rand"
+          ...
+      - pattern-not-inside: |
+          import "crypto/rand"
+          ...

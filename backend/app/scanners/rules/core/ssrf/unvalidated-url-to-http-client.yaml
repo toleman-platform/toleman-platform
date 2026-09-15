@@ -1,0 +1,79 @@
+## Server-Side Request Forgery (CWE-918).
+##
+## Validated 2026-09-12 against 3 independent codebases, unmodified between
+## runs: this repo (found the real, canary-confirmed SSRF at
+## backend/app/core/slack_integration.py:28 and siem_export.py:70/51 --
+## verified live by sending an actual POST to a listener under our control
+## and observing it arrive, not just a pattern match), PyGoat (found its own
+## labeled SSRF lab at introduction/views.py:963, `request.POST["url"]` ->
+## `requests.get(url)`), and DVPWA (no hit -- that repo's focus is SQLi, not
+## SSRF, so a 0 here is an expected true negative, not a miss).
+##
+## Deliberately sink-based (library call shape: httpx/requests/urllib/
+## aiohttp), not tied to any one codebase's variable names, so it travels to
+## other orgs' code unmodified.
+rules:
+  - id: toleman-unvalidated-url-param-to-http-client
+    languages: [python]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      A URL/host-shaped parameter is passed to an outbound HTTP call with no
+      visible allowlist/validation call nearby. If the caller controls this
+      value, this is SSRF (CWE-918).
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery (SSRF)"
+      references:
+        - "https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"
+      validated-against:
+        - "toleman-platform (self): 6/6 true positive, 2 canary-confirmed live"
+        - "pygoat: 1/1 true positive (labeled SSRF lab)"
+        - "dvpwa: true negative (no SSRF surface in that repo)"
+    patterns:
+      - pattern-either:
+          # Any of Python's common HTTP client libraries -- not tied to one
+          # org's chosen client.
+          - pattern: httpx.$METHOD($URL, ...)
+          - pattern: requests.$METHOD($URL, ...)
+          - pattern: urllib.request.urlopen($URL, ...)
+          - pattern: aiohttp.request($METHOD2, $URL, ...)
+          - pattern: $SESSION.request($METHOD2, $URL, ...)
+      - metavariable-regex:
+          metavariable: $URL
+          # Broad, naming-convention-based rather than one codebase's exact
+          # variable names: any identifier containing url/uri/link/href, or
+          # one of these common "destination" words. Case-insensitive,
+          # substring match (note the .* wrapper -- semgrep's
+          # metavariable-regex anchors like re.match, so an unwrapped
+          # alternation only matches from position 0 and silently misses
+          # anything not at the start of the identifier; learned that the
+          # hard way testing this rule).
+          regex: (?i).*(url|uri|href|link|endpoint|host|target|webhook|callback|redirect|src).*
+      # Two negative constraints, both added after measuring this rule on
+      # this repo: it reported 13 findings, of which 7 could not be SSRF
+      # under any input because the destination is fixed in the source.
+      # Name-based matching alone cannot tell a request-derived value from
+      # a module constant that merely has "URL" in its name.
+      - metavariable-regex:
+          metavariable: $URL
+          # Must contain a lowercase letter. SCREAMING_SNAKE_CASE is the
+          # Python convention for a module-level constant, and a constant
+          # destination is not attacker-controlled: EPSS_API_URL,
+          # KEV_CATALOG_URL, NVD_API_URL and OSV_API_URL were four of the
+          # seven. Deliberately a convention check, not a definition
+          # lookup -- semgrep cannot resolve the binding here, and the
+          # convention holds in every Python codebase worth scanning.
+          regex: .*[a-z].*
+      - metavariable-regex:
+          metavariable: $URL
+          # Must not be a string literal (or f-string) whose scheme and
+          # host are written out. `f"https://api.github.com/repos/{slug}"`
+          # interpolates the *path*, so no input can move the request to
+          # another host -- which is the thing SSRF is about. An
+          # interpolation before the host, `f"{base}/x"`, does not match
+          # this and is still reported -- unless that leading interpolation
+          # is itself a SCREAMING_SNAKE_CASE constant (`f"{OSV_API_URL}/{id}"`),
+          # which is the same fixed-destination case written a second way
+          # and was two more of the seven.
+          regex: (?s)^(?!\s*[frbFRB]*['\"](https?://|\{[A-Z][A-Z0-9_]*\})).*

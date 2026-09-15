@@ -1,0 +1,47 @@
+## Insecure TLS: InsecureSkipVerify: true (CWE-295), Go crypto/tls.
+##
+## NOT matched on any of the 3 real repos checked (govwa, go-dvwa,
+## go-test-bench) -- none of them construct a tls.Config at all (grepped
+## all three for "InsecureSkipVerify" and "tls.Config" before writing this
+## rule; zero hits, confirmed true negative rather than a missed search).
+## None of the OWASP-Top-10-style vulnerable-by-design Go apps found while
+## building this pack happen to demonstrate an outbound TLS client, which
+## tracks -- this bug class shows up in production HTTP client code
+## ("just disable verification to get past this cert error in staging"),
+## not in a teaching app's OWASP-labeled routes.
+##
+## Validated instead against hand-written synthetic positive/negative
+## files, per this pack's documented fallback:
+## /private/tmp/claude-501/-Users-geekshiv-Documents-OSP/d4c9fad0-390e-4d5f-be2d-4dc93cc45f90/scratchpad/gotest/insecure_tls_vulnerable.go
+## and .../gotest/insecure_tls_safe.go. This is a narrow, high-precision
+## literal-field match (InsecureSkipVerify: true is not something any
+## correct code path sets by accident), so in a general sense it would
+## deserve a confidence higher than this pack's synthetic-only tier
+## normally implies -- kept at LOW anyway, consistent with this pack's
+## rule that confidence reflects what's been verified on real target code,
+## not the rule author's a priori judgment of how clean the pattern is.
+rules:
+  - id: toleman-go-insecure-tls-skip-verify
+    languages: [go]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      A tls.Config sets InsecureSkipVerify: true, which disables
+      certificate chain and hostname verification entirely (CWE-295). Any
+      TLS connection made with this config is trivially interceptable by
+      an on-path attacker (MITM) -- the client will accept literally any
+      certificate. Remove this field (default false), or if a private CA
+      is the real problem, set RootCAs to a pool containing that CA
+      instead of disabling verification.
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      references:
+        - "https://owasp.org/www-community/vulnerabilities/Improper_Certificate_Validation"
+      validated-against:
+        - "synthetic (gotest/insecure_tls_vulnerable.go): fires on &tls.Config{InsecureSkipVerify: true} used both directly and via http.Transport.TLSClientConfig"
+        - "synthetic (gotest/insecure_tls_safe.go): silent on a tls.Config with InsecureSkipVerify: false (explicit) and on a tls.Config with no InsecureSkipVerify field at all"
+        - "govwa, go-dvwa, go-test-bench: true negative (no tls.Config construction anywhere in any of the 3 repos)"
+    pattern-either:
+      - pattern: "tls.Config{..., InsecureSkipVerify: true, ...}"
+      - pattern: $CFG.InsecureSkipVerify = true

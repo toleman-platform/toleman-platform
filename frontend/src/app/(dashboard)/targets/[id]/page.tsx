@@ -225,7 +225,10 @@ export default async function TargetDetailPage({
           <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <CriticalityChip label={target.label} />
             <span className="truncate">
-              · risk weight {target.criticality_weight}/5 · branch {target.default_branch}
+              {/* "criticality weight", not "risk": see target-overview.tsx's
+                  matching StatCard hint for why this can't share the word a
+                  finding's own Risk score uses. */}
+              · criticality weight {target.criticality_weight}/5 · branch {target.default_branch}
             </span>
             <TargetIdBadge targetId={targetId} />
           </p>

@@ -1,0 +1,99 @@
+## NoSQL injection (CWE-943).
+##
+## Validated 2026-09-12: grepped all 3 validation repos for pymongo/motor/
+## MongoClient usage and for the relevant requirements files before writing
+## this rule -- ZERO matches in toleman-platform, pygoat, and dvpwa. None of
+## the three repos use MongoDB at all (toleman-platform is
+## SQLAlchemy/Postgres, pygoat is Django/sqlite, dvpwa is Flask/asyncpg).
+## This is not "matched but the match was safe" -- there is no MongoDB
+## attack surface in any of the 3 repos to find, so the result below is
+## 0/0/0, honestly unproven, not a validated true-positive rule.
+##
+## Because the real repos gave nothing to test against, the pattern itself
+## was sanity-checked against a synthetic snippet (kept out of the shipped
+## rule pack, not one of the 3 validation repos, so this does NOT count as
+## "validated-against" evidence) to make sure it isn't silently dead on
+## arrival the way the metavariable-regex anchoring bug made the SSRF rule
+## dead at first:
+##   - collection.find({"role": request.args.get("role")})   -> MATCHED
+##   - collection.find({"role": str(request.args.get("role"))}) -> did NOT
+##     match (str() sanitizer works as intended)
+##   - "abc".find(request.args.get("x"))                      -> did NOT
+##     match (string .find() takes a non-dict arg, so the {...}-literal
+##     sink shape doesn't fire on it -- this was the deliberate
+##     disambiguator against the extremely common str.find()/list-like
+##     .find() methods that would otherwise make this rule pure noise)
+##
+## Sink is restricted to a dict-literal argument ($COLL.find({...}), not
+## $COLL.find(...)) specifically so it doesn't fire on every unrelated
+## .find(...) call in the codebase -- pymongo/motor queries are always
+## built from a dict; nothing else commonly is.
+##
+## Confidence is LOW, not MEDIUM, on purpose: unlike the SQL/LDAP/XPath
+## taint rules where "a format string reaches the driver's execute call"
+## is unambiguously wrong, a request value reaching a Mongo filter dict is
+## only a bug if the framework doesn't already coerce the value to a
+## scalar upstream (e.g. a Pydantic/DRF-typed field would make this a
+## correct, benign match, not a false positive) -- this needs a human to
+## check the surrounding type validation, same category as the SSRF
+## substring heuristic and the weak-hash rule.
+rules:
+  - id: toleman-nosql-injection-unchecked-value-in-query
+    languages: [python]
+    severity: WARNING
+    mode: taint
+    confidence: LOW
+    message: >-
+      A value read from the request is placed into a MongoDB query filter
+      dict with no scalar cast in between. If the client can submit a JSON
+      object instead of a plain string (e.g. {"$ne": null}, {"$gt": ""},
+      {"$where": "..."}) for this field, it is interpreted as a query
+      operator, not a literal value -- NoSQL injection (CWE-943). Cast the
+      value to the expected scalar type (str(...)/int(...)/ObjectId(...))
+      before it reaches find()/update()/delete().
+    metadata:
+      category: security
+      cwe: "CWE-943: Improper Neutralization of Special Elements in Data Query Logic"
+      references:
+        - "https://owasp.org/www-community/Injection_Theory#nosql-injection"
+      validated-against:
+        - "toleman-platform: 0 hits (repo has no MongoDB usage at all -- SQLAlchemy/Postgres throughout, confirmed via grep before writing this rule)"
+        - "pygoat: 0 hits (Django/sqlite, no pymongo import anywhere in the repo)"
+        - "dvpwa: 0 hits (Flask/asyncpg, no pymongo import anywhere in the repo)"
+        - "unproven-by-sample on all 3 repos -- see header comment"
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: request.GET.get(...)
+              - pattern: request.GET[...]
+              - pattern: request.POST.get(...)
+              - pattern: request.POST[...]
+              - pattern: request.args.get(...)
+              - pattern: request.args[...]
+              - pattern: request.form.get(...)
+              - pattern: request.form[...]
+              - pattern: request.values.get(...)
+              - pattern: request.json.get(...)
+              - pattern: request.json[...]
+              - pattern: request.data.get(...)
+              - pattern: request.query_params.get(...)
+              - pattern: request.query_params[...]
+    pattern-sanitizers:
+      - pattern: str(...)
+      - pattern: int(...)
+      - pattern: float(...)
+      - pattern: bool(...)
+      - pattern: ObjectId(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $COLL.find({...})
+              - pattern: $COLL.find_one({...})
+              - pattern: $COLL.find_one_and_update({...}, ...)
+              - pattern: $COLL.find_one_and_delete({...})
+              - pattern: $COLL.find_one_and_replace({...}, ...)
+              - pattern: $COLL.update_one({...}, ...)
+              - pattern: $COLL.update_many({...}, ...)
+              - pattern: $COLL.delete_one({...})
+              - pattern: $COLL.delete_many({...})
+              - pattern: $COLL.count_documents({...})

@@ -1,0 +1,34 @@
+## Unbounded allocation sized directly by caller input (CWE-400/770).
+##
+## Written 2026-09-12, not yet matched on any of toleman-platform/pygoat/
+## dvpwa -- none of the three build a string/list/bytes buffer whose size
+## comes straight from an unbounded request value. Kept LOW confidence and
+## unproven-by-sample rather than claimed.
+rules:
+  - id: toleman-unbounded-allocation-from-request-value
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A string/list repetition or range() is sized directly by a value
+      taken from the request, with no visible upper-bound check. A caller
+      can pass an arbitrarily large number and force a huge allocation or
+      loop -- memory/CPU exhaustion DoS (CWE-400).
+    metadata:
+      category: security
+      cwe: "CWE-400: Uncontrolled Resource Consumption"
+      validated-against: []
+    patterns:
+      - pattern-either:
+          - pattern: $STR * $N
+          - pattern: $N * $STR
+          - pattern: range($N)
+          - pattern: bytes($N)
+      - metavariable-pattern:
+          metavariable: $N
+          patterns:
+            - pattern-either:
+                - pattern: int(request.$ATTR[...])
+                - pattern: int(request.$ATTR.get(...))
+                - pattern: request.$ATTR[...]
+                - pattern: request.$ATTR.get(...)

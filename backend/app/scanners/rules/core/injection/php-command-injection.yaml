@@ -1,0 +1,96 @@
+## OS command injection (CWE-78) -- PHP.
+##
+## Validated 2026-09-12 against DVWA's vulnerabilities/exec lab, "low"
+## difficulty (DVWA's own labeled "Command Injection" challenge):
+##   vulnerabilities/exec/source/low.php:5,10,14 --
+##     $target = $_REQUEST[ 'ip' ];
+##     ...
+##     if( stristr( php_uname( 's' ), 'Windows NT' ) ) {
+##         $cmd = shell_exec( 'ping  ' . $target );
+##     } else {
+##         $cmd = shell_exec( 'ping  -c 4 ' . $target );
+##     }
+##   $target is concatenated straight into the shell command with no
+##   escapeshellarg()/escapeshellcmd() and no allowlist -- an attacker
+##   supplying `127.0.0.1; cat /etc/passwd` (or backticks/`&&`) gets it run
+##   verbatim by the shell.
+##
+## mode: taint, and this one actually needed it, not just "needed on
+## principle" -- $target is assigned once at the top of the handler, and
+## both shell_exec() calls sit one indentation level deeper inside the
+## if/else on php_uname(). Confirmed by hand: temporarily rewriting this as
+## a plain "$X = ...; ...; $SINK($X)" statement-sequence pattern found 0/2
+## on this exact file (it does not walk into the nested if/else branches);
+## switching to mode: taint found 2/2 immediately. Same gotcha this pack's
+## README already documents for a Python taint rule, now hit again in PHP.
+##
+## The PHP backtick operator (`` `$cmd` ``, shorthand for shell_exec()) is
+## deliberately NOT in pattern-sinks: semgrep's PHP grammar exposes it as a
+## distinct AST node from a shell_exec() call, and a quick check found no
+## semgrep pattern syntax that matches it directly without also matching
+## unrelated backtick-quoted strings. Out of scope for this rule; a
+## codebase using backticks for shelling out would need its own sink
+## pattern added and re-validated separately.
+##
+## Also checked, by hand, against the exec lab's medium/high/impossible
+## tiers (this rule has no sanitizer for a denylist str_replace(), so all
+## three still show up as taint-mode hits -- worth reading each one rather
+## than assuming "higher tier = fixed"):
+##   medium.php:19,23 -- denylist only strips "&&" and ";" -- a bare "|" or
+##     backtick still reaches the shell untouched. Still genuinely
+##     exploitable; correctly flagged.
+##   high.php:26,30 -- broader denylist (adds &, $, (, ), `, and "| " with
+##     a TRAILING SPACE) but that trailing space is the bug: a bare "|"
+##     with no following space survives the str_replace() untouched (e.g.
+##     "127.0.0.1|whoami"). Still genuinely exploitable; correctly
+##     flagged, and a good demonstration of why a denylist rather than
+##     escapeshellarg()/an allowlist keeps failing.
+##   impossible.php:22,26 -- CONFIRMED FALSE POSITIVE, read closely: this
+##     tier splits $target on "." and requires all 4 octets to pass
+##     is_numeric() before reassembling them, so by the time the tainted
+##     value reaches shell_exec() it is provably 4 numeric octets and
+##     nothing else -- correctly fixed, not exploitable. This rule still
+##     flags it because taint mode has no sanitizer for "reconstructed
+##     from values that passed a control-flow numeric check" (the same
+##     class of gap as this rule's sibling SQLi file's bac/medium.php
+##     false positive -- a preg_match/is_numeric gate on array elements
+##     upstream of the tainted variable, not a function call wrapping the
+##     variable itself). Documented and accepted rather than chased with a
+##     narrower sanitizer that would only ever match this one file.
+rules:
+  - id: toleman-php-command-injection-tainted-shell-call
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    confidence: MEDIUM
+    message: >-
+      Caller-controlled input ($_GET/$_POST/$_REQUEST) reaches
+      exec()/shell_exec()/system()/passthru()/popen()/proc_open() with no
+      escapeshellarg()/escapeshellcmd() in between -- OS command injection
+      (CWE-78). An attacker can append shell metacharacters (`;`, `|`,
+      `&&`, backticks) to run arbitrary commands. Wrap every interpolated
+      argument in escapeshellarg(), or avoid shelling out entirely.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      references:
+        - "https://owasp.org/www-community/attacks/Command_Injection"
+      validated-against:
+        - "DVWA (digininja/DVWA): 6/8 true positive across every non-fixed tier of the Command Injection lab -- low.php:10,14 (no filtering at all), medium.php:19,23 (denylist misses bare '|'/backtick), high.php:26,30 (denylist's '| ' entry has a trailing space, so a bare '|' still gets through). 2/8 confirmed false positive, documented and accepted -- impossible.php:22,26, where the value is provably 4 numeric octets by the time it reaches shell_exec() (an is_numeric() control-flow gate this rule's sanitizer list can't model, same class of gap as the sibling SQLi rule's bac/medium.php false positive)"
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+    pattern-sinks:
+      - pattern: exec($SINK)
+      - pattern: exec($SINK, ...)
+      - pattern: shell_exec($SINK)
+      - pattern: system($SINK)
+      - pattern: system($SINK, ...)
+      - pattern: passthru($SINK)
+      - pattern: passthru($SINK, ...)
+      - pattern: popen($SINK, ...)
+      - pattern: proc_open($SINK, ...)
+    pattern-sanitizers:
+      - pattern: escapeshellarg(...)
+      - pattern: escapeshellcmd(...)

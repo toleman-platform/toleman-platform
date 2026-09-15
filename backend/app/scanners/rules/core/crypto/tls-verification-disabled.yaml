@@ -1,0 +1,28 @@
+## Disabled TLS certificate verification (CWE-295).
+##
+## REGRESSION NOTE (2026-09-12): validated (written, 0/0/0 unproven) this
+## session but never persisted to this directory until now; see
+## injection/code-and-command-injection.yaml's header for the full story.
+##
+## 0/0/0 across toleman/pygoat/dvpwa -- none of the 3 disable TLS
+## verification anywhere. Kept LOW/unproven-by-sample.
+rules:
+  - id: toleman-tls-verification-disabled
+    languages: [python]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      TLS certificate verification is explicitly disabled -- this HTTP
+      client will accept any certificate, including one from an
+      active-MITM attacker (CWE-295).
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      validated-against: []
+    patterns:
+      - pattern-either:
+          - pattern: requests.$METHOD(..., verify=False, ...)
+          - pattern: httpx.$METHOD(..., verify=False, ...)
+          - pattern: httpx.Client(..., verify=False, ...)
+          - pattern: ssl._create_unverified_context()
+          - pattern: ssl.CERT_NONE

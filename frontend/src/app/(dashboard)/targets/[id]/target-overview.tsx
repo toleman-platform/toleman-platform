@@ -132,7 +132,12 @@ export function TargetOverview({
           icon={GitBranch}
           label="Default branch"
           value={target.default_branch}
-          hint={`risk weight ${target.criticality_weight}/5`}
+          // "criticality weight", not "risk": this is the target's own 1-5
+          // multiplier (CriticalityChip's Prod/Dev/Internal tier as a
+          // number), and "Risk score" (finding-row.tsx, this target's own
+          // Findings list) names a different, per-finding 0-1000 quantity
+          // that this weight only feeds into.
+          hint={`criticality weight ${target.criticality_weight}/5`}
         />
         <StatCard
           icon={target.is_ai_repo_effective ? Boxes : ShieldCheck}

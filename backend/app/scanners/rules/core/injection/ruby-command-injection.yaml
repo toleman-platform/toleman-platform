@@ -1,0 +1,49 @@
+## OS command injection (CWE-78), Ruby on Rails.
+##
+## Validated 2026-09-12 against RailsGoat (scratchpad/railsgoat).
+##
+## `toleman-ruby-command-injection-shell-interpolation`: 1/1 true positive --
+## app/models/benefits.rb:15:
+##   silence_streams(STDERR) { system("cp #{full_file_name} #{data_path}/bak#{Time.zone.now.to_i}_#{file.original_filename}") }
+## `system(...)` is called with a single interpolated string, which Ruby
+## hands to `/bin/sh -c` for parsing -- any shell metacharacter smuggled
+## into an interpolated value (here `file.original_filename`, the
+## client-supplied upload filename from BenefitFormsController#upload, one
+## call site up the chain) breaks out of the intended `cp` invocation
+## (CWE-78). Confirmed by reading both benefits.rb and the caller in
+## benefit_forms_controller.rb: `file.original_filename` is exactly the
+## filename the browser sent in the multipart upload, never sanitized
+## before reaching this interpolation.
+##
+## Backtick/`%x{}`/IO.popen forms are the same bug class (Ruby shells out
+## for a single-string command with any of the four) but RailsGoat's app
+## code doesn't happen to use those specific forms -- 0/0 on this repo for
+## those three, kept per this pack's policy of shipping a rule for a
+## documented shape even without a confirmed hit on every alternative form.
+rules:
+  - id: toleman-ruby-command-injection-shell-interpolation
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      A shell command is built with string interpolation/concatenation and
+      passed as a single string to system()/backticks/%x{}/IO.popen. Ruby
+      hands a single-string command to `/bin/sh -c`, so any shell
+      metacharacter (`;`, `|`, `` ` ``, `$()`) in the interpolated value
+      runs as a new command (CWE-78). Pass the command and each argument as
+      separate array elements instead (system("cp", src, dst)) -- that form
+      never invokes a shell.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      references:
+        - "https://guides.rubyonrails.org/security.html#command-line-injection"
+      validated-against:
+        - "railsgoat: 1/1 true positive (app/models/benefits.rb:15, system(\"cp #{full_file_name} ...#{file.original_filename}\"))"
+    patterns:
+      - pattern-either:
+          - pattern: system("...#{...}...")
+          - pattern: system("..." + ...)
+          - pattern: "`...#{...}...`"
+          - pattern: "%x{...#{...}...}"
+          - pattern: IO.popen("...#{...}...")

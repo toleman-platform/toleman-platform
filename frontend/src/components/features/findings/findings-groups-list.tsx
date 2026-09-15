@@ -92,31 +92,44 @@ export function FindingsGroupsList({
           }
         />
       ) : (
-      <div className="overflow-hidden rounded-md border border-border">
-        <div className="flex items-center gap-3 border-b border-border bg-secondary/60 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-          <span className="w-3.5 shrink-0" aria-hidden="true" />
-          <span className="w-[72px] shrink-0">Severity</span>
-          <span className="min-w-0 flex-1">Subject</span>
-          <span className="shrink-0">Findings</span>
-          <span className="hidden shrink-0 md:block">Signals</span>
-          <span className="hidden w-12 shrink-0 text-right lg:block">Oldest</span>
-        </div>
+        // core M11: real table semantics -- `table`/`rowgroup`/`row`/
+        // `columnheader`/`cell` -- laid over the same flex/div structure
+        // rather than a native <table>, because a native table's cell model
+        // (fixed column widths, no `shrink`/`hidden md:block` responsive
+        // collapse) is incompatible with the row staying one line at every
+        // density. This is the standard "CSS table" ARIA pattern for exactly
+        // that situation: a screen reader gets row/column navigation and each
+        // cell announced against its header, and the visual layout is
+        // unchanged. See FindingGroupRow for the per-row half of this fix.
+        <div role="table" aria-label="Grouped findings" className="overflow-hidden rounded-md border border-border">
+          <div role="rowgroup">
+            <div role="row" className="flex items-center gap-3 border-b border-border bg-secondary/60 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              <span role="columnheader" aria-label="Expand" className="w-3.5 shrink-0" />
+              <span role="columnheader" className="w-[72px] shrink-0">Severity</span>
+              <span role="columnheader" className="min-w-0 flex-1">Subject</span>
+              <span role="columnheader" className="shrink-0">Findings</span>
+              <span role="columnheader" className="hidden shrink-0 md:block">Signals</span>
+              <span role="columnheader" className="hidden w-12 shrink-0 text-right lg:block">Oldest</span>
+            </div>
+          </div>
 
-        {groups.map((group) => (
-          <FindingGroupRow
-            // representative_id, not (tool, rule_id): the ungrouped half emits
-            // one row per finding, so several rows can share a tool and rule
-            // and React would see duplicate keys — warning, and misassociating
-            // each row's expand/members/reason state on reorder.
-            key={group.representative_id}
-            group={group}
-            memberQuery={memberQuery}
-            targets={targets}
-            onTriaged={() => router.refresh()}
-            onInspect={setInspecting}
-          />
-        ))}
-      </div>
+          <div role="rowgroup">
+            {groups.map((group) => (
+              <FindingGroupRow
+                // representative_id, not (tool, rule_id): the ungrouped half emits
+                // one row per finding, so several rows can share a tool and rule
+                // and React would see duplicate keys — warning, and misassociating
+                // each row's expand/members/reason state on reorder.
+                key={group.representative_id}
+                group={group}
+                memberQuery={memberQuery}
+                targets={targets}
+                onTriaged={() => router.refresh()}
+                onInspect={setInspecting}
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       {total > 0 && <ActivityPagination total={total} page={page} pageSize={pageSize} />}

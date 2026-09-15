@@ -18,6 +18,26 @@ export const SEVERITY_BORDER_COLOR: Record<string, string> = {
 
 export const SEVERITY_ORDER = ["Critical", "High", "Medium", "Low", "Informational"];
 
+// Solid fill for a small indicator dot (SeverityChip's `dot` variant, e.g. the
+// design-system swatch grid). A dot reads as more emphatic than a
+// bordered/tinted chip, so it gets its own map rather than reusing
+// SEVERITY_COLOR's border+bg+text combo verbatim -- but it stays in the same
+// per-tier family (Critical -> destructive, High -> chart-3, Medium ->
+// chart-1) and, like every other map here, treats Low as neutral rather than
+// inventing a colored tier the rest of this file doesn't have. SeverityChip
+// used to keep a private copy of this (`DOT_COLOR`) that disagreed on
+// exactly that point -- Low got its own accent (chart-2) instead of the
+// neutral muted-foreground every other severity map gives it -- because a
+// second hand-written vocabulary is how that kind of drift happens. This is
+// the one map; SeverityChip imports it instead of re-declaring it.
+export const SEVERITY_DOT_COLOR: Record<string, string> = {
+  Critical: "bg-destructive",
+  High: "bg-chart-3",
+  Medium: "bg-chart-1",
+  Low: "bg-muted-foreground",
+  Informational: "bg-muted-foreground",
+};
+
 // CSS custom-property references, not literal hex; these feed recharts
 // `fill`/Cell colors (see components/charts/severity-pie.tsx), which accept
 // `var(--x)` in both the fill attribute and inline style, and modern

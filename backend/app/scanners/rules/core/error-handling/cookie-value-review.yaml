@@ -1,0 +1,42 @@
+## Cookie value review (CWE-565) -- not a vulnerability by itself, a
+## "confirm this is what it looks like" flag.
+##
+## Validated 2026-09-12 against toleman-platform: matched the real CodeQL
+## "Construction of a cookie using user-supplied input" alert at
+## backend/api/auth.py:172,252 -- and on inspection this one is a
+## non-issue: the cookie value is a server-generated, signed session
+## token, not raw user input. Kept in the pack anyway: this rule's entire
+## purpose is "make a human confirm the value is opaque/signed", and it
+## did exactly that. A rule with 100% "reviewed, turned out fine" hits on
+## one repo is still working as intended.
+rules:
+  - id: toleman-cookie-set-with-derived-value
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      response.set_cookie() value comes from a variable, not a
+      hardcoded/static value -- confirm it's a signed/opaque session
+      token, not raw user input.
+    metadata:
+      category: security
+      cwe: "CWE-565: Reliance on Cookies without Validation and Integrity Checking"
+      validated-against:
+        - "toleman-platform (self): 2 findings, both the hardened session cookie in api/auth.py. Manually reviewed 2026-09-15: correct code, so both counted as false positives and the rule now excludes httponly+samesite cookies. 0 findings here afterwards."
+    patterns:
+      - pattern: $RESP.set_cookie(..., value=$V, ...)
+      - pattern-not: $RESP.set_cookie(..., value="...", ...)
+      # A cookie set with httponly AND samesite together is one whose
+      # handling someone has already thought about; asking them to
+      # "confirm it's a signed/opaque token" is a question the surrounding
+      # code has answered. Measured on this repo: both findings this rule
+      # produced were the session cookie in api/auth.py, set with
+      # httponly=True, secure, samesite="lax" and max_age -- correct code,
+      # and a warning on correct code is noise however low its severity
+      # says it is.
+      #
+      # Deliberately requires BOTH flags. httponly alone does not mean the
+      # value was considered (it is the one flag people set reflexively),
+      # and a cookie carrying raw user input with no samesite is still
+      # worth a look.
+      - pattern-not: $RESP.set_cookie(..., httponly=True, ..., samesite=$S, ...)

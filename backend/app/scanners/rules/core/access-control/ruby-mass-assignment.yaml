@@ -1,0 +1,92 @@
+## Mass assignment (CWE-915), Ruby on Rails.
+##
+## Validated 2026-09-12 against RailsGoat (scratchpad/railsgoat). Rails
+## replaced attr_accessible with "strong parameters" (params.require(...)
+## .permit(...)) specifically to close this bug class; both sub-rules here
+## flag the two documented ways app code still routes around it.
+##
+## `toleman-ruby-mass-assignment-to-unsafe-h`: 1/1 true positive --
+## app/controllers/admin_controller.rb:45 (update_user action):
+##   user_params = params[:user].to_unsafe_h if params[:user].respond_to?(:to_unsafe_h)
+##   user_params ||= params[:user]
+##   filtered_params = user_params.reject { |k, v| (k == "password" || k == "password_confirmation") && v.blank? }
+##   user.update(filtered_params)
+## `.to_unsafe_h` is Rails' own escape hatch out of strong parameters --
+## it converts an ActionController::Parameters object back into a plain,
+## fully-permitted Hash, so every key the client sent (including `admin`)
+## reaches `update`. RailsGoat's own inline comment on lines 36-38 names
+## this exact line as "VULNERABILITY: Using params[:user] directly without
+## strong parameters ... allows mass assignment of any user attribute
+## including 'admin'" and cites its own wiki page
+## (Extras:-Mass-Assignment-Admin-Role.md). Needed `mode: taint`, not a
+## plain multi-line pattern: the tainted value crosses a `||=` fallback
+## assignment, then a `.reject { |k, v| ... }` block call, then a
+## `filtered_params` rename, before finally reaching `update()` -- three
+## indirections, and the block form in particular is exactly the "value
+## assigned here, used later, not on the very next statement" shape this
+## pack's README already flags as needing taint mode rather than a
+## sequence pattern.
+##
+## `toleman-ruby-mass-assignment-permit-bang`: 1/1 true positive --
+## app/controllers/users_controller.rb:50 (used by the `create` action):
+##   def user_params
+##     params.require(:user).permit!
+##   end
+## `permit!` marks every key on the Parameters object as permitted,
+## unconditionally -- it looks like strong parameters (there's a
+## `.require`/`.permit` chain right there) but allowlists nothing, so it's
+## functionally identical to `to_unsafe_h` for this bug class. This is a
+## simple pattern match, not taint: the vulnerable call is the `.permit!`
+## site itself, independent of where its result later flows.
+rules:
+  - id: toleman-ruby-mass-assignment-to-unsafe-h
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      params.to_unsafe_h converts request parameters back into a fully
+      permitted plain Hash, undoing strong parameters. If this reaches an
+      ActiveRecord constructor/update, a client can set any column the
+      model has -- including admin/role/owner_id flags that were never
+      meant to be client-settable (CWE-915). Use
+      params.require(...).permit(:allowed, :fields) instead.
+    metadata:
+      category: security
+      cwe: "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes"
+      references:
+        - "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+        - "https://guides.rubyonrails.org/action_controller_overview.html#strong-parameters"
+      validated-against:
+        - "railsgoat: 1/1 true positive (app/controllers/admin_controller.rb:45, user.update(filtered_params) where filtered_params derives from params[:user].to_unsafe_h -- matches this repo's own inline VULNERABILITY comment)"
+    mode: taint
+    pattern-sources:
+      - pattern: $P.to_unsafe_h
+    pattern-sinks:
+      - pattern: $MODEL.new($SINK)
+      - pattern: $MODEL.create($SINK)
+      - pattern: $MODEL.create!($SINK)
+      - pattern: $OBJ.update($SINK)
+      - pattern: $OBJ.update!($SINK)
+      - pattern: $OBJ.update_attributes($SINK)
+      - pattern: $OBJ.assign_attributes($SINK)
+
+  - id: toleman-ruby-mass-assignment-permit-bang
+    languages: [ruby]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      permit! allowlists every key on this Parameters object unconditionally
+      -- it has the shape of strong parameters (a .require/.permit chain)
+      but filters nothing, so any client-supplied key reaches whatever
+      ActiveRecord call consumes it, including admin/role/owner_id fields
+      that were never meant to be client-settable (CWE-915). Name the
+      specific fields: params.require(:model).permit(:field1, :field2).
+    metadata:
+      category: security
+      cwe: "CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes"
+      references:
+        - "https://cheatsheetseries.owasp.org/cheatsheets/Mass_Assignment_Cheat_Sheet.html"
+      validated-against:
+        - "railsgoat: 1/1 true positive (app/controllers/users_controller.rb:50, params.require(:user).permit!, feeding the create action's User.new(user_params))"
+    pattern-either:
+      - pattern: $P.permit!

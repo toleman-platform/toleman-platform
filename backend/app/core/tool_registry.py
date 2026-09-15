@@ -161,6 +161,28 @@ TOOL_REGISTRY = [
         "pip_package": "semgrep",
     },
     {
+        "tool": "semgrep-core",
+        "display_name": "Semgrep (Toleman rules)",
+        "category": "SAST",
+        "languages": ["python", "javascript", "typescript", "java", "php", "ruby", "go"],
+        "description": "Toleman's own rule pack: 94 rules across 6 languages, written for vulnerability classes the public registry misses or gets wrong for common frameworks (its only Python SSRF rule is hard-coded to Flask, for instance). Every rule was validated by hand against a real vulnerable application before shipping. Rules live in-repo, so results are reproducible offline with no registry fetch.",
+        "install_cmd": "pip install semgrep",
+        "docs_url": "https://semgrep.dev/docs/writing-rules/rule-syntax/",
+        "version_cmd": ["semgrep", "--version"],
+        "pip_package": "semgrep",
+    },
+    {
+        "tool": "semgrep-registry",
+        "display_name": "Semgrep (public registry, pruned)",
+        "category": "SAST",
+        "languages": ["python", "javascript", "typescript", "java", "php", "ruby", "go"],
+        "description": "The public semgrep-rules registry, pruned to the languages and frameworks a repository actually uses and filtered to security-category rules only. Broad recall, lower precision than the Toleman rules by construction: these rules know nothing about the application they are pointed at. Defaults on for on-demand and scheduled scans and off for CI and PR Guardrail, where latency gates a developer.",
+        "install_cmd": "pip install semgrep",
+        "docs_url": "https://github.com/semgrep/semgrep-rules",
+        "version_cmd": ["semgrep", "--version"],
+        "pip_package": "semgrep",
+    },
+    {
         "tool": "garak",
         "display_name": "garak",
         "category": "AI/ML",
@@ -269,7 +291,7 @@ USAGE_SURFACES = ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail")
 # Everything else in the registry is genuinely optional and installed on
 # demand (see install.py); absent is its honest state, not a defect.
 BUNDLED_TOOLS = frozenset(
-    {"semgrep", "semgrep-llm", "gitleaks", "trivy", "trivy-license", "gosec", "modelscan"}
+    {"semgrep", "semgrep-llm", "semgrep-core", "semgrep-registry", "gitleaks", "trivy", "trivy-license", "gosec", "modelscan"}
 )
 
 
@@ -297,6 +319,23 @@ BUNDLED_TOOLS = frozenset(
 # Enabling it stays one checkbox away in Tool Marketplace, for an operator
 # who has installed it and wants the extra recall.
 OPT_IN_TOOLS = frozenset({"noseyparker"})
+
+
+# Tools that belong on the scans nobody is waiting for, and not on the two
+# surfaces where latency gates a developer.
+#
+# The two surfaces have genuinely different budgets: a CI or PR Guardrail
+# scan blocks a merge, so wall-clock is the constraint, while an on-demand
+# or scheduled scan can take as long as it needs and should go as deep as
+# it can. semgrep-registry is the tool where that distinction bites -- it
+# roughly triples the applicable rule set and carries several times the
+# taint-mode rules, which is worth minutes on a nightly run and is not
+# worth it on a pull request.
+#
+# This is a *default*, not a prohibition: an operator who wants the registry
+# layer on their pull requests can switch it on per workspace, the same way
+# any other surface assignment is changed.
+DEEP_SCAN_ONLY_TOOLS = frozenset({"semgrep-registry"})
 
 
 def default_usage_for(tool: str) -> dict:
@@ -328,11 +367,12 @@ def default_usage_for(tool: str) -> dict:
     that check.
     """
     integrated = tool in TOOL_COMMANDS and tool not in OPT_IN_TOOLS
+    deep_only = tool in DEEP_SCAN_ONLY_TOOLS
     return {
         "on_demand_scan": integrated,
-        "ci_pipeline": integrated,
+        "ci_pipeline": integrated and not deep_only,
         "api_scan": tool == "nuclei",
-        "pr_guardrail": integrated,
+        "pr_guardrail": integrated and not deep_only,
     }
 
 

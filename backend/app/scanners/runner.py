@@ -40,6 +40,47 @@ ALLOWED_CLONE_HOSTS = {"github.com"}
 # over coverage. Resolved off __file__ so it works the same in the container
 # image and a local checkout.
 LLM_RULES_DIR = Path(__file__).parent / "rules" / "llm"
+CORE_RULES_DIR = Path(__file__).parent / "rules" / "core"
+
+# Where the pruned per-language registry configs are cached between scans.
+# Rebuilding one means parsing ~2000 registry YAML files, so this must
+# survive across runs; see rule_selector.build_registry_config, which
+# invalidates on the vendored clone's git HEAD rather than on time.
+REGISTRY_CONFIG_CACHE_DIR = os.environ.get(
+    "SEMGREP_REGISTRY_CACHE_DIR", os.path.join(tempfile.gettempdir(), "toleman-semgrep-registry")
+)
+
+def registry_configs_for(repo_path: str) -> list[str]:
+    """Pruned registry config paths for whatever languages this repo
+    actually contains, newest-cache-first. Empty list when the vendored
+    semgrep-rules clone is absent or nothing survives pruning.
+
+    Empty is a real, expected answer, not a failure: nothing populates
+    SEMGREP_RULES_REGISTRY_ROOT on a fresh install yet, and a repo can
+    legitimately be in a language the registry has no folder for. The
+    caller turns that into ToolNotApplicable rather than running semgrep
+    with no --config, which would scan nothing and exit 0 -- a false
+    all-clear, which is the one outcome this codebase treats as worse
+    than a loud failure.
+    """
+    from app.scanners import rule_selector
+
+    configs: list[str] = []
+    for language in rule_selector.detect_languages(repo_path):
+        technologies = rule_selector.detect_technologies(repo_path, language)
+        try:
+            pruned = rule_selector.build_registry_config(
+                language, technologies, REGISTRY_CONFIG_CACHE_DIR
+            )
+        except OSError:
+            # An unwritable cache directory must not take the whole scan
+            # down; the rest of the tools still have work to do.
+            logger.warning("could not build pruned registry config for %s", language, exc_info=True)
+            continue
+        if pruned and pruned.rule_count:
+            configs.append(pruned.path)
+    return configs
+
 
 TOOL_COMMANDS = {
     # --disable-nosem: semgrep respects a `# nosemgrep` (or `# nosem`) trailing
@@ -62,6 +103,26 @@ TOOL_COMMANDS = {
     # reasoning as trivy vs trivy-license already being separate entries.
     "semgrep-llm": lambda path: [
         "semgrep", "scan", f"--config={LLM_RULES_DIR}", "--disable-nosem", "--json", "--quiet", path
+    ],
+    # Toleman's own general-purpose rule pack (rules/core), 94 rules across
+    # 6 languages, aimed at classes the public registry misses or gets wrong
+    # for common frameworks. A separate tool from "semgrep" for the same
+    # reason semgrep-llm is: findings carry tool "semgrep-core", so per-tool
+    # coverage, usage assignment and triage can tell Toleman's narrow,
+    # app-specific rules apart from the registry's broad generic ones.
+    "semgrep-core": lambda path: [
+        "semgrep", "scan", f"--config={CORE_RULES_DIR}", "--disable-nosem", "--json", "--quiet", path
+    ],
+    # The public semgrep-rules registry, pruned to this repo's actual
+    # languages and frameworks and consolidated one file per language (see
+    # app.scanners.rule_selector). Broader recall and lower precision than
+    # semgrep-core by construction -- these rules know nothing about the app
+    # they are pointed at -- which is why it defaults off for the two
+    # latency-sensitive surfaces; see tool_registry.default_usage_for.
+    "semgrep-registry": lambda path: [
+        "semgrep", "scan",
+        *[f"--config={c}" for c in registry_configs_for(path)],
+        "--disable-nosem", "--json", "--quiet", path,
     ],
     # `--report-path` was /dev/stdout until #253. That is not portable: where
     # /dev/stdout isn't writable by the process, gitleaks aborts with
@@ -797,6 +858,8 @@ PACKAGE = "package"
 TOOL_SCOPING = {
     "semgrep": MULTI_PATH,
     "semgrep-llm": MULTI_PATH,
+    "semgrep-core": MULTI_PATH,
+    "semgrep-registry": MULTI_PATH,
     "checkov": MULTI_PATH,
     "gitleaks": PER_FILE,
     "noseyparker": MULTI_PATH,
@@ -1459,6 +1522,9 @@ TOOL_CACHE_ISOLATION = {
     # is the same binary writing the same settings file, so it races the
     # same way.
     "semgrep-llm": _isolate_semgrep,
+    # Same binary, same settings file, same race.
+    "semgrep-core": _isolate_semgrep,
+    "semgrep-registry": _isolate_semgrep,
 }
 
 
@@ -1665,6 +1731,18 @@ def _run_tool_inner(
     #
     # "Not applicable" is the honest answer here and the codebase already
     # has a word for it.
+    # (#469-adjacent, registry layer) The pruned registry configs are built
+    # from the vendored semgrep-rules clone. With no clone provisioned there
+    # is nothing to pass --config, and semgrep with no config scans nothing
+    # and exits 0 -- which ingests as a clean sweep and mitigates every open
+    # finding this tool previously reported. "Not applicable" is the honest
+    # answer, and it keeps the run's health intact.
+    if tool == "semgrep-registry" and not registry_configs_for(str(repo_path)):
+        raise ToolNotApplicable(
+            "no pruned registry rules for this repository's languages "
+            "(is SEMGREP_RULES_REGISTRY_ROOT provisioned?)"
+        )
+
     extensions = TOOL_EXTENSIONS.get(tool)
     if extensions and not any(next(repo_path.rglob(f"*{ext}"), None) for ext in extensions):
         raise ToolNotApplicable(
@@ -1746,6 +1824,9 @@ def _strip_ansi(text: str) -> str:
 TOOL_SUCCESS_EXIT_CODES = {
     "semgrep": {0, 1},
     "semgrep-llm": {0, 1},
+    # Same binary, same convention: 0 clean, 1 findings present.
+    "semgrep-core": {0, 1},
+    "semgrep-registry": {0, 1},
     "gitleaks": {0},        # --exit-code 0
     "noseyparker": {0},
     "trivy": {0},

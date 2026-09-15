@@ -1,0 +1,95 @@
+## Insecure "remember me" / persistent auth cookie (CWE-330: Use of
+## Insufficiently Random Values; related CWE-539, CWE-384).
+##
+## Validated 2026-09-12: toleman-platform (true negative -- its only
+## cookie-setting call sites are login()/change-password() in
+## backend/app/api/auth.py, both passing `create_session_token(...)`, a
+## signed HMAC token, and using max_age=SESSION_TTL_SECONDS = 24h, under
+## this rule's 7-day threshold, so it correctly does not fire), dvpwa (true
+## negative -- no set_cookie call in the codebase at all, sessions go
+## through aiohttp_session). pygoat: 1/1 TRUE POSITIVE, and a good one --
+## introduction/views.py's `auth_lab_login`/`auth_lab_signup` (the
+## deliberately-vulnerable "Broken Authentication" lab) do:
+##
+##   response.set_cookie('userid', obj.userid, max_age=31449600,
+##                        samesite=None, secure=False)
+##
+## at introduction/views.py:291, 305, 319. `obj.userid` is the raw,
+## sequential/guessable database identifier -- not a token from
+## secrets/os.urandom/a signer -- set to persist for a full year
+## (31449600s). Anyone who can guess or enumerate a userid can forge this
+## cookie and be logged in as that user indefinitely; PyGoat's own
+## Solutions/solution.md names this exact lab under A2:Broken
+## Authentication.
+##
+## Also caught a second, even more exact hit in the same repo:
+## dockerized_labs/broken_auth_lab/app.py:49 --
+##   session_token = base64.b64encode(f"{username}:{datetime.now()}"...)
+##   if remember_me:
+##       response.set_cookie('session', session_token, max_age=30*24*60*60)
+## -- sitting directly under the source's own comment "# Vulnerable:
+## Insecure 'Remember Me' implementation". base64 of username+timestamp is
+## trivially reconstructible/forgeable, not random. Matched via the plain
+## variable ($VALUE = session_token, a Name node) rather than the call
+## that built it -- the rule doesn't do dataflow back through the
+## assignment, it just happens that the call-exclusion only applies to the
+## *argument expression itself*, and here that argument is a bare
+## variable, not the b64encode(...) call. This is precisely the class the
+## task asked for: a persistent identity cookie whose value isn't
+## cryptographically random.
+##
+## Deliberately keyed on *shape* (long-lived cookie + a value that isn't a
+## call to anything, i.e. a bare attribute/name, not a token-minting
+## function), not on the cookie being named "remember" -- pygoat's is named
+## 'userid', which a name-based rule would have missed entirely. This is
+## also why the rule doesn't fire on toleman's cookie: its value IS a call
+## (create_session_token(...)), which this rule treats as "probably a real
+## token, let a human/other rule (toleman-cookie-set-with-derived-value)
+## judge it" rather than trying to also verify the callee is
+## cryptographically sound.
+rules:
+  - id: toleman-insecure-persistent-auth-cookie
+    languages: [python]
+    severity: WARNING
+    confidence: MEDIUM  # 2 manually-verified TPs on pygoat, one exactly labeled by the source; true negative on toleman and dvpwa
+    message: >-
+      A long-lived cookie (max_age >= 7 days) is set to a bare
+      value -- an attribute/variable, not the result of calling a
+      token-generation function (secrets.*, os.urandom, a signer/JWT
+      encoder, etc). If this cookie is used to re-authenticate the user
+      later (a "remember me" / persistent-login cookie), a guessable or
+      low-entropy value lets an attacker forge it and hijack any account
+      without ever knowing a password (CWE-330). Use a
+      cryptographically random token (secrets.token_urlsafe) or a signed,
+      server-verifiable one, never a raw id/username/email.
+    metadata:
+      category: security
+      cwe: "CWE-330: Use of Insufficiently Random Values"
+      references:
+        - "https://cwe.mitre.org/data/definitions/330.html"
+      validated-against:
+        - "toleman-platform (self): true negative (session cookie value is a signed HMAC token, max_age is 24h, under the 7-day threshold)"
+        - "dvpwa: true negative (no set_cookie call in the codebase)"
+        - "pygoat: 4 hits, 2/2 spot-checked true positive -- introduction/views.py:291/305/319 (auth_lab_login/auth_lab_signup set cookie 'userid' to the raw DB id for 1 year, labeled A2:Broken Authentication in Solutions/solution.md) and dockerized_labs/broken_auth_lab/app.py:49 (session cookie is base64(username:timestamp), directly under a source comment reading 'Vulnerable: Insecure Remember Me implementation')"
+    patterns:
+      - pattern-either:
+          - pattern: $RESP.set_cookie($NAME, $VALUE, ...)
+          - pattern: $RESP.set_cookie(..., value=$VALUE, ...)
+      - pattern-either:
+          - pattern: $RESP.set_cookie(..., max_age=$AGE, ...)
+          - pattern: $RESP.set_cookie(..., $AGE, ...)
+      - metavariable-comparison:
+          metavariable: $AGE
+          comparison: $AGE >= 604800
+      - metavariable-pattern:
+          metavariable: $VALUE
+          patterns:
+            # Exclude anything that's a call (token-minting functions,
+            # signers, str()/f-strings wrapping a call). Note: a bare
+            # `pattern-not: "..."` here would exclude *everything* --
+            # semgrep's `...` ellipsis matches any single expression, not
+            # just "multiple statements" -- learned that the hard way
+            # while building this rule; had to drop it rather than use it
+            # as a stand-in for "a string literal".
+            - pattern-not: $F(...)
+            - pattern-not-regex: '^".*"$'

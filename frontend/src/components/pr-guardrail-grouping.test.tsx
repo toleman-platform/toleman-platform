@@ -283,3 +283,40 @@ describe("PR Guardrail findings list", () => {
     expect(requestIgnoreFinding).toHaveBeenCalledWith(2, expect.any(String));
   });
 });
+
+// PRGuardrailFinding cannot carry a FindingRow/FindingDetailDrawer -- it has
+// no priority_score/sla_days/kev_listed/state (see the boundary-adaptation
+// comment on PrGuardrailFindingRow in pr-guardrail-log.tsx) -- but severity
+// itself is real data both objects share, and SEVERITY_BORDER_COLOR is the
+// one token finding-row.tsx/finding-group-row.tsx use to accent it. These
+// pin that this file reads the same token rather than a color of its own,
+// which is exactly the kind of drift the KEV/EPSS badges once had between
+// the grouped and flat finding rows, one rendering down.
+describe("severity-first visual hierarchy", () => {
+  it("gives a standalone finding row the shared left-border severity accent", async () => {
+    await renderFindings(
+      [finding({ severity: "Critical", group_key: "1@README.md:7", group_size: 1 })],
+      null,
+      /Detected AWS access key ID/,
+    );
+
+    const row = screen.getByText("Detected AWS access key ID").closest('[id^="finding-"]');
+    expect(row).not.toBeNull();
+    // SEVERITY_BORDER_COLOR.Critical, not a hand-rolled destructive class --
+    // a change to the shared token has to reach this row automatically.
+    expect(row?.className).toContain("border-l-destructive");
+  });
+
+  it("gives a grouped row's header the accent for the group's own (highest-member) severity", async () => {
+    await renderFindings([
+      finding({ severity: "Low" }),
+      { ...GITLEAKS, severity: "Critical" },
+    ]);
+
+    const header = screen.getByText(/found by: semgrep, gitleaks/).closest("div.rounded-md");
+    expect(header).not.toBeNull();
+    // The group is badged Critical (the more severe member), so the accent
+    // has to follow that, not either member's row individually.
+    expect(header?.className).toContain("border-l-destructive");
+  });
+});

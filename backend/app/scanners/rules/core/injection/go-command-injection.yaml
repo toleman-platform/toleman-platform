@@ -1,0 +1,77 @@
+## Go OS command injection (CWE-78), os/exec.
+##
+## Validated 2026-09-12 against sqreen/go-dvwa (real, runnable vulnerable Go
+## app -- see go-sql-injection.yaml's header for how it was found).
+##
+## - go-dvwa: vulnerable/system.go:9
+##   `exec.CommandContext(ctx, "sh", "-c", cmd)` -- cmd is a plain string
+##   parameter; server/router.go wires it as
+##   `"ping -c1 sqreen.com" + r.FormValue("extra")`, so an attacker fully
+##   controls a shell metacharacter-interpreted string. This is the
+##   textbook Go command-injection shape: exec.Command/CommandContext with
+##   an explicit shell (`sh -c` / `bash -c`) and a non-literal command
+##   string, as opposed to Go's normal safe pattern of passing the binary
+##   and each argument as separate exec.Command(bin, arg1, arg2) elements
+##   (no shell involved, so no metacharacter expansion).
+rules:
+  - id: toleman-go-command-injection-shell
+    languages: [go]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      exec.Command/CommandContext invokes a shell ("sh -c"/"bash -c") with
+      a non-literal command string. Anything the shell sees here is subject
+      to shell metacharacter expansion (;, |, &&, $(...), backticks) --
+      OS command injection (CWE-78). Prefer exec.Command(bin, arg1, arg2,
+      ...) with each argument as a separate element (no shell, no
+      metacharacter expansion) instead of building one shell command line.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      references:
+        - "https://owasp.org/www-community/attacks/Command_Injection"
+      validated-against:
+        - "go-dvwa: 1/1 true positive (vulnerable/system.go:9, exec.CommandContext(ctx, \"sh\", \"-c\", cmd))"
+        - "govwa: true negative (no os/exec usage anywhere in that repo)"
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", $CMD)
+          - pattern: exec.Command("bash", "-c", $CMD)
+          - pattern: exec.CommandContext($CTX, "sh", "-c", $CMD)
+          - pattern: exec.CommandContext($CTX, "bash", "-c", $CMD)
+      - metavariable-pattern:
+          # Shared across all 4 alternatives, but every alternative binds
+          # $CMD in the exact same role/position, so this doesn't hit the
+          # "unbound metavariable silently rejects" gotcha documented
+          # elsewhere in this pack -- that gotcha only bites when some
+          # alternatives don't bind the filtered metavariable at all.
+          metavariable: $CMD
+          patterns:
+            - pattern-not: '"..."'
+
+  - id: toleman-go-command-injection-dynamic-binary
+    languages: [go]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      exec.Command/CommandContext is called with a non-literal value as the
+      binary/command name itself (not just an argument). If that value is
+      ever influenced by request input, this selects an arbitrary binary to
+      run rather than just passing it an argument -- CWE-78. A benign match
+      is expected here (many legitimate programs run an admin-configured or
+      looked-up binary path); this rule's job is "make a human confirm the
+      value isn't attacker-reachable", not "this is always wrong".
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      validated-against:
+        - "go-test-bench (Contrast-Security-OSS): 1/1 true positive (internal/injection/cmdi/cmd-injection.go:52, cmd = exec.Command(args[0], args[1:]...) where args comes from strings.Fields(in) and in is attacker-controlled request input) -- correctly silent on the same file's Safe-mode branch, exec.Command(\"echo\", in), because \"echo\" is a literal"
+        - "go-dvwa: true negative for this rule specifically (its exec.Command call always uses the literal \"echo\"; the real go-dvwa command-injection hit is the sh -c shape caught by the rule above)"
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command($CMD, ...)
+          - pattern: exec.CommandContext($CTX, $CMD, ...)
+      - metavariable-pattern:
+          metavariable: $CMD
+          patterns:
+            - pattern-not: '"..."'

@@ -1,0 +1,93 @@
+## OAuth authorization request built with no state= parameter (CWE-352:
+## Cross-Site Request Forgery -- the OAuth `state` param exists
+## specifically to bind the callback to the request that started it; an
+## attacker who gets a victim to complete an authorize flow the attacker
+## initiated can hijack the resulting account link/login).
+##
+## Written 2026-09-12. 0/0/0 across all three validation repos --
+## unproven-by-sample, and expected to be: none of the three hand-roll an
+## OAuth authorize redirect. toleman-platform has no OAuth login at all
+## (it does have one *other* home-grown redirect-based flow that carries a
+## CSRF-binding token -- the GitHub App manifest flow in
+## backend/app/api/github_app.py, which mints `state =
+## secrets.token_urlsafe(24)`, tracks it server-side in `_pending_states`,
+## and rejects the callback if the returned `state` isn't a known pending
+## one. Checked it by hand specifically because it was the one plausible
+## place this rule could false-positive on the reference app -- it's not
+## an `authorize`/`oauth` URL literal so this rule's regex doesn't touch
+## it anyway, and manually confirmed it does the right thing regardless).
+## pygoat's OAuth support is entirely via django-allauth
+## (SOCIALACCOUNT_PROVIDERS in pygoat/settings.py, google provider) --
+## allauth builds and validates `state` itself deep in vendored library
+## code (allauth/socialaccount/models.py stores
+## `session["socialaccount_state"]`), so pygoat's own app code never
+## constructs an authorize URL for this rule to check. dvpwa has no OAuth
+## surface at all.
+##
+## Deliberately sink-based like toleman-unvalidated-url-param-to-http-client
+## and toleman-open-redirect-from-request-param: keys on a redirect call
+## whose URL text looks like an OAuth authorize request (contains
+## client_id= and redirect_uri=, and the word authorize/oauth) but has no
+## literal `state=` in it. This is a real, checkable absence -- the URL
+## string either has the param or it doesn't -- unlike "was a check run
+## somewhere else in this function" (declined for weak-logout/session-
+## fixation in this same batch, see this directory's README notes) which
+## has no fixed place to look.
+##
+## mode: taint, not a plain multi-pattern rule -- hit the exact sibling-
+## statement gotcha this pack already knows about while building this:
+## the URL is almost always built one line (`url = f"...?client_id=...&
+## redirect_uri=..."`) before the redirect call (`return redirect(url)`),
+## and a plain pattern matching `redirect($URL)` then metavariable-regex-
+## checking $URL only sees the *variable name* `url`, not the f-string's
+## contents, so it silently never matches. Taint mode's pattern-sources
+## checks the regex against the assigned expression itself, then tracks
+## it (through the variable) to the sink. Verified against a synthetic
+## repro (both the one-line-earlier-assignment form and the fully inline
+## `redirect(f"...")` form) before trusting it, and confirmed the
+## state-included variant of the same URL correctly does NOT fire.
+##
+## Known blind spot: won't catch `state` omitted from a dict later passed
+## to `urlencode(...)` -- only literal query-string construction
+## (f-string/`.format`/concatenation), since metavariable-regex only sees
+## the matched node's source text, not a resolved dict's keys.
+rules:
+  - id: toleman-oauth-authorize-redirect-missing-state
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    mode: taint
+    message: >-
+      A redirect to what looks like an OAuth/OpenID authorize endpoint
+      (has client_id= and redirect_uri=) carries no state= parameter.
+      Without a per-request state value that's verified on callback, an
+      attacker can pre-generate an authorization request, trick a victim
+      into completing it, and hijack the resulting login/account link
+      (CSRF on the OAuth flow, CWE-352). Generate a random state before
+      the redirect, store it server-side (session/cache), and reject any
+      callback whose state doesn't match.
+    metadata:
+      category: security
+      cwe: "CWE-352: Cross-Site Request Forgery (CSRF)"
+      references:
+        - "https://datatracker.ietf.org/doc/html/rfc6749#section-10.12"
+      validated-against: []
+    pattern-sources:
+      - patterns:
+          - pattern: $URL
+          - metavariable-regex:
+              metavariable: $URL
+              # All lookaheads bar the trailing negative one, so this works
+              # despite metavariable-regex anchoring like re.match -- a
+              # match at position 0 still succeeds once every lookahead
+              # holds. Requires: looks like an authorize endpoint, has
+              # client_id=, has redirect_uri=, and no state= anywhere.
+              regex: '(?is).*(authoriz|oauth).*client_id.*redirect_uri(?!.*state=).*'
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: redirect($SINKURL)
+              - pattern: HttpResponseRedirect($SINKURL)
+              - pattern: RedirectResponse($SINKURL)
+              - pattern: requests.$METHOD($SINKURL, ...)
+              - pattern: httpx.$METHOD($SINKURL, ...)

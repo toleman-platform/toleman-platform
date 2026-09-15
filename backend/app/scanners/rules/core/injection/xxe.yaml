@@ -1,0 +1,63 @@
+## XXE (CWE-611) -- Python.
+##
+## REGRESSION NOTE (2026-09-12): validated multiple times this session but
+## never actually persisted to this directory until now; see
+## code-and-command-injection.yaml's header for the full story.
+##
+## Validated against pygoat: `toleman-xxe-external-entities-explicitly-enabled`
+## found their real, labeled A4 XXE lab (introduction/views.py:258-260)
+## exactly -- `parser.setFeature(feature_external_ges, True)` right before
+## `xml.dom.pulldom.parseString(request.body.decode(...), parser=parser)`.
+## `toleman-xxe-unsafe-xml-parser`'s sink list (etree/lxml/minidom) does NOT
+## cover pygoat's actual xml.sax/pulldom-based lab -- extended the sink list
+## after finding that gap, but the generic sink rule still has 0 direct
+## hits on any of the 3 repos; the explicit-enable rule is what actually
+## fires. Both kept: the explicit-enable rule is a near-zero-FP smoking-gun
+## signal, the generic sink rule is defense-in-depth for the more common
+## etree/lxml/minidom shape other codebases use.
+rules:
+  - id: toleman-xxe-unsafe-xml-parser
+    languages: [python]
+    severity: ERROR
+    confidence: LOW
+    message: >-
+      XML parsed with the stdlib's default settings resolves external
+      entities -- a crafted document can read local files or trigger SSRF
+      via a DTD (CWE-611). Use defusedxml instead of xml.etree/lxml/minidom/
+      sax/pulldom for anything parsing untrusted XML.
+    metadata:
+      category: security
+      cwe: "CWE-611: XML External Entity (XXE) Reference"
+      validated-against:
+        - "0 direct hits on any of the 3 repos -- pygoat's real XXE lab uses xml.sax/pulldom in a shape this sink-list rule doesn't directly catch; see toleman-xxe-external-entities-explicitly-enabled below for what actually fires on it"
+    patterns:
+      - pattern-either:
+          - pattern: xml.etree.ElementTree.parse(...)
+          - pattern: xml.etree.ElementTree.fromstring(...)
+          - pattern: lxml.etree.parse(...)
+          - pattern: lxml.etree.fromstring(...)
+          - pattern: xml.dom.minidom.parse(...)
+          - pattern: xml.dom.minidom.parseString(...)
+          - pattern: xml.dom.pulldom.parse(...)
+          - pattern: xml.dom.pulldom.parseString(...)
+          - pattern: xml.sax.parse(...)
+          - pattern: xml.sax.parseString(...)
+
+  - id: toleman-xxe-external-entities-explicitly-enabled
+    languages: [python]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      xml.sax's `feature_external_ges` is explicitly turned on -- this is
+      not a default-config oversight, it's a direct request for the parser
+      to fetch external general entities from a DTD. That's the mechanism
+      an XXE payload uses to read local files or trigger SSRF (CWE-611).
+      Never set this True on a parser fed caller-supplied XML.
+    metadata:
+      category: security
+      cwe: "CWE-611: XML External Entity (XXE) Reference"
+      validated-against:
+        - "pygoat: 1/1 true positive (their labeled A4 XXE lab, introduction/views.py:259)"
+    pattern-either:
+      - pattern: $PARSER.setFeature(feature_external_ges, True)
+      - pattern: $PARSER.setFeature(xml.sax.handler.feature_external_ges, True)

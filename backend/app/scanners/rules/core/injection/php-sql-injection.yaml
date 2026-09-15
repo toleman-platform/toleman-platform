@@ -1,0 +1,139 @@
+## SQL injection (CWE-89) -- PHP, the pack's first PHP-language rule file.
+##
+## Validated 2026-09-12 against DVWA (digininja/DVWA, cloned into
+## scratchpad/dvwa), the vulnerabilities/sqli lab's "low" difficulty
+## source:
+##   vulnerabilities/sqli/source/low.php:5,10-11 --
+##     $id = $_REQUEST[ 'id' ];
+##     ...
+##     $query = "SELECT first_name, last_name FROM users WHERE user_id = '$id';";
+##     $result = mysqli_query($GLOBALS["___mysqli_ston"], $query) or die(...);
+##   The tainted $id is interpolated straight into the SQL string, then
+##   that string variable (not a bound parameter) is handed to
+##   mysqli_query(). This is DVWA's own labeled SQL Injection challenge.
+##
+## Written mode: taint per this pack's own README gotcha #2. In this
+## specific DVWA snippet the assignment and the query call happen to sit
+## at the same block depth (both directly inside the `case MYSQL:` arm), so
+## a plain statement-sequence pattern would also have found this one --
+## but two of the three real hits below (xss_s, csrf) do NOT keep source
+## and sink at the same depth, so taint mode is what actually made this
+## rule portable across DVWA's own labs, not just the sqli one.
+##
+## First full-repo run (before pattern-sanitizers existed) also matched
+## vulnerabilities/xss_s/source/low.php:16-17 and
+## vulnerabilities/csrf/source/low.php:16-17. Both interpolate a
+## $_POST/$_GET value into a QUOTED SQL literal ('$message', '$pass_new')
+## after routing it through DVWA's mysql->mysqli auto-converter's
+## `isset(...) && is_object(...) ? mysqli_real_escape_string(...) : (...)`
+## ternary shim. Read closely (not assumed): that ternary really does call
+## mysqli_real_escape_string() on the live connection in the normal case --
+## it's verbose, not broken -- and escaping a value that lands inside
+## quotes is the textbook-correct defense. So these two were false
+## positives from the FIRST version of this rule (no sanitizers at all),
+## not real SQLi; adding mysqli_real_escape_string()/mysql_real_escape_string()
+## as pattern-sanitizers (see below) correctly silenced both on re-run.
+## Kept in this file as the reason the sanitizer list exists, not as
+## claimed findings.
+##
+## Real confirmed positives after adding sanitizers, all read by hand:
+##   vulnerabilities/sqli/source/low.php:11 (MYSQL branch) and :34 (SQLITE
+##     branch, caught by the generic $CONN->query($SINK) sink) -- DVWA's
+##     own SQL Injection lab, no escaping at all.
+##   vulnerabilities/sqli_blind/source/low.php:13 and :34 -- same shape,
+##     DVWA's Blind SQL Injection lab.
+##   vulnerabilities/sqli_blind/source/medium.php:36 -- the SQLITE branch
+##     of the Blind SQLi lab's "medium" tier. Note medium.php's MYSQL
+##     branch (mysqli_real_escape_string()'d, but into an UNQUOTED
+##     `user_id = $id;` -- DVWA's own well-known point that escaping
+##     without quoting doesn't help) is a documented FALSE NEGATIVE of
+##     this rule: the sanitizer list treats mysqli_real_escape_string() as
+##     an unconditional "safe now" signal because that's correct for the
+##     overwhelmingly common case (escaping into a quoted literal), and
+##     this rule has no way to tell a quoted sink from an unquoted one.
+##     vulnerabilities/sqli/source/medium.php:11 has the identical
+##     false-negative shape for the same reason. Traded deliberately:
+##     treating mysqli_real_escape_string() as a sanitizer turns 3 real
+##     false positives (xss_s/low, csrf/low, and see brute/captcha/csrf
+##     "high" tiers below) into true negatives, at the cost of 2 known
+##     false negatives on DVWA's own "escaped-but-unquoted" teaching
+##     example. Confirmed both tradeoffs by hand, not assumed.
+##   vulnerabilities/brute/source/low.php:13 -- DVWA's Brute Force lab,
+##     $user/$pass both interpolated raw, no escaping at all.
+##
+## Reviewed, NOT real SQLi (confirmed benign, correct rule behavior):
+##   vulnerabilities/brute/source/high.php:20,
+##   vulnerabilities/captcha/source/high.php:31,
+##   vulnerabilities/csrf/source/high.php:44 -- all three call
+##   mysqli_real_escape_string() directly (no shim) before interpolating
+##   into a quoted literal; correctly silenced by the sanitizer.
+##   vulnerabilities/bac/source/medium.php:22,29,73 -- DVWA's Broken Access
+##   Control lab (not a SQLi lab). $id = $_GET['user_id'] is only reached
+##   in an `else` branch after `if (!preg_match('/^\d+\$/', $_GET['user_id']))`
+##   rejects anything non-numeric, so $id is provably digits-only by the
+##   time it's used -- but that's a control-flow gate on the SOURCE
+##   expression, not a data transform on $id itself, so this rule's taint
+##   sanitizers (which match a value passing through a function call) have
+##   no way to see it. A genuine false positive of this rule, not silenced,
+##   and not worth adding a control-flow-aware sanitizer for one lab.
+##
+## pattern-sinks intentionally does NOT include mysqli_prepare()/PDO's
+## ->prepare() -- those take the placeholder-bearing SQL and bind values
+## separately, so a tainted variable reaching them is the safe path, not
+## the vulnerable one.
+rules:
+  - id: toleman-php-sqli-tainted-query-string
+    languages: [php]
+    severity: ERROR
+    mode: taint
+    confidence: MEDIUM
+    message: >-
+      A SQL query string built by interpolating/concatenating
+      $_GET/$_POST/$_REQUEST is passed to mysqli_query()/mysql_query()/
+      ->query() instead of a prepared statement. The request data becomes
+      part of the query text itself, not a bound parameter -- SQL
+      injection (CWE-89). Use mysqli_prepare()/bound params, or PDO with
+      parameter binding, instead of building the query as a string.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      references:
+        - "https://owasp.org/www-community/attacks/SQL_Injection"
+      validated-against:
+        - "DVWA (digininja/DVWA): 6 true positive, all hand-confirmed -- sqli/source/low.php:11,34 (SQL Injection lab, MYSQL+SQLITE branches), sqli_blind/source/low.php:13,34 (Blind SQLi lab), sqli_blind/source/medium.php:36 (Blind SQLi lab's SQLITE branch), brute/source/low.php:13 (Brute Force lab). 3 reviewed-benign true negatives correctly NOT flagged after adding mysqli_real_escape_string() as a sanitizer (brute/high.php:20, captcha/high.php:31, csrf/high.php:44 -- all properly escaped into a quoted literal). 3 confirmed false positives, documented and accepted -- bac/source/medium.php:22,29,73 (value is digit-only by a preg_match gate this rule can't model). 2 known false negatives, documented and accepted -- sqli/source/medium.php:11 and sqli_blind/source/medium.php's MYSQL branch (escaped but interpolated unquoted, DVWA's own point that escaping alone isn't enough)"
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+    pattern-sinks:
+      - pattern: mysqli_query($DB, $SINK)
+      - pattern: mysqli_query($SINK)
+      - pattern: mysql_query($SINK)
+      - pattern: $CONN->query($SINK)
+    pattern-sanitizers:
+      - pattern: mysqli_real_escape_string(...)
+      - pattern: mysql_real_escape_string(...)
+      - pattern: intval(...)
+      - pattern: (int)$X
+
+  - id: toleman-php-sqli-inline-concat-query-call
+    languages: [php]
+    severity: ERROR
+    confidence: MEDIUM
+    message: >-
+      A query call is built inline from string concatenation instead of a
+      prepared statement (CWE-89). Any caller-controlled value
+      concatenated in here becomes query text, not a bound parameter. Use
+      a parameterized/prepared query instead of building SQL by hand.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      references:
+        - "https://owasp.org/www-community/attacks/SQL_Injection"
+      validated-against:
+        - "DVWA: unproven-by-sample -- DVWA always builds the query into a separate $query/$insert variable first (see toleman-php-sqli-tainted-query-string above), never concatenates directly inline inside the query() call's argument list. Kept in the pack for the shape other PHP codebases do write; not deleted, but don't cite it as validated against real code yet."
+    pattern-either:
+      - pattern: mysqli_query($DB, "..." . $A . "...")
+      - pattern: mysqli_query("..." . $A . "...")
+      - pattern: mysql_query("..." . $A . "...")
+      - pattern: $CONN->query("..." . $A . "...")

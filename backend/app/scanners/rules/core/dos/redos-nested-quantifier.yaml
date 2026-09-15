@@ -1,0 +1,81 @@
+## ReDoS / catastrophic backtracking (CWE-1333).
+##
+## IMPORTANT HONESTY NOTE, read before trusting or extending this rule:
+## whether a regex actually exhibits catastrophic backtracking depends on
+## the regex ENGINE's implementation (CPython's `re` backtracks; `re2` and
+## Rust's `regex` crate don't and can't catastrophically blow up) and on
+## the exact structure of the pattern, not just "does it contain a plus
+## next to a star". This rule is a textbook-shape heuristic, not a real
+## complexity analysis (that requires building the NFA and checking for
+## ambiguous/overlapping paths -- tools like rxxr2 or safe-regex do that;
+## this is a grep with extra steps). It WILL miss real catastrophic
+## patterns that don't look like textbook nested-quantifier examples
+## (e.g. overlapping alternation split across multiple groups, or
+## backreference-driven blowups), and it CAN false-positive on a nested
+## quantifier that's actually safe because the inner and outer character
+## classes don't overlap (e.g. `([a-z]+\d)+` on a bounded-length input is
+## fine; the danger is specifically overlapping repetition on attacker-
+## length-controlled input). Treat every hit as "a human should look at
+## this pattern and think about worst-case input", not "this is
+## definitely exploitable".
+##
+## Detection method: metavariable-regex applied to the string literal
+## passed to re.compile/re.match/re.search/re.fullmatch, looking for the
+## single most common textbook shape -- a group containing its own
+## quantifier (+ or *), immediately followed by another quantifier on the
+## group itself, e.g. (a+)+, (a*)+, (.+)*, (\d*)+. Per this pack's own
+## README gotcha #1, metavariable-regex anchors like re.match (position
+## 0), so the regex below is wrapped in .*(...).* to get real substring
+## matching -- without that wrapper this silently matches nothing.
+##
+## Validated 2026-09-12, honest result: 0 hits on all 3 repos -- every
+## re.compile/re.match/re.search call in toleman-platform's, pygoat's, and
+## dvpwa's own app code (grepped, excluding .venv/site-packages) uses
+## flat, non-nested patterns (route matchers, version-string parsers,
+## suppression-comment keyword lists, etc.) -- none has a group with its
+## own internal quantifier that is itself re-quantified. 0/0/0,
+## unproven-by-sample.
+##
+## Self-test only (not a repo finding): confirmed this fires on
+## `re.compile(r"(a+)+$")` and `re.compile(r"([a-zA-Z]+)*b")` (both are
+## real, well-known catastrophic-backtracking examples against CPython's
+## re engine on non-matching input), and confirmed it does NOT fire on
+## flat patterns like `re.compile(r"^[a-z0-9._-]+$")` or on a single
+## quantified group with no inner quantifier like `re.compile(r"(abc)+")`.
+rules:
+  - id: toleman-redos-nested-quantifier
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      This regex literal contains a group with its own quantifier (+/*)
+      that is itself immediately re-quantified (e.g. (a+)+, (.*)+) -- the
+      textbook shape for catastrophic backtracking (CWE-1333) against a
+      backtracking engine like CPython's `re` on crafted non-matching
+      input (e.g. "aaaaaaaaaaaaaaaaaaaaaaaaa!"). This is a heuristic
+      string-shape match, not a real complexity analysis -- it can both
+      miss real catastrophic patterns and flag safe ones where the inner
+      and outer repetitions don't actually overlap. If this regex ever
+      runs against attacker-controlled input (a header, a URL, form
+      input), rewrite it to avoid nested unbounded quantifiers, or add a
+      length cap before matching, or test it with a pathological input
+      under a timeout.
+    metadata:
+      category: security
+      cwe: "CWE-1333: Inefficient Regular Expression Complexity"
+      references:
+        - "https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS"
+      validated-against:
+        - "toleman-platform: 0/0 -- all app regexes are flat, non-nested"
+        - "pygoat: 0/0 -- (app code only; .venv excluded)"
+        - "dvpwa: 0/0 -- (app code only; .venv excluded)"
+        - "self-test only: confirmed fires on (a+)+$ and ([a-zA-Z]+)*b; confirmed silent on a flat character-class pattern and on a single non-nested quantified group"
+    patterns:
+      - pattern-either:
+          - pattern: re.compile($PATTERN, ...)
+          - pattern: re.match($PATTERN, ...)
+          - pattern: re.search($PATTERN, ...)
+          - pattern: re.fullmatch($PATTERN, ...)
+      - metavariable-regex:
+          metavariable: $PATTERN
+          regex: (?s).*\([^()]*[+*][^()]*\)[+*].*

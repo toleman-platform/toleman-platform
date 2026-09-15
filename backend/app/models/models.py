@@ -272,6 +272,35 @@ class Target(SQLModel, table=True):
     dependency_sync_at: Optional[datetime] = None
     dependency_component_count: Optional[int] = None
 
+    # OSV malicious-package check status: a clean result used to render as
+    # a bare 0, indistinguishable from a target nobody had ever checked.
+    # These three make a clean result a claim with evidence behind it.
+    # Separate from dependency_sync_* above because they track a different
+    # thing: dependency_sync_* records the GitHub Dependency Graph import;
+    # this records the OSV check itself, which runs from three places that
+    # don't touch dependency_sync_* at all: a plain re-check over whatever's
+    # already persisted (POST .../malware-check), an uploaded external SBOM
+    # (POST .../upload), and the best-effort pass inside automatic SBOM
+    # generation (app.tasks.sbom_tasks) -- only .../github-sync happens to
+    # also touch dependency_sync_*, because it imports *and* checks in one
+    # request.
+    #
+    # All three are written together, and only by a check that actually
+    # completed (app.core.osv_malware_ingestion.check_and_ingest_malware).
+    # A failed attempt (OSV unreachable) deliberately leaves them untouched
+    # rather than stamping "failed" over a real prior result: the honest
+    # signal for "we have not managed to verify this recently" is that the
+    # timestamp stops advancing, not a fourth status value that would pair
+    # a fresh "attempted just now" clock against a stale package count and
+    # invite reading the two together as one coherent, current answer.
+    #
+    # None on all three means "never completed a check" -- every target
+    # that predates this, or whose SBOM inventory has always been empty --
+    # and must render as an unmeasured unknown, never as a clean 0.
+    malware_last_checked_at: Optional[datetime] = None
+    malware_last_check_status: Optional[str] = None  # clean / found
+    malware_packages_checked: Optional[int] = None
+
     # AI/ML repo detection (issue #185), the gate every AI-specific
     # scanner in epic #192 runs behind. Recomputed on each scan by
     # app.core.ai_repo_detection, so a repo becomes an AI repo the day

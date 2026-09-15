@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ProgressBar } from "./progress-bar";
 
@@ -87,5 +87,40 @@ describe("ProgressBar", () => {
     expect(progressbar.getAttribute("aria-valuenow")).toBe("60");
     expect(progressbar.getAttribute("aria-valuemin")).toBe("0");
     expect(progressbar.getAttribute("aria-valuemax")).toBe("100");
+  });
+
+  // core lows: every real caller (dashboard widgets, design-system) renders
+  // a bare `<ProgressBar value={n} />` and relied on nobody remembering to
+  // also pass role/aria-value* by hand -- which nobody did. These now come
+  // from the same `value`/`max` the bar's own width is computed from, with
+  // no opt-in required.
+  it("exposes progressbar semantics from value/max without being asked", () => {
+    render(<ProgressBar value={42} max={100} aria-label="Scan coverage" />);
+    const bar = screen.getByRole("progressbar", { name: "Scan coverage" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("42");
+    expect(bar.getAttribute("aria-valuemin")).toBe("0");
+    expect(bar.getAttribute("aria-valuemax")).toBe("100");
+  });
+
+  it("derives aria-valuenow from a non-100 max the same way the visible percentage is", () => {
+    // 1 of 4 renders as "25%" on screen (see the first test above); the
+    // accessible value has to agree with what's shown, not restate the raw
+    // value/max pair as if max were always 100.
+    render(<ProgressBar value={1} max={4} aria-label="Steps complete" />);
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("25");
+  });
+
+  it("warns in development when the meter has no accessible name", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    render(<ProgressBar value={50} />);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("aria-label"));
+    warn.mockRestore();
+  });
+
+  it("does not warn once the caller supplies aria-label or aria-labelledby", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    render(<ProgressBar value={50} aria-label="Coverage" />);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

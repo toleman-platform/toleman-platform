@@ -1,0 +1,74 @@
+## Insecure temp file creation (CWE-377/CWE-379): tempfile.mktemp()
+## returns a filename and then closes the door behind it -- there is a
+## race window between "name chosen" and "caller opens it" where another
+## local process/attacker can create a symlink or file at that path first
+## (predictable name, world-writable /tmp). It's been deprecated in the
+## Python docs for exactly this reason since 2.3. Same problem, spelled
+## differently: open("/tmp/" + <predictable-name>, ...) instead of one of
+## the stdlib functions (NamedTemporaryFile/mkstemp/mkdtemp/
+## TemporaryDirectory) that atomically create-and-open in one syscall.
+##
+## Validated 2026-09-12, honest result: 0 hits on all 3 repos -- and the
+## reason is instructive, not just "didn't find it": toleman-platform's
+## own scanners/runner.py and tasks/snippet_scan_tasks.py use
+## tempfile.mkdtemp()/NamedTemporaryFile()/TemporaryDirectory() throughout
+## (runner.py:395,443,482,522) -- i.e. this codebase already does it the
+## *safe* way everywhere it touches temp files, so the 0 hits there is a
+## true negative that also incidentally proves this rule doesn't false-
+## positive on the correct APIs. pygoat and dvpwa have no temp-file
+## handling in their own app code at all (only inside .venv). 0/0/0,
+## unproven-by-sample for finding a real bug, but proven-by-sample for
+## NOT flagging the safe stdlib calls it's meant to distinguish from.
+##
+## Self-test only (not a repo finding): confirmed this fires on
+## `path = tempfile.mktemp()` and on
+## `open("/tmp/" + user_supplied, "w")`, and confirmed it does NOT fire on
+## `tempfile.mkstemp()`, `tempfile.NamedTemporaryFile()`, or
+## `tempfile.mkdtemp()` -- matching exactly the true-negative behavior
+## already observed on toleman-platform's real code above.
+rules:
+  - id: toleman-insecure-temp-file-mktemp
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      tempfile.mktemp() returns a filename without creating it, leaving a
+      race window where another process can create/symlink that path
+      first (CWE-377). It has been documented as unsafe since Python 2.3.
+      Use tempfile.mkstemp() (file) or tempfile.NamedTemporaryFile() /
+      tempfile.TemporaryDirectory() instead -- all of which create the
+      file/dir atomically.
+    metadata:
+      category: security
+      cwe: "CWE-377: Insecure Temporary File"
+      references:
+        - "https://docs.python.org/3/library/tempfile.html#tempfile.mktemp"
+      validated-against:
+        - "toleman-platform: 0/0 -- true negative; its real temp-file code already uses mkdtemp/NamedTemporaryFile/TemporaryDirectory correctly (runner.py:395,443,482,522), confirming this rule doesn't flag the safe APIs"
+        - "pygoat: 0/0 -- no temp-file handling in app code"
+        - "dvpwa: 0/0 -- no temp-file handling in app code"
+        - "self-test only: confirmed fires on tempfile.mktemp(); confirmed silent on mkstemp/NamedTemporaryFile/mkdtemp"
+    pattern: tempfile.mktemp(...)
+
+  - id: toleman-insecure-temp-file-predictable-tmp-path
+    languages: [python]
+    severity: WARNING
+    confidence: LOW
+    message: >-
+      A file is opened at a path built by concatenating/formatting a
+      hardcoded "/tmp/" prefix with another value, instead of using
+      tempfile.mkstemp()/NamedTemporaryFile(). A predictable path under a
+      world-writable directory is vulnerable to a pre-created symlink or a
+      TOCTOU race by another local process (CWE-377/CWE-379).
+    metadata:
+      category: security
+      cwe: "CWE-377: Insecure Temporary File"
+      validated-against:
+        - "toleman-platform: 0/0 -- true negative (its one literal \"/tmp/toleman-scans\" is a config default combined with tempfile.mkdtemp(), not a raw open() concatenation)"
+        - "pygoat: 0/0 -- no matching shape in app code"
+        - "dvpwa: 0/0 -- no matching shape in app code"
+        - "self-test only: confirmed fires on open(\"/tmp/\" + name, \"w\") and open(f\"/tmp/{name}\", \"w\")"
+    patterns:
+      - pattern-either:
+          - pattern: open("/tmp/" + ..., ...)
+          - pattern: open(f"/tmp/{...}...", ...)

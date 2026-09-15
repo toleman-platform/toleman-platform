@@ -77,7 +77,7 @@ function DeactivatedBadge({ target }: { target: Target }) {
 
 const ITEM_STATUS_LABEL: Record<string, string> = {
   pending: "Queued",
-  running: "Opening PR...",
+  running: "Opening PR…",
   succeeded: "PR opened",
   failed: "Failed",
   already_integrated: "Already integrated",
@@ -754,7 +754,7 @@ export function TargetsList({
                 onChange={(e) => setMassWorkspaceId(e.target.value === "" ? "" : Number(e.target.value))}
                 aria-label="Workspace"
               >
-                <option value="">Choose workspace...</option>
+                <option value="">Choose workspace…</option>
                 {workspaces?.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}
@@ -770,7 +770,7 @@ export function TargetsList({
                 onChange={(e) => setMassGroupId(e.target.value === "" ? "" : Number(e.target.value))}
                 aria-label="Repo group"
               >
-                <option value="">Choose group...</option>
+                <option value="">Choose group…</option>
                 {groupsInWorkspace?.map((g) => (
                   <option key={g.id} value={g.id}>
                     {g.name}
@@ -796,7 +796,7 @@ export function TargetsList({
             )}
 
             <Button size="sm" disabled={massSubmitting} onClick={startMassRollout} className="h-9 text-xs">
-              {massSubmitting ? "Starting..." : "Start Rollout"}
+              {massSubmitting ? "Starting…" : "Start Rollout"}
             </Button>
           </div>
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -818,7 +818,7 @@ export function TargetsList({
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/50 p-3">
           <span className="text-xs font-medium text-foreground">{selected.size} selected</span>
           <Button size="sm" disabled={submitting} onClick={() => addPipelineBulk()} className="h-7 text-xs">
-            {submitting ? "Starting..." : `Add Pipeline to ${selected.size} repo${selected.size === 1 ? "" : "s"}`}
+            {submitting ? "Starting…" : `Add Pipeline to ${selected.size} repo${selected.size === 1 ? "" : "s"}`}
           </Button>
           <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground underline">
             clear selection
@@ -833,7 +833,7 @@ export function TargetsList({
           <div className="flex items-center justify-between">
             <div className="text-sm font-medium text-foreground">
               {batch.status === "running" ? (
-                <>Adding pipeline to {batch.total} repos...</>
+                <>Adding pipeline to {batch.total} repos…</>
               ) : (
                 <>
                   Done: {batch.succeeded} succeeded, {batch.already_integrated} already integrated,{" "}
@@ -897,7 +897,7 @@ export function TargetsList({
             </ul>
           )}
           {batch.status === "running" && batch.items.length === 0 && (
-            <p className="text-xs text-muted-foreground">Starting...</p>
+            <p className="text-xs text-muted-foreground">Starting…</p>
           )}
         </div>
       )}
@@ -1026,10 +1026,17 @@ export function TargetsList({
               />
               {/* Labelled like the findings column beside it. A bare "2/5"
                   floating at the row end is unreadable as anything, the
-                  same complaint #174 fixed for the old bare "weight 2". */}
-              <div className="w-12 shrink-0 text-right" title={CRITICALITY_WEIGHT_EXPLANATION}>
+                  same complaint #174 fixed for the old bare "weight 2".
+                  Labelled "criticality weight", not "risk": this number is
+                  the target's own 1-5 multiplier (CriticalityChip's
+                  Prod/Dev/Internal tier, quantified), and a finding's own
+                  Risk score (finding-row.tsx) is a completely different
+                  0-1000 quantity that this weight only feeds into. Both
+                  used to render as a bare "risk", which is the one word
+                  AGENTS.md §1.3 reserves for that other, per-finding number. */}
+              <div className="w-28 shrink-0 text-right" title={CRITICALITY_WEIGHT_EXPLANATION}>
                 <div className="text-sm text-muted-foreground">{t.criticality_weight}/5</div>
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">risk</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground">criticality weight</div>
               </div>
             </Link>
             {/* (#273) Outside the <Link>: buttons nested inside an anchor

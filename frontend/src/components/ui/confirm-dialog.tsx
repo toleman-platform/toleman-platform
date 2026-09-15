@@ -78,7 +78,7 @@ export function ConfirmDialog({
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
         aria-describedby="confirm-dialog-description"
-        className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-lg"
+        className="w-full max-w-sm rounded-xl border border-dialog-edge bg-card p-5 shadow-lg"
       >
         <div className="flex items-start gap-3">
           <div

@@ -121,6 +121,15 @@
      near-white canvas crushes it to mid-grey and hides more context than it
      needs to. See the light value for its own number. */
   --overlay: rgb(0 0 0 / 0.62);
+  /* Edge of a dialog or drawer surface, which is NOT the same job as
+     --border's hairline. On this charcoal ground a black scrim cannot
+     separate the dialog from the page at all: --card against the dimmed
+     canvas is 1.22:1, and even a fully opaque scrim tops out at 1.28:1, so
+     no alpha fixes it. The boundary has to be carried by the edge instead.
+     #646a74 is 3.66:1 against the dimmed page and 3.00:1 against --card,
+     clearing the 3:1 bar for a non-text boundary that carries meaning on
+     both sides. */
+  --dialog-edge: #646a74;
   /* --ring is tied to --primary/button semantics (focus outline around
      interactive controls), not to bare-text contrast, so it stays fixed
      alongside --primary for the same reason. */
@@ -249,6 +258,10 @@
      white dialog surface at 3.6:1 against the dimmed page, above the 3:1 bar
      for a boundary that carries meaning. */
   --overlay: rgb(0 0 0 / 0.45);
+  /* Here the surface carries the boundary on its own -- white --card against
+     the dimmed canvas is 3.55:1 -- so the edge only has to stay visible
+     against the surface it outlines: #8b93a1 is 3.09:1 on white. */
+  --dialog-edge: #8b93a1;
   --ring: var(--accent-strong);
   --chart-1: var(--accent-strong); /* "Medium" severity reuses the brand accent */
   --chart-2: #0e6ba8; /* deepened info blue (was unused in dark; now backs "already integrated") */
@@ -335,11 +348,16 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  /* Backs the `bg-overlay` utility every modal/drawer scrim uses. The token
-     already carries its own alpha, so it is applied bare -- an opacity
-     modifier (`bg-overlay/50`) would compose on top of that and is not what
-     any caller wants. */
+  /* Backs the `bg-overlay` utility. It is used by the scrimmed surfaces --
+     the confirm dialog, the finding detail modal and the mobile sidebar
+     drawer; the command palette and the side drawer deliberately use a
+     translucent `bg-background/80` with a blur instead, which is a different
+     treatment rather than a missed call site. The token already carries its
+     own alpha, so it is applied bare -- an opacity modifier
+     (`bg-overlay/50`) would compose on top of that and is not what any
+     caller wants. */
   --color-overlay: var(--overlay);
+  --color-dialog-edge: var(--dialog-edge);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);

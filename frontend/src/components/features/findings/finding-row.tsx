@@ -626,7 +626,7 @@ function FindingDetailDialog({ finding, open, onClose }: { finding: Finding; ope
         role="dialog"
         aria-modal="true"
         aria-labelledby="finding-detail-dialog-title"
-        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-border bg-card shadow-lg"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-dialog-edge bg-card shadow-lg"
       >
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div className="flex min-w-0 flex-col gap-1">

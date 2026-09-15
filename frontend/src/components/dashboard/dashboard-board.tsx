@@ -139,14 +139,24 @@ export function DashboardBoard({
   // Precedence: this visit's changes, then what this browser has stored for
   // this user, then the default for their role. `resolveHiddenWidgets` is
   // also what guarantees the last of those can never empty the board.
-  const hidden: ReadonlySet<WidgetId> =
-    sessionHidden !== null
-      ? new Set(sessionHidden)
-      : resolveHiddenWidgets(
-          storedVisibility.preference,
-          role,
-          widgets.map((w) => w.widget_id),
-        );
+  const hidden: ReadonlySet<WidgetId> = (() => {
+    const base =
+      sessionHidden !== null
+        ? new Set(sessionHidden)
+        : resolveHiddenWidgets(
+            storedVisibility.preference,
+            role,
+            widgets.map((w) => w.widget_id),
+          );
+    // Adding a widget in Edit Dashboard is an explicit request to see it, so
+    // it can never come back hidden. Without this, a widget outside the
+    // reader's role profile is added, saved, and immediately disappears --
+    // because the profile is re-resolved over the new layout and does not
+    // name it. The user's own action outranks a guess made from their role.
+    const loadedTypes = new Set(initialWidgets.map((w) => w.widget_id));
+    for (const w of widgets) if (!loadedTypes.has(w.widget_id)) base.delete(w.widget_id);
+    return base;
+  })();
 
   // One row per widget type, in layout order. A layout could in principle
   // hold two instances of the same widget; visibility is a property of the

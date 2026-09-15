@@ -65,27 +65,70 @@ export type WidgetDefaultProfile = "leadership" | "engineer" | "overview";
 /**
  * Which widgets each profile starts with.
  *
- * `leadership` leads with posture and trend: the score, the KPI row, SLA
- * compliance, the findings trend, and where the risk is concentrated.
+ * These are emphases, not filters. The backend's default layout
+ * (app.core.widgets.DEFAULT_WIDGET_ORDER) is seven widgets, and a profile
+ * that named only two or three of them would leave a first-time user staring
+ * at a nearly empty dashboard -- which is the complaint this feature exists
+ * to answer, not a fix for it. So each profile keeps most of the board and
+ * drops only what is genuinely not that reader's job.
  *
- * `engineer` leads with work: the Needs Action queue first, then what is
- * happening to pull requests and scans. Note that `guardrail_activity` and
- * `live_scan_activity` are not part of the backend's own default layout
- * (app.core.widgets.DEFAULT_WIDGET_ORDER), so an engineer sees them only
- * once they have been added to the layout -- listing them here means they
- * are on from the moment they are added rather than needing a second step.
+ * `leadership` keeps posture, trend and concentration of risk, and drops the
+ * per-finding triage queue: a reader at this level acts on the aggregate, not
+ * on individual findings.
  *
- * `overview` is the smallest honest read of the platform for someone
- * without a triage or reporting job: where posture stands and what is
- * outstanding.
+ * `engineer` keeps the work surfaces -- the queue, what is blocking pull
+ * requests, what is scanning, where the risk concentrates -- and drops SLA
+ * compliance, which is a reporting view. `guardrail_activity` and
+ * `live_scan_activity` are not in the backend's default layout, so listing
+ * them here only means they are already on for an engineer the moment they
+ * are added.
+ *
+ * `overview` keeps everything in the default layout. Someone without a
+ * triage or reporting job has no widget that is clearly not for them, and
+ * guessing wrong costs them the information.
  *
  * Ordering within the arrays carries no meaning; widgets are drawn in the
  * saved layout's order, which the user controls through Edit Dashboard.
  */
 export const PROFILE_WIDGETS: Readonly<Record<WidgetDefaultProfile, readonly WidgetId[]>> = {
-  leadership: ["security_score", "kpi_cards", "sla_compliance", "findings_trend", "top_risky_repos"],
-  engineer: ["recent_findings", "guardrail_activity", "live_scan_activity"],
-  overview: ["security_score", "kpi_cards", "recent_findings"],
+  leadership: [
+    "security_score",
+    "kpi_cards",
+    "sla_compliance",
+    "findings_trend",
+    "top_risky_repos",
+    "cve_timeline",
+    "ai_ml_risk",
+  ],
+  engineer: [
+    "security_score",
+    "kpi_cards",
+    "findings_trend",
+    "top_risky_repos",
+    "cve_timeline",
+    "recent_findings",
+    "guardrail_activity",
+    "live_scan_activity",
+    "fp_auto_suppressions",
+    "ai_ml_risk",
+  ],
+  // Every widget there is, deliberately. Listing them rather than special-
+  // casing "hide nothing" keeps the profile a plain data answer to the same
+  // question the other two answer, and makes it obvious at review time that
+  // nothing was left out by accident.
+  overview: [
+    "security_score",
+    "kpi_cards",
+    "sla_compliance",
+    "findings_trend",
+    "top_risky_repos",
+    "cve_timeline",
+    "recent_findings",
+    "guardrail_activity",
+    "live_scan_activity",
+    "fp_auto_suppressions",
+    "ai_ml_risk",
+  ],
 };
 
 /**
@@ -291,6 +334,12 @@ export function resolveHiddenWidgets(
   if (!defaults) return new Set<WidgetId>();
   const allowed = new Set(defaults);
   const hidden = new Set([...present].filter((id) => !allowed.has(id)));
-  if (hidden.size === present.size) return new Set<WidgetId>();
+  // A role guess must never be the reason the dashboard looks broken. The
+  // user has not chosen anything yet at this point -- this is a first-run
+  // default -- so if the profile would hide at least half the board, the
+  // profile is wrong for this layout and showing everything is the safer
+  // answer. Guessing a persona is worth a little tidying, never most of the
+  // page.
+  if (hidden.size * 2 >= present.size) return new Set<WidgetId>();
   return hidden;
 }

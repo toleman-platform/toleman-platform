@@ -84,11 +84,12 @@ describe("per-role default widget set", () => {
 
     expect(screen.queryByText("Needs Action Queue")).not.toBeNull();
     expect(screen.queryByText("Guardrail Activity")).not.toBeNull();
-    expect(screen.queryByText("Security Posture")).toBeNull();
+    // SLA compliance is the reporting view and the only thing this default
+    // drops. Everything else stays: a role is a guess about emphasis, and a
+    // guess must never be the reason most of the dashboard is missing.
     expect(screen.queryByText("SLA Compliance")).toBeNull();
-    // The queue is the first thing on the page, not something below four
-    // reporting cards.
-    expect(cardTitles()[0]).toBe("Needs Action Queue");
+    expect(screen.queryByText("Security Posture")).not.toBeNull();
+    expect(cardTitles().length).toBe(LAYOUT.length - 1);
   });
 
   it("gives the two roles different boards from the same saved layout", () => {
@@ -178,14 +179,14 @@ describe("turning widgets on and off", () => {
 
   it("keeps hidden widgets visible and marked while the layout is being edited", () => {
     renderBoard({ role: "developer" });
-    expect(screen.queryByText("Security Posture")).toBeNull();
+    expect(screen.queryByText("SLA Compliance")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: /Edit Dashboard/ }));
 
     // Everything the layout holds is reachable while rearranging it, and the
     // ones that will not be on the page afterwards say so.
-    expect(screen.queryByText("Security Posture")).not.toBeNull();
-    expect(screen.queryAllByText("Hidden").length).toBe(4);
+    expect(screen.queryByText("SLA Compliance")).not.toBeNull();
+    expect(screen.queryAllByText("Hidden").length).toBe(1);
   });
 });
 
@@ -197,7 +198,15 @@ describe("a browser that will not hand over storage", () => {
 
     renderBoard({ role: "developer" });
 
-    expect(cardTitles()).toEqual(["Needs Action Queue", "Guardrail Activity"]);
+    // The role default still decides, and still leaves a usable dashboard:
+    // everything the layout holds except the one reporting card.
+    expect(cardTitles()).toEqual([
+      "Security Posture",
+      "Findings Over Time",
+      "Top Risky Repos",
+      "Needs Action Queue",
+      "Guardrail Activity",
+    ]);
     expect(screen.queryByText("Every widget is turned off")).toBeNull();
     expect(screen.queryByText("Your dashboard is empty")).toBeNull();
   });

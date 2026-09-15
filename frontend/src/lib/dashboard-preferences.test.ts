@@ -51,15 +51,19 @@ describe("role defaults", () => {
     expect(shown[0]).toBe("security_score");
   });
 
-  it("gives an engineer the queue and what is blocking merges, not the reporting cards", () => {
+  it("gives an engineer the work surfaces and drops only the reporting view", () => {
     const shown = visible("developer");
     expect(shown).toContain("recent_findings");
     expect(shown).toContain("guardrail_activity");
-    expect(shown).not.toContain("security_score");
-    expect(shown).not.toContain("kpi_cards");
+    // SLA compliance is the reporting view, and the only thing an engineer's
+    // default drops.
     expect(shown).not.toContain("sla_compliance");
-    // Work leads the page: the first card an engineer sees is their queue.
-    expect(shown[0]).toBe("recent_findings");
+    // A role default is a guess about emphasis, never a reason to empty the
+    // page. An earlier version of this profile named three widgets, only one
+    // of which is in the backend's default layout, so a developer's first
+    // visit rendered a single card -- which is the complaint this feature
+    // exists to answer, not a fix for it.
+    expect(shown.length).toBeGreaterThan(STOCK_LAYOUT.length / 2);
   });
 
   it("gives the two roles genuinely different dashboards", () => {
@@ -69,10 +73,10 @@ describe("role defaults", () => {
 
   it("treats security_engineer as leadership and viewer as an overview", () => {
     expect(visible("security_engineer")).toEqual(visible("admin"));
-    const overview = visible("viewer");
-    expect(overview).toContain("security_score");
-    expect(overview).toContain("recent_findings");
-    expect(overview).not.toContain("cve_timeline");
+    // A viewer has neither a triage nor a reporting job, so there is no
+    // widget that is clearly not for them and nothing is hidden: guessing
+    // wrong costs them the information, and costs us nothing to avoid.
+    expect(visible("viewer")).toEqual(STOCK_LAYOUT);
   });
 
   it("hides nothing when the role is unknown or unreadable", () => {

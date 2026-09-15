@@ -1,5 +1,5 @@
 import * as React from "react";
-import { CheckCircle2, AlertOctagon, Clock, Loader2, Ban, HelpCircle } from "lucide-react";
+import { CheckCircle2, AlertOctagon, Clock, Loader2, Ban, HelpCircle, ShieldOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type StatusVariant =
@@ -29,6 +29,12 @@ const STATUS_MAP: Record<
   passed: { icon: CheckCircle2, color: "border-chart-5/40 bg-chart-5/10 text-chart-5", label: "Passed" },
   failed: { icon: AlertOctagon, color: "border-destructive/40 bg-destructive/10 text-destructive", label: "Failed" },
   blocked: { icon: Ban, color: "border-destructive/40 bg-destructive/10 text-destructive", label: "Blocked" },
+  // Risk knowingly accepted by a human, which is neither a pass nor a block.
+  // chart-3 deliberately matches LOG_STATUS_COLOR.overridden in
+  // features/scans/pr-guardrail-log.tsx: both render on the PR History page,
+  // for the same scan_status field, and rendering one green and the other
+  // amber let a reviewer skimming by colour read an overridden PR as clean.
+  overridden: { icon: ShieldOff, color: "border-chart-3/40 bg-chart-3/10 text-chart-3", label: "Overridden" },
   unknown: { icon: HelpCircle, color: "border-border bg-secondary text-muted-foreground", label: "Unknown" },
 };
 

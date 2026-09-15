@@ -249,3 +249,70 @@ describe("expanding a PR into its findings", () => {
     await waitFor(() => expect(getPrGuardrailFindings).not.toHaveBeenCalled());
   });
 });
+
+// admin M9: scanBadgeStatus used to route "blocked"/"error" into one shared
+// "failed" bucket and everything else (including "overridden" and "not
+// scanned", two states with opposite meanings) into the untouched "queued"
+// default -- so StatusBadge's own distinct icon+color variants for these
+// never got used. The label text was already correct (it has always been the
+// raw scan_status string, passed straight through as `label`); what these pin
+// is the badge's own visual variant, which was the actual bug.
+describe("scan verdict badge distinguishes states StatusBadge already models", () => {
+  it("reads a never-scanned PR as unknown posture, not as queued for a scan that isn't coming", async () => {
+    prsByState({ open: [pr({ number: 1, scan_status: "not scanned" })] });
+
+    render(<PrHistoryPage />);
+    const label = await screen.findByText("not scanned");
+
+    // StatusBadge's "unknown" variant (neutral, HelpCircle) -- not "queued"
+    // (amber, Clock), which promises a scan is on its way when none is.
+    expect(label.parentElement?.className).toContain("text-muted-foreground");
+    expect(label.parentElement?.className).not.toContain("chart-3");
+  });
+
+  it("reads an overridden PR as risk-accepted, not as a clean pass", async () => {
+    prsByState({
+      open: [pr({ number: 1, scan_status: "overridden", latest_scan_id: 55 })],
+    });
+
+    render(<PrHistoryPage />);
+    const label = await screen.findByText("overridden");
+
+    // chart-3, matching LOG_STATUS_COLOR.overridden in the PR Guardrail audit
+    // log rendered directly below on this same page, for this same field. An
+    // earlier version used chart-5 -- the same green as "passed" -- so a
+    // reviewer skimming the list by colour read a PR whose guardrail finding
+    // had been risk-accepted as one that scanned clean, while the log two
+    // inches down correctly showed it amber.
+    expect(label.parentElement?.className).toContain("chart-3");
+    expect(label.parentElement?.className).not.toContain("chart-5");
+  });
+
+  it("gives a guardrail block and a tool failure visually distinct badges", async () => {
+    // A diff the guardrail rejected is a verdict; a scan that crashed before
+    // judging anything produced none. Only the first is destructive -- the
+    // second is an unmeasured outcome and renders neutral, matching
+    // LOG_STATUS_COLOR.error in the audit log below. Before this fix both fell
+    // into the same "failed" bucket and rendered in the same red.
+    prsByState({
+      open: [
+        pr({ number: 1, title: "blocked pr", scan_status: "blocked", latest_scan_id: 55 }),
+        pr({ number: 2, title: "errored pr", scan_status: "error", latest_scan_id: 56 }),
+      ],
+    });
+
+    render(<PrHistoryPage />);
+    const blockedLabel = await screen.findByText("blocked");
+    const errorLabel = await screen.findByText("error");
+
+    const blockedIcon = blockedLabel.parentElement?.querySelector("svg");
+    const errorIcon = errorLabel.parentElement?.querySelector("svg");
+    expect(blockedIcon).not.toBeNull();
+    expect(errorIcon).not.toBeNull();
+    expect(blockedIcon?.getAttribute("class")).not.toBe(errorIcon?.getAttribute("class"));
+    // Colour, not just icon: an icon difference is a weak signal in a small
+    // badge and invisible to a colourblind reviewer.
+    expect(blockedLabel.parentElement?.className).toContain("destructive");
+    expect(errorLabel.parentElement?.className).not.toContain("destructive");
+  });
+});

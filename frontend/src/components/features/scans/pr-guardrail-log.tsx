@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ExternalLink, ShieldQuestion } from "lucide-react";
+import { ChevronRight, ExternalLink, ShieldQuestion } from "lucide-react";
 import { api, ApiError, PrGuardrailFinding, PrGuardrailLogEntry, PrGuardrailOrgStats } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
-import { IGNORE_STATUS_COLOR, SEVERITY_COLOR, SEVERITY_ORDER } from "@/lib/severity";
+import { IGNORE_STATUS_COLOR, SEVERITY_BORDER_COLOR, SEVERITY_COLOR, SEVERITY_ORDER } from "@/lib/severity";
 import { ALL_TARGETS } from "@/components/features/targets";
 import { serverDate } from "@/lib/format/date";
 
@@ -167,6 +167,34 @@ function RequestIgnoreAction({
   );
 }
 
+// Presentation note: this deliberately does not render through
+// features/findings' FindingRow/FindingDetailDrawer, even though both are
+// exactly the "shared finding presentation" this file should be matching.
+// Tried first, ruled out for a reason worth recording rather than silently
+// diverging again: PRGuardrailFinding (backend/app/models/models.py) is not a
+// Finding with fields missing, it is a smaller, separate table -- the model's
+// own comment on `severity` says why ("stored as str, not Severity, since
+// these aren't platform Findings"). It carries no priority_score, sla_days,
+// kev_listed, epss_score, state, target_id, branch, category or fixability,
+// because a PR-time diff finding has no triage lifecycle, no SLA clock and no
+// KEV/EPSS enrichment yet -- it may never become a persisted Finding at all
+// if the PR closes unmerged. FindingRow and FindingDetailDrawer both require
+// a real Finding for exactly those fields (RiskScore, SlaBadge,
+// FindingEnrichmentPanel, ScoreBreakdownPanel all read them directly); the
+// only way to hand them a PRGuardrailFinding would be inventing placeholder
+// values for data that was never measured, which is the one thing AGENTS.md
+// §1.4 rules out ("a failed or unmeasured check must NEVER render as a
+// confident zero, an empty state, or a success").
+//
+// So the boundary is adapted instead of papered over: this consumes the same
+// severity tokens FindingRow/FindingGroupRow consume --
+// SEVERITY_COLOR/SEVERITY_BORDER_COLOR from lib/severity.ts, the same
+// left-border-accent severity-first hierarchy pattern -- so a change to what
+// "Critical" looks like lands here automatically instead of this file
+// re-deriving its own palette and drifting the way the KEV/EPSS badges once
+// did between the grouped and flat finding rows. Everything rendered below is
+// a real PRGuardrailFinding field; nothing here is a stand-in for data this
+// object does not have.
 function PrGuardrailFindingRow({
   finding,
   onChanged,
@@ -206,7 +234,12 @@ function PrGuardrailFindingRow({
       id={`finding-${finding.id}`}
       // scroll-mt keeps the row clear of the sticky header when the browser
       // does handle the fragment itself (a reload with the hash already set).
-      className={`scroll-mt-24 rounded-md border px-3 py-2 ${
+      // border-l-4 + SEVERITY_BORDER_COLOR is the same severity-first-
+      // hierarchy accent finding-row.tsx puts on every Finding card; the
+      // deep-link highlight (border-chart-1/ring) still owns the other three
+      // sides, exactly as it did before, so a linked finding is still
+      // unmistakably the one the reader was sent to.
+      className={`scroll-mt-24 rounded-md border border-l-4 px-3 py-2 ${SEVERITY_BORDER_COLOR[finding.severity] || "border-l-border"} ${
         isLinked
           ? "border-chart-1 bg-chart-1/10 ring-1 ring-chart-1/40"
           : "border-border bg-secondary/40"
@@ -372,7 +405,13 @@ function GroupedFindingRow({
   const [open, setOpen] = useState(holdsLinkedFinding);
 
   return (
-    <div className="rounded-md border border-border bg-secondary/40 px-3 py-2">
+    // border-l-4 + SEVERITY_BORDER_COLOR: the same accent FindingGroupRow
+    // (features/findings) puts on its own collapsed group header, so a
+    // location group here reads by the same severity-first visual rule as
+    // every other grouped row in the product instead of a plain grey box.
+    <div
+      className={`rounded-md border border-l-4 border-border bg-secondary/40 px-3 py-2 ${SEVERITY_BORDER_COLOR[group.severity] || "border-l-border"}`}
+    >
       <button
         className="flex w-full items-start justify-between gap-3 text-left"
         onClick={() => setOpen(!open)}
@@ -380,6 +419,14 @@ function GroupedFindingRow({
       >
         <div className="min-w-0">
           <div className="flex items-center gap-2">
+            {/* Chevron, not just the "Show/Hide N findings" text: the same
+                this-row-expands affordance FindingGroupRow gives its own
+                collapsed groups, so a reader recognizes the interaction
+                without reading the label first. */}
+            <ChevronRight
+              aria-hidden="true"
+              className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90 text-foreground" : ""}`}
+            />
             <Badge
               variant="outline"
               className={`shrink-0 px-2 py-0.5 text-xs font-bold uppercase tracking-wide ${SEVERITY_COLOR[group.severity] || "text-muted-foreground"}`}

@@ -168,12 +168,17 @@ export type SbomExportFormat = "cyclonedx-json" | "spdx-json" | "csv" | "pdf";
 
 /**
  * Outcome of checking an SBOM inventory against OSV.dev for newly reported malicious packages.
+ *
+ * `packages_checked` is null on a "failed" status: a check that could not
+ * complete verified nothing, so there is no count to report -- never render
+ * it as 0, which would claim an inventory of size zero was checked clean.
  */
 export type MalwareCheckResult = {
   target_id: number;
   status: "clean" | "found" | "failed";
   malicious_count: number;
   findings_created: number;
+  packages_checked: Nullable<number>;
 };
 
 /**

@@ -129,7 +129,18 @@ def resolve_findings_trend(session: Session, ws_ids, config: dict) -> dict:
     real history accumulates.
     """
     days = max(1, min(int(config.get("days", 14)), 90))
-    findings = list(session.exec(_scoped_findings_query(ws_ids)).all())
+    # Vulnerabilities only, the same exclusion the KPI cards and the security
+    # score apply. This chart sits directly beneath a card reading "188 Open
+    # Findings" that had already dropped licence findings, so counting them
+    # here made the trend line and the counter above it disagree by the whole
+    # licence population -- 190 against 40 on a real instance. NOT IN the
+    # licence tools rather than IN vulnerability_tools(), so a tool name a CI
+    # pipeline invents when it POSTs SARIF stays in scope.
+    findings = list(
+        session.exec(
+            _scoped_findings_query(ws_ids).where(Finding.tool.not_in(tools_in_category("License")))
+        ).all()
+    )
     today = utcnow().date()
     points = []
     for i in range(days - 1, -1, -1):

@@ -6,6 +6,7 @@ import { Bot, Boxes, Radar } from "lucide-react";
 import { api, type Target, type ScanSummary } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { getErrorMessage } from "@/std-lib";
+import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWriteAction } from "@/hooks/use-write-action";
 import { useScanRun } from "@/hooks/features/use-scan-run";
@@ -104,6 +105,10 @@ export default function AiSecurityPage() {
   );
 
   const loading = targetsLoading || modelscanLoading || semgrepLlmLoading || scanSummaryLoading;
+  // Server-side truth about what is already running, so the row does not
+  // offer a duplicate dispatch of a scan someone started elsewhere.
+  const { isTargetScanning, refresh: refreshActiveScans } = useActiveScans();
+
   const aiTargets = (targets ?? []).filter((t) => t.is_ai_repo_effective);
 
   function countFor(tool: AiTool, targetId: number): number {
@@ -299,7 +304,7 @@ export default function AiSecurityPage() {
           />
         )}
 
-        {!loading &&
+        {!targetsLoading &&
           aiTargets.map((t) => (
             <Card key={t.id} className="border-border bg-card">
               <CardContent className="flex flex-col gap-3 px-4 py-3">
@@ -325,6 +330,8 @@ export default function AiSecurityPage() {
 
                 <RepoScanActions
                   target={t}
+                  alreadyScanning={isTargetScanning(t.id)}
+                  onDispatched={refreshActiveScans}
                   onScanCompleted={() => {
                     // The badges above are computed from the findings and
                     // scan-history queries, neither of which knows a scan
@@ -419,7 +426,25 @@ export default function AiSecurityPage() {
  * server refused, and a dispatch whose outcome is still unknown, each
  * render as themselves rather than as a finished scan (AGENTS.md 1.4).
  */
-function RepoScanActions({ target, onScanCompleted }: { target: Target; onScanCompleted: () => void }) {
+function RepoScanActions({
+  target,
+  onScanCompleted,
+  alreadyScanning,
+  onDispatched,
+}: {
+  target: Target;
+  onScanCompleted: () => void;
+  /**
+   * A scan is already running for this target according to the server, which
+   * this component cannot know on its own: it only remembers runs it started
+   * itself, so a scan dispatched from the target page, another tab, or this
+   * page before a reload left the button enabled. The API does not dedupe, so
+   * a second click really does start a second clone, a second tool run and a
+   * second ingest, and spends another of the caller's rate-limit budget.
+   */
+  alreadyScanning: boolean;
+  onDispatched: () => void;
+}) {
   // `useScanRun` follows one run at a time, so this row reports one at a
   // time: the buttons stay disabled until the dispatched scan settles
   // rather than starting a second one this component could not then speak
@@ -430,7 +455,7 @@ function RepoScanActions({ target, onScanCompleted }: { target: Target; onScanCo
   const scan = useScanRun({ onCompleted: onScanCompleted });
 
   const isActive = target.is_active !== false;
-  const inFlight = dispatching || scan.phase === "queued" || scan.phase === "running";
+  const inFlight = dispatching || alreadyScanning || scan.phase === "queued" || scan.phase === "running";
 
   async function run(nextTool: AiTool) {
     setTool(nextTool);
@@ -446,6 +471,10 @@ function RepoScanActions({ target, onScanCompleted }: { target: Target; onScanCo
         return;
       }
       scan.track(res.scan_id);
+      // Make the new run visible to the shared active-scans poll immediately,
+      // so every other row and surface reading it stops offering a duplicate
+      // before the next cadence tick.
+      onDispatched();
     } catch (err) {
       scan.fail(getErrorMessage(err, "Scan could not be started"));
     } finally {

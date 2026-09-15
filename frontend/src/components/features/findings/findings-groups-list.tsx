@@ -6,7 +6,7 @@ import { ShieldCheck } from "lucide-react";
 import { Finding, FindingGroup, FindingsQuery, Target } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ActivityPagination } from "@/components/activity-pagination";
+import { ActivityPagination } from "@/components/ui/activity-pagination";
 import { FindingGroupRow } from "./finding-group-row";
 import { FindingDetailDrawer } from "./finding-detail-drawer";
 

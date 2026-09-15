@@ -11,7 +11,7 @@ import { settleOrNull, settledOr } from "@/std-lib";
 import { pageSizeFromParams } from "@/lib/pagination";
 
 // Page size is now a user preference read off the URL (25/50/100),
-// defaulting to 25. See components/activity-pagination.tsx.
+// defaulting to 25. See components/ui/activity-pagination.tsx.
 
 function firstValue(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { ListRows } from "@/components/ui/list-row";
-import { ActivityPagination } from "@/components/activity-pagination";
+import { ActivityPagination } from "@/components/ui/activity-pagination";
 
 /**
  * The shell every scannable list in this app rebuilds around `ListRow`.

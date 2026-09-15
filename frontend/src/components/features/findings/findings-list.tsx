@@ -10,7 +10,7 @@ import { AlertBanner } from "@/components/ui/alert-banner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ActivityPagination } from "@/components/activity-pagination";
+import { ActivityPagination } from "@/components/ui/activity-pagination";
 import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { SelectAllVisible } from "@/components/ui/list-row";
 import { useSelection } from "@/hooks/use-selection";

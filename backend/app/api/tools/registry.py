@@ -4,12 +4,18 @@ Every supported OSS security tool across SAST/SCA/Secrets/Container/IaC/
 License/AI-ML, each merged with a real live health check (reusing health.py's
 `_check_one`, same subprocess `--version` probe /health always ran) and an
 `integrated`/`installable` flag pair.
+
+`_merge_worker_health` (the CTX-03 fold-in of what the Celery worker
+reported) used to live here and is now imported from health.py alongside
+`_check_one`, because /health needs the same merge for the same reason and
+health.py is the end of the dependency chain: registry -> health, never
+back. There is one implementation of that merge, not one per endpoint.
 """
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter
 
-from app.api.tools.health import _check_one
+from app.api.tools.health import _check_one, _merge_worker_health
 from app.core import tool_health_cache
 from app.core.tool_registry import registry_with_integration_status
 
@@ -67,28 +73,3 @@ def tools_registry():
             cached[entry["tool"]] = health
 
     return [{**entry, **_merge_worker_health(entry["tool"], cached[entry["tool"]])} for entry in entries]
-
-
-def _merge_worker_health(tool: str, local: dict) -> dict:
-    """Fold in what the Celery worker reported, when this process can't see
-    the tool itself (CTX-03).
-
-    The probe above runs `shutil.which()` in *this* process. One-click
-    installs run on the worker, which in the default Compose topology is a
-    separate container; so a successful install was invisible here and the
-    card read "not installed" forever, even after "Recheck all". Scans run on
-    the worker, so the worker's answer is the operationally correct one.
-
-    Only ever upgrades absent -> present, never the reverse. If this process
-    can see the binary, its own live probe is fresher and wins; a worker
-    record is a memory of an install, not a live check, and must not override
-    direct evidence.
-    """
-    if local.get("installed"):
-        return local
-
-    worker = tool_health_cache.get_worker_health(tool)
-    if not worker or not worker.get("installed"):
-        return local
-
-    return {**local, **worker, "checked_in": "worker"}

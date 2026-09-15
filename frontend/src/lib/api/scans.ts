@@ -81,12 +81,23 @@ export function scanHistory(
 /**
  * Health check endpoint for core built-in scanner binaries.
  */
-export function toolsHealth(): Promise<
-  { tool: string; installed: boolean; version: Nullable<string>; response_ms: Nullable<number> }[]
-> {
-  return jsonFetch<{ tool: string; installed: boolean; version: Nullable<string>; response_ms: Nullable<number> }[]>(
-    "/api/tools/health",
-  );
+/**
+ * `installed` is tri-state. `true` and `false` are answers from a process that
+ * could actually run the binary; `null` means neither the api container nor
+ * the scan worker has reported on it, which is an absence of evidence and not
+ * evidence of absence. `checked_in` names which process answered, and is null
+ * exactly when `installed` is.
+ */
+export type ToolHealth = {
+  tool: string;
+  installed: Nullable<boolean>;
+  version: Nullable<string>;
+  response_ms: Nullable<number>;
+  checked_in: Nullable<"api" | "worker">;
+};
+
+export function toolsHealth(): Promise<ToolHealth[]> {
+  return jsonFetch<ToolHealth[]>("/api/tools/health");
 }
 
 /**

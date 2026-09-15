@@ -4,6 +4,8 @@ import { useTabParam } from "@/hooks/use-tab-param";
 import { cn } from "@/lib/utils";
 import { Tag, Timer, GitBranch, ShieldCheck, ShieldAlert, SlidersHorizontal } from "lucide-react";
 import { PageHeader } from "@/components/ui/page-header";
+import { HelpHint } from "@/components/ui/help-hint";
+import { HELP_CONTENT } from "@/lib/help-content";
 import { Groups } from "./groups";
 import { SlaRules } from "./sla-rules";
 import { WorkflowTemplates } from "./workflow-templates";
@@ -41,6 +43,7 @@ export default function GuardrailsPage() {
       <PageHeader
         title="Guardrails"
         description="Repo groups, SLA rules, workflow templates, false-positive rules, policies, and risk scoring."
+        badge={<HelpHint topic={HELP_CONTENT.guardrails} />}
       />
 
       <div className="min-w-0 overflow-x-auto border-b border-border">

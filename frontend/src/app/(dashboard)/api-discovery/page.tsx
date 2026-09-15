@@ -18,6 +18,8 @@ import { ListRow, ListRows, SelectAllVisible } from "@/components/ui/list-row";
 import { useSelection } from "@/hooks/use-selection";
 import { DocGenStep, DocumentGeneratorPanel, WhatsIncludedCard } from "@/components/features/intelligence";
 import { PageHeader } from "@/components/ui/page-header";
+import { HelpHint } from "@/components/ui/help-hint";
+import { HELP_CONTENT } from "@/lib/help-content";
 import { Globe } from "lucide-react";
 import { formatSince } from "@/lib/format/date";
 
@@ -317,6 +319,7 @@ export default function ApiDiscoveryPage() {
       <PageHeader
         title="API Discovery"
         description="Static route extraction over the target's source (Flask/FastAPI/Express/Gin/Django/Spring patterns), real grep matches with file:line provenance, not an inferred/mocked inventory. Results are persisted, so this view reflects the last scan even after a reload."
+        badge={<HelpHint topic={HELP_CONTENT["api-discovery"]} />}
       />
 
       <DocumentGeneratorPanel

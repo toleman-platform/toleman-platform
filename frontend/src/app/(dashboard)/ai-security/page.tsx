@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/ui/page-header";
+import { HelpHint } from "@/components/ui/help-hint";
+import { HELP_CONTENT } from "@/lib/help-content";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { TargetPicker } from "@/components/features/targets";
@@ -190,6 +192,7 @@ export default function AiSecurityPage() {
       <PageHeader
         title="AI Security"
         description="Repositories detected as using AI/ML, and vulnerability findings from ModelScan and LLM rulesets."
+        badge={<HelpHint topic={HELP_CONTENT["ai-security"]} />}
       />
 
       <PartialFailureBanner

@@ -24,6 +24,8 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FindingsGroupsList } from "@/components/features/findings";
 import { PageHeader } from "@/components/ui/page-header";
+import { HelpHint } from "@/components/ui/help-hint";
+import { HELP_CONTENT } from "@/lib/help-content";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import {
   DocGenStep,
@@ -343,6 +345,7 @@ export default function SbomPage() {
       <PageHeader
         title="SBOM & OSS Vulnerabilities"
         description="Real dependency inventory for the target, imported from GitHub's Dependency Graph and uploaded CycloneDX/SPDX JSON documents. Results are persisted."
+        badge={<HelpHint topic={HELP_CONTENT.sbom} />}
       />
 
       <DocumentGeneratorPanel

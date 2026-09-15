@@ -15,13 +15,17 @@ const buttonVariants = cva(
   // an accident. `motion-reduce:transition-none` disables it outright under
   // prefers-reduced-motion, same guard drawer.tsx already uses for its
   // slide/fade.
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color,box-shadow] motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/2040 aria-invalid:border-destructive",
+  // `dark:` utilities removed here (was `dark:aria-invalid:ring-destructive/40`
+  // below, `dark:focus-visible:ring-destructive/40 dark:bg-destructive/80` on
+  // the destructive variant): dead code, matching a `.dark` class this app
+  // never sets. See globals.css for why the variant declaration itself stays.
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-[color,background-color,border-color,box-shadow] motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive",
   {
     variants: {
       variant: {
         default: 'bg-primary text-primary-foreground hover:bg-primary/90',
         destructive:
-          'bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/204080',
+          'bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20',
         outline:
           'border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground3050',
         secondary:

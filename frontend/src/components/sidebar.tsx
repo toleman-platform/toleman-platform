@@ -27,6 +27,7 @@ import {
   Building2,
   Bot,
   Bug,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,8 +41,15 @@ type NavItem = { href: string; label: string; icon: LucideIcon; adminOnly?: bool
 type NavGroup = { label: string; items: NavItem[] };
 
 // Regrouped by workflow stage (#116); the order a security engineer
-// actually works a finding (discover -> scan -> triage -> report -> operate)
-// instead of the old flat 13-item "MAIN" list build order.
+// actually works a finding (discover -> scan -> triage -> report) instead of
+// the old flat 13-item "MAIN" list build order.
+//
+// The former "Operate" group at the tail held two different kinds of thing
+// behind one heading: evidence trails you read during an investigation
+// (Audit Log, GitHub Org Logs) and configuration surfaces you change
+// (Settings, Workspaces, Control Plane). Reading and changing are different
+// tasks with different audiences, so they are two groups. This is a
+// regrouping only -- every href below is unchanged, no route moved.
 const NAV_GROUPS: NavGroup[] = [
   {
     label: "Overview",
@@ -85,10 +93,16 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: "Operate",
+    label: "Audit Trails",
     items: [
       { href: "/audit-log", label: "Audit Log", icon: ScrollText },
       { href: "/github-org-logs", label: "GitHub Org Logs", icon: Github },
+    ],
+  },
+  {
+    label: "Administration",
+    items: [
+      { href: "/administration", label: "Administration", icon: Wrench },
       { href: "/settings", label: "Settings", icon: Settings },
       { href: "/workspaces", label: "Workspaces", icon: Building2, adminOnly: true },
       { href: "/admin", label: "Control Plane", icon: UserCog, adminOnly: true },
@@ -188,7 +202,11 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
   const iconRail = collapsed && !mobileOpen;
 
   function NavLink({ item }: { item: NavItem }) {
-    const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(item.href));
+    // Match on a path-segment boundary, not a bare string prefix:
+    // "/administration".startsWith("/admin") is true, so the loose form lit
+    // up Control Plane whenever the Administration index was open. Every
+    // real child route still matches, since those all begin `href + "/"`.
+    const isActive = pathname === item.href || (item.href !== "/" && pathname.startsWith(`${item.href}/`));
     return (
       <Link
         key={item.href}

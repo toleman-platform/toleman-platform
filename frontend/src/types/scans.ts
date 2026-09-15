@@ -241,7 +241,7 @@ export type PrGuardrailFinding = {
  */
 export type PrScanToolEntry = {
   tool: string;
-  status: "ran" | "failed" | "skipped";
+  status: "ran" | "failed" | "skipped" | "pending";
   seconds: Nullable<number>;
   findings: Nullable<number>;
   detail: string;

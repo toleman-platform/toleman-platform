@@ -28,6 +28,13 @@ import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { SeverityChip } from "@/components/ui/severity-chip";
+// Read-only reuse of the Findings page's own triage-state palette: a
+// finding's `state` is never "Critical"/"High" etc., so it needs its own
+// color mapping rather than SeverityChip's, and finding-row.tsx already
+// established what that mapping should look like -- a second,
+// independently-invented one here is how "Reopened" ends up meaning a
+// different color on two pages that both claim to show it.
+import { STATE_COLOR } from "@/lib/severity";
 import { LOG_STATUS_COLOR } from "@/components/features/scans/pr-guardrail-log";
 import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
@@ -41,7 +48,7 @@ import type {
   CveTimelineData,
   SlaComplianceData,
   TopRiskyReposData,
-  RecentFindingsData,
+  NeedsActionQueueData,
   SecurityScore,
   FpAutoSuppressionsData,
   LiveScanActivityData,
@@ -63,7 +70,11 @@ export const WIDGET_META: Record<WidgetId, { label: string; icon: React.ElementT
   findings_trend: { label: "Findings Over Time", icon: Activity, colSpanClass: "lg:col-span-2" },
   top_risky_repos: { label: "Top Risky Repos", icon: GitBranch },
   cve_timeline: { label: "CVE Timeline", icon: Bug, colSpanClass: "lg:col-span-2" },
-  recent_findings: { label: "Recent Findings", icon: ListChecks },
+  // Catalog id kept as `recent_findings` for backward compatibility with
+  // already-saved DashboardLayout rows; label/icon/render below describe
+  // what it actually is now (see app.core.widgets.resolve_needs_action_queue's
+  // docstring for why this stopped being a plain recent-findings feed).
+  recent_findings: { label: "Needs Action Queue", icon: ListChecks },
   fp_auto_suppressions: { label: "Auto-Suppressed Findings", icon: ShieldCheck },
   live_scan_activity: { label: "Live Scan Activity", icon: Loader2 },
   ai_ml_risk: { label: "AI/ML Risk", icon: Bot },
@@ -454,32 +465,64 @@ function CveTimelineWidget({ data }: { data: CveTimelineData }) {
   );
 }
 
-function RecentFindingsWidget({ data }: { data: RecentFindingsData }) {
-  if (data.items.length === 0) return <EmptyState>No findings yet.</EmptyState>;
+function NeedsActionQueueWidget({ data }: { data: NeedsActionQueueData }) {
+  // A real zero here means the Needs Action queue is genuinely empty --
+  // the good outcome, not a missing-data state -- so this reads as an
+  // all-clear rather than the generic "No findings yet." the old
+  // Recent-Findings feed used, which read the same whether nothing had
+  // been scanned yet or everything really was handled.
+  if (data.items.length === 0) {
+    return <EmptyState icon={CheckCircle2}>Nothing needs action right now.</EmptyState>;
+  }
   return (
     <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
-      {data.items.map((f) => (
-        <div key={f.finding_id} className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2">
+      {data.items.map((item) => (
+        <Link
+          // `representative_id` has to be part of this key, not just
+          // `tool:rule_id`: two ungrouped Secrets findings (each its own
+          // row -- see app.core.grouping's UNGROUPED_CATEGORIES) can share
+          // one gitleaks rule, and `tool:rule_id` alone would collide them
+          // into the same React key.
+          key={`${item.tool}:${item.rule_id}:${item.representative_id}`}
+          // The flat Findings list's `search` filter already matches
+          // rule_id (app/api/findings.py's _apply_filters), so this lands
+          // the reader on exactly this decision's members inside the same
+          // "Needs action" queue -- not a member's own detail page, since a
+          // grouped row stands for one decision, not one detection.
+          href={`/findings?search=${encodeURIComponent(item.rule_id)}&queue=action`}
+          className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2 hover:bg-accent/40"
+        >
           <div className="min-w-0">
-            {/* Issue #117/#119: reuse the shared truncate-with-tooltip
-                affordance so a long title isn't silently clipped, and show
-                file_path in the subtitle; the same rule can legitimately
-                fire on several files in one scan (e.g. Semgrep's
-                django-no-csrf-token across multiple templates), which
-                otherwise renders as visually-identical rows since title/
-                target/tool/date alone don't distinguish them. */}
-            <TruncateTooltip
-              text={f.title}
-              subtext={f.file_path}
-              className="text-sm text-foreground"
-            />
+            <div className="flex min-w-0 items-center gap-1.5">
+              <TruncateTooltip
+                text={item.title}
+                subtext={item.representative_file_path}
+                className="text-sm text-foreground"
+              />
+              {/* A group's count of how many findings this one decision
+                  closes (issue #119's four-identical-rows complaint, this
+                  time collapsed on purpose instead of hidden by accident). */}
+              {item.finding_count > 1 && (
+                <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] text-muted-foreground">
+                  &times;{item.finding_count}
+                </Badge>
+              )}
+            </div>
             <p className="truncate text-xs text-muted-foreground">
-              {f.target_name ?? `target #${f.target_id}`} &middot; {f.tool} &middot; {f.file_path} &middot; {formatDate(f.first_seen)}
-              {f.sla_violated && <span className="ml-1 text-destructive">&middot; SLA violated</span>}
+              {item.target_name ?? `target #${item.representative_target_id}`} &middot; {item.tool} &middot;{" "}
+              {formatDate(item.first_seen)}
+              {/* The representative member's real triage state, always
+                  "Open" or "Reopened" -- the resolver's query already
+                  excludes every resolved state -- shown explicitly rather
+                  than left implicit, which is exactly what let an
+                  already-mitigated finding pass for a to-do in the widget
+                  this replaced. */}
+              <span className={`ml-1 font-medium ${STATE_COLOR[item.state] ?? ""}`}>&middot; {item.state}</span>
+              {item.sla_violated && <span className="ml-1 text-destructive">&middot; SLA violated</span>}
             </p>
           </div>
-          <SeverityChip severity={f.severity} size="sm" />
-        </div>
+          <SeverityChip severity={item.severity} size="sm" />
+        </Link>
       ))}
     </div>
   );
@@ -768,7 +811,7 @@ export function WidgetBody({ entry }: { entry: WidgetDataEntry | undefined }) {
     case "cve_timeline":
       return <CveTimelineWidget data={entry.data as CveTimelineData} />;
     case "recent_findings":
-      return <RecentFindingsWidget data={entry.data as RecentFindingsData} />;
+      return <NeedsActionQueueWidget data={entry.data as NeedsActionQueueData} />;
     case "security_score":
       return <SecurityScoreWidget initialData={entry.data as SecurityScore} />;
     case "fp_auto_suppressions":

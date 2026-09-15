@@ -16,6 +16,7 @@ import type {
   SlaComplianceData,
   ScoringWeights,
   FindingScoreBreakdown,
+  PackageRemediation,
 } from "@/types";
 import type { Nullable } from "@/std-lib";
 
@@ -155,6 +156,19 @@ export function findingCategories(query: CategoryFacetsQuery = {}): Promise<Cate
  */
 export function findingEnrichment(findingId: number): Promise<FindingEnrichment> {
   return jsonFetch<FindingEnrichment>(`/api/findings/${findingId}/enrichment`);
+}
+
+/**
+ * (#247) The smallest set of upgrades that would close the most open,
+ * CVE-bearing findings on a target, most findings-closed first -- see
+ * backend/app/core/remediation.py::group_remediations and
+ * PackageRemediation for the two honesty properties every caller has to
+ * preserve. Workspace-scoped like every other read here: a target_id
+ * outside the caller's workspace 404s rather than returning another
+ * tenant's plan.
+ */
+export function findingRemediations(targetId: number): Promise<PackageRemediation[]> {
+  return jsonFetch<PackageRemediation[]>(`/api/findings/remediations?target_id=${targetId}`);
 }
 
 /**

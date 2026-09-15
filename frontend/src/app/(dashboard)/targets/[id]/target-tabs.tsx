@@ -15,6 +15,12 @@ import { cn } from "@/lib/utils";
 // real navigation the browser can cache and the back button understands.
 export const TARGET_TABS = [
   { id: "overview", label: "Overview" },
+  // (#247) Above Vulnerabilities deliberately: this answers "what do I do
+  // about it", which only makes sense once "what is wrong" is in view, but
+  // it is the higher-value question for a repo owner staring at a long
+  // findings list, so it leads. GET /api/findings/remediations existed on
+  // the backend, fully tested, with nothing on the frontend ever calling it.
+  { id: "fix-plan", label: "Fix plan" },
   { id: "vulnerabilities", label: "Vulnerabilities" },
   // (#276) Dependencies answers "what is installed here", which the
   // findings list structurally cannot; it only ever shows what is

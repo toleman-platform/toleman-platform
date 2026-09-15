@@ -91,6 +91,29 @@
   --muted-foreground: #9aa0a8;
   --accent: #23262a;
   --accent-foreground: #e9eaec;
+  /* --control is the ground of a thing that sits ON a surface instead of
+     being one -- the outline Button. It is deliberately not --background.
+     The outline variant was `bg-background`, and outline buttons are
+     overwhelmingly rendered inside Cards, so the most-instantiated button in
+     the product was painted in the page colour on top of a lighter card:
+     relative luminance 0.0090 against --card's 0.0142. The control was
+     DARKER than the surface it sat on and read as a recessed hole rather
+     than a raised slab.
+
+     #2b2e33 (0.0271) inverts that: 1.20:1 above --card, 1.31:1 above
+     --background, 1.12:1 above --accent, and still 1.10:1 clear of
+     --secondary so the outline and secondary variants do not collapse into
+     one another. It is the next rung of the neutral ramp the surfaces above
+     already climb -- the same +7/+7/+8 per channel that takes --card to
+     --secondary -- so a control is one elevation step further up, exactly as
+     --card is one step above --background.
+
+     --control-hover keeps the direction of travel: 1.11:1 further up again.
+     The variant's old `hover:bg-accent` (0.0191) would have pushed a hovered
+     button back BELOW its own resting ground, re-creating the recess on
+     every pointer-over. */
+  --control: #2b2e33;
+  --control-hover: #32353b;
   /* --accent-strong: brand cyan used as bare text/icon color directly on a
      canvas/card/sidebar background (links, active nav state, icon tiles);
      as opposed to --primary, which is only ever a button/badge *fill*.
@@ -112,7 +135,22 @@
   --destructive: #fa7f86;
   --destructive-foreground: #0d1b1e;
   --border: #2b2e33;
-  --input: #2b2e33;
+  /* --input is a CONTROL's boundary -- the border on every native
+     <select>/<input> in the app and on the outline Button -- as opposed to
+     --border, which is the hairline between two surfaces. The two carried
+     the same value until now, which is how the control boundary went
+     unmeasured: the ~50 call sites that pair `border-input` with
+     `bg-secondary` were drawing that boundary at 1.10:1, and 1.20:1 on
+     --card. A hairline between a card and the page is decorative and 1.20:1
+     is fine for it; the edge of a text field is the only cue that a control
+     is there at all, and WCAG 1.4.11 puts that at 3:1.
+
+     #7d828b clears 3:1 against every neutral ground in this palette:
+     3.88:1 on --secondary/--muted, 4.24:1 on --card, 4.61:1 on --background,
+     3.93:1 on --accent, 3.53:1 on --control and 3.18:1 on --control-hover.
+     --border is left where it was, on purpose -- lifting the hairline to 3:1
+     would draw a hard box around every card and divider in the product. */
+  --input: #7d828b;
   /* Scrim behind a modal or drawer. A dialog's own surface is --card, so the
      scrim's job is to push the page behind it far enough down that the
      dialog reads as being in front. The alpha is chosen per ground rather
@@ -243,6 +281,22 @@
   --muted-foreground: #5b6472; /* dark's #94a3b8 is too light to read on white */
   --accent: #e6f6f9; /* soft cyan hover wash, replaces dark's saturated teal fill */
   --accent-foreground: #161c2b;
+  /* Same relationship as dark's --control, inverted and then capped. Light
+     had the identical defect -- the outline Button's `bg-background`
+     (#f5f7fa, 0.9284) sat on a #ffffff card (1.0000), 1.07:1 the wrong way,
+     a recessed control again. White is the ceiling, so here a control cannot
+     be lifted ABOVE --card the way it is in dark; it is levelled with it and
+     the raise is carried by the 3:1 --input edge and the variant's own
+     shadow. What the token guarantees is the part that was broken: --control
+     is never darker than a surface it sits on -- 1.00:1 on --card, 1.07:1
+     above --background, 1.13:1 above --secondary, 1.11:1 above --accent.
+
+     --control-hover has to darken, since white leaves nowhere else to go,
+     but it stops at 0.9392 -- still above the canvas at 0.9284 -- so a
+     hovered button never sinks below the page around it. The 1.06:1 step is
+     mostly carried by the cyan tint rather than by luminance. */
+  --control: #ffffff;
+  --control-hover: #f0fafc;
   --accent-strong: #0a7490; /* deepened from dark's #06b6d4 for contrast on white */
   /* Deepened a step from #c0193f, for the same reason the dark value moved:
      the KEV badge renders text-destructive on a `bg-destructive/20` wash of
@@ -252,7 +306,13 @@
   --destructive: #b01639; /* deepened critical/error red */
   --destructive-foreground: #fff5f5;
   --border: #dde2ea; /* hairline */
-  --input: #dde2ea;
+  /* The dark --input note applies here unchanged; these are its numbers on
+     the light grounds. #dde2ea drew a control boundary at 1.15:1 on
+     --secondary and 1.30:1 on --card. #7f8795 is 3.20:1 on
+     --secondary/--muted, 3.62:1 on --card/--control, 3.37:1 on --background,
+     3.26:1 on --accent and 3.41:1 on --control-hover. --border keeps the
+     pale hairline for surface edges. */
+  --input: #7f8795;
   /* Black at the dark theme's 0.62 would take this canvas to mid-grey; 0.45
      gives a comparable 3.8x luminance drop (0.939 -> 0.245) and keeps the
      white dialog surface at 3.6:1 against the dimmed page, above the 3:1 bar
@@ -347,6 +407,12 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
+  /* Backs `bg-control` / `bg-control-hover`, the outline Button's resting and
+     hover grounds. Kept out of `bg-background`'s way on purpose: the page
+     background is a surface, and a control that paints itself with it is
+     indistinguishable from a hole in whatever it is sitting on. */
+  --color-control: var(--control);
+  --color-control-hover: var(--control-hover);
   --color-ring: var(--ring);
   /* Backs the `bg-overlay` utility. It is used by the scrimmed surfaces --
      the confirm dialog, the finding detail modal and the mobile sidebar

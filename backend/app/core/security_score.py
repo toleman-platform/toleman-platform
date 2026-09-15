@@ -401,10 +401,22 @@ def _weighted_open_sum_at(
     return total
 
 
-def _observed_before(session: Session, target_ids: list[int], findings: list[Finding], as_of: datetime) -> bool:
-    """Whether this platform had actually looked at this scope on or before
+def _targets_observed_before(
+    session: Session, target_ids: list[int], findings: list[Finding], as_of: datetime
+) -> set[int]:
+    """Which targets this platform had actually looked at on or before
     `as_of` -- the precondition for `_weighted_open_sum_at(as_of, ...)`
     being a measurement rather than a placeholder.
+
+    Per target, not per scope. Answering this for the scope as a whole meant
+    one repo onboarded six months ago made a whole organisation "measurable",
+    while the prior sum was taken across every target including ten added
+    this morning. Their findings counted in the current sum and could not
+    have counted in the prior one, so onboarding a batch of repositories
+    rendered as a worsening trend -- a red score penalty for doing the thing
+    the product asks you to do. A trend has to compare like with like, so
+    targets without a baseline are excluded from both sides rather than
+    counted on one.
 
     Two independent kinds of evidence, either sufficient:
 
@@ -421,13 +433,14 @@ def _observed_before(session: Session, target_ids: list[int], findings: list[Fin
     `POST /api/ingest/{target_id}` by a CI pipeline arrive without this
     platform having run a Scan of its own.
     """
-    if any(f.first_seen <= as_of for f in findings):
-        return True
-    return bool(
-        session.exec(
-            select(Scan.id).where(Scan.target_id.in_(target_ids), Scan.started_at <= as_of).limit(1)
+    observed = {f.target_id for f in findings if f.first_seen <= as_of}
+    remaining = [t for t in target_ids if t not in observed]
+    if remaining:
+        rows = session.exec(
+            select(Scan.target_id).where(Scan.target_id.in_(remaining), Scan.started_at <= as_of)
         ).all()
-    )
+        observed.update(rows)
+    return observed
 
 
 def _unmeasurable_trend(current_sum: float) -> dict:
@@ -473,10 +486,16 @@ def _trend_score(session: Session, target_ids: list[int], targets_by_id: dict[in
     # penalty" callout naming a trend nobody had the history to compute.
     # A measurement that cannot be taken is unknown, not zero, so it drops
     # out of the weighting instead (see compute_security_score).
-    if not _observed_before(session, target_ids, findings, prior_as_of):
+    baseline_targets = _targets_observed_before(session, target_ids, findings, prior_as_of)
+    if not baseline_targets:
         return _unmeasurable_trend(current_sum)
 
-    prior_sum = _weighted_open_sum_at(prior_as_of, findings, logs_by_finding, targets_by_id)
+    # Both sums restricted to the targets that had a baseline, so a target
+    # added inside the window is absent from both rather than counted only in
+    # the current one.
+    compared = [f for f in findings if f.target_id in baseline_targets]
+    current_sum = _weighted_open_sum_at(now, compared, logs_by_finding, targets_by_id)
+    prior_sum = _weighted_open_sum_at(prior_as_of, compared, logs_by_finding, targets_by_id)
 
     if current_sum <= prior_sum:
         score = 100.0

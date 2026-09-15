@@ -385,7 +385,10 @@ def test_licence_zero_weighting_is_derived_from_one_definition():
     the score cannot come to disagree with the counts printed beside it."""
     for category in NON_VULNERABILITY_CATEGORIES:
         assert security_score.CATEGORY_RISK_WEIGHT[category] == 0.0
-    assert set(security_score.CATEGORY_RISK_WEIGHT) == set(NON_VULNERABILITY_CATEGORIES)
+    # Deliberately not set-equality: the constant's own comment invites adding
+    # a category with a partial rather than zero weight, and an assertion that
+    # forbids the documented extension is a test of the test, not of the code.
+    assert set(NON_VULNERABILITY_CATEGORIES) <= set(security_score.CATEGORY_RISK_WEIGHT)
 
 
 def test_findings_component_ignores_non_default_branch(engine):
@@ -519,6 +522,41 @@ def test_trend_component_worsening_from_new_finding(engine):
     assert trend["current_weighted_sum"] == 5.0
     assert trend["direction"] == "worsening"
     assert trend["score"] == 0.0
+
+
+def test_onboarding_repos_into_an_established_org_is_not_a_worsening_trend(engine):
+    """Adding targets must not read as posture getting worse.
+
+    An established repo scanned a fortnight ago with one open Low is the only
+    thing with a baseline. Ten repos onboarded today bring 200 Criticals
+    between them. Measuring the trend across the whole scope compared a prior
+    sum that could not include those repos against a current sum that does,
+    which scored 0/100 and raised a red penalty on the day an operator did
+    exactly what the product asks. Targets without a baseline belong on
+    neither side of the comparison.
+    """
+    ws_id = _make_workspace(engine)
+    established = _make_target(engine, ws_id)
+    _make_scan(engine, established, started_at=utcnow() - timedelta(days=14))
+    _make_finding(engine, established, severity=Severity.LOW, first_seen=utcnow() - timedelta(days=14))
+
+    target_ids = [established]
+    for _ in range(10):
+        fresh = _make_target(engine, ws_id)
+        target_ids.append(fresh)
+        for _ in range(20):
+            _make_finding(engine, fresh, severity=Severity.CRITICAL, first_seen=utcnow())
+
+    with Session(engine) as session:
+        result = compute_security_score(session, target_ids)
+
+    trend = result["components"]["trend"]
+    assert trend["measurable"] is True
+    # The established repo is unchanged across the window, so the comparison
+    # it is the only participant in is flat.
+    assert trend["direction"] != "worsening"
+    assert trend["score"] == 100.0
+    assert result["weakest_component"] != "trend"
 
 
 def test_trend_is_unmeasurable_without_any_observation_from_the_window_ago(engine):

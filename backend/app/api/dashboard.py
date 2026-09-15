@@ -7,7 +7,7 @@ from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.core.security_score import compute_security_score, resolve_target_ids_for_scope
 from app.core.sla import compute_sla_status
-from app.core.tool_registry import vulnerability_tools
+from app.core.tool_registry import tools_in_category
 from app.core.widgets import WIDGET_CATALOG, build_default_layout
 from app.core import target_lifecycle
 from app.core.time import utcnow
@@ -33,7 +33,7 @@ def stats(session: Session = Depends(get_session), user: User = Depends(current_
     """Aggregate counts for dashboard charts. Default-branch, Open findings
     only, scoped to the caller's workspaces (issue #57: admins still see
     everything). License findings are excluded -- a legal/compliance signal,
-    not a vulnerability count (see app.core.tool_registry.vulnerability_tools
+    not a vulnerability count (see app.core.tool_registry.NON_VULNERABILITY_CATEGORIES
     and the same exclusion in security_score/targets summary)."""
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and not ws_ids:
@@ -42,7 +42,13 @@ def stats(session: Session = Depends(get_session), user: User = Depends(current_
     targets = {t.id: t for t in session.exec(_scoped_targets_query(ws_ids)).all()}
 
     open_findings = session.exec(
-        select(Finding).where(Finding.state == FindingState.OPEN, Finding.tool.in_(vulnerability_tools()))
+    # NOT IN the License tools rather than IN `vulnerability_tools()`: the
+    # latter is derived from TOOL_REGISTRY, so a tool name a CI pipeline
+    # invents when it POSTs SARIF to /api/ingest/{target_id} is in neither
+    # set and was silently dropped here while the dashboard widgets and the
+    # Findings page both counted it. Two different totals for "open findings"
+    # on one screen is the disagreement this expression exists to end.
+        select(Finding).where(Finding.state == FindingState.OPEN, Finding.tool.not_in(tools_in_category("License")))
     ).all()
     open_default_branch = [
         f for f in open_findings if targets.get(f.target_id) and f.branch == targets[f.target_id].default_branch
@@ -78,7 +84,7 @@ def posture(session: Session = Depends(get_session), user: User = Depends(curren
             .where(
                 Finding.target_id == t.id,
                 Finding.branch == t.default_branch,
-                Finding.tool.in_(vulnerability_tools()),
+                Finding.tool.not_in(tools_in_category("License")),
             )
             .group_by(Finding.severity, Finding.state)
         ).all()
@@ -101,7 +107,7 @@ def summary(session: Session = Depends(get_session), user: User = Depends(curren
     # only exists for non-admin callers; an admin's totals must not keep
     # counting a deleted target's findings.
     base = target_lifecycle.exclude_deleted_targets(
-        select(Finding).where(Finding.tool.in_(vulnerability_tools())), Finding.target_id
+        select(Finding).where(Finding.tool.not_in(tools_in_category("License"))), Finding.target_id
     )
     if ws_ids is not None:
         base = base.join(Target, Target.id == Finding.target_id).where(Target.workspace_id.in_(ws_ids))
@@ -130,7 +136,7 @@ def sla_compliance(session: Session = Depends(get_session), user: User = Depends
     query = target_lifecycle.exclude_deleted_targets(
         select(Finding).where(
             Finding.state.in_([FindingState.OPEN, FindingState.REOPENED]),
-            Finding.tool.in_(vulnerability_tools()),
+            Finding.tool.not_in(tools_in_category("License")),
         ),
         Finding.target_id,
     )

@@ -37,6 +37,12 @@ ARG TRIVY_VERSION=0.73.0
 ARG GOSEC_VERSION=2.28.0
 ARG NUCLEI_VERSION=3.11.1
 ARG TFSEC_VERSION=1.28.14
+# github.com/semgrep/semgrep-rules has no release tags, so the pin is a
+# commit. Bump it deliberately, the way any other dependency here is
+# bumped: this is the rule set that decides what a scan reports, and a
+# floating ref would change findings under a running deployment with no
+# commit to point at when someone asks why a result moved.
+ARG SEMGREP_RULES_COMMIT=40b8c63f75dc7c22c8a77482d73bfb864b146f7e
 
 # (BLD-04, revised) Checksums of the release *assets* downloaded below, per
 # architecture, taken from each project's published checksums file for the
@@ -210,6 +216,35 @@ RUN set -eux; \
     chmod +x /usr/local/bin/nuclei; \
     rm -f /tmp/nuclei.zip; \
     nuclei -version
+
+# --- Public Semgrep registry (pruned at scan time) --------------------
+# The `semgrep-registry` tool prunes this clone down to the languages and
+# frameworks a target actually uses (app/scanners/rule_selector.py). With no
+# clone present that tool raises ToolNotApplicable on every scan, which is
+# the honest failure mode but means the registry half of SAST contributes
+# nothing -- so it is baked into the image rather than left to be
+# provisioned by hand.
+#
+# `git init` + `fetch --depth 1 <commit>` rather than `clone --branch`:
+# it pins the exact commit ARG above, and it keeps a .git directory, which
+# rule_selector's cache fingerprint reads (`git rev-parse HEAD`) to decide
+# whether a cached pruned config is still valid. Without .git it falls back
+# to stat'ing every file, which works but is slower and less exact.
+#
+# --filter=blob:none keeps the fetch small; the working tree is still
+# checked out in full, which is what gets read.
+#
+# World-readable and root-owned on purpose: every scan only ever reads it,
+# and nothing at runtime should be able to rewrite the rules it is judged
+# against. The pruned configs built from it are written to a separate
+# writable cache (runner.REGISTRY_CONFIG_CACHE_DIR).
+RUN set -eux; \
+    git init /opt/semgrep-rules; \
+    git -C /opt/semgrep-rules remote add origin https://github.com/semgrep/semgrep-rules.git; \
+    git -C /opt/semgrep-rules fetch --depth 1 --filter=blob:none origin "${SEMGREP_RULES_COMMIT}"; \
+    git -C /opt/semgrep-rules checkout --detach FETCH_HEAD; \
+    chmod -R a+rX /opt/semgrep-rules; \
+    test -d /opt/semgrep-rules/python
 
 # --- Python dependencies + Semgrep (SAST) -----------------------------
 # Semgrep isn't in requirements.txt (it's a standalone CLI, same as the other

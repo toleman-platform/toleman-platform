@@ -24,14 +24,64 @@ from unittest import mock
 
 import pytest
 
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
+
 from app.core.tool_registry import default_usage_for
-from app.scanners import runner
+from app.core.tool_usage import runnable_tools, tools_for_surface
+from app.models.models import Organization, Workspace
+from app.scanners import parsers, runner
 from app.scanners.runner import ToolNotApplicable
 
 
 def test_both_layers_are_runnable_tools():
-    assert "semgrep-core" in runner.TOOL_COMMANDS
-    assert "semgrep-registry" in runner.TOOL_COMMANDS
+    """Asserts runnable_tools(), not TOOL_COMMANDS membership.
+
+    An earlier version of this test carried this name and checked only
+    TOOL_COMMANDS, which is the weaker half. runnable_tools() intersects
+    TOOL_COMMANDS with parsers.PARSER_MAP, and both tools were missing from
+    the parser map -- so they were excluded from every usage surface,
+    never ran, and never appeared in scan history even as skipped. The
+    test passed throughout.
+    """
+    assert "semgrep-core" in runnable_tools()
+    assert "semgrep-registry" in runnable_tools()
+
+
+def test_every_runnable_command_has_a_parser():
+    """The general form of the bug above: a tool added to TOOL_COMMANDS
+    without a PARSER_MAP entry is silently unreachable rather than broken,
+    which is the hardest kind of wiring mistake to notice."""
+    missing = set(runner.TOOL_COMMANDS) - set(parsers.PARSER_MAP)
+    assert not missing, f"tools with a command but no parser, so never runnable: {sorted(missing)}"
+
+
+def test_both_layers_are_offered_on_the_deep_scan_surface():
+    """End to end through the real resolver, on a workspace with no saved
+    tool config -- the state every existing workspace is in. Membership in
+    runnable_tools() is necessary but not sufficient; this is what a scan
+    actually consults."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        org = Organization(name="Acme")
+        session.add(org)
+        session.commit()
+        session.refresh(org)
+        ws = Workspace(organization_id=org.id, name="ws", api_key="k")
+        session.add(ws)
+        session.commit()
+        session.refresh(ws)
+
+        on_demand = tools_for_surface(session, ws.id, "on_demand_scan")
+        ci = tools_for_surface(session, ws.id, "ci_pipeline")
+
+    assert "semgrep-core" in on_demand
+    assert "semgrep-registry" in on_demand
+    assert "semgrep-core" in ci
+    # The deep-scan-only default, observed through the resolver rather than
+    # through default_usage_for alone.
+    assert "semgrep-registry" not in ci
 
 
 def test_core_pack_runs_the_in_repo_rules_with_suppression_disabled():

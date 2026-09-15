@@ -157,23 +157,37 @@ export type TopRiskyReposData = {
   items: TopRiskyRepoItem[];
 };
 
-export type RecentFindingItem = {
-  finding_id: number;
+/**
+ * One row of the "Needs Action Queue" widget: a single decision (a
+ * `(tool, rule_id)` group, or an ungrouped Secrets/Malicious Package
+ * finding standing for itself -- `grouped` tells which), never a finding
+ * already past triage. Mirrors `FindingGroupOut` on the Findings page
+ * (GET /api/findings/groups) for the fields both share; `state` is this
+ * widget's own addition -- always "Open" or "Reopened" (the resolver's
+ * query already excludes every resolved state), read off the single
+ * representative member rather than synthesised across the group, same as
+ * `sla_days`/`sla_violated` below.
+ */
+export type NeedsActionItem = {
+  tool: string;
+  rule_id: string;
+  category: string;
   title: string;
   severity: string;
   state: string;
-  tool: string;
-  target_id: number;
+  grouped: boolean;
+  finding_count: number;
+  representative_id: number;
+  representative_target_id: number;
   target_name: Nullable<string>;
-  file_path: string;
+  representative_file_path: string;
   first_seen: string;
   sla_days: Nullable<number>;
   sla_violated: boolean;
-  fixability?: "fixable" | "no_known_fix" | "unknown";
 };
 
-export type RecentFindingsData = {
-  items: RecentFindingItem[];
+export type NeedsActionQueueData = {
+  items: NeedsActionItem[];
 };
 
 export type FpAutoSuppressionsData = {
@@ -229,7 +243,11 @@ export type WidgetDataMap = {
   cve_timeline: CveTimelineData;
   sla_compliance: SlaComplianceData;
   top_risky_repos: TopRiskyReposData;
-  recent_findings: RecentFindingsData;
+  // Catalog id kept as `recent_findings` for backward compatibility with
+  // already-saved DashboardLayout rows; the payload is the Needs Action
+  // Queue now (see NeedsActionQueueData and app.core.widgets.
+  // resolve_needs_action_queue's docstring for why).
+  recent_findings: NeedsActionQueueData;
   security_score: SecurityScore;
   fp_auto_suppressions: FpAutoSuppressionsData;
   live_scan_activity: LiveScanActivityData;

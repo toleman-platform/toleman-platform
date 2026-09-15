@@ -5,8 +5,11 @@ import Link from "next/link";
 import { Bot, Boxes, Radar } from "lucide-react";
 import { api, type Target, type ScanSummary } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
+import { getErrorMessage } from "@/std-lib";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWriteAction } from "@/hooks/use-write-action";
+import { useScanRun } from "@/hooks/features/use-scan-run";
+import { ScanHealthBadge, ScanProgress } from "@/components/features/scans";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +45,13 @@ const TOOL_LABEL: Record<AiTool, string> = {
   modelscan: "ModelScan",
   "semgrep-llm": "LLM rules",
 };
+
+// The two scanners this page is about, in the order their columns read.
+// Both are members of lib/scan-tools.ts's SCAN_TOOLS; this is the AI subset
+// of it, not a second list of tools the platform can run.
+const AI_TOOLS: readonly AiTool[] = ["modelscan", "semgrep-llm"];
+
+const DEACTIVATED_TITLE = "This target is deactivated; scanning is off. Reactivate it on the target page.";
 
 export default function AiSecurityPage() {
   const {
@@ -238,7 +248,7 @@ export default function AiSecurityPage() {
         <StatCard
           label="AI/ML repos"
           value={aiTargets.length}
-          hint="detected via dependency manifests (#185)"
+          hint="detected via dependency manifests"
           icon={Bot}
           unknown={targetsLoading || !!targetsError}
           unknownHint={targetsError ? "repo list unavailable" : undefined}
@@ -292,24 +302,39 @@ export default function AiSecurityPage() {
         {!loading &&
           aiTargets.map((t) => (
             <Card key={t.id} className="border-border bg-card">
-              <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <Link href={`/targets/${t.id}`} className="truncate font-medium text-foreground hover:underline">
-                      {t.name}
-                    </Link>
-                    <Badge variant="outline" className="shrink-0 text-[10px]">
-                      AI/ML
-                    </Badge>
+              <CardContent className="flex flex-col gap-3 px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Link href={`/targets/${t.id}`} className="truncate font-medium text-foreground hover:underline">
+                        {t.name}
+                      </Link>
+                      <Badge variant="outline" className="shrink-0 text-[10px]">
+                        AI/ML
+                      </Badge>
+                    </div>
+                    {t.is_ai_repo_signals && (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.is_ai_repo_signals}</p>
+                    )}
                   </div>
-                  {t.is_ai_repo_signals && (
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.is_ai_repo_signals}</p>
-                  )}
+                  <div className="flex shrink-0 items-center gap-2 text-xs">
+                    <ToolBadge tool="modelscan" target={t} count={countFor("modelscan", t.id)} scanned={everScanned("modelscan", t.id)} scanSummaryReady={scanSummaryReady} findingsFailed={!!modelscanError} />
+                    <ToolBadge tool="semgrep-llm" target={t} count={countFor("semgrep-llm", t.id)} scanned={everScanned("semgrep-llm", t.id)} scanSummaryReady={scanSummaryReady} findingsFailed={!!semgrepLlmError} />
+                  </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-2 text-xs">
-                  <ToolBadge tool="modelscan" target={t} count={countFor("modelscan", t.id)} scanned={everScanned("modelscan", t.id)} scanSummaryReady={scanSummaryReady} findingsFailed={!!modelscanError} />
-                  <ToolBadge tool="semgrep-llm" target={t} count={countFor("semgrep-llm", t.id)} scanned={everScanned("semgrep-llm", t.id)} scanSummaryReady={scanSummaryReady} findingsFailed={!!semgrepLlmError} />
-                </div>
+
+                <RepoScanActions
+                  target={t}
+                  onScanCompleted={() => {
+                    // The badges above are computed from the findings and
+                    // scan-history queries, neither of which knows a scan
+                    // just landed. Refetched on completion so a repo that
+                    // read "not scanned" a moment ago stops saying so.
+                    refetchScanSummary();
+                    refetchModelscan();
+                    refetchSemgrepLlm();
+                  }}
+                />
               </CardContent>
             </Card>
           ))}
@@ -347,7 +372,7 @@ export default function AiSecurityPage() {
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">
                     Models and datasets {aibomTarget.name} depends on, extracted from the same checkout as its
-                    SBOM (#190). Generating refreshes both.
+                    SBOM. Generating refreshes both.
                   </p>
                   <Button
                     size="sm"
@@ -355,11 +380,7 @@ export default function AiSecurityPage() {
                     className="h-7 shrink-0 text-xs"
                     onClick={generateAiBom}
                     disabled={generateAction.submitting || aibomTargetDeactivated}
-                    title={
-                      aibomTargetDeactivated
-                        ? "This target is deactivated; scanning is off. Reactivate it on the target page."
-                        : undefined
-                    }
+                    title={aibomTargetDeactivated ? DEACTIVATED_TITLE : undefined}
                   >
                     {generateAction.submitting ? "Generating..." : "Generate AI Bill of Materials"}
                   </Button>
@@ -380,6 +401,102 @@ export default function AiSecurityPage() {
           )
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Running the two AI-specific scanners against one repo, from the list.
+ *
+ * The same call path the target page's scan buttons already use --
+ * `api.runScan` dispatches, `useScanRun` follows the run from queued to
+ * settled -- rather than a second route to POST /api/scans/run that would
+ * word the same states differently. A scan started here is the same scan,
+ * and shows up on the target page's own progress line via the shared
+ * active-scan poll.
+ *
+ * Nothing here reports success the run has not earned: a dispatch the
+ * server refused, and a dispatch whose outcome is still unknown, each
+ * render as themselves rather than as a finished scan (AGENTS.md 1.4).
+ */
+function RepoScanActions({ target, onScanCompleted }: { target: Target; onScanCompleted: () => void }) {
+  // `useScanRun` follows one run at a time, so this row reports one at a
+  // time: the buttons stay disabled until the dispatched scan settles
+  // rather than starting a second one this component could not then speak
+  // for. `tool` is which scanner the state below belongs to.
+  const [tool, setTool] = useState<AiTool | null>(null);
+  const [dispatching, setDispatching] = useState(false);
+
+  const scan = useScanRun({ onCompleted: onScanCompleted });
+
+  const isActive = target.is_active !== false;
+  const inFlight = dispatching || scan.phase === "queued" || scan.phase === "running";
+
+  async function run(nextTool: AiTool) {
+    setTool(nextTool);
+    setDispatching(true);
+    scan.reset();
+    try {
+      const res = await api.runScan(target.id, nextTool);
+      if ("error" in res) {
+        // A refused dispatch (deactivated target, tool not assigned to the
+        // workspace, rate limit) never produces a scan id, so it settles
+        // through the same failure path as a run that dies later on.
+        scan.fail(res.error);
+        return;
+      }
+      scan.track(res.scan_id);
+    } catch (err) {
+      scan.fail(getErrorMessage(err, "Scan could not be started"));
+    } finally {
+      setDispatching(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {AI_TOOLS.map((t) => (
+        <Button
+          key={t}
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          // Deactivated targets refuse every scan server-side; disabled
+          // rather than hidden, matching the AI Bill of Materials action
+          // above and the target page's own buttons.
+          disabled={!isActive || inFlight}
+          title={isActive ? undefined : DEACTIVATED_TITLE}
+          // Every row carries identically labelled buttons, so the
+          // accessible name has to say which repo this one would scan.
+          aria-label={`Run ${TOOL_LABEL[t]} on ${target.name}`}
+          onClick={() => run(t)}
+        >
+          Run {TOOL_LABEL[t]}
+        </Button>
+      ))}
+
+      {!isActive && <span className="text-xs text-muted-foreground">Reactivate this target to scan it.</span>}
+
+      {dispatching && tool && (
+        <span role="status" className="text-xs text-muted-foreground">
+          Starting {TOOL_LABEL[tool]}...
+        </span>
+      )}
+
+      {!dispatching && tool && scan.phase && (
+        <>
+          <ScanProgress
+            phase={scan.phase}
+            tool={TOOL_LABEL[tool]}
+            elapsedSeconds={scan.elapsedSeconds}
+            etaSeconds={scan.etaSeconds}
+            error={scan.error}
+          />
+          {/* Renders only for a run the platform did not trust; a completed
+              scan whose results are qualified must not read as a clean one. */}
+          <ScanHealthBadge health={scan.health} />
+        </>
+      )}
     </div>
   );
 }

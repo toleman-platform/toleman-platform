@@ -13,16 +13,23 @@ import type { Target } from "@/lib/api";
  *      link to the exact query the count was computed from (never/scanned
  *      distinction included, per AGENTS.md #4);
  *   2. the AI Bill of Materials section generates and exports in place;
- *   3. the "not yet available" dead section is gone.
+ *   3. the "not yet available" dead section is gone;
+ *   4. each AI/ML repo can be scanned from its own row, through the same
+ *      dispatch the target page uses, and the row says what actually
+ *      happened to that dispatch -- queued, failed, or refused -- rather
+ *      than going quiet.
  */
-const { targetsFn, scanSummaryFn, findingsFn, generateSbomFn, getSbomRunFn, aibomFn } = vi.hoisted(() => ({
-  targetsFn: vi.fn(),
-  scanSummaryFn: vi.fn(),
-  findingsFn: vi.fn(),
-  generateSbomFn: vi.fn(),
-  getSbomRunFn: vi.fn(),
-  aibomFn: vi.fn(),
-}));
+const { targetsFn, scanSummaryFn, findingsFn, generateSbomFn, getSbomRunFn, aibomFn, runScanFn, getScanFn } =
+  vi.hoisted(() => ({
+    targetsFn: vi.fn(),
+    scanSummaryFn: vi.fn(),
+    findingsFn: vi.fn(),
+    generateSbomFn: vi.fn(),
+    getSbomRunFn: vi.fn(),
+    aibomFn: vi.fn(),
+    runScanFn: vi.fn(),
+    getScanFn: vi.fn(),
+  }));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -32,8 +39,19 @@ vi.mock("@/lib/api", () => ({
     generateSbom: generateSbomFn,
     getSbomRun: getSbomRunFn,
     aibom: aibomFn,
+    runScan: runScanFn,
+    getScan: getScanFn,
   },
 }));
+
+/**
+ * Matches the single text node inside ScanStatusBadge ("Queued · ModelScan").
+ * Written as a predicate rather than as the literal string so the assertion
+ * does not hinge on reproducing the badge's separator character exactly.
+ */
+function scanPhaseBadge(phase: string, toolLabel: string) {
+  return (content: string) => content.startsWith(phase) && content.includes(toolLabel);
+}
 
 function target(over: Partial<Target> = {}): Target {
   return {
@@ -78,6 +96,8 @@ beforeEach(() => {
   generateSbomFn.mockReset();
   getSbomRunFn.mockReset();
   aibomFn.mockReset();
+  runScanFn.mockReset();
+  getScanFn.mockReset();
 
   scanSummaryFn.mockResolvedValue({});
   findingsFn.mockResolvedValue({ items: [], total: 0 });
@@ -318,5 +338,104 @@ describe("AiSecurityPage - AI Bill of Materials generates and exports in place",
     const button = await screen.findByRole("button", { name: "Generate AI Bill of Materials" });
     expect(button.hasAttribute("disabled")).toBe(true);
     expect(screen.getByText(/deactivated; scanning is off/)).toBeTruthy();
+  });
+});
+
+describe("AiSecurityPage - running the AI scanners from the repo list", () => {
+  // A dispatch the server accepted, followed by a run that never settles.
+  // These tests are about the dispatch and what the row says about it; the
+  // queued -> running -> settled poll itself is covered by
+  // src/hooks/use-scan-run.test.tsx, so it is deliberately left in flight.
+  function acceptedDispatch(scanId: number) {
+    runScanFn.mockResolvedValue({ scan_id: scanId, status: "running" });
+    getScanFn.mockReturnValue(new Promise(() => {}));
+  }
+
+  it("dispatches the tool the button names against the repo in that row", async () => {
+    targetsFn.mockResolvedValue([
+      target({ id: 7, name: "model-server" }),
+      target({ id: 8, name: "chat-svc" }),
+    ]);
+    acceptedDispatch(42);
+
+    render(<AiSecurityPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on chat-svc" }));
+
+    await waitFor(() => expect(runScanFn).toHaveBeenCalledWith(8, "modelscan"));
+    // Not the other row's target, and not the other tool.
+    expect(runScanFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches the LLM ruleset under its own tool id, not ModelScan's", async () => {
+    targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
+    acceptedDispatch(43);
+
+    render(<AiSecurityPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Run LLM rules on model-server" }));
+
+    await waitFor(() => expect(runScanFn).toHaveBeenCalledWith(7, "semgrep-llm"));
+  });
+
+  it("says the scan is queued, and claims nothing about its outcome, while it is in flight", async () => {
+    targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
+    acceptedDispatch(42);
+
+    render(<AiSecurityPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on model-server" }));
+
+    expect(await screen.findByText(scanPhaseBadge("Queued", "ModelScan"))).toBeTruthy();
+    // The run has been accepted and nothing else is known about it yet, so
+    // nothing on the page may read as a finished scan.
+    expect(screen.queryByText(/Completed/)).toBeNull();
+    // ...and the row must not offer to start the same scan a second time.
+    const button = screen.getByRole("button", { name: "Run ModelScan on model-server" });
+    expect(button.hasAttribute("disabled")).toBe(true);
+  });
+
+  it("does not let a deactivated repo be scanned", async () => {
+    targetsFn.mockResolvedValue([target({ id: 7, name: "frozen", is_active: false })]);
+
+    render(<AiSecurityPage />);
+
+    const modelscan = await screen.findByRole("button", { name: "Run ModelScan on frozen" });
+    const llmRules = screen.getByRole("button", { name: "Run LLM rules on frozen" });
+    expect(modelscan.hasAttribute("disabled")).toBe(true);
+    expect(llmRules.hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(modelscan);
+    expect(runScanFn).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a refused dispatch as a failure, with the reason the server gave", async () => {
+    targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
+    // The shape POST /api/scans/run returns when it will not run the tool:
+    // no scan id, so there is nothing to poll and nothing to report later.
+    runScanFn.mockResolvedValue({ error: "modelscan is not enabled for this workspace" });
+
+    render(<AiSecurityPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on model-server" }));
+
+    expect(await screen.findByText(scanPhaseBadge("Failed", "ModelScan"))).toBeTruthy();
+    expect(screen.getByText("modelscan is not enabled for this workspace")).toBeTruthy();
+    expect(getScanFn).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a dispatch that never reached the server as a failure", async () => {
+    targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
+    runScanFn.mockRejectedValue(new Error("Failed to fetch"));
+
+    render(<AiSecurityPage />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on model-server" }));
+
+    expect(await screen.findByText(scanPhaseBadge("Failed", "ModelScan"))).toBeTruthy();
+    expect(screen.getByText("Failed to fetch")).toBeTruthy();
+    // The action comes back rather than staying stuck mid-dispatch.
+    const button = screen.getByRole("button", { name: "Run ModelScan on model-server" });
+    expect(button.hasAttribute("disabled")).toBe(false);
   });
 });

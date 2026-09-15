@@ -99,10 +99,28 @@
      own deepened value below since that same bright cyan is unreadable as
      text on white (see globals-level comment). */
   --accent-strong: #22c1d9;
-  --destructive: #f0555c;
+  /* Lightened from #f0555c. That value cleared AA on the plain canvas (5.2:1)
+     and on --card (4.8:1), but `text-destructive` is almost never used on a
+     bare surface: lib/severity.ts, status-badge.tsx and the KEV badge all
+     render it on a `bg-destructive/10` or `/20` wash of itself, which lifts
+     the ground and closes the gap. Measured on --card: /10 wash 4.30:1 and
+     /20 wash 3.74:1, both under the 4.5:1 body-text bar, as was
+     text-destructive on --muted/--secondary (4.40:1) and --accent (4.46:1).
+     #fa7f86 takes those to 5.66:1, 4.69:1, 6.06:1 and 6.19:1. It is also
+     still a fill (destructive Button); --destructive-foreground on it is
+     7.1:1, up from 6.5:1. */
+  --destructive: #fa7f86;
   --destructive-foreground: #0d1b1e;
   --border: #2b2e33;
   --input: #2b2e33;
+  /* Scrim behind a modal or drawer. A dialog's own surface is --card, so the
+     scrim's job is to push the page behind it far enough down that the
+     dialog reads as being in front. The alpha is chosen per ground rather
+     than shared: pure black at 0.62 drops this charcoal canvas 3.3x in
+     relative luminance (0.0090 -> 0.0027), while that same 0.62 on the
+     near-white canvas crushes it to mid-grey and hides more context than it
+     needs to. See the light value for its own number. */
+  --overlay: rgb(0 0 0 / 0.62);
   /* --ring is tied to --primary/button semantics (focus outline around
      interactive controls), not to bare-text contrast, so it stays fixed
      alongside --primary for the same reason. */
@@ -110,7 +128,7 @@
   --chart-1: #22c1d9;
   --chart-2: #4fc3d9;
   --chart-3: #f2924a;
-  --chart-4: #f0555c;
+  --chart-4: #fa7f86; /* kept mirrored to --destructive; see its note above */
   --chart-5: #34b774;
   --radius: 0.75rem;
   --radius-xs: 0.25rem;
@@ -217,15 +235,25 @@
   --accent: #e6f6f9; /* soft cyan hover wash, replaces dark's saturated teal fill */
   --accent-foreground: #161c2b;
   --accent-strong: #0a7490; /* deepened from dark's #06b6d4 for contrast on white */
-  --destructive: #c0193f; /* deepened critical/error red */
+  /* Deepened a step from #c0193f, for the same reason the dark value moved:
+     the KEV badge renders text-destructive on a `bg-destructive/20` wash of
+     itself, which measured 4.32:1 on white — just under the body-text bar.
+     #b01639 takes that pair to 4.88:1 and leaves every lighter ground
+     comfortably clear (the /10 wash 5.85:1, plain --card 6.95:1). */
+  --destructive: #b01639; /* deepened critical/error red */
   --destructive-foreground: #fff5f5;
   --border: #dde2ea; /* hairline */
   --input: #dde2ea;
+  /* Black at the dark theme's 0.62 would take this canvas to mid-grey; 0.45
+     gives a comparable 3.8x luminance drop (0.939 -> 0.245) and keeps the
+     white dialog surface at 3.6:1 against the dimmed page, above the 3:1 bar
+     for a boundary that carries meaning. */
+  --overlay: rgb(0 0 0 / 0.45);
   --ring: var(--accent-strong);
   --chart-1: var(--accent-strong); /* "Medium" severity reuses the brand accent */
   --chart-2: #0e6ba8; /* deepened info blue (was unused in dark; now backs "already integrated") */
   --chart-3: #8a6200; /* deepened amber/warning; bright yellow is unreadable on white */
-  --chart-4: #c0193f; /* deepened red, mirrors --destructive */
+  --chart-4: #b01639; /* deepened red, mirrors --destructive */
   --chart-5: #047857; /* deepened success green */
   --sidebar: #ffffff;
   --sidebar-foreground: #161c2b;
@@ -307,6 +335,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* Backs the `bg-overlay` utility every modal/drawer scrim uses. The token
+     already carries its own alpha, so it is applied bare -- an opacity
+     modifier (`bg-overlay/50`) would compose on top of that and is not what
+     any caller wants. */
+  --color-overlay: var(--overlay);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);

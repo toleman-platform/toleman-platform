@@ -10,6 +10,23 @@ describe("BulkActionBar", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  // The bar returning null at zero takes its actions and its children down
+  // with it, so anything that has to work with nothing selected -- a "scan
+  // all", a scope-based rollout -- cannot be passed in here. Pinned because
+  // it is invisible from the call site: the page reads as if it renders a
+  // button, and the button simply never appears.
+  it("takes its actions and children down with it at count 0", () => {
+    const onClick = vi.fn();
+    render(
+      <BulkActionBar count={0} onClear={vi.fn()} actions={[{ label: "Scan all", onClick }]}>
+        <span data-testid="passthrough">Reason</span>
+      </BulkActionBar>,
+    );
+
+    expect(screen.queryByRole("button", { name: "Scan all" })).toBeNull();
+    expect(screen.queryByTestId("passthrough")).toBeNull();
+  });
+
   it("announces count with role='status' and aria-live='polite'", () => {
     render(<BulkActionBar count={3} onClear={vi.fn()} />);
     const bar = screen.getByRole("status");

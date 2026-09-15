@@ -1,4 +1,6 @@
+import { cookies } from "next/headers";
 import { api } from "@/lib/api";
+import { WORKSPACE_COOKIE_KEY, parseWorkspaceCookie } from "@/lib/workspace-cookie";
 import {
   FindingsFilterBar,
   FindingsList,
@@ -27,6 +29,11 @@ export default async function FindingsPage({
   searchParams: Promise<SearchParamRecord>;
 }) {
   const sp = await searchParams;
+  // (#506) The global workspace switcher's active workspace, read from the
+  // cookie WorkspaceContext keeps in sync -- see lib/workspace-cookie.ts.
+  // `undefined` (no cookie, or "All workspaces") falls back to this page's
+  // existing unfiltered/accessible-scope default.
+  const workspace_id = parseWorkspaceCookie((await cookies()).get(WORKSPACE_COOKIE_KEY)?.value) ?? undefined;
   const {
     severity,
     tool,
@@ -68,6 +75,7 @@ export default async function FindingsPage({
     rule_id,
     new_since_days,
     exclude_category: queued.exclude_category,
+    workspace_id,
   };
 
   const listQuery = { ...commonFilters, category, state, resolved: queued.resolved };
@@ -86,7 +94,7 @@ export default async function FindingsPage({
             page_size: pageSize,
           }),
         ),
-    api.targets().catch(() => []),
+    api.targets({ workspace_id }).catch(() => []),
     // (#270) Every dimension's per-value counts in one call, taking exactly
     // the filters the list above took. Each dimension is counted with every
     // OTHER filter applied but not its own, so the filter bar reads as a

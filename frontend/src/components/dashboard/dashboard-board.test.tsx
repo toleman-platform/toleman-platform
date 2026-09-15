@@ -1,10 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { DashboardBoard } from "./dashboard-board";
 import type { LayoutWidget, WidgetCatalogEntry } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 const saveDashboardLayout = vi.fn();
 const dashboardWidgetData = vi.fn();
+const workspaces = vi.fn();
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -14,6 +16,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       ...actual.api,
       saveDashboardLayout: (...args: unknown[]) => saveDashboardLayout(...args),
       dashboardWidgetData: (...args: unknown[]) => dashboardWidgetData(...args),
+      workspaces: (...args: unknown[]) => workspaces(...args),
     },
   };
 });
@@ -30,6 +33,8 @@ function kpiWidget(id = "w1"): LayoutWidget {
 beforeEach(() => {
   saveDashboardLayout.mockReset();
   dashboardWidgetData.mockReset();
+  workspaces.mockReset();
+  workspaces.mockResolvedValue([]);
 });
 
 describe("DashboardBoard - layout read failure (data-loss guard)", () => {
@@ -39,7 +44,7 @@ describe("DashboardBoard - layout read failure (data-loss guard)", () => {
     // component treated the two the same, "Edit Dashboard" -> "Save
     // Dashboard" would PUT that placeholder back as the user's new layout,
     // overwriting whatever they actually had saved with no undo.
-    render(
+    renderWithWorkspace(
       <DashboardBoard
         initialWidgets={[]}
         catalog={CATALOG}
@@ -65,7 +70,7 @@ describe("DashboardBoard - layout read failure (data-loss guard)", () => {
     // Even if the caller (a bug elsewhere) passed real widgets alongside
     // layoutFailed, the gate must still win -- the flag, not the widget
     // count, is what decides whether editing is safe.
-    render(
+    renderWithWorkspace(
       <DashboardBoard
         initialWidgets={[kpiWidget()]}
         catalog={CATALOG}
@@ -88,7 +93,7 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
     // page.tsx's fallback for a failed widget-data batch is `{widgets: {}}`,
     // so every widget's lookup is `undefined` -- indistinguishable from
     // "still in flight" unless dataFailed says otherwise.
-    render(
+    renderWithWorkspace(
       <DashboardBoard
         initialWidgets={[kpiWidget()]}
         catalog={CATALOG}
@@ -110,7 +115,7 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
     // whether the last fetch succeeded -- that's a legitimately different
     // reason for "no entry" than a failed batch, and must not be repainted
     // as an error.
-    render(
+    renderWithWorkspace(
       <DashboardBoard
         initialWidgets={[kpiWidget("w1")]}
         catalog={CATALOG}
@@ -134,7 +139,7 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
   });
 
   it("renders normally with no banner and no error cards when nothing failed", () => {
-    render(
+    renderWithWorkspace(
       <DashboardBoard
         initialWidgets={[kpiWidget("w1")]}
         catalog={CATALOG}
@@ -155,7 +160,7 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
 
 describe("DashboardBoard - widget catalog failure", () => {
   it("surfaces the failed source in the shared partial-failure banner", () => {
-    render(
+    renderWithWorkspace(
       <DashboardBoard
         initialWidgets={[kpiWidget()]}
         catalog={[]}

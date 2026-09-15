@@ -21,6 +21,7 @@ import { ErrorState } from "@/components/ui/error-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { ReloadButton } from "@/components/reload-button";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { WidgetShell } from "@/components/dashboard/widget-shell";
 import { WidgetBody, WIDGET_META } from "@/components/dashboard/widgets";
 import { useStoredWidgetVisibility } from "@/components/dashboard/use-widget-visibility";
@@ -101,6 +102,11 @@ export function DashboardBoard({
   const [saving, startSaving] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const storedVisibility = useStoredWidgetVisibility(userId);
+  // (#506) page.tsx's server-side fetch already used the cookie mirror of
+  // this for `initialData`; the client-side refetch after saving a layout
+  // needs the same scope or it would silently widen back to "everything"
+  // until the next full page load.
+  const { activeWorkspaceId } = useWorkspaceContext();
 
   // A layout read that failed must never be treated as "the user
   // saved zero widgets" -- `initialWidgets` here is just the fallback `[]`
@@ -219,7 +225,7 @@ export function DashboardBoard({
       try {
         const saved = await api.saveDashboardLayout(widgets);
         setWidgets(saved.widgets);
-        const fresh = await api.dashboardWidgetData();
+        const fresh = await api.dashboardWidgetData(activeWorkspaceId);
         setData(fresh);
         setEditMode(false);
       } catch (e) {

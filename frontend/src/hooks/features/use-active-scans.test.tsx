@@ -1,18 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useActiveScans } from "./use-active-scans";
+import { WorkspaceProvider } from "@/contexts/workspace-context";
 
 const activeScansMock = vi.hoisted(() => vi.fn());
+const workspacesMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({
   api: {
     activeScans: activeScansMock,
+    workspaces: workspacesMock,
   },
 }));
+
+// (#506) useActiveScans now follows the global workspace switcher, so it
+// needs a WorkspaceProvider ancestor -- same as any other real consumer.
+function wrapper({ children }: { children: React.ReactNode }) {
+  return <WorkspaceProvider userId={null}>{children}</WorkspaceProvider>;
+}
 
 describe("useActiveScans", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     activeScansMock.mockReset();
+    workspacesMock.mockReset();
+    workspacesMock.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -24,7 +35,7 @@ describe("useActiveScans", () => {
       "1": [{ id: 101, tool: "semgrep", status: "running" }],
     });
 
-    const { result } = renderHook(() => useActiveScans());
+    const { result } = renderHook(() => useActiveScans(), { wrapper });
 
     expect(result.current.activeScans).toEqual({});
     expect(result.current.isTargetScanning(1)).toBe(false);
@@ -43,7 +54,7 @@ describe("useActiveScans", () => {
   it("polls every 20s when idle (no active scans)", async () => {
     activeScansMock.mockResolvedValue({});
 
-    renderHook(() => useActiveScans());
+    renderHook(() => useActiveScans(), { wrapper });
 
     await act(async () => {
       await Promise.resolve();
@@ -68,7 +79,7 @@ describe("useActiveScans", () => {
       "42": [{ id: 202, tool: "gitleaks", status: "running" }],
     });
 
-    const { result } = renderHook(() => useActiveScans());
+    const { result } = renderHook(() => useActiveScans(), { wrapper });
 
     await act(async () => {
       await Promise.resolve();
@@ -90,7 +101,7 @@ describe("useActiveScans", () => {
 
   it("refresh forces an immediate poll", async () => {
     activeScansMock.mockResolvedValue({});
-    const { result } = renderHook(() => useActiveScans());
+    const { result } = renderHook(() => useActiveScans(), { wrapper });
 
     await act(async () => {
       await Promise.resolve();
@@ -109,7 +120,7 @@ describe("useActiveScans", () => {
 
   it("suppresses polling errors gracefully", async () => {
     activeScansMock.mockRejectedValueOnce(new Error("Network disconnect"));
-    const { result } = renderHook(() => useActiveScans());
+    const { result } = renderHook(() => useActiveScans(), { wrapper });
 
     await act(async () => {
       await Promise.resolve();
@@ -122,7 +133,7 @@ describe("useActiveScans", () => {
 
   it("cancels timer and does not update state on unmount", async () => {
     activeScansMock.mockResolvedValue({});
-    const { unmount } = renderHook(() => useActiveScans());
+    const { unmount } = renderHook(() => useActiveScans(), { wrapper });
 
     await act(async () => {
       await Promise.resolve();

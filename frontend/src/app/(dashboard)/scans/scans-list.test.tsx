@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { ScansList } from "./scans-list";
 import type { Target } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * (core H5) Bulk scan dispatch used to report its own outcome as one plain
@@ -14,13 +15,14 @@ import type { Target } from "@/lib/api";
  * renders through (see finding-detail-drawer.test.tsx's State Updated /
  * Triage Failed pair).
  */
-const { runScan, activeScans } = vi.hoisted(() => ({
+const { runScan, activeScans, workspaces } = vi.hoisted(() => ({
   runScan: vi.fn(),
   activeScans: vi.fn(),
+  workspaces: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
-  api: { runScan, activeScans },
+  api: { runScan, activeScans, workspaces },
 }));
 
 vi.mock("next/navigation", () => ({
@@ -86,6 +88,8 @@ beforeEach(() => {
   runScan.mockReset();
   activeScans.mockReset();
   activeScans.mockResolvedValue({});
+  workspaces.mockReset();
+  workspaces.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -97,7 +101,7 @@ describe("ScansList bulk dispatch outcome", () => {
     runScan.mockResolvedValue({ scan_id: 1, status: "running" });
     const targets = [target({ id: 1, name: "svc-a" }), target({ id: 2, name: "svc-b" })];
 
-    render(<ScansList targets={targets} summary={{}} />);
+    renderWithWorkspace(<ScansList targets={targets} summary={{}} />);
 
     fireEvent.click(screen.getByLabelText("Select svc-a"));
     fireEvent.click(screen.getByLabelText("Select svc-b"));
@@ -119,7 +123,7 @@ describe("ScansList bulk dispatch outcome", () => {
     );
     const targets = [target({ id: 1, name: "svc-a" }), target({ id: 2, name: "svc-b" })];
 
-    render(<ScansList targets={targets} summary={{}} />);
+    renderWithWorkspace(<ScansList targets={targets} summary={{}} />);
 
     fireEvent.click(screen.getByLabelText("Select svc-a"));
     fireEvent.click(screen.getByLabelText("Select svc-b"));
@@ -142,7 +146,7 @@ describe("ScansList bulk dispatch outcome", () => {
     runScan.mockRejectedValue(new Error("503"));
     const targets = [target({ id: 1, name: "svc-a" }), target({ id: 2, name: "svc-b" })];
 
-    render(<ScansList targets={targets} summary={{}} />);
+    renderWithWorkspace(<ScansList targets={targets} summary={{}} />);
 
     fireEvent.click(screen.getByLabelText("Select svc-a"));
     fireEvent.click(screen.getByLabelText("Select svc-b"));
@@ -160,7 +164,7 @@ describe("ScansList bulk dispatch outcome", () => {
   it("tells the reader nothing was dispatched, rather than a bare error, when every selection is deactivated", async () => {
     const targets = [target({ id: 1, name: "svc-a", is_active: false })];
 
-    render(<ScansList targets={targets} summary={{}} />);
+    renderWithWorkspace(<ScansList targets={targets} summary={{}} />);
 
     fireEvent.click(screen.getByLabelText("Select svc-a"));
     fireEvent.click(screen.getByRole("button", { name: "Scan Selected" }));

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ActiveScans } from "@/lib/api";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 
 /**
  * L3 Domain Hook: Monitors running scans across all target repositories (issue #212).
@@ -24,6 +25,10 @@ export type UseActiveScansResult = {
 
 export function useActiveScans(): UseActiveScansResult {
   const [activeScans, setActiveScans] = useState<ActiveScans>({});
+  // (#506) Follows the global workspace switcher, same as every other
+  // dashboard surface; "All workspaces" (null) preserves the previous
+  // unfiltered/accessible-scope behavior.
+  const { activeWorkspaceId } = useWorkspaceContext();
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stoppedRef = useRef(false);
@@ -35,7 +40,7 @@ export function useActiveScans(): UseActiveScansResult {
 
     async function pollOnce() {
       try {
-        const data = await api.activeScans();
+        const data = await api.activeScans(activeWorkspaceId);
         if (stoppedRef.current) return;
         setActiveScans(data);
         anyActiveRef.current = Object.keys(data).length > 0;
@@ -63,7 +68,7 @@ export function useActiveScans(): UseActiveScansResult {
       stoppedRef.current = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
-  }, []);
+  }, [activeWorkspaceId]);
 
   const refresh = useCallback(() => {
     anyActiveRef.current = true;

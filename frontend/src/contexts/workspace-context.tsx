@@ -32,15 +32,43 @@
  * (deleted workspace, or a different user's leftover choice on a shared
  * machine) is treated the same as "nothing stored" rather than surfaced as
  * an error.
+ *
+ * Also mirrored into a `toleman-active-workspace` cookie -- same
+ * client-and-server-agree reasoning as ThemeToggle's `toleman-theme` cookie
+ * (src/components/theme-toggle.tsx): Dashboard/Findings/Targets/Scans fetch
+ * their data server-side in a Server Component, which has no access to
+ * localStorage, so the cookie is what lets those pages' initial render
+ * already reflect the active workspace instead of a client-side refetch
+ * flashing in a second, narrower result right after hydration. Unlike the
+ * localStorage key, the cookie is NOT per-user (a plain cookie has no cheap
+ * place to put a user id the server hasn't validated yet) -- so it is
+ * re-synced to this browser's actual resolved `activeWorkspaceId` on every
+ * change, including the per-user resolution on mount/login-switch, not only
+ * on an explicit pick. A shared machine's cookie can therefore be one
+ * render stale immediately after a different user logs in, self-correcting
+ * on that same first client render; the same trade-off ThemeInit documents
+ * for the theme cookie.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, type WorkspaceSummary } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import type { UseAsyncDataResult } from "@/hooks/use-async-data";
+import { WORKSPACE_COOKIE_KEY } from "@/lib/workspace-cookie";
+
+export { WORKSPACE_COOKIE_KEY };
 
 const STORAGE_KEY_PREFIX = "toleman-active-workspace";
 const ALL_WORKSPACES_SENTINEL = "all";
+
+function writeWorkspaceCookie(workspaceId: number | null): void {
+  if (typeof document === "undefined") return;
+  const value = workspaceId === null ? ALL_WORKSPACES_SENTINEL : String(workspaceId);
+  // 1 year, lax, no Secure requirement -- same as the theme cookie, works
+  // over plain http in local/dev docker-compose, and carries no sensitive
+  // data.
+  document.cookie = `${WORKSPACE_COOKIE_KEY}=${value}; path=/; max-age=31536000; samesite=lax`;
+}
 
 function storageKey(userId: number): string {
   return `${STORAGE_KEY_PREFIX}:${userId}`;
@@ -129,9 +157,18 @@ export function WorkspaceProvider({
     (id: number | null) => {
       setChosen(id);
       writeStored(userId, id);
+      writeWorkspaceCookie(id);
     },
     [userId],
   );
+
+  // Keeps the cookie in sync with this resolved value even when it changed
+  // for a reason other than an explicit pick above (the per-user default on
+  // first load, or a different user's storage taking over on a shared
+  // machine) -- see the file-level comment for why this mirrors ThemeInit.
+  useEffect(() => {
+    writeWorkspaceCookie(activeWorkspaceId);
+  }, [activeWorkspaceId]);
 
   return (
     <WorkspaceContext.Provider

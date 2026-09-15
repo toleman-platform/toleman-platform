@@ -7,6 +7,7 @@ import { api, type PrGuardrailFinding } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { IGNORE_STATUS_COLOR } from "@/lib/severity";
@@ -17,7 +18,7 @@ import { AlertBanner } from "@/components/ui/alert-banner";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, History as HistoryIcon } from "lucide-react";
-import { serverDate } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 
 // Split into two sub-pages (query-param tabs, same convention as
 // targets/[id]/target-tabs.tsx: tab state lives in the URL, not component
@@ -83,10 +84,13 @@ export function ApprovalQueue() {
 
   // Approve permanently suppresses a security finding; revoke reverses a
   // prior approval and can put a merge block back. Both get a confirmation
-  // that states what changes. Reject is left un-gated: it denies a request
-  // without changing what the guardrail enforces, and the developer can ask
-  // again.
+  // that states what changes. Reject is left un-gated by a confirm dialog:
+  // it denies a request without changing what the guardrail enforces, and
+  // the developer can ask again. It still needs a typed reason (the whole
+  // point of this column existing), so "Reject" expands an inline field
+  // rather than firing immediately.
   const [pending, setPending] = useState<{ finding: PrGuardrailFinding; action: "approve" | "revoke" } | null>(null);
+  const [rejecting, setRejecting] = useState<{ id: number; reason: string } | null>(null);
 
   async function run(id: number, action: () => Promise<unknown>, after: () => void, failureMessage: string) {
     setBusyId(id);
@@ -104,7 +108,16 @@ export function ApprovalQueue() {
 
   const approve = (id: number) =>
     run(id, () => api.approveIgnore(id), refresh, "failed to approve this ignore request");
-  const reject = (id: number) => run(id, () => api.rejectIgnore(id), refresh, "failed to reject this ignore request");
+  const reject = (id: number, reason: string) =>
+    run(
+      id,
+      () => api.rejectIgnore(id, reason),
+      () => {
+        setRejecting(null);
+        refresh();
+      },
+      "failed to reject this ignore request",
+    );
   const revoke = (id: number) =>
     run(id, () => api.revokeIgnore(id), refreshHistory, "failed to revoke this approval");
 
@@ -161,6 +174,34 @@ export function ApprovalQueue() {
                             Nothing was changed: {rowError.message}
                           </p>
                         )}
+                        {rejecting?.id === f.id && (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <Input
+                              autoFocus
+                              className="h-7 min-w-[160px] flex-1 bg-secondary text-xs"
+                              placeholder="Reason for rejecting"
+                              value={rejecting.reason}
+                              disabled={busyId === f.id}
+                              onChange={(e) => setRejecting({ id: f.id, reason: e.target.value })}
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={busyId === f.id || !rejecting.reason.trim()}
+                              onClick={() => reject(f.id, rejecting.reason)}
+                              className="h-7 text-xs text-destructive"
+                            >
+                              Confirm reject
+                            </Button>
+                            <button
+                              onClick={() => setRejecting(null)}
+                              disabled={busyId === f.id}
+                              className="text-xs text-muted-foreground"
+                            >
+                              cancel
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <Button
@@ -172,15 +213,17 @@ export function ApprovalQueue() {
                         >
                           Approve
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busyId === f.id}
-                          onClick={() => reject(f.id)}
-                          className="h-7 text-xs text-destructive"
-                        >
-                          Reject
-                        </Button>
+                        {rejecting?.id !== f.id && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busyId === f.id}
+                            onClick={() => setRejecting({ id: f.id, reason: "" })}
+                            className="h-7 text-xs text-destructive"
+                          >
+                            Reject
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -231,8 +274,20 @@ export function ApprovalQueue() {
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">
                           {DECISION_LABEL[f.ignore_status] || f.ignore_status} by {f.ignore_reviewed_by}
-                          {f.ignore_reviewed_at ? ` · ${serverDate(f.ignore_reviewed_at).toLocaleString()}` : ""}
+                          {f.ignore_reviewed_at ? (
+                            <>
+                              {" · "}
+                              <Timestamp value={f.ignore_reviewed_at} />
+                            </>
+                          ) : (
+                            ""
+                          )}
                         </div>
+                        {f.ignore_status === "rejected" && (
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Reason: {f.reject_reason || "not recorded"}
+                          </div>
+                        )}
                         {rowError?.id === f.id && (
                           <p role="alert" className="mt-1 text-xs text-destructive">
                             Nothing was changed: {rowError.message}

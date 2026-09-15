@@ -202,3 +202,19 @@ describe("GlobalIntegrations secret fields", () => {
     expect(jiraInput.getAttribute("type")).toBe("password");
   });
 });
+
+// M20: the GitHub PAT TTL default used to be "" (Never) with no stated
+// reason -- an external review flagged it as arbitrary. This is a
+// considered default now (90 days), not a behavior change an admin who
+// explicitly picks a TTL would ever notice; it only changes what an admin
+// who clicks through without choosing one ends up with.
+describe("GlobalIntegrations GitHub PAT TTL default", () => {
+  it("defaults the new-token TTL to 90 days rather than Never", async () => {
+    getConfig.mockResolvedValue(config());
+    render(<GlobalIntegrations />);
+
+    const select = (await screen.findByLabelText("Auto-purge after")) as HTMLSelectElement;
+    expect(select.value).toBe("2160");
+    expect(select.options[select.selectedIndex].text).toBe("90 days");
+  });
+});

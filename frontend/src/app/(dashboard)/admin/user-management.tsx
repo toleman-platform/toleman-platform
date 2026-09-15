@@ -9,7 +9,18 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
-const ROLES = ["admin", "user", "viewer", "developer", "security_engineer"];
+// M18: both `<select>`s below used to render these values verbatim
+// (`security_engineer` as an option's own text), so the raw snake_case enum
+// -- not a label meant for anyone to read -- was the only thing on screen.
+// `value` stays the wire format the API expects; `label` is the only thing
+// this file adds.
+const ROLES: { value: string; label: string }[] = [
+  { value: "admin", label: "Admin" },
+  { value: "user", label: "User" },
+  { value: "viewer", label: "Viewer" },
+  { value: "developer", label: "Developer" },
+  { value: "security_engineer", label: "Security engineer" },
+];
 
 export function UserManagement() {
   // Was `api.users().then(setUsers)` with no `.catch`, so a failed read left
@@ -126,8 +137,8 @@ export function UserManagement() {
               onChange={(e) => setRole(e.target.value)}
             >
               {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
+                <option key={r.value} value={r.value}>
+                  {r.label}
                 </option>
               ))}
             </select>
@@ -178,8 +189,8 @@ export function UserManagement() {
                   onChange={(e) => requestRoleChange(u, e.target.value)}
                 >
                   {ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
+                    <option key={r.value} value={r.value}>
+                      {r.label}
                     </option>
                   ))}
                 </select>

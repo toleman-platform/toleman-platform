@@ -34,6 +34,7 @@ vi.mock("next/navigation", () => ({
 afterEach(() => {
   githubAppStatus.mockReset();
   githubAppManifestData.mockReset();
+  githubAppSync.mockReset();
 });
 
 type StatusOverrides = Partial<{
@@ -275,6 +276,42 @@ describe("ConnectGithubCard, an App whose webhook has gone dead", () => {
     render(<ConnectGithubCard />);
 
     expect(await screen.findByText(/No webhook secret set/)).toBeDefined();
+  });
+});
+
+// M24: syncResult used to be one `string | null` rendered through the same
+// neutral paragraph regardless of whether the sync succeeded or failed, so a
+// failed sync read exactly like a successful one at a glance. These assert
+// the two are now visibly different things, not just different words.
+describe("ConnectGithubCard, syncing repos", () => {
+  it("reports a successful sync distinctly from how a failure would render", async () => {
+    githubAppStatus.mockResolvedValue(statusPayload({ apps: [appEntry()] }));
+    githubAppSync.mockResolvedValue({ created: 3 });
+
+    render(<ConnectGithubCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Sync Repos Now" }));
+
+    const banner = await screen.findByRole("alert");
+    expect(banner.textContent).toContain("3 new repo(s) added as targets");
+    // A failure banner carries "destructive" styling (see the next test);
+    // a real defect here would be this test passing with that class present.
+    expect(banner.className).not.toContain("destructive");
+  });
+
+  it("reports a failed sync as an alert, not the same muted line a success gets", async () => {
+    githubAppStatus.mockResolvedValue(statusPayload({ apps: [appEntry()] }));
+    githubAppSync.mockRejectedValue(new Error("GitHub API rate limited"));
+
+    render(<ConnectGithubCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Sync Repos Now" }));
+
+    const banner = await screen.findByRole("alert");
+    expect(banner.textContent).toContain("GitHub API rate limited");
+    expect(banner.className).toContain("destructive");
+    // The success copy must never appear next to a failed attempt.
+    expect(screen.queryByText(/new repo\(s\) added as targets/)).toBeNull();
   });
 });
 

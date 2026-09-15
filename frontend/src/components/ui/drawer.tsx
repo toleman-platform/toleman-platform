@@ -199,7 +199,7 @@ export function Drawer({
         ref={drawerRef}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "relative flex h-full w-full flex-col border-l border-border bg-card text-card-foreground shadow-2xl transition-transform duration-200 ease-out animate-in slide-in-from-right motion-reduce:animate-none motion-reduce:transition-none",
+          "relative flex h-full w-full flex-col border-l border-dialog-edge bg-card text-card-foreground shadow-2xl transition-transform duration-200 ease-out animate-in slide-in-from-right motion-reduce:animate-none motion-reduce:transition-none",
           SIZE_MAP[size],
           className
         )}

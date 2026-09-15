@@ -202,45 +202,177 @@ def resolve_top_risky_repos(session: Session, ws_ids, config: dict) -> dict:
     return {"items": items[:limit]}
 
 
-def resolve_recent_findings(session: Session, ws_ids, config: dict) -> dict:
-    """Most recently first-seen findings, org-wide; config: `limit`
-    (default 10, clamped 1-100). Reuses app.core.sla.compute_sla_status the
-    same way GET /api/findings does.
+def resolve_needs_action_queue(session: Session, ws_ids, config: dict) -> dict:
+    """Top of the "Needs action" queue -- the same grouped view GET
+    /api/findings/groups renders on the Findings page, with that page's own
+    "Needs action" tab filters applied (frontend/src/lib/findings-view.ts's
+    `queueFilters("action")`: open states only, License excluded), capped to
+    `limit` rows (default 5, clamped 1-25) in that same default
+    ("exploitability" -- highest priority score first) order.
 
-    Issue #119: a UX audit flagged 4 visually-identical rows in this widget.
-    Checked live against Postgres; there was zero real duplication (no
-    repeated `dedup_hash`, distinct `id`s, `SELECT dedup_hash, count(*) ...
-    HAVING count(*) > 1` returned 0 rows across all findings): a single scan
-    can legitimately trigger the same rule (e.g. Semgrep's
-    django-no-csrf-token) across several template files within milliseconds
-    of each other, and the old payload here (title/severity/tool/target/
-    date-only first_seen) had no field that differed between those rows.
-    `file_path` is added below so the frontend can render the one thing
-    that actually distinguishes them, instead of a client-side dedup hack
-    papering over data that was never duplicated.
+    This widget (catalog id `recent_findings`, kept for backward
+    compatibility with already-saved DashboardLayout rows) used to be
+    literally that: the N most-recently-first-seen findings, unfiltered by
+    triage state or category. Observed live on a real instance, that
+    rendered ten rows of which four were the identical Semgrep suggestion
+    to use `QUERY.count()` instead of `len(QUERY.all())`, and three more
+    were "logger call with a potential hardcoded secret" firing on log
+    FORMAT STRINGS containing no secret (e.g. "Purged expired GitHub token
+    for workspace %s") -- while the Findings page's own "Needs action" queue
+    reported a single finding actually needing attention, and none of the
+    ten rows showed their triage state, so an already-mitigated finding
+    looked exactly like an open one. The single most-visible strip on the
+    landing page was spending itself on one noisy lint rule instead of the
+    one thing a reader actually had to act on.
+
+    Built on app.core.grouping's group key/aggregate/representative-
+    selection primitives (the same ones GET /api/findings/groups is built
+    on) rather than re-deriving that logic by hand, so this cannot quietly
+    drift from what the real queue would show for the same filters --
+    imported from app.api.findings itself is deliberately avoided, since
+    that is the API layer importing back into core would invert. `state` on
+    each item is the *representative* member's (always "Open" or
+    "Reopened": every member here already passed the open-states filter
+    below, so it is never a resolved state) -- never synthesized across a
+    group's members, the same conservative rule app.core.grouping already
+    applies to SLA/fixability (see `representative_finding`'s docstring).
     """
-    limit = max(1, min(int(config.get("limit", 10)), 100))
-    query = _scoped_findings_query(ws_ids).order_by(Finding.first_seen.desc()).limit(limit)
-    findings = list(session.exec(query).all())
-    names = _target_names(session, {f.target_id for f in findings})
-    items = []
-    for f in findings:
-        sla_days, sla_violated = compute_sla_status(session, f)
+    from app.core.grouping import (
+        UNGROUPED_CATEGORIES,
+        group_aggregate_columns,
+        representative_finding,
+        severity_for_weight,
+    )
+    from app.core.tool_registry import tool_category, tools_in_category
+
+    limit = max(1, min(int(config.get("limit", 5)), 25))
+
+    # Same open-states + category exclusion as queueFilters("action"): a
+    # copyleft license on a transitive dependency is a quarterly policy call,
+    # not an incident, and a resolved/accepted/false-positive/won't-fix
+    # finding is, by definition, not something left to do -- letting either
+    # kind sit in a strip a reader reasonably reads as a to-do is exactly
+    # the bug this resolver exists to fix.
+    #
+    # The exclusion is expressed the way the real queue expresses it -- NOT IN
+    # the License tools -- rather than IN `vulnerability_tools()`, and the
+    # difference is not cosmetic. `vulnerability_tools()` is derived from
+    # `all_known_tools()`, which by design contains only tools present in
+    # TOOL_REGISTRY; an "Other"-category tool (any `tool` string a CI pipeline
+    # invents when it POSTs SARIF to /api/ingest/{target_id}) is therefore in
+    # neither set. Filtering by IN would silently drop those findings from this
+    # widget while GET /api/findings/groups?queue=action still lists them,
+    # because _apply_category excludes only the License category -- so a
+    # custom scanner's Critical would top the Findings page and be absent from
+    # the dashboard, which is precisely the disagreement this resolver exists
+    # to end. NOT IN keeps unrecognised tools in scope, and a newly integrated
+    # scanner lands here by default rather than going missing.
+    base = _scoped_findings_query(ws_ids).where(
+        Finding.state.in_(OPEN_STATES), Finding.tool.not_in(tools_in_category("License"))
+    )
+
+    ungrouped_tools: set[str] = set()
+    for category in UNGROUPED_CATEGORIES:
+        ungrouped_tools.update(tools_in_category(category))
+
+    stubs: list[dict] = []
+
+    # --- the collapsible majority: one row per (tool, rule_id) decision ---
+    grouped_query = base
+    if ungrouped_tools:
+        grouped_query = grouped_query.where(Finding.tool.not_in(ungrouped_tools))
+    # `execute`, not `exec`: see the identical comment in
+    # app/api/findings.py's list_finding_groups -- the aggregate row needs
+    # to come back as a labelled Row, not unwrapped to its first column.
+    rows = session.execute(
+        grouped_query.with_only_columns(*group_aggregate_columns())
+        .group_by(Finding.tool, Finding.rule_id)
+        .order_by(func.max(Finding.priority_score).desc(), Finding.tool, Finding.rule_id)
+        .limit(limit)
+    ).all()
+    for row in rows:
+        stubs.append(
+            {
+                "tool": row.tool,
+                "rule_id": row.rule_id,
+                "grouped": True,
+                "finding": None,
+                "severity": severity_for_weight(row.severity_weight or 0),
+                "finding_count": row.finding_count,
+                "max_priority_score": row.max_priority_score or 0,
+            }
+        )
+
+    # --- the deliberately ungrouped: Secrets/Malicious Package, one row each --
+    # (one leaked credential is one incident, not an instance of a gitleaks
+    # rule; see app.core.grouping's module docstring for why these never
+    # collapse into each other.)
+    if ungrouped_tools:
+        singles = list(
+            session.exec(
+                base.where(Finding.tool.in_(ungrouped_tools))
+                .order_by(Finding.priority_score.desc(), Finding.id)
+                .limit(limit)
+            ).all()
+        )
+        for f in singles:
+            stubs.append(
+                {
+                    "tool": f.tool,
+                    "rule_id": f.rule_id,
+                    "grouped": False,
+                    "finding": f,
+                    "severity": getattr(f.severity, "value", f.severity),
+                    "finding_count": 1,
+                    "max_priority_score": f.priority_score,
+                }
+            )
+
+    # Same default ("exploitability") tiebreak _sort_groups uses: highest
+    # priority score, then largest blast radius. Both halves above are
+    # already internally ordered and deterministic, so Python's stable sort
+    # keeps that ordering within ties instead of falling through to
+    # whatever order the database happened to return.
+    stubs.sort(key=lambda g: (g["max_priority_score"], g["finding_count"]), reverse=True)
+    stubs = stubs[:limit]
+
+    items: list[dict] = []
+    for stub in stubs:
+        rep = stub["finding"]
+        if rep is None:
+            # Scoped to `grouped_query`, never a bare select over the table --
+            # see the identical concern in list_finding_groups: a
+            # representative picked outside the caller's own filtered query
+            # could be a finding this caller isn't entitled to see.
+            rep = representative_finding(
+                session, grouped_query.where(Finding.tool == stub["tool"], Finding.rule_id == stub["rule_id"])
+            )
+            if rep is None:
+                continue
+        sla_days, sla_violated = compute_sla_status(session, rep)
         items.append(
             {
-                "finding_id": f.id,
-                "title": f.title,
-                "severity": f.severity,
-                "state": f.state,
-                "tool": f.tool,
-                "target_id": f.target_id,
-                "target_name": names.get(f.target_id),
-                "file_path": f.file_path,
-                "first_seen": f.first_seen.isoformat(),
+                "tool": stub["tool"],
+                "rule_id": stub["rule_id"],
+                "category": tool_category(stub["tool"]),
+                "title": rep.title,
+                "severity": stub["severity"],
+                "state": rep.state,
+                "grouped": stub["grouped"],
+                "finding_count": stub["finding_count"],
+                "representative_id": rep.id,
+                "representative_target_id": rep.target_id,
+                "representative_file_path": rep.file_path,
+                "first_seen": rep.first_seen.isoformat(),
                 "sla_days": sla_days,
                 "sla_violated": sla_violated,
             }
         )
+
+    names = _target_names(session, {i["representative_target_id"] for i in items})
+    for item in items:
+        item["target_name"] = names.get(item["representative_target_id"])
+
     return {"items": items}
 
 
@@ -452,10 +584,14 @@ WIDGET_CATALOG: dict[str, dict[str, Any]] = {
         "default_config": {"limit": 5},
     },
     "recent_findings": {
-        "name": "Recent Findings",
-        "description": "Most recently discovered findings, org-wide.",
-        "resolver": resolve_recent_findings,
-        "default_config": {"limit": 10},
+        # Catalog id kept as `recent_findings` for backward compatibility
+        # with DashboardLayout rows saved before this widget's data source
+        # changed; the name/description/resolver below are what actually
+        # changed. See resolve_needs_action_queue's docstring for why.
+        "name": "Needs Action Queue",
+        "description": "Top of the Needs Action queue: open, non-licence findings grouped the same way the Findings page groups them.",
+        "resolver": resolve_needs_action_queue,
+        "default_config": {"limit": 5},
     },
     "security_score": {
         "name": "Security Score",

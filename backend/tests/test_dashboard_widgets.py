@@ -26,7 +26,7 @@ from app.core.widgets import (
     resolve_guardrail_activity,
     resolve_kpi_cards,
     resolve_live_scan_activity,
-    resolve_recent_findings,
+    resolve_needs_action_queue,
     resolve_security_score,
     resolve_sla_compliance,
     resolve_top_risky_repos,
@@ -206,12 +206,93 @@ def test_top_risky_repos_ranks_by_open_critical_high(engine):
     assert data["items"][0]["high"] == 1
 
 
-def test_recent_findings_ordered_and_limited(engine):
+def test_needs_action_queue_excludes_mitigated_orders_by_priority_and_shows_state(engine):
+    """This widget used to be "Recent Findings" -- most-recent first_seen,
+    unfiltered by triage state -- which could and did render an
+    already-mitigated finding indistinguishably from an open one. It's now
+    the same "Needs action" queue the Findings page groups (open states
+    only, License excluded), in that queue's default priority-score order,
+    with each row's real triage state exposed."""
     _seed(engine)
     with Session(engine) as session:
-        data = resolve_recent_findings(session, None, {"limit": 2})
-    assert len(data["items"]) == 2
-    assert data["items"][0]["title"] == "Leaked key"  # most recent first_seen
+        data = resolve_needs_action_queue(session, None, {"limit": 5})
+    rule_ids = [item["rule_id"] for item in data["items"]]
+    # The MITIGATED semgrep finding (h3) must never appear -- it is not
+    # something left to do.
+    assert "sast-1" not in rule_ids
+    assert len(data["items"]) == 3  # h1, h2 (grouped, one row each) + h4 (ungrouped single)
+    # Highest priority_score first: the gitleaks secret (250) outranks both
+    # open trivy CVEs (200, 150).
+    assert rule_ids == ["secret-1", "CVE-1", "CVE-2"]
+    assert data["items"][0]["tool"] == "gitleaks"
+    assert data["items"][0]["grouped"] is False  # Secrets never collapse (app.core.grouping)
+    assert data["items"][1]["grouped"] is True
+    # Every row's real triage state is visible -- the thing the old widget
+    # never showed at all.
+    assert all(item["state"] == "Open" for item in data["items"])
+
+
+def test_needs_action_queue_respects_limit(engine):
+    _seed(engine)
+    with Session(engine) as session:
+        data = resolve_needs_action_queue(session, None, {"limit": 1})
+    assert len(data["items"]) == 1
+    assert data["items"][0]["rule_id"] == "secret-1"  # highest priority_score wins the single slot
+
+
+def test_needs_action_queue_excludes_license_category(engine):
+    """The queue's own category exclusion (frontend/src/lib/findings-view.ts's
+    POLICY_CATEGORIES): a licence finding is a policy call, not an incident,
+    and must not compete with real work for one of the widget's few slots --
+    regardless of how high its priority_score happens to be."""
+    t1, _t2, _ws_id = _seed(engine)
+    with Session(engine) as session:
+        session.add(
+            Finding(
+                target_id=t1, dedup_hash="h5", tool="trivy-license", rule_id="license:GPL-3.0",
+                title="GPL-3.0 dependency", file_path="package.json", severity=Severity.HIGH,
+                priority_score=500, state=FindingState.OPEN, first_seen=utcnow(),
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_needs_action_queue(session, None, {"limit": 5})
+    assert "license:GPL-3.0" not in [item["rule_id"] for item in data["items"]]
+
+
+def test_needs_action_queue_includes_unrecognised_tools(engine):
+    """A tool nobody registered must still reach the widget.
+
+    The exclusion has to be "NOT IN the License tools", not "IN the known
+    vulnerability tools". `all_known_tools()` contains only TOOL_REGISTRY
+    entries, so any `tool` string a CI pipeline invents when it POSTs SARIF to
+    /api/ingest/{target_id} falls in neither set. Filtering by IN would drop
+    those findings here while GET /api/findings/groups?queue=action still
+    lists them -- _apply_category excludes only the License category -- so a
+    custom scanner's Critical would top the Findings page and be missing from
+    the dashboard, which is the exact disagreement this widget was rewritten
+    to end.
+    """
+    t1, _t2, _ws_id = _seed(engine)
+    with Session(engine) as session:
+        session.add(
+            Finding(
+                target_id=t1, dedup_hash="h6", tool="my-custom-scanner", rule_id="custom-1",
+                title="Critical from an unregistered scanner", file_path="app/main.py",
+                severity=Severity.CRITICAL, priority_score=900, state=FindingState.OPEN,
+                first_seen=utcnow(),
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        data = resolve_needs_action_queue(session, None, {"limit": 5})
+
+    rule_ids = [item["rule_id"] for item in data["items"]]
+    assert "custom-1" in rule_ids, "an unregistered tool's finding must not vanish from the dashboard"
+    # Highest priority_score in the set, so it must also lead.
+    assert rule_ids[0] == "custom-1"
 
 
 def test_live_scan_activity_lists_running_scans_most_recent_first(engine):

@@ -47,6 +47,9 @@ describe("DashboardBoard - layout read failure (data-loss guard)", () => {
         layoutFailed
         catalogFailed={false}
         dataFailed={false}
+        userId={1}
+        role={null}
+        profileFailed={false}
       />,
     );
 
@@ -70,6 +73,9 @@ describe("DashboardBoard - layout read failure (data-loss guard)", () => {
         layoutFailed
         catalogFailed={false}
         dataFailed={false}
+        userId={1}
+        role={null}
+        profileFailed={false}
       />,
     );
     expect(screen.getByText(/Couldn't load your dashboard layout/)).not.toBeNull();
@@ -90,6 +96,9 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
         layoutFailed={false}
         catalogFailed={false}
         dataFailed
+        userId={1}
+        role={null}
+        profileFailed={false}
       />,
     );
     expect(screen.queryByText("Loading...")).toBeNull();
@@ -109,6 +118,9 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
         layoutFailed={false}
         catalogFailed={false}
         dataFailed
+        userId={1}
+        role={null}
+        profileFailed={false}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /Edit Dashboard/ }));
@@ -130,6 +142,9 @@ describe("DashboardBoard - widget data failure (no infinite Loading)", () => {
         layoutFailed={false}
         catalogFailed={false}
         dataFailed={false}
+        userId={1}
+        role={null}
+        profileFailed={false}
       />,
     );
     expect(screen.queryByText(/Couldn't load widget/)).toBeNull();
@@ -148,6 +163,9 @@ describe("DashboardBoard - widget catalog failure", () => {
         layoutFailed={false}
         catalogFailed
         dataFailed={false}
+        userId={1}
+        role={null}
+        profileFailed={false}
       />,
     );
     expect(screen.getByText("Widget catalog")).not.toBeNull();

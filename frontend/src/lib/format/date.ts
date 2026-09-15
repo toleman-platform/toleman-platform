@@ -30,7 +30,11 @@ export function timeAgo(isoTimestamp: string): string {
   if (diffDay < 7) return `${diffDay} days ago`;
   const diffWeek = Math.floor(diffDay / 7);
   if (diffWeek < 5) return `${diffWeek}w ago`;
-  return new Date(then).toLocaleDateString();
+  // Past five weeks the relative form stops being useful and this falls back
+  // to a date. That fallback must stay locale-independent for the same reason
+  // formatUtcDateTime exists: the server and the browser disagree about both
+  // locale and timezone, and a date is exactly where that disagreement shows.
+  return formatUtcDate(new Date(then).toISOString());
 }
 
 /**
@@ -77,10 +81,18 @@ export function serverDate(isoTimestamp: string): Date {
  * of this. Falls back to the raw string on an unparseable value rather than
  * rendering "Invalid Date".
  */
+const UTC_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+] as const;
+
 export function formatSince(isoTimestamp: string): string {
   const d = serverDate(isoTimestamp);
   if (Number.isNaN(d.getTime())) return isoTimestamp;
-  return `since ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  // Locale-independent for the same reason: this string is server-rendered on
+  // the SBOM and API-discovery pages, so a month name chosen by the Node
+  // process's locale is a value the browser then disagrees with.
+  return `since ${UTC_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
 }
 
 /**
@@ -109,5 +121,62 @@ export function timeUntil(isoTimestamp: string): string {
   if (diffDay < 7) return `in ${diffDay} days`;
   const diffWeek = Math.floor(diffDay / 7);
   if (diffWeek < 5) return `in ${diffWeek}w`;
-  return new Date(then).toLocaleDateString();
+  return formatUtcDate(new Date(then).toISOString());
+}
+
+/**
+ * Absolute renderings that depend on nothing about the machine doing the
+ * rendering: "2026-09-13 10:00:00 UTC", "2026-09-13 UTC", "10:00:00 UTC".
+ *
+ * `toLocaleString()` and its siblings read the host's locale *and* timezone,
+ * and in an app that server-renders those differ between the Node process
+ * that produces the HTML and the browser that hydrates it. A server in UTC
+ * emitting "13/09/2026, 10:00:00" against a browser in Asia/Kolkata
+ * producing "9/13/2026, 3:30:00 PM" is a real hydration mismatch, and for a
+ * moment the reader sees a time that is not the time they end up with. On a
+ * security product the moment next to an audit event is evidence, so the fix
+ * is a value both sides agree on rather than a suppressed warning.
+ *
+ * `<Timestamp>` (components/ui/timestamp.tsx) renders these until the
+ * viewer's own clock and locale are the ones being read, then upgrades.
+ *
+ * An unparseable input is echoed back unchanged -- the contract `timeAgo`
+ * and `formatSince` already follow -- so a bad value reads as the bad value
+ * rather than as "Invalid Date" or as the epoch.
+ */
+export function formatUtcDateTime(isoTimestamp: string): string {
+  const d = utcDateOrNull(isoTimestamp);
+  if (d === null) return isoTimestamp;
+  return `${utcDatePart(d)} ${utcTimePart(d)} UTC`;
+}
+
+/** Date half of {@link formatUtcDateTime}: "2026-09-13 UTC". */
+export function formatUtcDate(isoTimestamp: string): string {
+  const d = utcDateOrNull(isoTimestamp);
+  if (d === null) return isoTimestamp;
+  return `${utcDatePart(d)} UTC`;
+}
+
+/** Time half of {@link formatUtcDateTime}: "10:00:00 UTC". */
+export function formatUtcTime(isoTimestamp: string): string {
+  const d = utcDateOrNull(isoTimestamp);
+  if (d === null) return isoTimestamp;
+  return `${utcTimePart(d)} UTC`;
+}
+
+function utcDateOrNull(isoTimestamp: string): Date | null {
+  const ms = parseServerTimestamp(isoTimestamp);
+  return Number.isNaN(ms) ? null : new Date(ms);
+}
+
+function utcDatePart(d: Date): string {
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+function utcTimePart(d: Date): string {
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
 }

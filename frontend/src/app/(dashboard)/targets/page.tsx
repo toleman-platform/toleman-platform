@@ -11,6 +11,8 @@ import { ErrorState } from "@/components/ui/error-state";
 import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { ReloadButton } from "@/components/reload-button";
 import { PageHeader } from "@/components/ui/page-header";
+import { HelpHint } from "@/components/ui/help-hint";
+import { HELP_CONTENT } from "@/lib/help-content";
 import { settleOrNull, settledOr } from "@/std-lib";
 
 function firstValue(v: string | string[] | undefined): string | undefined {
@@ -87,6 +89,7 @@ export default async function TargetsPage({
       <PageHeader
         title="Targets"
         description="Repositories under management"
+        badge={<HelpHint topic={HELP_CONTENT.targets} />}
       />
 
       {/* Issue #125: integration admin config (connect button, webhook status,

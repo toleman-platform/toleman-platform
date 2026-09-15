@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pagination";
 import { AUTH_EVENT_COLOR, AUTH_EVENT_LABEL } from "@/lib/severity";
 import { ShieldAlert } from "lucide-react";
-import { serverDate } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 
 const EVENT_TYPES: AuthEventType[] = [
   "login_success",
@@ -168,9 +168,7 @@ export function SecurityLog() {
                         </div>
                       )}
                     </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {serverDate(e.created_at).toLocaleString()}
-                    </span>
+                    <Timestamp value={e.created_at} className="shrink-0 text-xs text-muted-foreground" />
                   </div>
                 </CardContent>
               </Card>

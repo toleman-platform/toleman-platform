@@ -732,6 +732,12 @@ def list_finding_groups(
     environment: list[str] | None = Query(default=None),
     owner: list[str] | None = Query(default=None),
     search: str | None = None,
+    # Exact group identity. `search` matches title, file path, rule id, CVE
+    # and target name, so a caller linking to one specific grouped row -- the
+    # dashboard queue does -- cannot express "this rule, nothing else" with
+    # it. The underlying filter already existed; only the grouped route was
+    # missing the parameter.
+    rule_id: list[str] | None = Query(default=None),
     new_since_days: int | None = None,
     sort: Literal["exploitability", "severity", "blast_radius", "age", "recent"] = DEFAULT_SORT,
     page: int = 1,
@@ -748,7 +754,7 @@ def list_finding_groups(
     query, _ = _filtered_findings_query(
         session, user, target_id=target_id, group_id=group_id, branch=branch, state=state, resolved=resolved,
         severity=severity, tool=tool, fixability=fixability, environment=environment, owner=owner, search=search,
-        new_since_days=new_since_days,
+        rule_id=rule_id, new_since_days=new_since_days,
     )
     if query is None:
         return FindingGroupListResponse(items=[], total=0, total_findings=0, truncated=False)

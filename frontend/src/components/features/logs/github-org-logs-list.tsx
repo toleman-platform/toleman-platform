@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
 import { ActivityPagination } from "@/components/activity-pagination";
-import { serverDate } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 
 export function GithubOrgLogsList({
   events,
@@ -63,7 +63,7 @@ export function GithubOrgLogsList({
               </div>
               <div className="flex items-center gap-2">
                 <Badge variant="outline">{e.target}</Badge>
-                <span className="text-xs text-muted-foreground">{e.date ? serverDate(e.date).toLocaleString() : ""}</span>
+                {e.date && <Timestamp value={e.date} className="text-xs text-muted-foreground" />}
               </div>
             </CardContent>
           </Card>

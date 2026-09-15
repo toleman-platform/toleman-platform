@@ -20,6 +20,7 @@ import { TargetTabs, normalizeTab } from "./target-tabs";
 import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
 import { TargetHistory } from "./target-history";
+import { RemediationPlan } from "./remediation-plan";
 // Both settle helpers, deliberately: `settleOrNull` where `null` is a usable
 // sentinel on its own (the list and group fetches, each of which renders an
 // ErrorState when it is null), and `settledOr` where the fallback is an empty
@@ -257,6 +258,8 @@ export default async function TargetDetailPage({
           scanSummaryFailed={scanSummaryFailed}
         />
       )}
+
+      {tab === "fix-plan" && <RemediationPlan targetId={targetId} />}
 
       {tab === "vulnerabilities" && (
         // Reuses the shared findings components rather than forking them, so

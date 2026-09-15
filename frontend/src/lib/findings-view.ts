@@ -96,6 +96,11 @@ export function parseFindingsView(sp: SearchParamRecord) {
   const fixability = toArray(sp.fixability);
   const state = toArray(sp.state);
   const search = firstValue(sp.search);
+  // Exact group identity, distinct from `search`: the API's search matches
+  // title, file path, rule id, CVE and target name, so linking to one
+  // specific decision with it can drag in anything whose title happens to
+  // mention the rule. The dashboard's needs-action queue links here.
+  const rule_id = toArray(sp.rule_id);
   // Target metadata filters (#459): filter findings by the owning target's
   // environment or owner. Multi-select, same as severity and tool.
   const environment = toArray(sp.environment);
@@ -135,6 +140,7 @@ export function parseFindingsView(sp: SearchParamRecord) {
     fixability,
     state,
     search,
+    rule_id,
     environment,
     owner,
     targetIdRaw,

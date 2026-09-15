@@ -2,6 +2,7 @@
 
 import { ArrowUp, ArrowDown, X, GripVertical } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 // Shared chrome around every dashboard widget (issue #69): title/icon in
@@ -20,6 +21,7 @@ export function WidgetShell({
   onMoveDown,
   onRemove,
   colSpanClass = "",
+  hiddenFromView = false,
   children,
 }: {
   icon: React.ElementType;
@@ -31,16 +33,31 @@ export function WidgetShell({
   onMoveDown: () => void;
   onRemove: () => void;
   colSpanClass?: string;
+  /** This widget is turned off in the user's widget menu. Only ever true in
+   * edit mode -- the board drops hidden widgets entirely in view mode -- so
+   * that someone rearranging their layout can still see and move every
+   * widget it contains, and can tell which ones they will not see
+   * afterwards. */
+  hiddenFromView?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <Card className={`border-border bg-card ${colSpanClass} ${editMode ? "ring-1 ring-primary/30" : ""}`}>
+    <Card
+      className={`border-border bg-card ${colSpanClass} ${editMode ? "ring-1 ring-primary/30" : ""} ${
+        hiddenFromView ? "opacity-60" : ""
+      }`}
+    >
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-foreground">
             {editMode && <GripVertical className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
             <Icon className="h-4 w-4 text-accent-strong" />
             {title}
+            {hiddenFromView && (
+              <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
+                Hidden
+              </Badge>
+            )}
           </CardTitle>
           {editMode && (
             <div className="flex items-center gap-1">

@@ -13,7 +13,7 @@ import { AlertTriangle, BrainCircuit, CheckCircle2, Eye, EyeOff, Key, MessageSqu
 import { ConnectGithubCard } from "@/components/features/integrations";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SEVERITY_ORDER } from "@/lib/severity";
-import { serverDate } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 
 const PROVIDERS: { value: AiProvider; label: string }[] = [
   { value: "anthropic", label: "Anthropic (Claude)" },
@@ -30,6 +30,26 @@ const GITHUB_TTL_OPTIONS: { value: string; label: string }[] = [
   { value: "2160", label: "90 days" },
   { value: "8760", label: "1 year" },
 ];
+
+// M20: the default used to be "" (Never), with no comment saying why -- an
+// external review flagged it as an arbitrary pick rather than a considered
+// one. "Never" is a defensible *option* (some workspaces genuinely want a
+// static token and accept the tradeoff), but it is a bad *default* for a
+// platform whose own guardrails would flag a non-expiring credential
+// elsewhere: this PAT authenticates git clones and API calls against every
+// repo in the workspace, and a default of "no expiry" means an admin who
+// clicks through without picking a TTL -- the common case -- gets the
+// longest-lived, worst-to-rotate version of this credential without ever
+// deciding to.
+//
+// 90 days is the middle preset in GITHUB_TTL_OPTIONS above: long enough that
+// routine scanning is never interrupted by a surprise mid-quarter expiry
+// (the auto-purge/expiry copy right below the header already tells the
+// admin when it will lapse), short enough to actually bound how long a
+// leaked or forgotten token stays valid instead of that risk running
+// indefinitely. "Never" stays one click away for whoever explicitly wants
+// it -- this only changes what happens when nobody picks.
+const DEFAULT_GITHUB_TTL_HOURS = "2160";
 
 // admin M13: every secret on this page was `type="password"` with no way
 // back to plain text. That correctly stops a shoulder-surfer or a screen
@@ -192,7 +212,7 @@ export function GlobalIntegrations() {
   // no render where the id is stale relative to the list.
   const githubWorkspaceId = githubWorkspaceChoice ?? workspaces[0]?.id ?? null;
   const [githubToken, setGithubToken] = useState("");
-  const [githubTtl, setGithubTtl] = useState("");
+  const [githubTtl, setGithubTtl] = useState(DEFAULT_GITHUB_TTL_HOURS);
   const [githubSaving, setGithubSaving] = useState(false);
   const [githubTesting, setGithubTesting] = useState(false);
   const [githubDeleting, setGithubDeleting] = useState(false);
@@ -544,10 +564,20 @@ export function GlobalIntegrations() {
             githubTokenView?.token_set && (
               <div className="flex items-center gap-2 text-sm text-chart-5">
                 <CheckCircle2 className="h-4 w-4" />
-                Configured
-                {githubTokenView.expires_at
-                  ? ` · auto-purges ${serverDate(githubTokenView.expires_at).toLocaleString()}`
-                  : " · never expires"}
+                {/* One span, not loose text plus a sibling <time>: in a flex
+                    row each would become its own flex item and pick up the
+                    container's gap mid-sentence. */}
+                <span>
+                  Configured
+                  {githubTokenView.expires_at ? (
+                    <>
+                      {" · auto-purges "}
+                      <Timestamp value={githubTokenView.expires_at} />
+                    </>
+                  ) : (
+                    " · never expires"
+                  )}
+                </span>
               </div>
             )
           )}

@@ -1122,6 +1122,14 @@ class PRGuardrailFinding(SQLModel, table=True):
     ignore_requested_reason: str = ""
     ignore_reviewed_by: str = ""
     ignore_reviewed_at: datetime | None = None
+    # Why a security reviewer rejected the developer's ignore request --
+    # required going forward on POST .../reject-ignore (app/api/
+    # pr_guardrail.py's reject_ignore), so "rejected" in the History tab
+    # always comes with the reviewer's stated reason rather than a bare
+    # verdict. Nullable, not a mandatory column default, because rows
+    # rejected before this column existed have no reason to backfill and
+    # must not read as an empty string the reviewer supposedly typed.
+    reject_reason: str | None = None
 
 
 class PipelineIntegrationBatch(SQLModel, table=True):

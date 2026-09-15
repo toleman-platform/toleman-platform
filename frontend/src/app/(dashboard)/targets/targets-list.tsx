@@ -17,9 +17,11 @@ import {
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { ScanProgress } from "@/components/features/scans";
-import { safeHref, timeAgo } from "@/lib/utils";
+import { safeHref } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { BulkActionBar } from "@/components/ui/bulk-action-bar";
 import { Button } from "@/components/ui/button";
+import { SelectAllVisible } from "@/components/ui/list-row";
 import { GroupBadge } from "@/components/features/targets/group-badge";
 import { CriticalityChip } from "@/components/features/targets/criticality-chip";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -30,7 +32,8 @@ import { ActivityPagination, pageSizeFromParams } from "@/components/activity-pa
 import type { TargetSort } from "./targets-filter-bar";
 import { PowerOff, Rocket, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { parseServerTimestamp, serverDate } from "@/lib/format/date";
+import { parseServerTimestamp } from "@/lib/format/date";
+import { Timestamp } from "@/components/ui/timestamp";
 import { TargetRowActions } from "./target-row-actions";
 
 function paginateSlice<T>(items: T[], page: number, pageSize: number): { items: T[]; clampedPage: number } {
@@ -178,11 +181,8 @@ function ScanFreshness({ lastScanAt, unknown = false }: { lastScanAt: string | n
   }
   const ageDays = (now - parseServerTimestamp(lastScanAt)) / 86_400_000;
   return (
-    <span
-      className={ageDays > 30 ? "text-chart-3" : undefined}
-      title={`Last scanned ${serverDate(lastScanAt).toLocaleString()}`}
-    >
-      scanned {timeAgo(lastScanAt)}
+    <span className={ageDays > 30 ? "text-chart-3" : undefined}>
+      scanned <Timestamp value={lastScanAt} mode="relative" />
     </span>
   );
 }
@@ -626,6 +626,9 @@ export function TargetsList({
   const { items: visible, clampedPage } = paginateSlice(filtered, page, pageSize);
 
   const allSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
+  // Feeds SelectAllVisible's indeterminate state. The hand-rolled checkbox
+  // this replaced never set it, so a part-selected page showed an empty box.
+  const someSelected = visible.some((t) => selected.has(t.id));
 
   return (
     <div className="flex flex-col gap-2">
@@ -687,19 +690,14 @@ export function TargetsList({
 
       <div className="flex items-center justify-between gap-2">
         {filtered.length > 0 ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              aria-label="Select all targets"
-              className="h-4 w-4 accent-primary"
-              checked={allSelected}
-              onChange={(e) => toggleAll(e.target.checked)}
-            />
-            <span>
-              Select all on this page{" "}
-              {(search || criticality) && `(${filtered.length} of ${targets.length} match)`}
-            </span>
-          </div>
+          <SelectAllVisible
+            allSelected={allSelected}
+            someSelected={someSelected}
+            onChange={toggleAll}
+            count={
+              search || criticality ? `${filtered.length} of ${targets.length} match` : undefined
+            }
+          />
         ) : (
           <span />
         )}
@@ -814,17 +812,29 @@ export function TargetsList({
         </div>
       )}
 
-      {selected.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-secondary/50 p-3">
-          <span className="text-xs font-medium text-foreground">{selected.size} selected</span>
-          <Button size="sm" disabled={submitting} onClick={() => addPipelineBulk()} className="h-7 text-xs">
-            {submitting ? "Starting…" : `Add Pipeline to ${selected.size} repo${selected.size === 1 ? "" : "s"}`}
-          </Button>
-          <button onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground underline">
-            clear selection
-          </button>
-        </div>
-      )}
+      {/* The shared bar rather than a page-local one. The copy this replaced
+          read "3 selected" with a lowercase "clear selection" link, against
+          "3 findings selected" and a labelled Clear control everywhere else,
+          and it carried neither the role="status" announcement nor the
+          Escape-to-clear shortcut the other lists have.
+
+          Mass Rollout stays above, outside the bar: BulkActionBar renders
+          nothing at zero selected, and rolling out by scope is precisely the
+          action that has to be reachable with nothing ticked. */}
+      <BulkActionBar
+        count={selected.size}
+        itemNoun="target"
+        onClear={() => setSelected(new Set())}
+        actions={[
+          {
+            label: submitting
+              ? "Starting…"
+              : `Add Pipeline to ${selected.size} repo${selected.size === 1 ? "" : "s"}`,
+            onClick: () => addPipelineBulk(),
+            disabled: submitting,
+          },
+        ]}
+      />
 
       {batchError && <p className="text-xs text-destructive">{batchError}</p>}
 

@@ -40,6 +40,7 @@ from app.models.models import (
 )
 from app.scanners.parsers import parse_nuclei
 from app.tasks import api_scan_tasks
+from app.tasks.api_scan_tasks import nuclei_timeout_for
 from app.tasks.celery_app import celery_app
 
 
@@ -328,8 +329,11 @@ def test_api_scan_end_to_end_eager_creates_findings(engine, monkeypatch):
         # Accepts headers because the task now passes the target's scan
         # credential (#470); this target has none configured, so the scan
         # stays anonymous, which is asserted rather than just tolerated.
-        def fake_run_nuclei(urls, headers=None):
+        def fake_run_nuclei(urls, headers=None, timeout_seconds=None):
             assert headers == {}
+            # Budget derives from the endpoint count (#493), not a flat
+            # constant; asserted so a regression to a fixed timeout fails here.
+            assert timeout_seconds == nuclei_timeout_for(len(urls))
             return canned_nuclei_output
 
         monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", fake_run_nuclei)
@@ -370,7 +374,7 @@ def test_api_scan_missing_nuclei_binary_records_scan_error(engine, monkeypatch):
         target_id = _make_target(engine)
         _add_endpoint(engine, target_id, "/admin")
 
-        def _raise_missing_binary(urls, headers=None):
+        def _raise_missing_binary(urls, headers=None, timeout_seconds=None):
             raise FileNotFoundError(2, "No such file or directory", "nuclei")
 
         monkeypatch.setattr(api_scan_tasks.runner, "run_nuclei", _raise_missing_binary)

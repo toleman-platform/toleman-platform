@@ -386,7 +386,10 @@ export default function DesignSystemGalleryPage() {
             <SeverityChip severity="High" count={12} />
             <SeverityChip severity="Medium" count={48} />
             <SeverityChip severity="Low" count={5} />
-            <SeverityChip severity="Info" count={2} />
+            {/* "Informational", matching lib/severity.ts's SEVERITY_ORDER and
+                the backend's Finding.severity -- not the shorter "Info" this
+                swatch used to demo, which no severity map here recognizes. */}
+            <SeverityChip severity="Informational" count={2} />
           </div>
 
           <div className="flex flex-wrap items-center gap-6 pt-2">

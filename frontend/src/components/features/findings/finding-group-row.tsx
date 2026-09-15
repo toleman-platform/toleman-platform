@@ -260,30 +260,57 @@ export function FindingGroupRow({
   }
 
   return (
+    // core M11: `role="row"` on the row, `role="cell"` on each of its
+    // columns below, so a screen reader's table navigation (arrow keys
+    // between cells) works here and each cell is announced against the
+    // `columnheader`s in FindingsGroupsList's header row -- "Severity: High",
+    // not an unlabelled fragment of a giant flattened string. That is also
+    // *why* this can no longer be one `<button>` wrapping the whole row (see
+    // the toggle button below, core M12): a button's subtree is flattened to
+    // its accessible name, which is exactly what would erase the per-cell
+    // structure this item exists to add. The two defects shared one cause.
     <div className={cn("border-l-4 border-b border-border bg-card", SEVERITY_BORDER_COLOR[group.severity])}>
-      <button
-        type="button"
-        onClick={toggle}
-        aria-expanded={expanded}
-        className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-secondary/50"
-      >
-        <ChevronRight
-          aria-hidden="true"
-          className={cn(
-            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
-            expanded && "rotate-90 text-foreground",
-            !group.grouped && "invisible",
-          )}
-        />
+      {/* `role="row"` sits here, on the one-line content only, so its
+          children are exactly the six `role="cell"`s below and nothing
+          else -- the expanded members panel is a sibling below, outside the
+          row, the same way a real table's detail row is never itself a cell
+          of the row it discloses. */}
+      <div role="row" className="flex items-center gap-3 px-3 py-2 hover:bg-secondary/50">
+        <div role="cell" className="flex w-3.5 shrink-0 items-center justify-center">
+          {/* core M12: this button's accessible name is now "Expand/Collapse
+              <subject> (<tool>)" -- naming the row, not concatenating every
+              fact rendered beside it (severity, path, finding count, age,
+              signal badges). The old giant button's implicit name read all
+              of that as one 20-word run-on; a screen reader user could not
+              tell two rows apart without listening to each one in full. */}
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Collapse" : "Expand"} ${groupSubject(group)} (${group.tool})`}
+            className="flex items-center justify-center rounded p-0.5 outline-none hover:bg-secondary focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+          >
+            <ChevronRight
+              aria-hidden="true"
+              className={cn(
+                "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+                expanded && "rotate-90 text-foreground",
+                !group.grouped && "invisible",
+              )}
+            />
+          </button>
+        </div>
 
-        <Badge
-          variant="outline"
-          className={cn("shrink-0 px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide", SEVERITY_COLOR[group.severity])}
-        >
-          {group.severity}
-        </Badge>
+        <div role="cell" className="shrink-0">
+          <Badge
+            variant="outline"
+            className={cn("px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide", SEVERITY_COLOR[group.severity])}
+          >
+            {group.severity}
+          </Badge>
+        </div>
 
-        <span className="flex min-w-0 flex-1 flex-col">
+        <div role="cell" className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-mono text-[13px] font-medium text-foreground">
             {groupSubject(group)}
             <span className="ml-2 font-sans font-normal text-muted-foreground">{group.tool}</span>
@@ -293,23 +320,23 @@ export function FindingGroupRow({
             {group.file_count > 1 ? `${group.file_count} files` : group.representative_file_path}
             {group.target_count > 1 ? ` · ${group.target_count} targets` : ""}
           </span>
-        </span>
+        </div>
 
-        <span className="shrink-0 text-right font-mono text-[13px] font-semibold tabular-nums text-foreground">
+        <div role="cell" className="shrink-0 text-right font-mono text-[13px] font-semibold tabular-nums text-foreground">
           {group.finding_count}
           {group.grouped && group.finding_count > 1 && (
             <span className="ml-1 text-[10px] font-normal text-muted-foreground">rows</span>
           )}
-        </span>
+        </div>
 
-        <span className="hidden shrink-0 md:block">
+        <div role="cell" className="hidden shrink-0 md:block">
           <GroupSignals group={group} />
-        </span>
+        </div>
 
-        <span className="hidden w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground lg:block">
+        <div role="cell" className="hidden w-12 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground lg:block">
           {formatAge(age)}
-        </span>
-      </button>
+        </div>
+      </div>
 
       {expanded && (
         <div className="border-t border-border bg-secondary/30 px-3 py-2 pl-10">

@@ -123,6 +123,35 @@ describe("FindingGroupRow", () => {
     expect(screen.getByText("LGPL-3.0-or-later")).not.toBeNull();
   });
 
+  // core M11: a screen reader's table navigation needs `row`/`cell` on the
+  // actual row content, not a flat stack of divs -- and needs the expanded
+  // members panel to sit *outside* the row (a real table's detail content is
+  // never itself one of the row's cells).
+  it("exposes itself as a table row of cells", () => {
+    const { container } = render(<FindingGroupRow group={makeGroup()} />);
+    const row = container.querySelector('[role="row"]') as HTMLElement;
+    expect(row).not.toBeNull();
+    const cells = row.querySelectorAll('[role="cell"]');
+    // expand toggle, severity, subject, finding count, signals, age
+    expect(cells.length).toBe(6);
+  });
+
+  // core M12: the old whole-row `<button>` had no accessible name of its
+  // own, so assistive tech read out every descendant's text as one run-on
+  // sentence -- severity, subject, tool, path, finding count, signals, age.
+  // The toggle now names only the row's subject, and none of the row's other
+  // facts (which render as plain, non-interactive cells) leak into it.
+  it("gives the row's toggle a short accessible name instead of its entire contents", () => {
+    render(<FindingGroupRow group={makeGroup()} />);
+    const toggle = screen.getByRole("button", { expanded: false });
+    const name = toggle.getAttribute("aria-label") ?? "";
+    expect(name).toContain("LGPL-3.0-or-later");
+    expect(name.split(/\s+/).length).toBeLessThan(6);
+    // None of the row's other facts leaked into the one control's name.
+    expect(name).not.toContain("11");
+    expect(name).not.toContain("package-lock.json");
+  });
+
   it("fetches members only when expanded, and only once", async () => {
     findings.mockResolvedValue({ items: [makeMember(38), makeMember(37)], total: 2 });
     render(<FindingGroupRow group={makeGroup()} />);

@@ -101,12 +101,23 @@ def test_registry_lists_every_tool_with_health_and_integration_flag(client, engi
     assert semgrep["integrated"] is True
 
 
-def test_health_endpoint_still_works_unchanged(client, engine):
+def test_health_endpoint_covers_every_registry_tool(client, engine):
+    """VERSION_COMMANDS used to be its own hardcoded 4-entry dict (the
+    original Sprint 1 set), independent of TOOL_REGISTRY: installing
+    checkov, tfsec, modelscan or noseyparker from the marketplace made them
+    run real scans, but there was no code path that could ever surface them
+    here. It is now derived from the registry's own `version_cmd`, so the
+    two cannot drift apart again -- this must cover all sixteen, not four."""
     client, _ = _login(client, engine, role=UserRole.ADMIN)
     res = client.get("/api/tools/health")
     assert res.status_code == 200
     tools = {e["tool"] for e in res.json()}
-    assert tools == {"semgrep", "gitleaks", "trivy", "gosec"}
+    assert tools == {e["tool"] for e in TOOL_REGISTRY}
+    # The original four are still in there, still shaped the same way.
+    semgrep = next(e for e in res.json() if e["tool"] == "semgrep")
+    assert "installed" in semgrep
+    assert "version" in semgrep
+    assert "checked_in" in semgrep
 
 
 # ---------------------------------------------------------------------------

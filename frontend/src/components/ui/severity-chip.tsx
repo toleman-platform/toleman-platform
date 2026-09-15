@@ -1,8 +1,12 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { SEVERITY_COLOR } from "@/lib/severity";
+import { SEVERITY_COLOR, SEVERITY_DOT_COLOR } from "@/lib/severity";
 
-export type SeverityLevel = "Critical" | "High" | "Medium" | "Low" | "Info";
+// Matches lib/severity's own tier spelling ("Informational", not "Info")
+// rather than hand-typing a second copy that can drift from it -- which is
+// exactly how this used to disagree with SEVERITY_COLOR/SEVERITY_DOT_COLOR
+// on Low: a private vocabulary here, subtly different from the real one.
+export type SeverityLevel = "Critical" | "High" | "Medium" | "Low" | "Informational";
 
 export interface SeverityChipProps extends React.HTMLAttributes<HTMLSpanElement> {
   severity: SeverityLevel | string;
@@ -10,14 +14,6 @@ export interface SeverityChipProps extends React.HTMLAttributes<HTMLSpanElement>
   size?: "sm" | "md" | "lg";
   count?: number;
 }
-
-const DOT_COLOR: Record<string, string> = {
-  Critical: "bg-destructive",
-  High: "bg-chart-3",
-  Medium: "bg-chart-1",
-  Low: "bg-chart-2",
-  Info: "bg-chart-2",
-};
 
 /**
  * Standardized Severity & Risk Badge component.
@@ -35,7 +31,7 @@ export function SeverityChip({
 }: SeverityChipProps) {
   const norm = severity.charAt(0).toUpperCase() + severity.slice(1).toLowerCase();
   const colorClass = SEVERITY_COLOR[norm] ?? "border-border bg-secondary text-muted-foreground";
-  const dotBg = DOT_COLOR[norm] ?? "bg-muted-foreground";
+  const dotBg = SEVERITY_DOT_COLOR[norm] ?? "bg-muted-foreground";
 
   const sizeClasses = {
     sm: "px-1.5 py-0.5 text-[10px]",

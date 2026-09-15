@@ -64,6 +64,16 @@ export type Target = {
   dependency_sync_error: Nullable<string>;
   dependency_sync_at: Nullable<string>;
   dependency_component_count: Nullable<number>;
+  // OSV malicious-package check status, separate from dependency_sync_*
+  // above: that tracks the GitHub import, this tracks the OSV check
+  // itself (also run by a plain re-check and by automatic SBOM
+  // generation, neither of which touches dependency_sync_*). All null
+  // means "never completed a check" -- render as unmeasured, not clean.
+  // A failed attempt leaves these at whatever the last completed check
+  // left them; see the backend model for why that's the honest choice.
+  malware_last_checked_at: Nullable<string>;
+  malware_last_check_status: Nullable<"clean" | "found">;
+  malware_packages_checked: Nullable<number>;
   // (#273) Lifecycle. `is_active` is derived server-side from
   // deactivated_at, the same server-owns-the-precedence shape as
   // is_ai_repo_effective; never re-derive it here, and never render a

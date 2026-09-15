@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Bug, ExternalLink, RefreshCw, ShieldAlert } from "lucide-react";
+import {
+  Bug,
+  ExternalLink,
+  Package,
+  RefreshCw,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
+} from "lucide-react";
 import { api, ApiError, type Finding, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
@@ -15,12 +23,29 @@ import { PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { SeverityChip } from "@/components/ui/severity-chip";
 import { TargetPicker } from "@/components/features/targets";
+import { timeAgo } from "@/lib/format/date";
 
 // Issue #177/#181: malicious dependencies detected via OSV.dev. Hits are
 // persisted as ordinary Critical `Finding` rows (tool="osv-malware"), so this
 // page is a focused view over the findings the SBOM-generation pipeline
 // already produces; the same rows the Findings list shows, just filtered
 // and re-assertable without regenerating an SBOM.
+//
+// A target with nothing flagged used to render as three zeros and a
+// sentence -- indistinguishable from a target nobody had ever checked. The
+// per-repository list below (backed by Target.malware_last_checked_at /
+// _last_check_status / _packages_checked, stamped by
+// app.core.osv_malware_ingestion.check_and_ingest_malware on every
+// completed check) is what turns "clean" into a claim with evidence behind
+// it: how many packages, compared when, and a link to the exact inventory
+// that was compared.
+
+// OSV serves the malicious-packages dataset live from /v1/querybatch; there
+// is no dataset export or version number to cite, so the honest "source"
+// statement is what was queried and how current the answer is, not a
+// pinned version this page cannot actually name.
+const OSV_SOURCE_NOTE =
+  "Source: OSV.dev's OpenSSF malicious-packages advisories, queried live against each target's SBOM inventory on every check. OSV does not publish a dataset version to pin to -- how recently a repo was checked is the freshness signal.";
 
 export default function MaliciousPackagesPage() {
   const findingsQuery = useAsyncData<Finding[]>(() =>
@@ -37,6 +62,33 @@ export default function MaliciousPackagesPage() {
 
   const affectedTargetIds = Array.from(new Set(findings.map((f) => f.target_id)));
   const openCount = findings.filter((f) => f.state === "Open").length;
+
+  // Per-target open-finding count, for the coverage list's status label.
+  // Deliberately read off the same `findings` fetch the stat cards above
+  // use (current triage truth), rather than off `malware_last_check_status`
+  // (a snapshot of what OSV said *at check time*): a package flagged by the
+  // last check and since triaged to Mitigated on the Findings page must not
+  // keep reading "found" here just because nobody has re-run the check.
+  const openCountByTarget = new Map<number, number>();
+  for (const f of findings) {
+    if (f.state === "Open") {
+      openCountByTarget.set(f.target_id, (openCountByTarget.get(f.target_id) ?? 0) + 1);
+    }
+  }
+
+  // Aggregate "how much has actually been verified" figure. Only counts
+  // targets whose last check *completed* (Target.malware_packages_checked
+  // is non-null); a target that has only ever failed a check contributes
+  // nothing here, same reasoning as the per-row unknown state below.
+  const checkedTargets = targets.filter((t) => t.malware_packages_checked !== null);
+  const totalPackagesChecked = checkedTargets.reduce(
+    (sum, t) => sum + (t.malware_packages_checked ?? 0),
+    0,
+  );
+  // Unknown only when there is something to have checked and none of it
+  // ever has been -- distinct from zero registered targets, which is a
+  // real, measured "nothing to check" rather than an unmeasured gap.
+  const packagesCheckedUnknown = targets.length > 0 && checkedTargets.length === 0;
 
   function malwareLabel(status: "clean" | "found" | "failed", count: number): string {
     if (status === "found") return `found ${count}`;
@@ -93,13 +145,40 @@ export default function MaliciousPackagesPage() {
         count = res.malicious_count;
       }
       setCheckState((c) => ({ ...c, [targetId]: malwareLabel(status, count) }));
+      // Both findings (the detected-package list) and targets (packages
+      // checked / last-checked evidence, stamped server-side by this same
+      // request) changed; refetching only one would leave the other half
+      // of the page showing a check that just happened as if it hadn't.
       findingsQuery.refetch();
+      targetsQuery.refetch();
     } catch {
       setCheckState((c) => ({ ...c, [targetId]: "check failed" }));
     }
   }
 
   const loading = findingsQuery.isInitialLoading || targetsQuery.isInitialLoading;
+  // A query that has errored must not fall through to its "loaded, and
+  // there's nothing here" empty state -- that reads as a verified clean
+  // result when the truth is "we don't know, the request failed". The
+  // critical banner below already says so; the sections beneath it render
+  // only what actually loaded.
+  const findingsUnavailable = !loading && !!findingsQuery.error;
+  const targetsUnavailable = !loading && !!targetsQuery.error;
+
+  // Coverage list order: repositories with something currently open first
+  // (the most actionable rows), then repositories that have never
+  // completed a check (a real gap, not a clean result), then everything
+  // else alphabetically. A long, unsorted dump of mostly-clean repos would
+  // bury the two rows that actually need a look.
+  const sortedTargets = [...targets].sort((a, b) => {
+    const openA = openCountByTarget.get(a.id) ?? 0;
+    const openB = openCountByTarget.get(b.id) ?? 0;
+    if (openA !== openB) return openB - openA;
+    const neverA = a.malware_last_checked_at === null;
+    const neverB = b.malware_last_checked_at === null;
+    if (neverA !== neverB) return neverA ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -114,14 +193,15 @@ export default function MaliciousPackagesPage() {
         </AlertBanner>
       )}
 
-      <StatGrid columns={3}>
+      <StatGrid columns={4}>
         <StatCard
           label="Malicious packages"
           value={findings.length}
           hint="Critical findings from tool osv-malware"
           icon={Bug}
           tone={findings.length > 0 ? "critical" : "default"}
-          unknown={loading}
+          unknown={loading || findingsUnavailable}
+          unknownHint={findingsUnavailable ? "Findings failed to load" : undefined}
         />
         <StatCard
           label="Affected repos"
@@ -129,14 +209,34 @@ export default function MaliciousPackagesPage() {
           hint="repos with at least one malicious dependency"
           icon={ShieldAlert}
           tone={affectedTargetIds.length > 0 ? "attention" : "default"}
-          unknown={loading}
+          unknown={loading || findingsUnavailable}
+          unknownHint={findingsUnavailable ? "Findings failed to load" : undefined}
         />
         <StatCard
           label="Open"
           value={openCount}
           hint="not yet triaged"
           icon={Bug}
-          unknown={loading}
+          unknown={loading || findingsUnavailable}
+          unknownHint={findingsUnavailable ? "Findings failed to load" : undefined}
+        />
+        <StatCard
+          label="Packages checked"
+          value={totalPackagesChecked}
+          hint={
+            targets.length > 0
+              ? `across ${checkedTargets.length} of ${targets.length} repo${targets.length === 1 ? "" : "s"} checked`
+              : "no repositories registered"
+          }
+          icon={Package}
+          unknown={loading || targetsUnavailable || packagesCheckedUnknown}
+          unknownHint={
+            targetsUnavailable
+              ? "Repositories failed to load"
+              : packagesCheckedUnknown
+                ? "No repository has completed an OSV check yet"
+                : undefined
+          }
         />
       </StatGrid>
 
@@ -145,15 +245,24 @@ export default function MaliciousPackagesPage() {
 
         {loading && <SkeletonList count={4} />}
 
-        {!loading && findings.length === 0 && (
+        {!loading && findingsUnavailable && (
+          <EmptyState
+            icon={Bug}
+            title="Detected packages unavailable"
+            description="The findings list failed to load, so this cannot say whether any malicious packages are flagged. Reload to retry."
+          />
+        )}
+
+        {!loading && !findingsUnavailable && findings.length === 0 && (
           <EmptyState
             icon={Bug}
             title="No malicious packages detected"
-            description="The OSV check runs automatically on each SBOM generation. Use Scan a repository below to pull the latest GitHub dependency inventory and re-check it against OSV's latest data on demand."
+            description="The OSV check runs automatically on each SBOM generation. See Check coverage by repository below for what was actually compared and when; use Scan a repository to pull the latest GitHub dependency inventory and re-check it on demand."
           />
         )}
 
         {!loading &&
+          !findingsUnavailable &&
           findings.map((f) => {
             const target = targetById.get(f.target_id);
             return (
@@ -206,7 +315,85 @@ export default function MaliciousPackagesPage() {
           })}
       </div>
 
-      {!loading && targets.length > 0 && (
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium text-foreground">Check coverage by repository</h2>
+        <p className="text-xs text-muted-foreground">{OSV_SOURCE_NOTE}</p>
+
+        {loading && <SkeletonList count={4} />}
+
+        {!loading && targetsUnavailable && (
+          <EmptyState
+            icon={Package}
+            title="Coverage unavailable"
+            description="The repository list failed to load, so per-repository check status cannot be shown. Reload to retry."
+          />
+        )}
+
+        {!loading && !targetsUnavailable && targets.length === 0 && (
+          <EmptyState
+            icon={Package}
+            title="No repositories registered"
+            description="Register a repository as a target to start checking its dependencies against OSV."
+          />
+        )}
+
+        {!loading &&
+          !targetsUnavailable &&
+          sortedTargets.map((t) => {
+            const openForTarget = openCountByTarget.get(t.id) ?? 0;
+            const neverChecked = t.malware_last_checked_at === null;
+            return (
+              <Card key={t.id} className="border-border bg-card">
+                <CardContent className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={`/targets/${t.id}`} className="truncate font-medium text-foreground hover:underline">
+                        {t.name}
+                      </Link>
+                      {neverChecked ? (
+                        <Badge variant="outline" className="shrink-0 text-[10px] text-muted-foreground">
+                          <ShieldQuestion className="h-3 w-3" />
+                          Never checked
+                        </Badge>
+                      ) : openForTarget > 0 ? (
+                        <Badge variant="destructive" className="shrink-0 text-[10px]">
+                          <ShieldAlert className="h-3 w-3" />
+                          {openForTarget} open
+                        </Badge>
+                      ) : (
+                        <Badge variant="success" className="shrink-0 text-[10px]">
+                          <ShieldCheck className="h-3 w-3" />
+                          Clean
+                        </Badge>
+                      )}
+                      {t.is_active === false && (
+                        <Badge variant="warning" className="shrink-0 text-[10px]">
+                          Deactivated
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t.malware_last_checked_at === null
+                        ? "Never checked against OSV. Run Scan a repository below to establish a baseline."
+                        : `Compared ${t.malware_packages_checked ?? 0} package${t.malware_packages_checked === 1 ? "" : "s"} against OSV's malicious-package advisories ${timeAgo(t.malware_last_checked_at)}.`}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Link
+                      href={`/targets/${t.id}?tab=dependencies`}
+                      className="flex items-center gap-1 text-xs text-accent-strong hover:underline"
+                    >
+                      View SBOM
+                      <ExternalLink className="h-3 w-3" />
+                    </Link>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+      </div>
+
+      {!loading && !targetsUnavailable && targets.length > 0 && (
         <div className="flex flex-col gap-3">
           <h2 className="text-sm font-medium text-foreground">Scan a repository</h2>
           <p className="text-xs text-muted-foreground">

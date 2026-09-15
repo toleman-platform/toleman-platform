@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { api, AuthEventType } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
@@ -41,6 +42,14 @@ const SELECT_CLASS =
 // URL-backed filters/pagination (?event_type=&email=&page=&page_size=),
 // same convention as the rest of this codebase's paginated lists, nested
 // under the Admin page's own ?tab= param without conflicting with it.
+//
+// Deliberately a separate trail rather than folded into the Audit Log, not
+// an oversight: that page is login_required (any authenticated user), this
+// one is admin_required, because it exposes every user's login activity and
+// permission history, not just their own. Kept apart for that reason, but
+// linked both ways -- see the Audit Log's own AlertBanner and the link back
+// to it below -- so the split reads as a deliberate scope boundary instead
+// of two unrelated pages an auditor has to discover independently.
 export function SecurityLog() {
   const router = useRouter();
   const pathname = usePathname();
@@ -72,11 +81,23 @@ export function SecurityLog() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h2 className="text-lg font-semibold text-foreground">Security Log</h2>
-        <p className="text-sm text-muted-foreground">
-          Login/logout activity, password changes, and permission changes across every user.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2 className="text-lg font-semibold text-foreground">Security Log</h2>
+          <p className="text-sm text-muted-foreground">
+            Login/logout activity, password changes, and permission changes across every user.
+          </p>
+        </div>
+        {/* Reverse direction of the Audit Log's own link to this page: scan
+            and triage history lives there, not here, and an admin reading
+            this trail is exactly the person who might next ask "what about
+            the scans". */}
+        <Link
+          href="/audit-log"
+          className="shrink-0 text-xs text-muted-foreground underline hover:text-foreground"
+        >
+          View scan and triage history in the Audit Log
+        </Link>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card p-3">

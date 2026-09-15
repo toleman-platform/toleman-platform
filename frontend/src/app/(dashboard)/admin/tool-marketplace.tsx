@@ -1,16 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { api, ToolAssignment, ToolRegistryEntry } from "@/lib/api";
+import { api, ToolAssignment, ToolRegistryEntry, workspaceDisplayName } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
 import { useToolInstall } from "@/hooks/features/use-tool-install";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { Button } from "@/components/ui/button";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { CheckCircle2, Download, ExternalLink, Loader2, XCircle } from "lucide-react";
+import { Download, ExternalLink, Loader2 } from "lucide-react";
 
 const USAGE_SURFACES = [
   { key: "on_demand_scan" as const, label: "On-demand scan" },
@@ -23,11 +24,11 @@ const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License",
 
 // Issue #75: tool marketplace / health page. Extends the original Sprint 1
 // Tools Health tab (still available separately at the "tools" admin tab,
-// which /api/tools/health backs unchanged) with the full registry across
-// every supported category (including the new IaC tools; Checkov, tfsec,
-// KICS), a real live health check per tool, and a per-workspace usage
-// assignment matrix (on-demand scan / CI pipeline / API scan / PR
-// guardrail).
+// backed by /api/tools/health, which now probes every registry tool too)
+// with the full registry across every supported category (including the
+// new IaC tools; Checkov, tfsec, KICS), a real live health check per tool,
+// and a per-workspace usage assignment matrix (on-demand scan / CI
+// pipeline / API scan / PR guardrail).
 //
 // Issue #216 added one-click install. The button appears only for tools the
 // backend can actually install into itself (`installable`, derived from a
@@ -123,9 +124,15 @@ export function ToolMarketplace() {
             value={workspaceId ?? ""}
             onChange={(e) => setWorkspaceId(Number(e.target.value))}
           >
+            {/* Bare `w.name` collided whenever two workspaces shared a name
+                (e.g. two orgs both called "default") -- the option list showed
+                two identical strings with no way to tell which one would
+                actually receive the usage-assignment toggles below.
+                `workspaceDisplayName` appends `(#id)` only to the duplicates,
+                matching the other workspace pickers on this platform. */}
             {workspaces?.map((w) => (
               <option key={w.id} value={w.id}>
-                {w.name}
+                {workspaceDisplayName(w, workspaces ?? [])}
               </option>
             ))}
           </select>
@@ -160,13 +167,40 @@ export function ToolMarketplace() {
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         {t.installed && t.version ? (
-                          <Badge variant="outline" className="border-chart-5/20 bg-chart-5/10 text-chart-5">
-                            <CheckCircle2 className="h-3 w-3" /> healthy
-                          </Badge>
+                          <StatusBadge status="completed" label="healthy" />
+                        ) : t.installed ? (
+                          // installed:true but no version is a confirmed
+                          // finding either way (the binary answered
+                          // `shutil.which`, running it is what failed) --
+                          // not the bundled ambiguity below, which only
+                          // ever applies to a negative "installed".
+                          <StatusBadge status="failed" label="error" />
+                        ) : t.bundled ? (
+                          // (admin M1/M2 -- the same root cause as the
+                          // identical two-state badge on the Tools Health
+                          // tab.) A bundled tool ships in the same image
+                          // the worker uses (BUNDLED_TOOLS, enforced by
+                          // scripts/verify_tools.py in CI), so a negative
+                          // reading here is inherently surprising, not the
+                          // routine "go install this" case the red badge
+                          // implies for everything else. Worker-side
+                          // confirmation (tool_health_cache.get_worker_
+                          // health) is written only by a *completed
+                          // one-click install*, and most bundled tools
+                          // (gitleaks, trivy, gosec, ...) never go through
+                          // one at all -- no button, nothing to confirm
+                          // with -- so this process's own probe is the
+                          // only signal that will ever exist for them.
+                          // Even the few that are also pip-installable
+                          // (semgrep, modelscan) would normally have shown
+                          // "installed: true" from day one; an install
+                          // button appearing for one of those is a repair
+                          // path, not routine setup. Either way, a
+                          // confident red "not installed" claims more than
+                          // this check can back up.
+                          <StatusBadge status="unknown" label="unverified" />
                         ) : (
-                          <Badge variant="outline" className="border-destructive/20 bg-destructive/10 text-destructive">
-                            <XCircle className="h-3 w-3" /> {t.installed ? "error" : "not installed"}
-                          </Badge>
+                          <StatusBadge status="failed" label="not installed" />
                         )}
                         {!t.integrated && (
                           <Badge variant="outline" className="border-muted-foreground/20 text-muted-foreground">

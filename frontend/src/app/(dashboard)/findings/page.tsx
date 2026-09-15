@@ -8,6 +8,8 @@ import { FindingsCategoryTabs, type CategoryTab } from "@/components/findings-ca
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
 import { PageHeader } from "@/components/ui/page-header";
+import { HelpHint } from "@/components/ui/help-hint";
+import { HELP_CONTENT } from "@/lib/help-content";
 import { settleOrNull } from "@/std-lib";
 // Plain modules, not "use client" components; a Server Component cannot call
 // a function exported from a client module.
@@ -218,6 +220,7 @@ export default async function FindingsPage({
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Findings"
+        badge={<HelpHint topic={HELP_CONTENT.findings} />}
         description={
           // The `failed` arm is the whole fix for this line. Both branches
           // below bottom out in `?? 0`, so a failed list request rendered the

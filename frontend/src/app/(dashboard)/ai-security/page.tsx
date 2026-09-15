@@ -10,6 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/ui/page-header";
+import { HelpHint } from "@/components/ui/help-hint";
+import { HELP_CONTENT } from "@/lib/help-content";
 import { AlertBanner } from "@/components/ui/alert-banner";
 
 // Issue #224: AI/ML repo detection (#185), ModelScan (#186) and the LLM
@@ -51,6 +53,7 @@ export default function AiSecurityPage() {
       <PageHeader
         title="AI Security"
         description="Repositories detected as using AI/ML, and vulnerability findings from ModelScan and LLM rulesets."
+        badge={<HelpHint topic={HELP_CONTENT["ai-security"]} />}
       />
 
       {targetsError && <AlertBanner tone="critical">{targetsError.message}</AlertBanner>}

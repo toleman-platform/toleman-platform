@@ -571,7 +571,11 @@ def _write_nuclei_header_config(headers: dict[str, str] | None) -> str | None:
     return path
 
 
-def run_nuclei(urls: list[str], headers: dict[str, str] | None = None) -> list[dict]:
+def run_nuclei(
+    urls: list[str],
+    headers: dict[str, str] | None = None,
+    timeout_seconds: int | None = None,
+) -> list[dict]:
     """Run nuclei against an already-validated list of live URLs and return
     parsed JSONL results (one dict per finding).
 
@@ -654,7 +658,8 @@ def run_nuclei(urls: list[str], headers: dict[str, str] | None = None) -> list[d
         # cmd is built entirely from settings/constants above, no shell, no
         # interpolated repo content.
         proc = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
-            cmd, capture_output=True, text=True, timeout=settings.nuclei_timeout_seconds
+            cmd, capture_output=True, text=True,
+            timeout=timeout_seconds or settings.nuclei_timeout_seconds,
         )
     finally:
         for path in (target_file, config_file):
@@ -675,8 +680,22 @@ def run_nuclei(urls: list[str], headers: dict[str, str] | None = None) -> list[d
         tail = detail[-1] if detail else "no stderr"
         raise ToolExecutionError(f"nuclei exited {proc.returncode}: {tail[:300]}")
 
+    return parse_nuclei_jsonl(proc.stdout)
+
+
+def parse_nuclei_jsonl(text: str | bytes | None) -> list[dict]:
+    """Parse nuclei's JSONL output, skipping anything unparseable.
+
+    Shared with the timeout path, which has only a truncated prefix of this
+    same stream to work with -- the last line is very likely a half-written
+    object, and skipping it is the point rather than a concession.
+    """
+    if not text:
+        return []
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
     results = []
-    for line in proc.stdout.splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line:
             continue

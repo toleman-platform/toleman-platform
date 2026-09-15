@@ -11,6 +11,7 @@ from app.core.ingestion import ingest_findings
 from app.core.notifications import dispatch_notification
 from app.core import target_lifecycle
 from app.core.scan_schedules import describe_api_scan_readiness
+from app.core.config import settings
 from app.core.time import utcnow
 from app.models.models import NotificationEventType, Scan, Target
 from app.scanners import parsers, runner
@@ -25,6 +26,54 @@ logger = logging.getLogger(__name__)
 # FileNotFoundError (nuclei binary missing) are deterministic and won't
 # change on retry, same rationale as scan_tasks.RETRYABLE_EXCEPTIONS.
 RETRYABLE_EXCEPTIONS = (subprocess.TimeoutExpired,)
+
+# Seconds of nuclei budget per discovered endpoint, and the bounds that
+# budget is clamped into.
+#
+# A flat 300s gave a target with 5 endpoints and a target with 500 the same
+# allowance, so the large one could never finish and failed identically on
+# every retry. settings.nuclei_rate_limit caps outbound requests per second,
+# so wall-clock scales with the endpoint count by construction and a fixed
+# budget is the wrong shape.
+#
+# The ceiling exists because this runs on a Celery worker: an unbounded
+# budget turns one unreachable target into a worker blocked for as long as
+# it takes, and stale_job_timeout_seconds would reap the job anyway.
+NUCLEI_SECONDS_PER_ENDPOINT = 6
+NUCLEI_TIMEOUT_CEILING_SECONDS = 1800
+
+
+def nuclei_timeout_for(url_count: int) -> int:
+    """Wall-clock budget for scanning `url_count` endpoints."""
+    scaled = url_count * NUCLEI_SECONDS_PER_ENDPOINT
+    return max(settings.nuclei_timeout_seconds, min(scaled, NUCLEI_TIMEOUT_CEILING_SECONDS))
+
+
+def describe_nuclei_timeout(exc: subprocess.TimeoutExpired, url_count: int) -> str:
+    """Turn a bare timeout into something a triager can act on.
+
+    "nuclei scan timed out after retries" said nothing: not how many
+    endpoints were in the run, not how long it was given, and not whether
+    nuclei had produced anything before it was killed. Those distinguish
+    the two causes that need opposite responses -- a target that is slow or
+    unreachable, where every request burns its own timeout and nothing is
+    ever produced, versus a run that is genuinely working and simply needs
+    longer than the budget.
+
+    The partial findings are counted and then discarded on purpose. They are
+    a progress signal, not results: ingesting a truncated run as if it were
+    complete is what would let a half-finished scan mitigate every open
+    finding on the target.
+    """
+    partial = len(runner.parse_nuclei_jsonl(getattr(exc, "stdout", None)))
+    budget = int(exc.timeout) if exc.timeout else 0
+    if partial:
+        progress = f"nuclei had produced {partial} finding(s) before it was killed, so it was making progress"
+    else:
+        progress = "nuclei had produced nothing before it was killed, which usually means the host is slow or unreachable"
+    return (
+        f"nuclei scan timed out after {budget}s covering {url_count} endpoint(s); {progress}"
+    )
 
 
 def _notify_api_scan_failure(session: Session, target: Target, error: str) -> None:
@@ -148,6 +197,10 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
             logger.info("api scan refused for target %s: %s", target_id, refusal)
             return {"error": refusal, "scan_id": scan.id}
 
+        # Bound before the try so the timeout handler below can report the
+        # endpoint count even if the failure happens early: referencing an
+        # unbound local there would raise NameError and mask the real error.
+        urls: list[str] = []
         try:
             scope = build_scan_urls(session, target, endpoint_ids)
             urls, endpoints = scope.urls, scope.endpoints
@@ -172,7 +225,11 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
                 _notify_api_scan_failure(session, target, error)
                 return {"error": error, "scan_id": scan.id}
 
-            raw_results = runner.run_nuclei(urls, headers=build_scan_headers(target))
+            raw_results = runner.run_nuclei(
+                urls,
+                headers=build_scan_headers(target),
+                timeout_seconds=nuclei_timeout_for(len(urls)),
+            )
             parsed = parsers.parse_nuclei(raw_results)
             # (#229) What makes this assertion earned rather than assumed:
             # runner.run_nuclei now checks nuclei's exit code and raises
@@ -192,9 +249,9 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
                 health=scan_health.trusted("api-scan"),
             )
             return {"scan_id": scan.id, "ingested": count, "endpoints_scanned": len(endpoints)}
-        except RETRYABLE_EXCEPTIONS:
+        except RETRYABLE_EXCEPTIONS as exc:
             if self.request.retries >= self.max_retries:
-                error = "nuclei scan timed out after retries"
+                error = describe_nuclei_timeout(exc, len(urls))
                 scan.status = "failed"
                 scan.error = error
                 session.add(scan)

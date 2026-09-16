@@ -427,6 +427,47 @@ class TestEnrichmentCoverage:
         }
 
 
+class TestPagination:
+    """`_group_by_package` has to see every open CVE finding to compute a
+    single package's fixes_count/upgrade_to/unresolved correctly, so
+    pagination slices the already-sorted result list rather than pushing
+    down to SQL -- these pin that slicing down directly, separately from
+    `group_remediations` (the unpaginated helper other callers, including
+    the auto-raise sweep, still use unchanged)."""
+
+    def test_slices_the_sorted_plan_and_reports_the_whole_total(self, engine):
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", severity=Severity.CRITICAL, fixes=[("pkg-a", "1.0")])
+        _finding(engine, tid, "CVE-2", severity=Severity.HIGH, fixes=[("pkg-b", "1.0")])
+        _finding(engine, tid, "CVE-3", severity=Severity.MEDIUM, fixes=[("pkg-c", "1.0")])
+        with Session(engine) as session:
+            page1 = remediation_plan(session, tid, page=1, page_size=2)
+            page2 = remediation_plan(session, tid, page=2, page_size=2)
+        assert [p["package"] for p in page1["plans"]] == ["pkg-a", "pkg-b"]
+        assert page1["total"] == 3
+        assert [p["package"] for p in page2["plans"]] == ["pkg-c"]
+        assert page2["total"] == 3
+
+    def test_coverage_stays_whole_target_regardless_of_page(self, engine):
+        """coverage is an honesty counter about the target, not a page stat
+        -- a 1-item page must not shrink it to describe only that item."""
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", fixes=[("pkg-a", "1.0")])
+        _finding(engine, tid, "CVE-2", fixes=[("pkg-b", "1.0")])
+        with Session(engine) as session:
+            page1 = remediation_plan(session, tid, page=1, page_size=1)
+        assert page1["coverage"]["cve_findings"] == 2
+
+    def test_page_and_page_size_are_clamped_like_list_findings(self, engine):
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", fixes=[("pkg-a", "1.0")])
+        with Session(engine) as session:
+            zero_page = remediation_plan(session, tid, page=0, page_size=10000)
+            page_one = remediation_plan(session, tid, page=1, page_size=10000)
+        assert zero_page["plans"] == page_one["plans"]
+        assert zero_page["total"] == 1
+
+
 class TestApi:
     def test_endpoint_returns_groups(self, client, engine):
         _admin(client, engine)
@@ -435,6 +476,19 @@ class TestApi:
         res = client.get(f"/api/findings/remediations?target_id={tid}")
         assert res.status_code == 200, res.text
         assert res.json()["plans"][0]["package"] == "starlette"
+        assert res.json()["total"] == 1
+
+    def test_endpoint_paginates(self, client, engine):
+        _admin(client, engine)
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", severity=Severity.CRITICAL, fixes=[("pkg-a", "1.0")])
+        _finding(engine, tid, "CVE-2", severity=Severity.HIGH, fixes=[("pkg-b", "1.0")])
+        res = client.get(f"/api/findings/remediations?target_id={tid}&page=1&page_size=1")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert len(body["plans"]) == 1
+        assert body["plans"][0]["package"] == "pkg-a"
+        assert body["total"] == 2
 
     def test_endpoint_reports_coverage_alongside_the_plans(self, client, engine):
         """An empty `plans` with 2 unenriched CVEs behind it: the response

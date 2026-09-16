@@ -161,13 +161,23 @@ def enrichment_coverage(findings: list[Finding], by_cve: dict[str, CveEnrichment
     }
 
 
-def remediation_plan(session: Session, target_id: int) -> dict:
+def remediation_plan(session: Session, target_id: int, page: int = 1, page_size: int = 25) -> dict:
     """The per-package upgrades for a target, plus the coverage behind them.
 
-    ``{"plans": [...], "coverage": {...}}`` -- `plans` is exactly what
-    `group_remediations` returns, `coverage` is `enrichment_coverage`. Both
-    are derived from a single pass over the same findings and enrichment
-    rows, so the counts always describe the plan they ship with.
+    ``{"plans": [...], "coverage": {...}, "total": N}`` -- the full,
+    unpaginated plan is `group_remediations`' result; `plans` here is a
+    `page`/`page_size` slice of it (clamped the same way list_findings
+    clamps its own paging params), `total` is the whole-target package
+    count, and `coverage` is `enrichment_coverage` over EVERY open CVE
+    finding on the target, not just the ones behind this page -- it is an
+    honesty counter about the target, not a page stat, and slicing it would
+    make it describe a different, smaller population than the one the
+    caveat sentences on an empty/partial page actually need.
+
+    Pagination cannot push down to SQL: `_group_by_package` has to see every
+    open CVE finding on the target to correctly compute one package's
+    `fixes_count`/`upgrade_to`/`unresolved`, so the full list is always
+    built first and only the already-sorted result is sliced.
 
     `plans == []` and `coverage["findings_with_fix_data"] == 0` are the same
     condition by construction: a finding with parseable fix data always
@@ -176,9 +186,16 @@ def remediation_plan(session: Session, target_id: int) -> dict:
     """
     findings = _open_cve_findings(session, target_id)
     by_cve = _enrichment_by_cve(session, findings)
+    plans = _group_by_package(findings, by_cve)
+
+    page = max(page, 1)
+    page_size = max(min(page_size, 500), 1)
+    start = (page - 1) * page_size
+
     return {
-        "plans": _group_by_package(findings, by_cve),
+        "plans": plans[start:start + page_size],
         "coverage": enrichment_coverage(findings, by_cve),
+        "total": len(plans),
     }
 
 

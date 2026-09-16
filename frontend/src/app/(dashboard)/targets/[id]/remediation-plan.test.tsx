@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { PackageRemediation, RemediationCoverage } from "@/types";
 import { RemediationPlanView } from "./remediation-plan";
+
+// ActivityPagination and RemediationBulkRaise (#247 follow-up) read/write
+// the URL and router; only navigation is mocked so the rest of each still
+// renders for real, same as audit-log-list.test.tsx's identical mock.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/targets/7",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 // (#247) These assert the two honesty properties backend/app/core/
 // remediation.py's docstring calls out, plus the failed/empty distinction

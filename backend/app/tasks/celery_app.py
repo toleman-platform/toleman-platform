@@ -28,6 +28,7 @@ celery_app = Celery(
         "app.tasks.github_sync_tasks",
         "app.tasks.snippet_scan_tasks",
         "app.tasks.schedule_tasks",
+        "app.tasks.remediation_tasks",
     ],
 )
 celery_app.conf.task_routes = {
@@ -76,6 +77,13 @@ celery_app.conf.task_routes = {
     # the symptom would be "scheduled scans silently stopped happening" with
     # nothing failing anywhere.
     "app.tasks.schedule_tasks.*": {"queue": "scans"},
+    # remediation_tasks (#247 follow-up): Fix Plan's bulk "Raise all" batch
+    # and the auto-raise sweep. Both do real GitHub API call sequences
+    # (branch create + commit + PR open per package), the same class of
+    # off-request-thread work as pipeline_tasks above; same queue, same
+    # "an unrouted task lands on the unconsumed default queue" hazard every
+    # entry in this dict exists to avoid.
+    "app.tasks.remediation_tasks.*": {"queue": "scans"},
 }
 
 # task_acks_late + reject_on_worker_lost: if a worker dies mid-scan (OOM, pod
@@ -160,6 +168,14 @@ celery_app.conf.beat_schedule = {
     "sweep-scan-workdir": {
         "task": "app.tasks.scan_tasks.sweep_scan_workdir",
         "schedule": timedelta(minutes=30),
+    },
+    # (#247 follow-up) Auto-raise PRs for every target with
+    # Target.auto_raise_fix_prs on. 24h matches the shipped default full-scan
+    # cadence (app.core.scan_schedules.SHIPPED_DEFAULTS) -- sweeping more
+    # often than scans typically run would just re-check an unchanged plan.
+    "sweep-fix-plan-auto-raise-prs": {
+        "task": "app.tasks.remediation_tasks.sweep_auto_raise_prs_task",
+        "schedule": timedelta(hours=24),
     },
 }
 

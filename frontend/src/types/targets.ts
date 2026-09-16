@@ -57,6 +57,10 @@ export type Target = {
   enforcement_mode_source?: EnforcementModeSource;
   api_base_url: Nullable<string>;
   diff_scoped_pr_scans: boolean;
+  // (#247 follow-up) Auto-raise PRs for the Fix Plan's own dependency
+  // upgrades, unattended, on the periodic sweep. Same plain per-target
+  // on/off as diff_scoped_pr_scans above.
+  auto_raise_fix_prs: boolean;
   client_cert_set?: boolean;
   client_key_set?: boolean;
   clone_proxy_url?: string;

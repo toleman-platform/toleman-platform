@@ -1,6 +1,7 @@
 import logging
 import shutil
 import subprocess
+from pathlib import Path
 
 from sqlmodel import Session, select
 
@@ -244,7 +245,26 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             return {"error": error_message, "scan_id": scan.id}
         finally:
             if repo_path is not None:
-                shutil.rmtree(repo_path, ignore_errors=True)
+                # Defense in depth (disk exhaustion, 2026-09 postmortem): a
+                # test double once stood in for clone_repo and returned the
+                # literal Path("/tmp") -- this finally then rmtree'd the
+                # entire sandbox tmp directory, taking every later test's
+                # fixtures with it. clone_repo itself always returns a path
+                # under settings.scan_workdir, but nothing stops a future
+                # bug or stub from returning something else, so only ever
+                # remove a path that actually resolves inside scan_workdir.
+                try:
+                    resolved = Path(repo_path).resolve()
+                    workdir = Path(runner.settings.scan_workdir).resolve()
+                    if resolved == workdir or workdir in resolved.parents:
+                        shutil.rmtree(resolved, ignore_errors=True)
+                    else:
+                        logger.error(
+                            "run_scan: refusing to remove %s -- outside scan_workdir %s",
+                            resolved, workdir,
+                        )
+                except OSError:
+                    pass
 
 
 def queue_full_scan(session: Session, target: Target) -> list[int]:

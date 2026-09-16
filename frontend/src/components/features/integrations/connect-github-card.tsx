@@ -6,6 +6,7 @@ import { api, GitHubAppInstallation } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWriteAction } from "@/hooks/use-write-action";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -178,8 +179,17 @@ function WebhookSecretForm({ app, onSaved }: { app: GitHubAppInstallation; onSav
   );
 }
 
+const PLATFORM_DEFAULT_VALUE = "__platform_default__";
+
 export function ConnectGithubCard() {
   const router = useRouter();
+  // (#506 follow-up) Lets an operator scope a new App to one of their
+  // workspaces instead of always creating the single platform-wide default
+  // -- previously this card had no way to reach the workspace-scoped App
+  // support the backend already had, so a second App of any kind was
+  // blocked outright once the platform default existed.
+  const { workspaces } = useWorkspaceContext();
+  const [scope, setScope] = useState<string>(PLATFORM_DEFAULT_VALUE);
   // (#355 review) One state machine for the status read, rather than a
   // hand-rolled `status`/`error` pair: that version left `status` null on a
   // failed read, so the card rendered a skeleton forever next to a disabled
@@ -237,7 +247,8 @@ export function ConnectGithubCard() {
     setConnecting(true);
     setError(null);
     try {
-      const { manifest, post_url } = await api.githubAppManifestData(org || undefined);
+      const workspaceId = scope === PLATFORM_DEFAULT_VALUE ? undefined : Number(scope);
+      const { manifest, post_url } = await api.githubAppManifestData(org || undefined, workspaceId);
       // Built and submitted imperatively (not via React state -> JSX -> ref) so
       // there's no render-timing race between setting the value and submitting.
       const form = document.createElement("form");
@@ -303,8 +314,11 @@ export function ConnectGithubCard() {
                   {status.apps.map((appEntry) => (
                     <div key={appEntry.id} className="rounded-md border border-border p-3">
                       <div className="flex items-center justify-between">
-                        <div className="text-sm font-medium text-foreground">
+                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                           <code>{appEntry.app_slug}</code>
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-normal uppercase tracking-wide text-muted-foreground">
+                            {appEntry.workspace_name ?? "Platform default"}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Button asChild size="sm" variant="outline">
@@ -518,9 +532,34 @@ export function ConnectGithubCard() {
                 )}
                 <p className="text-xs text-muted-foreground">
                   {status.apps.length > 0
-                    ? "Register another GitHub App (e.g. a separate dev/prod App, or one scoped to a different org):"
+                    ? "Register another GitHub App (e.g. a separate dev/prod App, one scoped to a different org, or a workspace's own App):"
                     : "Leave blank to install on your personal account, or enter an org name to install there instead."}
                 </p>
+                {/* (#506 follow-up) A workspace-scoped App is managed by that
+                    workspace's own security engineers going forward -- see
+                    _require_app_config_manager in backend/app/api/github_app.py --
+                    while the platform default stays admin-only, same as before
+                    this option existed. Each workspace can hold at most one App
+                    (enforced by a DB constraint), so this list only ever grows by
+                    one App per workspace, not an unbounded number. */}
+                {workspaces && workspaces.length > 0 && (
+                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+                    Scope this App to
+                    <select
+                      aria-label="Scope this GitHub App to"
+                      className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
+                      value={scope}
+                      onChange={(e) => setScope(e.target.value)}
+                    >
+                      <option value={PLATFORM_DEFAULT_VALUE}>Platform default (admin only)</option>
+                      {workspaces.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <div className="flex gap-2">
                   <Input
                     aria-label="GitHub organization to install the App on (optional)"

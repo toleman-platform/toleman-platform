@@ -1,6 +1,7 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
 import { ConnectGithubCard } from "./connect-github-card";
+import { renderWithWorkspace as render } from "@/test/render-with-workspace";
 
 /**
  * #355 is a rendering-placement bug, so these are the tests that actually
@@ -13,29 +14,36 @@ import { ConnectGithubCard } from "./connect-github-card";
  * first time got no warning at all, and GitHub's rejection page instead.
  */
 
-const { githubAppStatus, githubAppManifestData, githubAppSync, updateWebhookSecret, deleteGithubApp } = vi.hoisted(
-  () => ({
+const { githubAppStatus, githubAppManifestData, githubAppSync, updateWebhookSecret, deleteGithubApp, workspaces } =
+  vi.hoisted(() => ({
     githubAppStatus: vi.fn(),
     githubAppManifestData: vi.fn(),
     githubAppSync: vi.fn(),
     updateWebhookSecret: vi.fn(),
     deleteGithubApp: vi.fn(),
-  }),
-);
+    workspaces: vi.fn(),
+  }));
 
 vi.mock("@/lib/api", () => ({
-  api: { githubAppStatus, githubAppManifestData, githubAppSync, updateWebhookSecret, deleteGithubApp },
+  api: { githubAppStatus, githubAppManifestData, githubAppSync, updateWebhookSecret, deleteGithubApp, workspaces },
 }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 
+beforeEach(() => {
+  // No workspaces by default: keeps every pre-existing test's DOM (no scope
+  // picker) unchanged. Tests for the picker itself set their own list.
+  workspaces.mockResolvedValue([]);
+});
+
 afterEach(() => {
   githubAppStatus.mockReset();
   githubAppManifestData.mockReset();
   githubAppSync.mockReset();
   updateWebhookSecret.mockReset();
+  workspaces.mockReset();
 });
 
 type StatusOverrides = Partial<{
@@ -67,6 +75,8 @@ function appEntry(over: Record<string, unknown> = {}) {
     manage_url: "https://github.com/settings/apps/toleman-devsecops-abc",
     webhook_secret_set: true,
     installations: [{ installation_id: 111, account_login: "acme", account_type: "Organization" }],
+    workspace_id: null,
+    workspace_name: null,
     ...over,
   };
 }
@@ -395,5 +405,98 @@ describe("ConnectGithubCard, saving a webhook secret", () => {
     await screen.findByLabelText("Webhook secret for toleman-devsecops-abc");
     expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
     expect(updateWebhookSecret).not.toHaveBeenCalled();
+  });
+});
+
+// (#506 follow-up) The platform-default App is a singleton (DB-enforced),
+// so a second App of any kind was blocked outright until this card could
+// reach the workspace-scoped App support the backend already had. These
+// pin the fix: a scope picker appears once the caller has workspaces, and
+// what it's set to is what actually gets sent when creating a new App.
+describe("ConnectGithubCard, scoping a new App to a workspace", () => {
+  it("renders no scope picker for a caller with no workspaces", async () => {
+    workspaces.mockResolvedValue([]);
+    githubAppStatus.mockResolvedValue(statusPayload());
+
+    render(<ConnectGithubCard />);
+
+    await screen.findByRole("button", { name: "Connect GitHub" });
+    expect(screen.queryByLabelText("Scope this GitHub App to")).toBeNull();
+  });
+
+  it("offers each workspace plus the platform default, defaulting to platform default", async () => {
+    workspaces.mockResolvedValue([
+      { id: 1, name: "acme-prod", organization_id: 1, enforcement_mode: null },
+      { id: 2, name: "acme-staging", organization_id: 1, enforcement_mode: null },
+    ]);
+    githubAppStatus.mockResolvedValue(statusPayload());
+
+    render(<ConnectGithubCard />);
+
+    const picker = (await screen.findByLabelText("Scope this GitHub App to")) as HTMLSelectElement;
+    expect(picker.value).toBe("__platform_default__");
+    expect(screen.getByRole("option", { name: "Platform default (admin only)" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "acme-prod" })).toBeDefined();
+    expect(screen.getByRole("option", { name: "acme-staging" })).toBeDefined();
+  });
+
+  it("starts the connect flow with no workspace_id when left on platform default", async () => {
+    workspaces.mockResolvedValue([{ id: 1, name: "acme-prod", organization_id: 1, enforcement_mode: null }]);
+    githubAppStatus.mockResolvedValue(statusPayload());
+    githubAppManifestData.mockResolvedValue({
+      manifest: {},
+      post_url: "https://github.com/settings/apps/new",
+      webhook_url: "https://api.example.com/api/github-app/callback",
+      webhook_reachable: true,
+    });
+
+    render(<ConnectGithubCard />);
+
+    await screen.findByLabelText("Scope this GitHub App to");
+    fireEvent.click(connectButton());
+
+    expect(githubAppManifestData).toHaveBeenCalledWith(undefined, undefined);
+  });
+
+  it("starts the connect flow with that workspace's id once a workspace is picked", async () => {
+    workspaces.mockResolvedValue([{ id: 7, name: "acme-prod", organization_id: 1, enforcement_mode: null }]);
+    githubAppStatus.mockResolvedValue(statusPayload());
+    githubAppManifestData.mockResolvedValue({
+      manifest: {},
+      post_url: "https://github.com/settings/apps/new",
+      webhook_url: "https://api.example.com/api/github-app/callback",
+      webhook_reachable: true,
+    });
+
+    render(<ConnectGithubCard />);
+
+    const picker = await screen.findByLabelText("Scope this GitHub App to");
+    fireEvent.change(picker, { target: { value: "7" } });
+    fireEvent.click(connectButton());
+
+    expect(githubAppManifestData).toHaveBeenCalledWith(undefined, 7);
+  });
+
+  it("labels an already-registered App by its workspace, or as platform default", async () => {
+    githubAppStatus.mockResolvedValue(
+      statusPayload({
+        apps: [
+          appEntry({ workspace_id: null, workspace_name: null }),
+          appEntry({
+            id: 2,
+            app_slug: "toleman-devsecops-def",
+            workspace_id: 7,
+            workspace_name: "acme-prod",
+            installations: [],
+          }),
+        ],
+      }),
+    );
+
+    render(<ConnectGithubCard />);
+
+    await screen.findByText("toleman-devsecops-abc");
+    expect(screen.getByText("Platform default")).toBeDefined();
+    expect(screen.getByText("acme-prod")).toBeDefined();
   });
 });

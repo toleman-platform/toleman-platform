@@ -72,6 +72,11 @@ export default function MaliciousPackagesPage() {
   const targets = (targetsQuery.data ?? []).filter(
     (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
   );
+  // `??`, not a length check: `chosenTargetIds` is `null` only when nothing
+  // has been explicitly chosen yet -- an explicit Clear in the picker sets
+  // it to `[]`, which must stay `[]` here rather than silently snapping
+  // back to the default (#519 review).
+  const targetIds = chosenTargetIds ?? (targets[0] ? [targets[0].id] : []);
   const targetById = new Map(targets.map((t) => [t.id, t]));
   // Filtered again client-side, same reasoning as `targets`: a workspace
   // switch's refetch keeps the previous workspace's findings on screen
@@ -428,9 +433,9 @@ export default function MaliciousPackagesPage() {
           <Card className="border-border bg-card">
             <CardContent className="flex flex-col gap-2 px-4 py-3">
               <div className="flex flex-wrap items-center gap-3">
-                <TargetPicker targets={targets} value={chosenTargetIds} onChange={setChosenTargetIds} />
+                <TargetPicker targets={targets} value={targetIds} onChange={setChosenTargetIds} />
                 {(() => {
-                  const activeIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+                  const activeIds = targetIds;
                   const checking = activeIds.some((id) => checkState[id] === "checking");
                   // (#273) Both endpoints this button calls (/github-sync
                   // and /malware-check) refuse a deactivated target, because
@@ -497,7 +502,7 @@ export default function MaliciousPackagesPage() {
                 })()}
               </div>
               {(() => {
-                const activeIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+                const activeIds = targetIds;
                 if (activeIds.length !== 1) return null;
                 const warning = importWarning[activeIds[0]];
                 return warning ? <p className="text-xs text-warning">{warning}</p> : null;

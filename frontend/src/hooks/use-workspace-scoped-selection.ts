@@ -3,8 +3,7 @@
 import { useState } from "react";
 
 /**
- * A repo-picker selection (`number[]`) that resets when the active workspace
- * changes.
+ * A repo-picker selection that resets when the active workspace changes.
  *
  * A specific target id belongs to whichever workspace was active when it was
  * picked; switching the global workspace switcher must not leave that (now
@@ -22,6 +21,20 @@ import { useState } from "react";
  * given: an org-wide selection re-scopes cleanly to the new workspace on
  * its own, and a switch should not kick the reader out of it.
  *
+ * Returns `null` for "nothing explicitly chosen yet" (a caller falls back to
+ * its own default -- usually the first repo, or `ALL_TARGETS`) and `[]` for
+ * "explicitly cleared" -- these are NOT the same thing. `TargetPicker`'s
+ * popover has its own Clear action, and a caller whose fallback expression
+ * was `selection.length > 0 ? selection : default` could not tell the two
+ * apart: clearing the picker produced an empty array, which read exactly
+ * like "never touched" and silently snapped straight back to the default,
+ * so the Clear button appeared to do nothing -- worse, on pages where the
+ * fallback still fed live reads/actions/exports, a "cleared" selection kept
+ * acting on the default target the reader had just deselected (#519
+ * review). Callers must resolve the effective selection with `selection ??
+ * default`, never `selection.length > 0 ? selection : default`, so an
+ * explicit empty array stays empty.
+ *
  * React's documented "adjust state when a prop changes" pattern, not an
  * effect, so the reset lands the same render the switch does (see
  * sidebar.tsx's `lastPathname`) -- this was previously duplicated inline in
@@ -31,14 +44,17 @@ import { useState } from "react";
 export function useWorkspaceScopedSelection(
   activeWorkspaceId: number | null,
   allTargetsValue?: number,
-  initial: number[] | (() => number[]) = [],
-): [number[], (ids: number[]) => void] {
-  const [ids, setIds] = useState<number[]>(initial);
+  initial: number[] | null | (() => number[] | null) = null,
+): [number[] | null, (ids: number[]) => void] {
+  const [ids, setIds] = useState<number[] | null>(initial);
   const [lastWorkspaceId, setLastWorkspaceId] = useState(activeWorkspaceId);
   if (lastWorkspaceId !== activeWorkspaceId) {
     setLastWorkspaceId(activeWorkspaceId);
-    if (allTargetsValue === undefined || !ids.includes(allTargetsValue)) {
-      setIds([]);
+    // A workspace switch resets back to "nothing explicitly chosen" (not to
+    // `[]`): the point is to let each page's default apply to the *new*
+    // workspace, not to freeze the picker cleared forever.
+    if (allTargetsValue === undefined || !(ids ?? []).includes(allTargetsValue)) {
+      setIds(null);
     }
   }
   return [ids, setIds];

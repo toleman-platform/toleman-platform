@@ -112,7 +112,11 @@ export default function ApiDiscoveryPage() {
   const targets = (targetsData ?? []).filter(
     (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
   );
-  const targetIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+  // `??`, not a length check: `chosenTargetIds` is `null` only when nothing
+  // has been explicitly chosen yet -- an explicit Clear in the picker sets
+  // it to `[]`, which must stay `[]` here rather than silently snapping
+  // back to the default (#519 review).
+  const targetIds = chosenTargetIds ?? (targets[0] ? [targets[0].id] : []);
   // Discovery runs, active scans and scope toggles are inherently
   // single-target actions (a scan dispatches a Celery task against one
   // checkout, a scope override is one target's exclusion list) -- so those

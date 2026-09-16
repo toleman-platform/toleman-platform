@@ -165,8 +165,11 @@ export default function SbomPage() {
   );
   // Derived rather than seeded in an effect, same reasoning as
   // WorkspaceContext's activeWorkspaceId: the user's choice wins and a
-  // reload cannot move them.
-  const targetIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+  // reload cannot move them. `??`, not a length check: `chosenTargetIds` is
+  // `null` only when nothing has been explicitly chosen yet -- an explicit
+  // Clear in the picker sets it to `[]`, which must stay `[]` here rather
+  // than silently snapping back to the default (#519 review).
+  const targetIds = chosenTargetIds ?? (targets[0] ? [targets[0].id] : []);
   const isOrgWide = targetIds.includes(ALL_TARGETS);
   // Generate/export/import/upload all write one repo's persisted inventory
   // (POST /api/sbom/{id}/...), so they -- and the tabbed single-repo view

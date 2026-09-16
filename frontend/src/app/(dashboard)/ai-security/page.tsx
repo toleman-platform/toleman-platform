@@ -180,7 +180,7 @@ export default function AiSecurityPage() {
   // through to the "nothing explicitly selected" branch below, same as an
   // honest empty selection.
   const [aibomTargetIds, setAibomTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId);
-  const selectedAibomTargets = aiTargets.filter((t) => aibomTargetIds.includes(t.id));
+  const selectedAibomTargets = aiTargets.filter((t) => (aibomTargetIds ?? []).includes(t.id));
   // Falls back to the single AI target rather than tracking "unset" as a
   // separate state only when there is exactly one -- nothing to pick, so
   // implicitly offering to generate its AIBOM is not offering an action for
@@ -340,7 +340,7 @@ export default function AiSecurityPage() {
           {aiTargets.length > 1 && (
             <TargetPicker
               targets={aiTargets}
-              value={aibomTargetIds}
+              value={aibomTargetIds ?? []}
               onChange={setAibomTargetIds}
               label="AI/ML repositories"
             />

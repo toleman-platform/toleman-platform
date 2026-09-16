@@ -69,7 +69,11 @@ export default function ReportsPage() {
   // (#519) Resets on a workspace switch, "All repositories" (ALL_TARGETS)
   // exempted -- see the hook's own doc comment.
   const [selectedTargetIds, setSelectedTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId, ALL_TARGETS);
-  const targetIds = selectedTargetIds.length > 0 ? selectedTargetIds : targets.length > 0 ? [ALL_TARGETS] : [];
+  // `??`, not a length check: `selectedTargetIds` is `null` only when
+  // nothing has been explicitly chosen yet -- an explicit Clear in the
+  // picker sets it to `[]`, which must stay `[]` here rather than silently
+  // snapping back to the default (#519 review).
+  const targetIds = selectedTargetIds ?? (targets.length > 0 ? [ALL_TARGETS] : []);
   const setTargetId = setSelectedTargetIds;
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [exporting, setExporting] = useState(false);

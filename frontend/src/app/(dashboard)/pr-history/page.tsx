@@ -259,7 +259,9 @@ export default function PrHistoryPage() {
   // exempted -- see the hook's own doc comment.
   const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId, ALL_TARGETS, () => {
     const seeded = positiveIntParam(prSearchParams, "target_id");
-    return seeded !== null ? [seeded] : [];
+    // `null`, not `[]`, when nothing was seeded: that's "nothing explicitly
+    // chosen yet" (falls back to the default below), not an explicit clear.
+    return seeded !== null ? [seeded] : null;
   });
   const linkedScanId = positiveIntParam(prSearchParams, "pr_scan_id");
   const linkedIgnoreFindingId = positiveIntParam(prSearchParams, "ignore_finding");
@@ -288,7 +290,11 @@ export default function PrHistoryPage() {
   const targets = (targetsRaw ?? []).filter(
     (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
   );
-  const targetIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+  // `??`, not a length check: `chosenTargetIds` is `null` only when nothing
+  // has been explicitly chosen yet -- an explicit Clear in the picker sets
+  // it to `[]`, which must stay `[]` here rather than silently snapping
+  // back to the default (#519 review).
+  const targetIds = chosenTargetIds ?? (targets[0] ? [targets[0].id] : []);
   const setTargetId = setChosenTargetIds;
 
   const isOrgWide = targetIds.includes(ALL_TARGETS);
@@ -329,10 +335,12 @@ export default function PrHistoryPage() {
   // parallel per-repo PR fetches, merged and tagged with which repo each PR
   // belongs to -- there is no batch/multi-repo variant of GitHub's PR API to
   // call instead.
+  const mergedSelectionKey = `${targetIds.join(",")}:${prState}`;
   const {
     data: mergedPrsRaw,
     error: mergedError,
-    isInitialLoading: mergedLoading,
+    isInitialLoading: mergedInitialLoading,
+    isRefreshing: mergedRefreshing,
   } = useAsyncData(
     () =>
       Promise.allSettled(
@@ -344,26 +352,36 @@ export default function PrHistoryPage() {
           })),
         ),
       ).then((settled) => ({
+        // Tagged with the selection/state it was fetched for: useAsyncData
+        // keeps the previous result on screen while a selection or state
+        // change refetch is in flight, and without this key the merged view
+        // below would render the previous selection's PRs under the new
+        // one's repo names for that window.
+        selectionKey: mergedSelectionKey,
         // One repo's PR fetch failing must not blank out every other
         // selected repo's PRs -- Promise.all would reject the whole batch on
         // a single rejection.
         fulfilled: settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
         failedTargetIds: targetIds.filter((_, i) => settled[i].status === "rejected"),
       })),
-    { enabled: multiSelected, deps: [targetIds.join(","), prState] },
+    { enabled: multiSelected, deps: [mergedSelectionKey] },
   );
-  const mergedPrs = (mergedPrsRaw?.fulfilled ?? [])
-    .flatMap((r) => r.items.map((pr) => ({ pr, targetId: r.targetId, targetName: r.targetName })))
-    .sort((a, b) => b.pr.created_at.localeCompare(a.pr.created_at));
-  const mergedFailedTargetNames = (mergedPrsRaw?.failedTargetIds ?? []).map(
-    (id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`,
-  );
+  const mergedResultStale = mergedPrsRaw !== null && mergedPrsRaw.selectionKey !== mergedSelectionKey;
+  const mergedLoading = mergedInitialLoading || mergedRefreshing || mergedResultStale;
+  const mergedPrs = mergedResultStale
+    ? []
+    : (mergedPrsRaw?.fulfilled ?? [])
+        .flatMap((r) => r.items.map((pr) => ({ pr, targetId: r.targetId, targetName: r.targetName })))
+        .sort((a, b) => b.pr.created_at.localeCompare(a.pr.created_at));
+  const mergedFailedTargetNames = mergedResultStale
+    ? []
+    : (mergedPrsRaw?.failedTargetIds ?? []).map((id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`);
   // Each api.prs call is independently capped at PR_LIST_PAGE_SIZE; a repo
   // that hit the cap may have older PRs GitHub never returned, the same
   // truncation the single-repo view already warns about below.
-  const mergedTruncatedTargetNames = (mergedPrsRaw?.fulfilled ?? [])
-    .filter((r) => r.items.length === PR_LIST_PAGE_SIZE)
-    .map((r) => r.targetName);
+  const mergedTruncatedTargetNames = mergedResultStale
+    ? []
+    : (mergedPrsRaw?.fulfilled ?? []).filter((r) => r.items.length === PR_LIST_PAGE_SIZE).map((r) => r.targetName);
 
   // A 401 is not a page error; it means the GitHub session lapsed, and the
   // page has a dedicated reconnect affordance for it.

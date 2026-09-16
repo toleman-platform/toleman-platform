@@ -247,6 +247,45 @@ describe("Security Score widget - scoped to the active workspace", () => {
 
     vi.doUnmock("@/lib/api");
   });
+
+  it("does not get stuck on a stale skeleton after switching back before an abandoned fetch resolves", async () => {
+    // CodeRabbit review, PR #517: useAsyncData's cleanup aborts an in-flight
+    // request when a scope stops being fetched, but an aborted request's
+    // promise never dispatches -- so `isInitialLoading` freezes at whatever
+    // it was the instant that happened, rather than resetting. A fetch that
+    // never resolves during this test stands in for "still in flight when
+    // the reader switches away".
+    const securityScore = vi.fn(() => new Promise<SecurityScore>(() => {}));
+    vi.doMock("@/lib/api", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/api")>();
+      return {
+        ...actual,
+        api: {
+          ...actual.api,
+          targets: () => Promise.resolve([]),
+          groups: () => Promise.resolve([]),
+          workspaces: () => Promise.resolve([{ id: 7, name: "acme-prod", organization_id: 1, enforcement_mode: null }]),
+          securityScore,
+        },
+      };
+    });
+    vi.resetModules();
+    const { WidgetBody: FreshWidgetBody } = await import("./widgets");
+    const { renderWithWorkspace: freshRender } = await import("@/test/render-with-workspace");
+
+    freshRender(<FreshWidgetBody entry={{ widget_id: "security_score", data: baseScore() }} />);
+
+    const select = (await screen.findByLabelText("Scope")) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "org" } }); // starts the never-resolving fetch
+    fireEvent.change(select, { target: { value: "workspace:7" } }); // switches away before it settles
+
+    // Back on the default, fetch-free tier: the gauge must show initialData
+    // immediately, not the abandoned "org" fetch's forever-loading skeleton.
+    expect(await screen.findByRole("img", { name: /Security score 72 out of 100/ })).not.toBeNull();
+    expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
+
+    vi.doUnmock("@/lib/api");
+  });
 });
 
 describe("Security Score widget - multi-select repositories", () => {

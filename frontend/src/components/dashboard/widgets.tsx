@@ -820,11 +820,12 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
   // See the score derivation below for why "org" only qualifies once no
   // workspace is active.
   const usesInitialData = scope.kind === "workspace" || (scope.kind === "org" && activeWorkspaceId === null);
+  const shouldFetchScopedScore = !usesInitialData && !noTargetsPicked;
 
   const {
     data: scopedScore,
     error: loadError,
-    isInitialLoading: loading,
+    isInitialLoading: scopedLoading,
   } = useAsyncData<SecurityScore>(
     () => {
       if (scope.kind === "group") return api.securityScore({ groupId: scope.id });
@@ -834,8 +835,16 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
       // org, whenever one is selected).
       return api.securityScore({});
     },
-    { enabled: !usesInitialData && !noTargetsPicked, deps: [scoreScopeKey(scope)] },
+    { enabled: shouldFetchScopedScore, deps: [scoreScopeKey(scope)] },
   );
+  // useAsyncData's own effect aborts an in-flight request when `enabled`
+  // flips to false (switching scope away mid-fetch), but an aborted
+  // request's promise never dispatches -- so `scopedLoading`/`loadError`
+  // freeze at whatever they were the instant this scope stopped being
+  // fetched, rather than resetting. Gating both on `shouldFetchScopedScore`
+  // is what stops that frozen, unrelated state from leaking into the
+  // workspace/no-selection render below once the scoped fetch is disabled.
+  const loading = shouldFetchScopedScore && scopedLoading;
 
   // "workspace" scope is always batched into `initialData` by
   // GET /api/dashboard/widget-data (scoped to the same activeWorkspaceId).
@@ -852,7 +861,7 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
     : noTargetsPicked
       ? { ...initialData, target_count: 0 }
       : (scopedScore ?? initialData);
-  const error = loadError?.message ?? null;
+  const error = shouldFetchScopedScore ? (loadError?.message ?? null) : null;
   const scored = score.target_count > 0;
   const coverage = score.components.coverage as SecurityScore["components"]["coverage"] | undefined;
 

@@ -89,6 +89,13 @@ def run_discovery(self, target_id: int, run_id: int):
             logger.info("discovery refused for target %s: %s", target_id, refusal)
             return {"error": refusal, "run_id": run.id}
 
+        # (disk exhaustion, 2026-09) This clone is deliberately NOT rmtree'd
+        # here: discovery results are wanted back quickly, and an inline
+        # rmtree of a full checkout is exactly the synchronous cost that
+        # should not sit on this task's own return path -- same reasoning as
+        # execute_pr_guardrail_scan's clone. runner.sweep_stale_run_caches
+        # (Beat-scheduled, app.tasks.scan_tasks.sweep_scan_workdir) reclaims
+        # settings.scan_workdir entries once they're stale instead.
         try:
             repo_path = runner.clone_repo(
                 target.repo_url, target.default_branch,

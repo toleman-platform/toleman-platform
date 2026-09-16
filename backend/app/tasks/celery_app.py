@@ -151,6 +151,16 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.scan_tasks.warm_scanner_caches",
         "schedule": timedelta(hours=6),
     },
+    # (disk exhaustion, 2026-09) settings.scan_workdir fills far faster than
+    # the rare trivy-warm debris warm-scanner-caches was sized for --
+    # discovery/SBOM/PR Guardrail all leave a clone behind on every single
+    # run by design (see sweep_stale_run_caches), so at real usage volume
+    # this needs its own tighter cadence rather than waiting on the 6h trivy
+    # schedule above.
+    "sweep-scan-workdir": {
+        "task": "app.tasks.scan_tasks.sweep_scan_workdir",
+        "schedule": timedelta(minutes=30),
+    },
 }
 
 

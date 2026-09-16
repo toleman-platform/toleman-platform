@@ -233,6 +233,36 @@ def test_status_empty_when_nothing_configured(client, engine):
     assert data["installed"] is False
 
 
+def test_status_labels_each_app_by_workspace_scope(client, engine):
+    """(#506 follow-up) connect-github-card.tsx needs workspace_id/
+    workspace_name on each app to label "Platform default" vs. a specific
+    workspace -- without this it has no way to tell them apart in the UI,
+    which is what made a second, workspace-scoped App indistinguishable
+    from (and previously impossible to create alongside) the platform
+    default."""
+    _login(client, engine)
+    with Session(engine) as session:
+        org = Organization(name="acme")
+        session.add(org)
+        session.commit()
+        session.refresh(org)
+        ws = Workspace(organization_id=org.id, name="acme-prod", api_key="k")
+        session.add(ws)
+        session.commit()
+        session.refresh(ws)
+        ws_id = ws.id
+        _make_config(session, "1", "platform-app")
+        _make_config(session, "2", "workspace-app", workspace_id=ws_id)
+
+    res = client.get("/api/github-app/status")
+    data = res.json()
+    by_slug = {a["app_slug"]: a for a in data["apps"]}
+    assert by_slug["platform-app"]["workspace_id"] is None
+    assert by_slug["platform-app"]["workspace_name"] is None
+    assert by_slug["workspace-app"]["workspace_id"] == ws_id
+    assert by_slug["workspace-app"]["workspace_name"] == "acme-prod"
+
+
 # --- "Manage on GitHub" link (manage_url) ---------------------------------
 #
 # Org-owned and personal-account-owned Apps live at different GitHub

@@ -155,6 +155,16 @@ def status(session: Session = Depends(get_session), user: User = Depends(current
         configs = [c for c in configs if c.workspace_id is None or c.workspace_id in ws_ids]
         installations = [i for i in installations if i.workspace_id in ws_ids]
 
+    # (#506 follow-up) So the Integrations card can label each App by its
+    # scope -- "Platform default" vs. a specific workspace's name -- instead
+    # of the caller having to already know which workspace_id maps to which
+    # workspace.
+    config_workspace_ids = {c.workspace_id for c in configs if c.workspace_id is not None}
+    workspace_names = {
+        w.id: w.name
+        for w in session.exec(select(Workspace).where(Workspace.id.in_(config_workspace_ids))).all()
+    } if config_workspace_ids else {}
+
     apps = []
     for config in configs:
         # Backfill for GitHubAppConfig rows created before owner_login/
@@ -180,6 +190,8 @@ def status(session: Session = Depends(get_session), user: User = Depends(current
             "html_url": config.html_url,
             "manage_url": app_management_url(config),
             "webhook_secret_set": bool(config.webhook_secret),
+            "workspace_id": config.workspace_id,
+            "workspace_name": workspace_names.get(config.workspace_id) if config.workspace_id is not None else None,
             "installations": [
                 {
                     "installation_id": i.installation_id,

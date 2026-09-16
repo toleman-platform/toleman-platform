@@ -298,14 +298,23 @@ export function githubAppStatus(): Promise<{
  */
 export function githubAppManifestData(
   org?: string,
+  workspaceId?: number,
 ): Promise<{ manifest: object; post_url: string; webhook_url: string; webhook_reachable: boolean }> {
   // (GH-03) webhook_reachable is false when PUBLIC_API_URL is a localhost
   // address, in which case GitHub rejects this manifest on submission and
   // creates nothing (#355). The connect flow is blocked in the UI before
   // it gets here; this endpoint still returns a submittable manifest for
   // any other client.
+  //
+  // (#506 follow-up) workspaceId, when given, scopes the App being created
+  // to that workspace instead of the platform-wide default -- see
+  // manifest_data's docstring in backend/app/api/github_app.py.
+  const params = new URLSearchParams();
+  if (org) params.set("org", org);
+  if (workspaceId !== undefined) params.set("workspace_id", String(workspaceId));
+  const qs = params.toString();
   return jsonFetch<{ manifest: object; post_url: string; webhook_url: string; webhook_reachable: boolean }>(
-    `/api/github-app/manifest-data${org ? `?org=${encodeURIComponent(org)}` : ""}`,
+    `/api/github-app/manifest-data${qs ? `?${qs}` : ""}`,
   );
 }
 

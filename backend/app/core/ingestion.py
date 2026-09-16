@@ -1,7 +1,7 @@
 import logging
 from sqlmodel import Session, select
 
-from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, ScoringSignal, Severity, Target
+from app.models.models import Finding, FindingState, FindingStateLog, NotificationEventType, PlatformConfig, Scan, Severity, Target
 from app.core.dedup import compute_dedup_hash
 from app.core.cve_enrichment import warm_cve_enrichment
 from app.core.scoring import compute_priority_score
@@ -200,22 +200,18 @@ def ingest_findings(
     # shipped baseline, which scores identically to before #201 existed.
     weights = workspace_scoring_weights(session, target.workspace_id)
 
-    # The CVSS-exploitability and fixability signals read the CveEnrichment
-    # cache, whose only other writer is a human opening a finding's detail
-    # view. Left at that, those signals would fire only for CVEs somebody
-    # had already browsed -- so this warms the cache for the CVEs in this
-    # batch, but ONLY when the workspace actually weights one of them above
-    # zero. On the shipped baseline (both 0.0) nothing is fetched and this
-    # run makes exactly the network calls it made before #201; the cost
-    # arrives with the feature rather than with the upgrade.
+    # The CVSS-exploitability and fixability signals, and the Fix Plan tab,
+    # all read the CveEnrichment cache. Its only other writer is a human
+    # opening a finding's detail view, which means a target nobody has
+    # clicked through -- exactly the case Fix Plan exists for -- would never
+    # get a plan on its own. So every scan warms the cache for the CVEs in
+    # its own batch, regardless of scoring config; the per-run cap below is
+    # what keeps this bounded rather than a weight gate.
     #
     # Deliberately before the loop: get_cve_enrichment commits its own row,
     # and running that partway through would commit half-built Finding rows
     # with it. Nothing of this run's is in the session yet at this point.
-    if cve_ids and any(
-        weights.get(signal, 0.0) > 0
-        for signal in (ScoringSignal.CVSS_EXPLOITABILITY, ScoringSignal.FIXABILITY)
-    ):
+    if cve_ids:
         warm_cve_enrichment(session, cve_ids)
 
     # Read after the warm-up so this run's findings are scored against what

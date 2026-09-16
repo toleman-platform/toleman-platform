@@ -1083,10 +1083,10 @@ def test_rescan_without_a_config_change_leaves_the_score_alone(engine, monkeypat
     assert scores == [[480], [480], [480]]
 
 
-def test_ingestion_does_not_enrich_when_the_cve_signals_are_switched_off(engine, monkeypatch):
-    """On the shipped baseline both CVE-backed weights are 0, so a scan must
-    make exactly the network calls it made before #201 -- the cost of the
-    feature arrives when someone enables it, not when they upgrade."""
+def test_ingestion_warms_enrichment_even_when_the_cve_signals_are_switched_off(engine, monkeypatch):
+    """Fix Plan reads the same cache the scoring signals do, and a target
+    nobody has clicked through is exactly the case it exists for -- so the
+    warm-up must not be gated behind an opt-in scoring weight."""
     from app.core import ingestion
 
     monkeypatch.setattr(ingestion, "fetch_epss_scores", lambda ids: {})
@@ -1098,12 +1098,12 @@ def test_ingestion_does_not_enrich_when_the_cve_signals_are_switched_off(engine,
     target_id = _make_target(engine, ws_id)
     _ingest(engine, target_id, _parsed(cve_id="CVE-2024-9999"), tool="trivy")
 
-    assert calls == []
+    assert calls == [["CVE-2024-9999"]]
 
 
 def test_ingestion_warms_enrichment_once_a_cve_signal_is_weighted(engine, monkeypatch):
-    """The other half: a weighted signal whose cache nothing populates is a
-    signal that silently cannot fire."""
+    """A weighted signal reads the same warm-up path as the unweighted case
+    above; weighting it changes scoring, not whether the cache gets filled."""
     from app.core import ingestion
 
     monkeypatch.setattr(ingestion, "fetch_epss_scores", lambda ids: {})

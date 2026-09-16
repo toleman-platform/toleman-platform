@@ -90,9 +90,11 @@ def _target(engine):
 
 
 def _finding(engine, target_id, cve_id, severity=Severity.HIGH, fixes=None, osv_found=True,
-             enrich=True, suffix=""):
+             enrich=True, suffix="", package_name=None):
     """fixes: list of (package, version) this CVE's advisory offers, or None
-    for an advisory with no fix at all.
+    for an advisory with no fix at all. A `package` of None in `fixes`
+    simulates an OSV record with no package name; `package_name` gives the
+    Finding itself trivy's attribution for that case.
 
     enrich=False writes the finding with NO CveEnrichment row at all -- the
     state a target is in before anything has been looked up, which is
@@ -103,7 +105,7 @@ def _finding(engine, target_id, cve_id, severity=Severity.HIGH, fixes=None, osv_
         session.add(Finding(
             target_id=target_id, tool="trivy", rule_id=cve_id, title=f"{cve_id} in dep",
             file_path="requirements.txt", severity=severity, cve_id=cve_id,
-            state=FindingState.OPEN,
+            state=FindingState.OPEN, package_name=package_name,
             # NOT NULL in the schema, and unique per finding; reusing one
             # value here would make two findings collide rather than group.
             dedup_hash=f"hash-{cve_id}{suffix}",
@@ -213,6 +215,39 @@ class TestGrouping:
         with Session(engine) as session:
             groups = group_remediations(session, tid)
         assert groups[0]["highest_severity"] == "Critical"
+
+    def test_falls_back_to_the_findings_own_package_when_osv_names_none(self, engine):
+        """#521: a CVE-ID-keyed OSV/NVD lookup often returns a fixed version
+        with no package name at all (unlike the ecosystem-native GHSA/PYSEC
+        advisory, which normally has one). Trivy already knows which
+        package it flagged, so that -- not a guess -- fills the gap."""
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", fixes=[(None, "1.4.1")], package_name="loader-utils")
+        with Session(engine) as session:
+            groups = group_remediations(session, tid)
+        assert len(groups) == 1
+        assert groups[0]["package"] == "loader-utils"
+        assert groups[0]["upgrade_to"] == "1.4.1"
+
+    def test_no_fallback_and_no_osv_package_drops_the_finding(self, engine):
+        """The conservative default still holds when there is nothing to
+        attribute the fix to -- neither OSV nor the finding itself names a
+        package, so this must not invent one."""
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", fixes=[(None, "1.4.1")], package_name=None)
+        with Session(engine) as session:
+            groups = group_remediations(session, tid)
+        assert groups == []
+
+    def test_osvs_own_package_name_wins_over_the_fallback(self, engine):
+        """The fallback only fills a gap; it must never override an
+        advisory that already names its own package."""
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", fixes=[("starlette", "0.40.0")], package_name="not-starlette")
+        with Session(engine) as session:
+            groups = group_remediations(session, tid)
+        assert len(groups) == 1
+        assert groups[0]["package"] == "starlette"
 
 
 class TestDoesNotOverstate:
@@ -374,6 +409,22 @@ class TestEnrichmentCoverage:
             ("starlette", "0.40.0", 2)
         ]
         assert result["coverage"]["findings_with_fix_data"] == 2
+
+    def test_fix_data_counted_via_the_findings_own_package_fallback(self, engine):
+        """#521: an advisory with a fixed version but no package name still
+        counts as fix data once the finding's own trivy-reported package
+        fills the gap -- coverage must not drift from what the plan built."""
+        tid = _target(engine)
+        _finding(engine, tid, "CVE-1", fixes=[(None, "1.4.1")], package_name="loader-utils")
+        result = _plan(engine, tid)
+        assert len(result["plans"]) == 1
+        assert result["coverage"] == {
+            "cve_findings": 1,
+            "distinct_cves": 1,
+            "enriched_findings": 1,
+            "findings_with_advisory": 1,
+            "findings_with_fix_data": 1,
+        }
 
 
 class TestApi:

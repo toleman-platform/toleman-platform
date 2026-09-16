@@ -1123,6 +1123,16 @@ CACHE_LOCK_FILENAME = "trivy-warm.lock"
 # below it, so this can never delete a cache a live scan is using.
 RUN_CACHE_MAX_AGE_SECONDS = 6 * 60 * 60
 
+# Separate, tighter cutoff for settings.scan_workdir. Unlike the trivy-warm
+# debris above (a rare edge case: only a worker killed mid-replace leaves
+# any), a scan_workdir clone is left behind on *every single* PR Guardrail
+# scan by design (see sweep_stale_run_caches) -- so at PR volume this root
+# accumulates routinely, not exceptionally, and needs a cutoff close to how
+# long a clone is ever legitimately still needed rather than one sized for
+# a rare leftover. Still an order of magnitude above the 15-minute
+# stale-job timeout, same safety margin RUN_CACHE_MAX_AGE_SECONDS relies on.
+SCAN_WORKDIR_MAX_AGE_SECONDS = 2 * 60 * 60
+
 # Where trivy puts the DB and its metadata inside a cache directory.
 TRIVY_DB_FILE_PATH = "db/trivy.db"
 TRIVY_DB_METADATA_PATH = "db/metadata.json"
@@ -1271,23 +1281,36 @@ def sweep_stale_run_caches() -> int:
     the only sweeper this gets: there is no cron in this project, and a
     directory that only grows is how a disk fills up quietly.
 
-    Covers two roots, because warming leaves its own debris. A SIGKILL or
-    OOM between ensure_warm_trivy_db's two renames strands a
-    ``trivy-warm.replaced-*`` directory, and one during the download
-    strands a ``trivy-staging-*`` one -- each a full copy of the database,
-    which is the largest thing this platform writes to disk. The happy
-    paths remove both; nothing else did.
+    Covers three roots. Two are warming's own debris: a SIGKILL or OOM
+    between ensure_warm_trivy_db's two renames strands a
+    ``trivy-warm.replaced-*`` directory, and one during the download strands
+    a ``trivy-staging-*`` one -- each a full copy of the database, which is
+    otherwise the largest thing this platform writes to disk.
+
+    The third is settings.scan_workdir (disk exhaustion, 2026-09):
+    clone_repo's own docstring calls cleaning up scan workdirs "a separate
+    ops concern, intentionally out of scope", and nothing ever did it.
+    scan_tasks.run_scan now rmtrees its own clone right after use, since a
+    plain scheduled/triggered tool scan has nothing waiting on a fast
+    return. discovery_tasks, sbom_tasks and execute_pr_guardrail_scan
+    deliberately do not: their results are wanted back quickly (PR Guardrail
+    is on a CI check's critical path; discovery/SBOM callers are waiting on
+    the response), and an rmtree of a full checkout is exactly the kind of
+    synchronous cost those should not carry. This periodic sweep is what
+    reclaims those clones instead, plus anything any of the four clone_repo
+    call sites left behind because their own worker was killed before its
+    cleanup ran.
     """
-    cutoff = time.time() - RUN_CACHE_MAX_AGE_SECONDS
     removed = 0
 
-    def _sweep(root: Path, matches) -> int:
+    def _sweep(root: Path, matches, max_age_seconds: float) -> int:
         if not root.is_dir():
             return 0
         try:
             entries = list(root.iterdir())
         except OSError:
             return 0
+        cutoff = time.time() - max_age_seconds
         count = 0
         for entry in entries:
             if not matches(entry):
@@ -1301,12 +1324,14 @@ def sweep_stale_run_caches() -> int:
             count += 1
         return count
 
-    removed += _sweep(_run_cache_root(), lambda _entry: True)
+    removed += _sweep(_run_cache_root(), lambda _entry: True, RUN_CACHE_MAX_AGE_SECONDS)
     removed += _sweep(
         tool_cache_root(),
         lambda entry: entry.name.startswith(TRIVY_STAGING_PREFIX)
         or entry.name.startswith(f"{TRIVY_WARM_DIRNAME}.replaced-"),
+        RUN_CACHE_MAX_AGE_SECONDS,
     )
+    removed += _sweep(Path(settings.scan_workdir), lambda _entry: True, SCAN_WORKDIR_MAX_AGE_SECONDS)
     return removed
 
 

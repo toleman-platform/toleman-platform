@@ -18,6 +18,7 @@ session-token-login pattern used in tests/test_workspace_roles.py:
      the full dispatch -> execution -> DB-row-transitions-to-completed path
      genuinely works, not just that `.delay()` was called.
 """
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -228,7 +229,15 @@ def _fake_clone_repo(repo_url, branch, github_token="", scan_id=None, **kwargs):
     # Stand-in checkout dir; real clone_repo/git is never invoked in tests.
     # **kwargs absorbs clone_kwargs_for_target's client_cert_pem/
     # client_key_pem/proxy_url (#298), which callers always pass now.
-    return Path("/tmp")
+    #
+    # A fresh throwaway directory, never the literal Path("/tmp") this used
+    # to return (disk exhaustion, 2026-09): run_scan now does
+    # `finally: shutil.rmtree(repo_path)` right after the scan, so whatever
+    # this returns gets recursively deleted before the test finishes.
+    # Returning "/tmp" itself meant that cleanup deleted the whole sandbox
+    # tmp directory -- including pytest's own basetemp -- out from under
+    # every test that ran after this one in the same session.
+    return Path(tempfile.mkdtemp(prefix="fake-clone-"))
 
 
 def test_scan_dispatch_runs_eagerly_end_to_end_and_completes(client, engine, monkeypatch, eager_celery):

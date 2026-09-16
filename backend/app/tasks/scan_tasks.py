@@ -1,5 +1,7 @@
 import logging
+import shutil
 import subprocess
+from pathlib import Path
 
 from sqlmodel import Session, select
 
@@ -129,6 +131,13 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             session.commit()
             session.refresh(scan)
 
+        # (disk exhaustion, 2026-09) clone_repo's own docstring calls cleaning
+        # up scan workdirs "a separate ops concern, intentionally out of
+        # scope" -- nothing ever did it, so every scan's clone sat in
+        # settings.scan_workdir forever. Tracked outside the try so the
+        # finally below can remove it on every exit path, including a clone
+        # failure that raises before repo_path would otherwise exist.
+        repo_path = None
         try:
             repo_path = runner.clone_repo(
                 target.repo_url, target.default_branch,
@@ -234,6 +243,28 @@ def run_scan(self, target_id: int, tool: str, scan_id: int | None = None):
             session.commit()
             _notify_scan_failure(session, target, tool, error_message)
             return {"error": error_message, "scan_id": scan.id}
+        finally:
+            if repo_path is not None:
+                # Defense in depth (disk exhaustion, 2026-09 postmortem): a
+                # test double once stood in for clone_repo and returned the
+                # literal Path("/tmp") -- this finally then rmtree'd the
+                # entire sandbox tmp directory, taking every later test's
+                # fixtures with it. clone_repo itself always returns a path
+                # under settings.scan_workdir, but nothing stops a future
+                # bug or stub from returning something else, so only ever
+                # remove a path that actually resolves inside scan_workdir.
+                try:
+                    resolved = Path(repo_path).resolve()
+                    workdir = Path(runner.settings.scan_workdir).resolve()
+                    if resolved == workdir or workdir in resolved.parents:
+                        shutil.rmtree(resolved, ignore_errors=True)
+                    else:
+                        logger.error(
+                            "run_scan: refusing to remove %s -- outside scan_workdir %s",
+                            resolved, workdir,
+                        )
+                except OSError:
+                    pass
 
 
 def queue_full_scan(session: Session, target: Target) -> list[int]:
@@ -314,6 +345,25 @@ def warm_scanner_caches() -> dict:
     if not warm:
         logger.warning("scheduled trivy DB warm-up failed: %s", detail)
     return {"warm": warm, "detail": detail, "stale_run_caches_removed": removed}
+
+
+@celery_app.task(name="app.tasks.scan_tasks.sweep_scan_workdir")
+def sweep_scan_workdir() -> dict:
+    """Beat-scheduled (disk exhaustion, 2026-09): reclaim stale
+    settings.scan_workdir clones without touching the trivy DB.
+
+    A separate, more frequent schedule from warm_scanner_caches on purpose:
+    execute_pr_guardrail_scan leaves a clone behind on every single run (see
+    sweep_stale_run_caches' docstring for why -- an inline rmtree would add
+    a synchronous cost to a CI-blocking PR check), so at any real PR volume
+    this root fills far faster than the rare trivy-warm debris
+    warm_scanner_caches' 6h cadence was sized for. Calling the same
+    sweep_stale_run_caches here is redundant with that schedule for the
+    other two roots, but cheap (one listdir each) and avoids a second
+    sweep function to keep in sync.
+    """
+    removed = runner.sweep_stale_run_caches()
+    return {"stale_run_caches_removed": removed}
 
 
 @celery_app.task(name="app.tasks.scan_tasks.run_scheduled_full_scans")

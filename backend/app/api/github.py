@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -180,7 +180,7 @@ def repo_prs(
 
 @router.get("/org-activity")
 def org_activity(
-    target_id: int | None = None,
+    target_id: list[int] | None = Query(default=None),
     date_from: str | None = None,
     date_to: str | None = None,
     page: int = 1,
@@ -193,14 +193,14 @@ def org_activity(
     scope not available for personal accounts/repos.
 
     Issue #123: adds the same repo + date-range filter and real-pagination
-    pattern as the Audit Log. target_id narrows the fetch to a single repo
-    (fewer GitHub API calls, more commits fetched for that repo since
-    there's only one); with no filter this still fetches a bounded number of
-    commits per repo across every target, same trade-off the original
-    unfiltered version made. date_from/date_to are passed straight through
-    as GitHub's own `since`/`until` commit-search params (real filtering at
-    the source, not a client-side guess), then the combined, sorted result
-    is paginated in-process.
+    pattern as the Audit Log. target_id narrows the fetch to one or more
+    repos (fewer GitHub API calls, more commits fetched per repo since
+    there are fewer of them); with no filter this still fetches a bounded
+    number of commits per repo across every target, same trade-off the
+    original unfiltered version made. date_from/date_to are passed straight
+    through as GitHub's own `since`/`until` commit-search params (real
+    filtering at the source, not a client-side guess), then the combined,
+    sorted result is paginated in-process.
     """
     # (#273) Live targets only: this makes a real GitHub API call per target,
     # and a deleted one is both a wasted call and a repo that shouldn't be
@@ -209,13 +209,13 @@ def org_activity(
     query = target_lifecycle.live_targets(select(Target))
     if ws_ids is not None:
         query = query.where(Target.workspace_id.in_(ws_ids))
-    if target_id is not None:
-        query = query.where(Target.id == target_id)
+    if target_id:
+        query = query.where(Target.id.in_(target_id))
     targets = session.exec(query).all()
 
-    # Fetch more commits per repo when scoped to just one, since there's
-    # only one GitHub API call to make either way.
-    per_repo_limit = 100 if target_id is not None else 10
+    # Fetch more commits per repo when scoped to a subset, since there are
+    # fewer GitHub API calls to make either way.
+    per_repo_limit = 100 if target_id else 10
 
     commit_params: dict[str, str | int] = {"per_page": per_repo_limit}
     if date_from:

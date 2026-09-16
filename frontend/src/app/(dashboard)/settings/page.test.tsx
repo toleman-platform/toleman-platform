@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen } from "@testing-library/react";
 import SettingsPage from "./page";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * Every write on this page reported success by silence: `try`/`finally` with
@@ -21,6 +22,7 @@ const {
   apiTokens,
   createApiToken,
   revokeApiToken,
+  workspaces,
 } = vi.hoisted(() => ({
   me: vi.fn(),
   updateMe: vi.fn(),
@@ -32,6 +34,10 @@ const {
   apiTokens: vi.fn(),
   createApiToken: vi.fn(),
   revokeApiToken: vi.fn(),
+  // The Workspace tab's target picker now reads the global workspace
+  // switcher (#520), which needs a WorkspaceProvider ancestor -- see
+  // renderWithWorkspace below.
+  workspaces: vi.fn(),
 }));
 
 // Spread over the real module rather than replaced wholesale: this page pulls
@@ -53,6 +59,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       apiTokens,
       createApiToken,
       revokeApiToken,
+      workspaces,
     },
   };
 });
@@ -76,11 +83,19 @@ afterEach(() => {
   targets.mockReset();
   updateTarget.mockReset();
   apiTokens.mockReset();
+  workspaces.mockReset();
+});
+
+// WorkspaceProvider (via renderWithWorkspace) fetches this on every mount,
+// regardless of which test is running -- default it here rather than in
+// every test/helper that renders the page.
+beforeEach(() => {
+  workspaces.mockResolvedValue([]);
 });
 
 /** Mounts the page and waits for the profile read, which owns the name field. */
 async function renderSettings() {
-  render(<SettingsPage />);
+  renderWithWorkspace(<SettingsPage />);
   await screen.findByText(USER.email);
 }
 
@@ -165,7 +180,7 @@ describe("Settings, saving notification preferences", () => {
     notificationPreferences.mockResolvedValue([
       { channel: "slack", event_type: "critical_finding", enabled: true },
     ]);
-    render(<SettingsPage />);
+    renderWithWorkspace(<SettingsPage />);
     await screen.findByText(USER.email);
     fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
     await screen.findByLabelText("Slack for New Critical finding");
@@ -213,7 +228,7 @@ describe("Settings, saving a target's configuration", () => {
     me.mockResolvedValue(USER);
     targets.mockResolvedValue([TARGET]);
     apiTokens.mockResolvedValue([]);
-    render(<SettingsPage />);
+    renderWithWorkspace(<SettingsPage />);
     await screen.findByText(USER.email);
     fireEvent.click(screen.getByRole("button", { name: "Workspace" }));
     await screen.findByDisplayValue("main");

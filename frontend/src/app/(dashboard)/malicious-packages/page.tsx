@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { api, ApiError, type Finding, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -48,17 +50,39 @@ const OSV_SOURCE_NOTE =
   "Source: OSV.dev's OpenSSF malicious-packages advisories, queried live against each target's SBOM inventory on every check. OSV does not publish a dataset version to pin to -- how recently a repo was checked is the freshness signal.";
 
 export default function MaliciousPackagesPage() {
-  const findingsQuery = useAsyncData<Finding[]>(() =>
-    api.findings({ tool: "osv-malware", page_size: 500 }).then((r) => r.items),
+  const { activeWorkspaceId } = useWorkspaceContext();
+  // (#519) Also scoped by workspace, same bug class the picker's own fix is
+  // about: this predates the multi-select work, but an OSV finding from a
+  // repo outside the active workspace has no business in this page's
+  // headline stats or detected-package list either.
+  const findingsQuery = useAsyncData<Finding[]>(
+    () => api.findings({ tool: "osv-malware", page_size: 500, workspace_id: activeWorkspaceId }).then((r) => r.items),
+    { deps: [activeWorkspaceId] },
   );
-  const targetsQuery = useAsyncData<Target[]>(() => api.targets());
+  // (#520) Workspace-scoped, same pattern as sbom/page.tsx.
+  const targetsQuery = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
+    deps: [activeWorkspaceId],
+  });
   const [checkState, setCheckState] = useState<Record<number, string>>({});
   const [importWarning, setImportWarning] = useState<Record<number, string>>({});
-  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
+  // (#519) Resets on a workspace switch -- this picker has no "All
+  // repositories" pseudo-value, so any selection is workspace-specific.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId);
 
-  const findings = findingsQuery.data ?? [];
-  const targets = targetsQuery.data ?? [];
+  const targets = (targetsQuery.data ?? []).filter(
+    (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
+  );
+  // `??`, not a length check: `chosenTargetIds` is `null` only when nothing
+  // has been explicitly chosen yet -- an explicit Clear in the picker sets
+  // it to `[]`, which must stay `[]` here rather than silently snapping
+  // back to the default (#519 review).
+  const targetIds = chosenTargetIds ?? (targets[0] ? [targets[0].id] : []);
   const targetById = new Map(targets.map((t) => [t.id, t]));
+  // Filtered again client-side, same reasoning as `targets`: a workspace
+  // switch's refetch keeps the previous workspace's findings on screen
+  // while it's in flight.
+  const targetIdSet = new Set(targets.map((t) => t.id));
+  const findings = (findingsQuery.data ?? []).filter((f) => targetIdSet.has(f.target_id));
 
   const affectedTargetIds = Array.from(new Set(findings.map((f) => f.target_id)));
   const openCount = findings.filter((f) => f.state === "Open").length;
@@ -409,62 +433,78 @@ export default function MaliciousPackagesPage() {
           <Card className="border-border bg-card">
             <CardContent className="flex flex-col gap-2 px-4 py-3">
               <div className="flex flex-wrap items-center gap-3">
-                <TargetPicker
-                  targets={targets}
-                  value={chosenTargetId ?? targets[0]?.id ?? null}
-                  onChange={setChosenTargetId}
-                />
+                <TargetPicker targets={targets} value={targetIds} onChange={setChosenTargetIds} />
                 {(() => {
-                  const activeId = chosenTargetId ?? targets[0]?.id ?? null;
-                  const label = activeId !== null ? checkState[activeId] : undefined;
+                  const activeIds = targetIds;
+                  const checking = activeIds.some((id) => checkState[id] === "checking");
                   // (#273) Both endpoints this button calls (/github-sync
                   // and /malware-check) refuse a deactivated target, because
                   // both persist Critical findings and fan out to Jira/SIEM/
                   // notifications. The button has to say so rather than
                   // firing and reporting "check failed", which would read as
                   // an OSV outage -- the opposite of what actually happened.
-                  const deactivated =
-                    activeId !== null && targetById.get(activeId)?.is_active === false;
+                  const deactivatedIds = activeIds.filter((id) => targetById.get(id)?.is_active === false);
+                  const allDeactivated = activeIds.length > 0 && deactivatedIds.length === activeIds.length;
+                  // Only shown for a single-repo selection; with several repos
+                  // selected each one's own row below still carries its own
+                  // status label, and one shared line here can't speak for all
+                  // of them at once.
+                  const singleLabel = activeIds.length === 1 ? checkState[activeIds[0]] : undefined;
                   return (
                     <>
-                      {deactivated && (
+                      {deactivatedIds.length > 0 && (
                         <span className="text-xs text-warning">
-                          This repo is deactivated; scanning is off.
+                          {deactivatedIds.length === activeIds.length
+                            ? "This repo is deactivated; scanning is off."
+                            : `${deactivatedIds.length} of ${activeIds.length} selected repos are deactivated and will be skipped.`}
                         </span>
                       )}
-                      {!deactivated && label && label !== "checking" && (
+                      {!allDeactivated && singleLabel && singleLabel !== "checking" && (
                         <span
                           className={
-                            label === "clean"
+                            singleLabel === "clean"
                               ? "text-xs text-chart-5"
-                              : label === "check failed"
+                              : singleLabel === "check failed"
                                 ? "text-xs text-destructive"
                                 : "text-xs text-warning"
                           }
                         >
-                          {label}
+                          {singleLabel}
                         </span>
                       )}
                       <Button
                         size="sm"
-                        onClick={() => activeId !== null && recheck(activeId)}
-                        disabled={activeId === null || label === "checking" || deactivated}
+                        onClick={() =>
+                          Promise.all(
+                            activeIds
+                              .filter((id) => targetById.get(id)?.is_active !== false)
+                              .map((id) => recheck(id)),
+                          )
+                        }
+                        disabled={activeIds.length === 0 || checking || allDeactivated}
                         title={
-                          deactivated
+                          allDeactivated
                             ? "This target is deactivated; scanning is off. Reactivate it on the target page."
                             : undefined
                         }
                       >
-                        <RefreshCw className={label === "checking" ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-                        <span>{label === "checking" ? "Scanning..." : "Import & Check"}</span>
+                        <RefreshCw className={checking ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
+                        <span>
+                          {checking
+                            ? "Scanning..."
+                            : activeIds.length > 1
+                              ? `Import & Check ${activeIds.length} repos`
+                              : "Import & Check"}
+                        </span>
                       </Button>
                     </>
                   );
                 })()}
               </div>
               {(() => {
-                const activeId = chosenTargetId ?? targets[0]?.id ?? null;
-                const warning = activeId !== null ? importWarning[activeId] : undefined;
+                const activeIds = targetIds;
+                if (activeIds.length !== 1) return null;
+                const warning = importWarning[activeIds[0]];
                 return warning ? <p className="text-xs text-warning">{warning}</p> : null;
               })()}
             </CardContent>

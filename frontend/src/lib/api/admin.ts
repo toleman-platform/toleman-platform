@@ -1,4 +1,4 @@
-import { jsonFetch } from "./client";
+import { jsonFetch, appendMulti } from "./client";
 import type {
   BuildInfo,
   AuthUser,
@@ -397,7 +397,7 @@ export function activity(targetId: number): Promise<CommitEvent[]> {
  */
 export function orgActivity(query: OrgActivityQuery = {}): Promise<OrgActivityResult> {
   const params = new URLSearchParams();
-  if (query.target_id) params.set("target_id", String(query.target_id));
+  appendMulti(params, "target_id", query.target_id);
   if (query.date_from) params.set("date_from", query.date_from);
   if (query.date_to) params.set("date_to", query.date_to);
   if (query.page) params.set("page", String(query.page));

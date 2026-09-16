@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -145,25 +146,12 @@ function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
 
 export default function SbomPage() {
   const { activeWorkspaceId } = useWorkspaceContext();
-  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
+  // (#506/#519) A specific chosen target belongs to whichever workspace was
+  // active when it was picked; resets on a workspace switch, "All
+  // repositories" (ALL_TARGETS) exempted -- see the hook's own doc comment.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId, ALL_TARGETS);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // (#506) A specific chosen target belongs to whichever workspace was
-  // active when it was picked; switching the global active workspace must
-  // not leave that (now likely out-of-scope) target selected underneath a
-  // freshly-scoped list. "All repositories" (ALL_TARGETS) is exempt: an
-  // org-wide view re-scopes cleanly to the new workspace on its own and a
-  // switch shouldn't kick the reader out of it. React's documented "adjust
-  // state when a prop changes" pattern (see sidebar.tsx's `lastPathname`),
-  // not an effect, so the reset lands the same render the switch does.
-  const [lastWorkspaceId, setLastWorkspaceId] = useState(activeWorkspaceId);
-  if (lastWorkspaceId !== activeWorkspaceId) {
-    setLastWorkspaceId(activeWorkspaceId);
-    if (chosenTargetId !== ALL_TARGETS) {
-      setChosenTargetId(null);
-    }
-  }
 
   const { data: targetsData } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
     deps: [activeWorkspaceId],
@@ -177,9 +165,19 @@ export default function SbomPage() {
   );
   // Derived rather than seeded in an effect, same reasoning as
   // WorkspaceContext's activeWorkspaceId: the user's choice wins and a
-  // reload cannot move them.
-  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
-  const setTargetId = setChosenTargetId;
+  // reload cannot move them. `??`, not a length check: `chosenTargetIds` is
+  // `null` only when nothing has been explicitly chosen yet -- an explicit
+  // Clear in the picker sets it to `[]`, which must stay `[]` here rather
+  // than silently snapping back to the default (#519 review).
+  const targetIds = chosenTargetIds ?? (targets[0] ? [targets[0].id] : []);
+  const isOrgWide = targetIds.includes(ALL_TARGETS);
+  // Generate/export/import/upload all write one repo's persisted inventory
+  // (POST /api/sbom/{id}/...), so they -- and the tabbed single-repo view
+  // below -- stay scoped to exactly one repo. `targetId` is that repo, or
+  // null while org-wide or several-selected has taken over.
+  const targetId = !isOrgWide && targetIds.length === 1 ? targetIds[0] : null;
+  const multiSelected = !isOrgWide && targetIds.length > 1;
+  const setTargetId = setChosenTargetIds;
   // Only meaningful relative to a scan just triggered in this session; the
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" badge at all until a POST has completed here (same convention as
@@ -218,9 +216,44 @@ export default function SbomPage() {
     isInitialLoading: orgInitialLoading,
     isRefreshing: orgRefreshing,
   } = useAsyncData<OrgSbomResult>(() => api.getOrgSbom(activeWorkspaceId), {
-    enabled: targetId === ALL_TARGETS,
-    deps: [targetId, activeWorkspaceId],
+    enabled: isOrgWide,
+    deps: [isOrgWide, activeWorkspaceId],
   });
+
+  // Several specific repos selected at once (not "All", not one repo): N
+  // parallel per-repo SBOM fetches, merged and tagged with which repo each
+  // component came from -- each GET already returns that repo's full
+  // unpaginated component list, so this is a plain client-side concat rather
+  // than a new backend aggregate endpoint duplicating getOrgSbom's.
+  const {
+    data: multiSbom,
+    error: multiSbomError,
+    isInitialLoading: multiSbomLoading,
+  } = useAsyncData(
+    () =>
+      Promise.allSettled(
+        targetIds.map((id) =>
+          api.getSbom(id).then((res) => ({
+            targetId: id,
+            targetName: targets.find((t) => t.id === id)?.name ?? `target #${id}`,
+            components: res.components ?? [],
+          })),
+        ),
+      ).then((settled) => ({
+        // One repo's SBOM fetch failing must not blank out every other
+        // selected repo's components -- Promise.all would reject the whole
+        // batch on a single rejection.
+        fulfilled: settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
+        failedTargetIds: targetIds.filter((_, i) => settled[i].status === "rejected"),
+      })),
+    { enabled: multiSelected, deps: [targetIds.join(","), multiSelected] },
+  );
+  const mergedComponents = (multiSbom?.fulfilled ?? []).flatMap((r) =>
+    r.components.map((c) => ({ ...c, repoTargetId: r.targetId, repoName: r.targetName })),
+  );
+  const multiSbomFailedTargetNames = (multiSbom?.failedTargetIds ?? []).map(
+    (id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`,
+  );
   // A workspace switch re-triggers this fetch (activeWorkspaceId is a dep)
   // but useAsyncData keeps the previous workspace's org SBOM visible while it
   // is in flight; treated as loading too so that stale cross-workspace data
@@ -257,7 +290,7 @@ export default function SbomPage() {
     isInitialLoading: loading,
     refetch: reloadPersisted,
   } = useAsyncData(() => api.getSbom(targetId!), {
-    enabled: targetId !== null && targetId !== ALL_TARGETS,
+    enabled: targetId !== null,
     deps: [targetId],
   });
   const components = persisted?.components ?? null;
@@ -272,6 +305,19 @@ export default function SbomPage() {
   const sbomTotalPages = Math.max(1, Math.ceil((components?.length ?? 0) / sbomPageSize));
   const sbomPage = Math.min(sbomPageRaw, sbomTotalPages);
   const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
+
+  // The merged multi-repo view pages off the same URL params as the
+  // single-target Components tab above (mutually exclusive views, never
+  // both on screen). `getSbom` returns a repo's full unpaginated component
+  // list -- on a target with thousands of components, rendering
+  // `mergedComponents` in one unpaged PaginatedList call would put the
+  // entire merged set in the DOM at once.
+  const mergedTotalPages = Math.max(1, Math.ceil(mergedComponents.length / sbomPageSize));
+  const mergedPage = Math.min(sbomPageRaw, mergedTotalPages);
+  const visibleMergedComponents = mergedComponents.slice(
+    (mergedPage - 1) * sbomPageSize,
+    mergedPage * sbomPageSize,
+  );
 
   // The org-wide list pages off the same URL params. Only one of the two
   // views is ever on screen -- the tabs below exist only for a single target
@@ -312,7 +358,7 @@ export default function SbomPage() {
         page_size: ossPageSize,
       }),
     {
-      enabled: targetId !== null && targetId !== ALL_TARGETS,
+      enabled: targetId !== null,
       deps: [targetId, ossPageRaw, ossPageSize],
     },
   );
@@ -445,9 +491,9 @@ export default function SbomPage() {
         layout="stacked"
         steps={[
           <DocGenStep key="target" n={1} label="Target">
-            <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+            <TargetPicker targets={targets} value={targetIds} onChange={setTargetId} allowAll />
           </DocGenStep>,
-          ...(targetId !== ALL_TARGETS
+          ...(targetId !== null
             ? [
                 <DocGenStep key="scope" n={2} label="Scope">
                   <div className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground">
@@ -468,12 +514,12 @@ export default function SbomPage() {
               ]
             : []),
         ]}
-        generateLabel={targetId !== ALL_TARGETS ? "Generate SBOM" : undefined}
-        onGenerate={targetId !== ALL_TARGETS ? run : undefined}
+        generateLabel={targetId !== null ? "Generate SBOM" : undefined}
+        onGenerate={targetId !== null ? run : undefined}
         generating={running}
         generateDisabled={targetId === null || targetDeactivated}
         extra={
-          targetId !== ALL_TARGETS ? (
+          targetId !== null ? (
             <div className="flex flex-col gap-2">
               {targetDeactivated && (
                 <p className="text-xs text-warning">
@@ -516,7 +562,7 @@ export default function SbomPage() {
                 aria-label="Upload SBOM document"
               />
             </div>
-          ) : (
+          ) : isOrgWide ? (
             <Button
               variant="outline"
               className="w-full justify-center"
@@ -525,11 +571,61 @@ export default function SbomPage() {
             >
               {orgExporting ? "Exporting..." : "Export Org SBOM (JSON)"}
             </Button>
-          )
+          ) : null
         }
       />
 
-      {targetId === ALL_TARGETS && (
+      {multiSelected && (
+        <p className="text-sm text-muted-foreground">
+          Generating, exporting, importing and uploading an SBOM all act on one repository at a time --
+          select a single repository above to use them. Showing already-persisted components across the{" "}
+          {targetIds.length} selected repositories below.
+        </p>
+      )}
+
+      {multiSelected && (
+        <div className="flex flex-col gap-4">
+          {/* The whole batch only fails to load when the aggregate fetcher
+              itself throws; an individual repo's SBOM fetch failing is
+              reported per-repo below instead. */}
+          {multiSbomError && <p className="text-sm text-destructive">{multiSbomError.message}</p>}
+          {multiSbomLoading && <SkeletonList count={4} />}
+          {!multiSbomLoading && !multiSbomError && (
+            <PaginatedList
+              items={visibleMergedComponents}
+              total={mergedComponents.length}
+              page={mergedPage}
+              pageSize={sbomPageSize}
+              summary={`${mergedComponents.length} component${mergedComponents.length === 1 ? "" : "s"} across ${targetIds.length} repositories${multiSbomFailedTargetNames.length > 0 ? ` (couldn't load ${multiSbomFailedTargetNames.join(", ")})` : ""}`}
+              getKey={(c) => `${c.repoTargetId}-${c.id}`}
+              renderItem={(c) => (
+                <ListRow>
+                  <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <span className="truncate font-mono text-sm text-foreground" title={c.name}>
+                      {c.name}
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-foreground">{c.version}</span>
+                  </div>
+                  <Badge variant="outline" className="shrink-0 text-[10px]">
+                    {c.repoName}
+                  </Badge>
+                  <span className="w-20 shrink-0 truncate text-xs text-muted-foreground">{c.package_type}</span>
+                </ListRow>
+              )}
+              empty={
+                <EmptyState
+                  icon={Package}
+                  title="No SBOM data yet"
+                  description="Select a single repository above and generate an SBOM to see its dependency inventory here."
+                  bare
+                />
+              }
+            />
+          )}
+        </div>
+      )}
+
+      {isOrgWide && (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
             Aggregated from every already-scanned target&apos;s persisted SBOM
@@ -588,7 +684,7 @@ export default function SbomPage() {
         </div>
       )}
 
-      {targetId !== null && targetId !== ALL_TARGETS && (
+      {targetId !== null && (
         <>
           {/* Scan/export failures and the persisted-SBOM load failure share
               one slot; a load failure must not be swallowed just because no
@@ -692,7 +788,7 @@ export default function SbomPage() {
             </>
           )}
 
-          {tab === "aibom" && targetId !== null && targetId !== ALL_TARGETS && (
+          {tab === "aibom" && targetId !== null && (
             <AiBomPanel targetId={targetId} targetName={currentTarget?.name} />
           )}
 

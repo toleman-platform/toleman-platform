@@ -204,8 +204,10 @@ class ReportFilters:
     FILTER_SCOPE_NOTE; that distinction is printed on the document.
     """
 
-    # Target-level.
-    target_id: Optional[int] = None
+    # Target-level. Zero, one, or several repos; empty means "no target
+    # filter" (org-wide), matching the list-typed convention severity/state/
+    # tool already use on this same dataclass and on GET /api/findings.
+    target_id: list[int] = field(default_factory=list)
     group_id: Optional[int] = None
     environment: Optional[str] = None
     owner: Optional[str] = None
@@ -346,11 +348,19 @@ def _resolve_targets(
     than every workspace's data.
 
     The target-level filters (#302: group / environment / owner) apply
-    whether or not a single `target_id` was named. A named target that does
-    not match them yields an empty report rather than silently ignoring the
+    whether or not `target_id` was named. A named target that does not
+    match them yields an empty report rather than silently ignoring the
     filters -- the document says which filters were applied, so an empty
     result is readable, whereas a full result under filters the header
     claims were active would not be.
+
+    `filters.target_id` is a list: empty means org-wide (unchanged
+    behavior), one id means the same single-target report this has always
+    produced, and several ids resolve to that exact set. Every requested id
+    must individually be accessible to the caller or the whole call 404s --
+    silently dropping an inaccessible id from a multi-repo selection would
+    turn "repos A, B, C" into "A and B" without saying so, which is a
+    workspace-boundary leak, not a graceful degradation.
     """
     # "org-wide" has always meant "every target you can see". Once target-
     # level filters exist it can no longer say "(all targets)" unqualified:
@@ -362,11 +372,17 @@ def _resolve_targets(
         else f"org-wide, narrowed by {filters.target_level_summary()} (see '{APPLIED_FILTERS_HEADING}')"
     )
 
-    if ws_ids is not None and not ws_ids and filters.target_id is None:
-        # No memberships and no named target: an empty org-wide report. The
-        # named-target case deliberately falls through to the lookup below
-        # so it still 404s rather than degrading into a silent empty report,
-        # which is what it did before #302.
+    # Deduplicated, preserving first-occurrence order: a caller repeating an
+    # id (`target_id=1&target_id=1`) must not see "2 repositories (repo,
+    # repo)" next to a `matching` list of one -- the label and the count it
+    # describes have to agree.
+    target_ids = list(dict.fromkeys(filters.target_id))
+
+    if ws_ids is not None and not ws_ids and not target_ids:
+        # No memberships and no named target(s): an empty org-wide report.
+        # The named-target case deliberately falls through to the lookup
+        # below so it still 404s rather than degrading into a silent empty
+        # report, which is what it did before #302.
         return [], org_label, "org-wide"
 
     # (#273) Soft-deleted targets are excluded from every report. A
@@ -388,21 +404,41 @@ def _resolve_targets(
     if filters.owner is not None:
         query = query.where(Target.owner == filters.owner)
 
-    if filters.target_id is None:
+    if not target_ids:
         return list(session.exec(query.order_by(Target.name)).all()), org_label, "org-wide"
 
-    target = session.get(Target, filters.target_id)
-    if not target or target_lifecycle.is_deleted(target) or (ws_ids is not None and target.workspace_id not in ws_ids):
-        # 404 rather than 403 to avoid confirming the target exists in a
-        # workspace the caller can't see (matches findings.py's get_finding).
-        raise HTTPException(status_code=404, detail="target not found")
-    matching = list(session.exec(query.where(Target.id == target.id)).all())
-    # The label/name describe what was *asked for*, so a report that came
-    # back empty because the named repo fell outside the other filters is
-    # still filed under that repo's name instead of a blank. The name is
-    # returned raw; the Content-Disposition layer owns making it header-safe
-    # (app.core.downloads), so no caller here can forget to.
-    return matching, target.name, target.name
+    # Every requested id is looked up (and access-checked) individually,
+    # rather than relying on `matching` below coming back short: `matching`
+    # is also narrowed by group/environment/owner, so a short result there
+    # can mean "filtered out", not "inaccessible" -- the two must not be
+    # conflated into the same silent omission.
+    resolved_by_id: dict[int, Target] = {}
+    for tid in target_ids:
+        target = session.get(Target, tid)
+        if not target or target_lifecycle.is_deleted(target) or (ws_ids is not None and target.workspace_id not in ws_ids):
+            # 404 rather than 403 to avoid confirming the target exists in a
+            # workspace the caller can't see (matches findings.py's get_finding).
+            raise HTTPException(status_code=404, detail="target not found")
+        resolved_by_id[tid] = target
+
+    matching = list(session.exec(query.where(Target.id.in_(target_ids)).order_by(Target.name)).all())
+
+    if len(target_ids) == 1:
+        target = resolved_by_id[target_ids[0]]
+        # The label/name describe what was *asked for*, so a report that came
+        # back empty because the named repo fell outside the other filters is
+        # still filed under that repo's name instead of a blank. The name is
+        # returned raw; the Content-Disposition layer owns making it header-safe
+        # (app.core.downloads), so no caller here can forget to.
+        return matching, target.name, target.name
+
+    # Several specific repos, not all of them: neither "org-wide" (the
+    # header would overstate the scope) nor a single repo's name (it would
+    # silently drop the rest). Named explicitly so the header, like the
+    # single-target case, states exactly what was asked for.
+    names = [resolved_by_id[tid].name for tid in target_ids]
+    label = f"{len(target_ids)} repositories ({', '.join(names)})"
+    return matching, label, f"{len(target_ids)}-repos"
 
 
 def _resolve_group_label(session: Session, filters: ReportFilters, ws_ids: Optional[list[int]]) -> None:
@@ -476,7 +512,7 @@ def build_posture_report(
     base_query, _ = _filtered_findings_query(
         session,
         user,
-        target_id=[filters.target_id] if filters.target_id is not None else None,
+        target_id=filters.target_id or None,
         group_id=filters.group_id,
         branch=None,
         state=filters.state or None,
@@ -1101,7 +1137,12 @@ def list_report_sections() -> list[dict]:
 
 @router.get("/posture")
 def posture_report(
-    target_id: Optional[int] = Query(default=None),
+    # Repeated in the query string (`?target_id=1&target_id=2`), the same
+    # convention severity/state/tool already use below and GET /api/findings
+    # uses for its own target_id -- omitted or empty means org-wide, one
+    # value means a single-target report, several resolve to that exact set
+    # (see _resolve_targets).
+    target_id: Optional[list[int]] = Query(default=None),
     format: str = Query(default="csv", pattern="^(csv|pdf)$"),
     # --- #302 filters -------------------------------------------------
     # Multi-select params are repeated in the query string
@@ -1124,14 +1165,17 @@ def posture_report(
     """Real audit-evidence posture report (finding counts by
     severity/state, open-finding SLA/age, scan coverage, and SBOM summary)
     built from persisted Finding/Scan/SbomComponent rows. target_id omitted
-    means org-wide (every target the caller can see), same "0/omitted = all"
-    convention as TargetPicker's ALL_TARGETS sentinel on the frontend.
+    or empty means org-wide (every target the caller can see), same
+    "0/omitted = all" convention as TargetPicker's ALL_TARGETS sentinel on
+    the frontend. One or more target_id values scope the report to exactly
+    that set of repos (see _resolve_targets for the one-vs-many labeling).
 
     Issue #86: the org-wide case is scoped to the caller's workspaces via
     accessible_workspace_ids(), the same helper #57 applied to
     dashboard/findings/targets but which reports.py was out of scope for at
-    the time. A specific target_id outside the caller's workspaces 404s
-    (see _resolve_targets), matching findings.py's get_finding.
+    the time. Any target_id outside the caller's workspaces 404s the whole
+    request (see _resolve_targets), matching findings.py's get_finding --
+    a multi-repo selection never silently drops an inaccessible id.
 
     Issue #302: the report can additionally be filtered the way the Findings
     page can be (severity/state/tool/category/environment/owner/repo group,
@@ -1186,7 +1230,7 @@ def posture_report(
             )
 
     filters = ReportFilters(
-        target_id=target_id,
+        target_id=list(target_id or []),
         group_id=group_id,
         environment=environment,
         owner=owner,

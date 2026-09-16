@@ -252,14 +252,16 @@ export function reportSections(): Promise<ReportSection[]> {
  * call this had before #302 still produces the same full report.
  */
 export async function exportPostureReport(
-  targetId: Nullable<number>,
+  targetIds: number[],
   format: "csv" | "pdf",
   options: PostureReportOptions = {},
 ): Promise<PostureReportDownload> {
   const params = new URLSearchParams({ format });
-  if (targetId !== null && targetId !== 0) {
-    params.set("target_id", String(targetId));
-  }
+  // ALL_TARGETS (0) and an empty selection both mean "every accessible
+  // target"; omitting target_id entirely is what asks the backend for that,
+  // same convention severity/state/tool/sections already follow below.
+  const specificIds = targetIds.filter((id) => id !== 0);
+  appendMulti(params, "target_id", specificIds);
   if (options.group_id) params.set("group_id", String(options.group_id));
   appendMulti(params, "severity", options.severity);
   appendMulti(params, "state", options.state);

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import ApiDiscoveryPage from "./page";
 import type { Endpoint, ScanRun, Target } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * Three bugs observed live, all covered here:
@@ -19,19 +20,21 @@ import type { Endpoint, ScanRun, Target } from "@/lib/api";
  *     file:line buried behind a bullet. The table must be dense (ListRow),
  *     grouped by method, and give file:line its own legible slot.
  */
-const { targets, getDiscoveredEndpoints, getLatestApiScan, setEndpointScope, runApiScan, runDiscovery } = vi.hoisted(
-  () => ({
+const { targets, getDiscoveredEndpoints, getLatestApiScan, setEndpointScope, runApiScan, runDiscovery, workspaces } =
+  vi.hoisted(() => ({
     targets: vi.fn(),
     getDiscoveredEndpoints: vi.fn(),
     getLatestApiScan: vi.fn(),
     setEndpointScope: vi.fn(),
     runApiScan: vi.fn(),
     runDiscovery: vi.fn(),
-  }),
-);
+    // The repo picker now reads the global workspace switcher (#520), which
+    // needs a WorkspaceProvider ancestor -- see renderWithWorkspace below.
+    workspaces: vi.fn(),
+  }));
 
 vi.mock("@/lib/api", () => ({
-  api: { targets, getDiscoveredEndpoints, getLatestApiScan, setEndpointScope, runApiScan, runDiscovery },
+  api: { targets, getDiscoveredEndpoints, getLatestApiScan, setEndpointScope, runApiScan, runDiscovery, workspaces },
 }));
 
 // The active-scan poll loop (queued -> running -> settled) is exercised by
@@ -129,6 +132,7 @@ beforeEach(() => {
   runDiscovery.mockReset();
   targets.mockResolvedValue([target()]);
   getLatestApiScan.mockResolvedValue({ target_id: 1, scan: null });
+  workspaces.mockResolvedValue([]);
 });
 
 describe("extraction-artefact filtering", () => {
@@ -149,7 +153,7 @@ describe("extraction-artefact filtering", () => {
       ],
     });
 
-    render(<ApiDiscoveryPage />);
+    renderWithWorkspace(<ApiDiscoveryPage />);
 
     expect(await screen.findByText("2 endpoints found")).not.toBeNull();
     expect(screen.queryByText(/backend\/tests\/test_runner\.py/)).toBeNull();
@@ -175,7 +179,7 @@ describe("extraction-artefact filtering", () => {
       ],
     });
 
-    render(<ApiDiscoveryPage />);
+    renderWithWorkspace(<ApiDiscoveryPage />);
 
     expect(await screen.findByText("2 endpoints found")).not.toBeNull();
     expect(screen.getByText("/admin/users")).not.toBeNull();
@@ -189,7 +193,7 @@ describe("extraction-artefact filtering", () => {
       endpoints: [endpoint({ method: "POST", route: "/users/:id/replies" })],
     });
 
-    render(<ApiDiscoveryPage />);
+    renderWithWorkspace(<ApiDiscoveryPage />);
 
     expect(await screen.findByText("1 endpoint found")).not.toBeNull();
     expect(screen.getByText("/users/:id/replies")).not.toBeNull();
@@ -208,7 +212,7 @@ describe("active scan failure state", () => {
       scan: scanRun({ status: "failed", error_message: "nuclei scan timed out after retries" }),
     });
 
-    render(<ApiDiscoveryPage />);
+    renderWithWorkspace(<ApiDiscoveryPage />);
 
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Last active scan failed");
@@ -226,7 +230,7 @@ describe("active scan failure state", () => {
       scan: scanRun({ status: "completed", findings_count: 3 }),
     });
 
-    render(<ApiDiscoveryPage />);
+    renderWithWorkspace(<ApiDiscoveryPage />);
 
     expect(await screen.findByText(/Last active scan: 3 findings/)).not.toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
@@ -244,7 +248,7 @@ describe("dense grouped table", () => {
       ],
     });
 
-    const { container } = render(<ApiDiscoveryPage />);
+    const { container } = renderWithWorkspace(<ApiDiscoveryPage />);
 
     await screen.findByText("/a");
     // Conventional verb order: GET's group (and its one route) renders
@@ -269,7 +273,7 @@ describe("dense grouped table", () => {
       ],
     });
 
-    render(<ApiDiscoveryPage />);
+    renderWithWorkspace(<ApiDiscoveryPage />);
     await screen.findByText("/a");
 
     fireEvent.change(screen.getByLabelText("Filter by framework"), { target: { value: "fastapi" } });

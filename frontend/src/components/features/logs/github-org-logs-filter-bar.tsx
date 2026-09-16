@@ -2,41 +2,35 @@
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Target } from "@/lib/api";
+import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { DateRangeFilter } from "./date-range-filter";
-
-const SELECT_CLASS =
-  "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
 export function GithubOrgLogsFilterBar({ targets }: { targets: Target[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  function updateParam(key: string, value: string) {
+  const targetIds = searchParams.getAll("target_id").map(Number);
+  // No target_id params in the URL reads as "All repositories" -- represent
+  // that in TargetPicker's own terms rather than inventing a second "empty
+  // means all" convention on top of its ALL_TARGETS sentinel.
+  const pickerValue = targetIds.length > 0 ? targetIds : [ALL_TARGETS];
+
+  function setTargetIds(ids: number[]) {
     const params = new URLSearchParams(searchParams.toString());
-    if (value) params.set(key, value);
-    else params.delete(key);
+    params.delete("target_id");
+    if (!ids.includes(ALL_TARGETS)) {
+      for (const id of ids) params.append("target_id", String(id));
+    }
     params.delete("page");
     router.push(`${pathname}?${params.toString()}`);
   }
 
-  const hasFilters = ["target_id", "date_from", "date_to"].some((k) => searchParams.get(k));
+  const hasFilters = targetIds.length > 0 || ["date_from", "date_to"].some((k) => searchParams.get(k));
 
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-card p-3">
-      <select
-        aria-label="Filter by repository"
-        className={SELECT_CLASS}
-        value={searchParams.get("target_id") ?? ""}
-        onChange={(e) => updateParam("target_id", e.target.value)}
-      >
-        <option value="">All repositories</option>
-        {targets.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name}
-          </option>
-        ))}
-      </select>
+      <TargetPicker targets={targets} value={pickerValue} onChange={setTargetIds} allowAll label="Filter by repository" />
 
       <DateRangeFilter />
 

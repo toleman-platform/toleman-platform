@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Target, type ScanRun, type Endpoint } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { useScanRun } from "@/hooks/features/use-scan-run";
 import { ScanProgress } from "@/components/features/scans";
 import { Badge } from "@/components/ui/badge";
@@ -73,8 +75,8 @@ function methodRank(method: string): number {
  * file:line is the only thing that tells them apart; adjacency is what
  * makes that legible instead of two identical-looking rows 40 apart.
  */
-function groupByMethod(endpoints: Endpoint[]): { method: string; items: Endpoint[] }[] {
-  const groups = new Map<string, Endpoint[]>();
+function groupByMethod<T extends Endpoint>(endpoints: T[]): { method: string; items: T[] }[] {
+  const groups = new Map<string, T[]>();
   for (const e of endpoints) {
     const list = groups.get(e.method);
     if (list) list.push(e);
@@ -91,7 +93,10 @@ function groupByMethod(endpoints: Endpoint[]): { method: string; items: Endpoint
 }
 
 export default function ApiDiscoveryPage() {
-  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
+  const { activeWorkspaceId } = useWorkspaceContext();
+  // (#519) Resets on a workspace switch -- this picker has no "All
+  // repositories" pseudo-value, so any selection is workspace-specific.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // "" means no facet: every framework shown. A specific value narrows the
@@ -100,10 +105,27 @@ export default function ApiDiscoveryPage() {
   // be isolated instead of scrolled past.
   const [frameworkFilter, setFrameworkFilter] = useState<string>("");
 
-  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
-  const targets = targetsData ?? [];
-  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
-  const setTargetId = setChosenTargetId;
+  // (#520) Workspace-scoped, same pattern as sbom/page.tsx.
+  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
+    deps: [activeWorkspaceId],
+  });
+  const targets = (targetsData ?? []).filter(
+    (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
+  );
+  // `??`, not a length check: `chosenTargetIds` is `null` only when nothing
+  // has been explicitly chosen yet -- an explicit Clear in the picker sets
+  // it to `[]`, which must stay `[]` here rather than silently snapping
+  // back to the default (#519 review).
+  const targetIds = chosenTargetIds ?? (targets[0] ? [targets[0].id] : []);
+  // Discovery runs, active scans and scope toggles are inherently
+  // single-target actions (a scan dispatches a Celery task against one
+  // checkout, a scope override is one target's exclusion list) -- so those
+  // stay scoped to a single repo. `targetId` is that repo when exactly one
+  // is selected, and the merged read-only view further below takes over
+  // when more than one is.
+  const targetId = targetIds.length === 1 ? targetIds[0] : null;
+  const setTargetId = setChosenTargetIds;
+  const multiSelected = targetIds.length > 1;
   // Only meaningful relative to a scan just triggered in this session; the
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" column at all until a POST has completed here.
@@ -128,6 +150,59 @@ export default function ApiDiscoveryPage() {
   });
   const apiScanRunning = apiScan.phase === "queued" || apiScan.phase === "running";
   const currentTarget = targets.find((t) => t.id === targetId) ?? null;
+
+  // Read-only merged view across several selected repos: discovery runs,
+  // active scans and scope toggles stay single-target actions (see the
+  // `targetId` comment above), but browsing what's already been discovered
+  // for a handful of repos at once is a plain N-parallel-call merge -- each
+  // GET already returns that repo's full endpoint list, unpaginated.
+  const multiSelectionKey = targetIds.join(",");
+  const {
+    data: multiEndpoints,
+    error: multiError,
+    isInitialLoading: multiInitialLoading,
+    isRefreshing: multiRefreshing,
+  } = useAsyncData(
+    () =>
+      Promise.allSettled(
+        targetIds.map((id) =>
+          api.getDiscoveredEndpoints(id).then((res) => ({
+            targetId: id,
+            targetName: targets.find((t) => t.id === id)?.name ?? `target #${id}`,
+            endpoints: res.endpoints.filter((e) => !isExtractionArtefact(e)),
+          })),
+        ),
+      ).then((settled) => ({
+        // Tagged with the selection it was fetched for: useAsyncData keeps
+        // the previous result on screen while a selection-change refetch is
+        // in flight, and without this key the merged view below would
+        // render the previous selection's endpoints under the new one's
+        // repo names for that window.
+        selectionKey: multiSelectionKey,
+        // One repo's request failing must not blank out every other
+        // selected repo's endpoints -- Promise.all would reject the whole
+        // batch on a single rejection, hiding fulfilled results behind an
+        // error message that names none of them.
+        fulfilled: settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
+        failedTargetIds: targetIds.filter((_, i) => settled[i].status === "rejected"),
+      })),
+    { enabled: multiSelected, deps: [multiSelectionKey] },
+  );
+  const multiResultStale = multiEndpoints !== null && multiEndpoints.selectionKey !== multiSelectionKey;
+  const multiLoading = multiInitialLoading || multiRefreshing || multiResultStale;
+  const mergedEndpoints = useMemo(
+    () =>
+      multiResultStale
+        ? []
+        : (multiEndpoints?.fulfilled ?? []).flatMap((r) =>
+            r.endpoints.map((e) => ({ ...e, repoTargetId: r.targetId, repoName: r.targetName })),
+          ),
+    [multiEndpoints, multiResultStale],
+  );
+  const multiFailedTargetNames = multiResultStale
+    ? []
+    : (multiEndpoints?.failedTargetIds ?? []).map((id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`);
+  const mergedGroupedByMethod = useMemo(() => groupByMethod(mergedEndpoints), [mergedEndpoints]);
 
   useEffect(() => {
     // Stop the discovery poll if the component unmounts mid-run. The active
@@ -326,7 +401,7 @@ export default function ApiDiscoveryPage() {
         layout="stacked"
         steps={[
           <DocGenStep key="target" n={1} label="Target">
-            <TargetPicker targets={targets} value={targetId} onChange={setTargetId} />
+            <TargetPicker targets={targets} value={targetIds} onChange={setTargetId} />
           </DocGenStep>,
           ...(currentTarget
             ? [
@@ -346,15 +421,87 @@ export default function ApiDiscoveryPage() {
               ]
             : []),
         ]}
-        generateLabel="Run Discovery"
-        onGenerate={run}
+        generateLabel={multiSelected ? undefined : "Run Discovery"}
+        onGenerate={multiSelected ? undefined : run}
         generating={running}
         generateDisabled={targetId === null}
       />
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {multiSelected && (
+        <p className="text-sm text-muted-foreground">
+          Discovery, active scans and scope changes run against one repository at a time -- select a single
+          repository above to use them. Showing already-discovered endpoints across the {targetIds.length}
+          selected repositories below.
+        </p>
+      )}
 
-      {!error && !loadError && scanSummary && (
+      {multiSelected && (
+        <div className="flex flex-col gap-3">
+          {/* The whole batch only fails to load when the aggregate fetcher
+              itself throws (e.g. before any per-repo call runs); an
+              individual repo's request failing is reported per-repo below
+              instead, so it can't blank out every other repo's endpoints. */}
+          {multiError && <p className="text-sm text-destructive">{multiError.message}</p>}
+          {multiLoading && <SkeletonList count={3} />}
+          {!multiLoading && !multiError && (
+            <>
+              {multiFailedTargetNames.length > 0 && (
+                <p className="text-sm text-destructive">
+                  Couldn&apos;t load endpoints for {multiFailedTargetNames.join(", ")}. Showing the rest.
+                </p>
+              )}
+              <p className="text-sm text-muted-foreground">
+                {mergedEndpoints.length} endpoint{mergedEndpoints.length === 1 ? "" : "s"} found across{" "}
+                {targetIds.length} repositories
+              </p>
+              {mergedGroupedByMethod.map(({ method, items }) => (
+                <div key={method} className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2 px-1">
+                    <Badge variant="outline" className="font-mono text-[11px]">
+                      {method}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {items.length} route{items.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <ListRows>
+                    {items.map((e) => (
+                      <ListRow key={`${e.repoTargetId}-${e.id}`}>
+                        <span
+                          className={`truncate font-mono text-sm ${e.excluded ? "text-muted-foreground line-through" : "text-foreground"}`}
+                          title={e.route}
+                        >
+                          {e.route}
+                        </span>
+                        <Badge variant="outline" className="shrink-0 text-[10px]">
+                          {e.repoName}
+                        </Badge>
+                        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
+                          <span className="text-muted-foreground">{e.framework}</span>
+                          <span className="whitespace-nowrap font-mono text-foreground" title={`${e.file}:${e.line}`}>
+                            {e.file}:{e.line}
+                          </span>
+                        </div>
+                      </ListRow>
+                    ))}
+                  </ListRows>
+                </div>
+              ))}
+              {mergedEndpoints.length === 0 && (
+                <EmptyState
+                  icon={Globe}
+                  title="No routes discovered yet"
+                  description="Select a single repository above and run discovery to scan its codebase for API routes."
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {!multiSelected && error && <p className="text-sm text-destructive">{error}</p>}
+
+      {!multiSelected && !error && !loadError && scanSummary && (
         <p className="text-sm text-foreground">
           {scanSummary.new_count > 0
             ? `${scanSummary.new_count} new endpoint${scanSummary.new_count === 1 ? "" : "s"} found`
@@ -362,9 +509,9 @@ export default function ApiDiscoveryPage() {
         </p>
       )}
 
-      {showBusy && <SkeletonList count={3} />}
+      {!multiSelected && showBusy && <SkeletonList count={3} />}
 
-      {!showBusy && endpoints && (
+      {!multiSelected && !showBusy && endpoints && (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">

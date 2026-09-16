@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Group, type PostureReportOptions, type ReportSection, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { FINDING_STATE_ORDER, SEVERITY_ORDER } from "@/lib/severity";
 import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { MultiSelectDropdown } from "@/components/multi-select-filter";
@@ -33,12 +35,28 @@ const FALLBACK_INCLUDED = [
 ];
 
 export default function ReportsPage() {
+  const { activeWorkspaceId } = useWorkspaceContext();
+  // A ref, not a plain read of `activeWorkspaceId` after the await in
+  // generate() below: that closure captures the workspace id from the
+  // render `generate` was created in, which never changes even if the user
+  // switches workspaces mid-request. The ref is the one thing in that
+  // closure that can reflect a *later* render's value.
+  const activeWorkspaceIdRef = useRef(activeWorkspaceId);
+  useEffect(() => {
+    activeWorkspaceIdRef.current = activeWorkspaceId;
+  }, [activeWorkspaceId]);
   const {
     data: targetsData,
     status: targetsStatus,
     refetch: reloadTargets,
-  } = useAsyncData<Target[]>(() => api.targets());
-  const targets = targetsData ?? [];
+  } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
+    deps: [activeWorkspaceId],
+  });
+  // (#520) Workspace-scoped, same pattern as sbom/page.tsx.
+  const targets = useMemo(
+    () => (targetsData ?? []).filter((t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId),
+    [targetsData, activeWorkspaceId],
+  );
   // Unlike the facet fetches below (groups/tools/categories/...), which are
   // decoration the generator can run without, Targets *is* the Scope step:
   // `targets ?? []` used to make a rejected request indistinguishable from a
@@ -48,9 +66,15 @@ export default function ReportsPage() {
   // bug was this page reading only `data` and throwing that status away one
   // line later -- the same shape `settledOr` exists to prevent in std-lib.
   const targetsFailed = targetsStatus === "error";
-  const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
-  const targetId = selectedTargetId ?? (targets.length > 0 ? ALL_TARGETS : null);
-  const setTargetId = setSelectedTargetId;
+  // (#519) Resets on a workspace switch, "All repositories" (ALL_TARGETS)
+  // exempted -- see the hook's own doc comment.
+  const [selectedTargetIds, setSelectedTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId, ALL_TARGETS);
+  // `??`, not a length check: `selectedTargetIds` is `null` only when
+  // nothing has been explicitly chosen yet -- an explicit Clear in the
+  // picker sets it to `[]`, which must stay `[]` here rather than silently
+  // snapping back to the default (#519 review).
+  const targetIds = selectedTargetIds ?? (targets.length > 0 ? [ALL_TARGETS] : []);
+  const setTargetId = setSelectedTargetIds;
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,9 +151,19 @@ export default function ReportsPage() {
     loadFacets();
   }, [loadFacets]);
 
-  const currentTarget = targets.find((t) => t.id === targetId);
-  const scopeLabel =
-    targetId === ALL_TARGETS ? "org-wide" : (currentTarget?.name ?? "target");
+  const isOrgWide = targetIds.includes(ALL_TARGETS);
+  const selectedTargets = isOrgWide ? [] : targets.filter((t) => targetIds.includes(t.id));
+  // Single-repo scope keeps its own branch line below ("default branch
+  // (main)"); with more than one repo selected there is no one branch to
+  // name, so that line is only shown for exactly one.
+  const currentTarget = selectedTargets.length === 1 ? selectedTargets[0] : undefined;
+  const scopeLabel = isOrgWide
+    ? "org-wide"
+    : selectedTargets.length === 1
+      ? (currentTarget?.name ?? "target")
+      : selectedTargets.length > 1
+        ? `${selectedTargets.length} repositories`
+        : "target";
 
   const allSectionsChosen = sectionCatalog.length > 0 && sections.length === sectionCatalog.length;
   const chosenSections = useMemo(
@@ -186,7 +220,14 @@ export default function ReportsPage() {
   }
 
   async function generate() {
-    if (targetId === null) return;
+    if (targetIds.length === 0) return;
+    // A workspace switch mid-export must not land this download (or its
+    // "Downloaded ..." confirmation) under the workspace the reader has
+    // since moved to: exportPostureReport has no cancellation, and
+    // ReportsPage stays mounted across the switch (DashboardShell keeps the
+    // same client tree), so the request just keeps running for whichever
+    // workspace it was scoped to. Captured before the await, checked after.
+    const requestedWorkspaceId = activeWorkspaceId;
     setExporting(true);
     setError(null);
     setLastDownload(null);
@@ -209,7 +250,8 @@ export default function ReportsPage() {
         // that case).
         sections: allSectionsChosen || sections.length === 0 ? undefined : sections,
       };
-      const { blob, filename: serverFilename } = await api.exportPostureReport(targetId, format, options);
+      const { blob, filename: serverFilename } = await api.exportPostureReport(targetIds, format, options);
+      if (activeWorkspaceIdRef.current !== requestedWorkspaceId) return;
       const url = URL.createObjectURL(blob);
       // The backend names the file and that name wins. The fallback is only
       // for a response that arrived without a readable Content-Disposition,
@@ -235,7 +277,7 @@ export default function ReportsPage() {
 
   const steps = [
     <DocGenField key="scope" label="Scope">
-      <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+      <TargetPicker targets={targets} value={targetIds} onChange={setTargetId} allowAll />
     </DocGenField>,
     <DocGenField key="format" label="Format">
       <DocGenToggle
@@ -420,13 +462,13 @@ export default function ReportsPage() {
         onGenerate={generate}
         generating={exporting}
         generateDisabled={
-          targetId === null || (sectionCatalog.length > 0 && sections.length === 0) || invalidWindow
+          targetIds.length === 0 || (sectionCatalog.length > 0 && sections.length === 0) || invalidWindow
         }
         extra={
           <div className="basis-full">
             <p className="text-xs text-muted-foreground">
               Scope: <span className="font-medium text-foreground">{scopeLabel}</span>
-              {targetId === ALL_TARGETS
+              {isOrgWide
                 ? ", every target in the platform"
                 : currentTarget
                   ? `, default branch (${currentTarget.default_branch})`

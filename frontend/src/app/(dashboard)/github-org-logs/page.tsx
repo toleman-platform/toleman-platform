@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { api, type Target } from "@/lib/api";
 import { GithubOrgLogsFilterBar, GithubOrgLogsList } from "@/components/features/logs";
 import { PageHeader } from "@/components/ui/page-header";
@@ -6,6 +7,7 @@ import { settleOrNull, settledOr } from "@/std-lib";
 // Plain module, not the "use client" component; a Server Component
 // cannot call a function exported from a client module.
 import { pageSizeFromParams } from "@/lib/pagination";
+import { WORKSPACE_COOKIE_KEY, parseWorkspaceCookie } from "@/lib/workspace-cookie";
 
 // Page size is now a user preference read off the URL (25/50/100),
 // defaulting to 25. See components/ui/activity-pagination.tsx.
@@ -14,19 +16,26 @@ function firstValue(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
+function allValues(v: string | string[] | undefined): string[] {
+  if (v === undefined) return [];
+  return Array.isArray(v) ? v : [v];
+}
+
 export default async function GithubOrgLogsPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const sp = await searchParams;
-  const targetIdRaw = firstValue(sp.target_id);
-  const target_id = targetIdRaw ? Number(targetIdRaw) : undefined;
+  const target_id = allValues(sp.target_id).map(Number);
   const date_from = firstValue(sp.date_from);
   const date_to = firstValue(sp.date_to);
   const pageRaw = firstValue(sp.page);
   const page = pageRaw && Number(pageRaw) > 0 ? Number(pageRaw) : 1;
   const pageSize = pageSizeFromParams(sp.page_size);
+  // (#506) The global workspace switcher's active workspace, read from the
+  // cookie WorkspaceContext keeps in sync -- see lib/workspace-cookie.ts.
+  const workspace_id = parseWorkspaceCookie((await cookies()).get(WORKSPACE_COOKIE_KEY)?.value) ?? undefined;
 
   const [activityResult, [targetsList, targetsFailed]] = await Promise.all([
     settleOrNull(api.orgActivity({ target_id, date_from, date_to, page, page_size: pageSize })),
@@ -37,7 +46,7 @@ export default async function GithubOrgLogsPage({
     // from every repository you've connected. Secondary to the activity feed,
     // so it degrades the page rather than failing it, but the boolean has to
     // survive to the screen (std-lib/async.ts).
-    settledOr(api.targets(), [] as Target[]),
+    settledOr(api.targets({ workspace_id }), [] as Target[]),
   ]);
   const result = activityResult ?? { items: [], total: 0 };
 

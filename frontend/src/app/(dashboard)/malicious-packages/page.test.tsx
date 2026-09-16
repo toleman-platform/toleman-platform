@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
 import MaliciousPackagesPage from "./page";
 import type { Finding, Target } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 // A negative OSV result used to render as three zeros and a sentence --
 // indistinguishable from a repository nobody had ever checked. These tests
@@ -9,9 +10,12 @@ import type { Finding, Target } from "@/lib/api";
 // last-checked time, and a link to the SBOM the check ran against, plus the
 // "never checked" / "check failed" states staying visibly distinct from a
 // verified clean result (frontend/AGENTS.md 1.4).
-const { findings, targets } = vi.hoisted(() => ({
+const { findings, targets, workspaces } = vi.hoisted(() => ({
   findings: vi.fn(),
   targets: vi.fn(),
+  // The repo picker now reads the global workspace switcher (#520), which
+  // needs a WorkspaceProvider ancestor -- see renderWithWorkspace below.
+  workspaces: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -20,6 +24,7 @@ vi.mock("@/lib/api", () => ({
     targets,
     importGithubSbom: vi.fn(),
     malwareCheck: vi.fn(),
+    workspaces,
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -29,6 +34,10 @@ vi.mock("@/lib/api", () => ({
     }
   },
 }));
+
+beforeEach(() => {
+  workspaces.mockResolvedValue([]);
+});
 
 function target(over: Partial<Target> = {}): Target {
   return {
@@ -103,7 +112,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
       }),
     ]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     expect(await screen.findByText(/Compared 717 packages against OSV/)).not.toBeNull();
@@ -116,7 +125,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
       target({ id: 2, name: "new-service", malware_last_checked_at: null }),
     ]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     expect(await screen.findByText("Never checked")).not.toBeNull();
@@ -142,7 +151,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
       }),
     ]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     expect(await screen.findByText("Clean")).not.toBeNull();
@@ -163,7 +172,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
       }),
     ]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     expect(await screen.findByText("1 open")).not.toBeNull();
@@ -175,7 +184,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
       target({ id: 5, name: "linked-repo", malware_last_checked_at: "2026-09-14T10:00:00", malware_packages_checked: 3, malware_last_check_status: "clean" }),
     ]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     const link = (await screen.findByText("View SBOM")).closest("a");
@@ -187,7 +196,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
     findings.mockRejectedValue(new Error("network error"));
     targets.mockResolvedValue([target({ id: 6 })]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     const banner = await screen.findByRole("alert");
     expect(banner.textContent).toContain("network error");
@@ -200,7 +209,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
     findings.mockResolvedValue({ items: [] });
     targets.mockResolvedValue([target({ id: 7, malware_packages_checked: null })]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     expect(await screen.findByText("No repository has completed an OSV check yet")).not.toBeNull();
@@ -213,7 +222,7 @@ describe("Malicious Packages page: per-repository check evidence", () => {
       target({ id: 9, name: "b", malware_packages_checked: 317, malware_last_checked_at: "2026-09-14T10:00:00", malware_last_check_status: "clean" }),
     ]);
 
-    render(<MaliciousPackagesPage />);
+    renderWithWorkspace(<MaliciousPackagesPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     expect(await screen.findByText("717")).not.toBeNull();

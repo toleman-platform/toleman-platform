@@ -987,7 +987,7 @@ def test_backfill_on_a_row_with_no_vector_at_all_is_a_no_op():
 # --------------------------------------------------------------------------
 
 
-def _parsed(rule_id="R1", severity=Severity.HIGH, cve_id=None):
+def _parsed(rule_id="R1", severity=Severity.HIGH, cve_id=None, package_name=None):
     return [
         {
             "rule_id": rule_id,
@@ -997,6 +997,7 @@ def _parsed(rule_id="R1", severity=Severity.HIGH, cve_id=None):
             "line_start": 3,
             "severity": severity,
             "cve_id": cve_id,
+            "package_name": package_name,
         }
     ]
 
@@ -1160,3 +1161,40 @@ def test_warm_up_survives_an_upstream_failure(engine, monkeypatch):
     monkeypatch.setattr(ce, "get_cve_enrichment", exploding_get)
     with Session(engine) as session:
         assert ce.warm_cve_enrichment(session, ["CVE-2024-0001"]) == 0
+
+
+def test_ingestion_persists_the_findings_package_name(engine):
+    """#521: trivy's PkgName used to be thrown away after dedup-hash
+    computation. app.core.remediation needs it on the Finding row to
+    attribute a fix when OSV's own record names no package."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _ingest(engine, target_id, _parsed(cve_id="CVE-2024-9999", package_name="loader-utils"), tool="trivy")
+
+    with Session(engine) as session:
+        finding = session.exec(select(Finding).where(Finding.target_id == target_id)).one()
+        assert finding.package_name == "loader-utils"
+
+
+def test_ingestion_backfills_package_name_on_a_rescan(engine):
+    """A pre-#521 row (or one from a scan that ran before this field
+    existed) has package_name=None. The next scan must fill it in
+    without the dedup_hash changing -- the whole existing backlog
+    depends on convergence happening this way, not by re-creating every
+    finding."""
+    ws_id = _make_workspace(engine)
+    target_id = _make_target(engine, ws_id)
+    _ingest(engine, target_id, _parsed(cve_id="CVE-2024-9999", package_name=None), tool="trivy")
+
+    with Session(engine) as session:
+        finding = session.exec(select(Finding).where(Finding.target_id == target_id)).one()
+        assert finding.package_name is None
+        original_hash = finding.dedup_hash
+
+    _ingest(engine, target_id, _parsed(cve_id="CVE-2024-9999", package_name="loader-utils"), tool="trivy")
+
+    with Session(engine) as session:
+        findings = session.exec(select(Finding).where(Finding.target_id == target_id)).all()
+        assert len(findings) == 1
+        assert findings[0].package_name == "loader-utils"
+        assert findings[0].dedup_hash == original_hash

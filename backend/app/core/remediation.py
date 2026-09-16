@@ -52,8 +52,18 @@ def parse_version(raw: str) -> tuple:
     return tuple(parts)
 
 
-def _fixes_by_package(row: CveEnrichment) -> dict[str, list[str]]:
-    """package name -> fixed versions this advisory offers for it."""
+def _fixes_by_package(row: CveEnrichment, fallback_package: str | None = None) -> dict[str, list[str]]:
+    """package name -> fixed versions this advisory offers for it.
+
+    OSV names the package on most records, but ones auto-converted from
+    NVD's CPE data (see core/osv.py's comment on GIT-type ranges) often
+    carry a `fixed` version with no package name at all -- looking up a
+    bare CVE ID resolves to exactly this kind of record more often than
+    looking up its ecosystem-native advisory (GHSA/PYSEC/...) would.
+    `fallback_package` -- the Finding's own package, from trivy's scan
+    output (#521), not a guess -- fills that gap instead of a real, known
+    fix silently vanishing from the plan.
+    """
     if not row.fixed_versions:
         return {}
     try:
@@ -62,7 +72,7 @@ def _fixes_by_package(row: CveEnrichment) -> dict[str, list[str]]:
         return {}
     out: dict[str, list[str]] = defaultdict(list)
     for entry in entries or []:
-        package = entry.get("package")
+        package = entry.get("package") or fallback_package
         fixed = entry.get("fixed")
         if package and fixed:
             out[str(package)].append(str(fixed))
@@ -140,7 +150,7 @@ def enrichment_coverage(findings: list[Finding], by_cve: dict[str, CveEnrichment
         # Same parse the grouping uses, so "has fix data" here cannot drift
         # from "produced a plan" there: a row whose JSON is unparseable, or
         # whose entries carry no `fixed`, counts as no fix data in both.
-        if _fixes_by_package(row):
+        if _fixes_by_package(row, finding.package_name):
             with_fix_data += 1
     return {
         "cve_findings": len(findings),
@@ -203,7 +213,7 @@ def _group_by_package(findings: list[Finding], by_cve: dict[str, CveEnrichment])
 
     for finding in findings:
         row = by_cve.get(finding.cve_id)
-        fixes = _fixes_by_package(row) if row else {}
+        fixes = _fixes_by_package(row, finding.package_name) if row else {}
         if not fixes:
             # No advisory, or an advisory with no fix. Either way there is no
             # package name to group under from OSV, so this finding cannot be
@@ -222,7 +232,7 @@ def _group_by_package(findings: list[Finding], by_cve: dict[str, CveEnrichment])
     # upgrade, and has to be reported.
     for finding in findings:
         row = by_cve.get(finding.cve_id)
-        if row is None or _fixes_by_package(row):
+        if row is None or _fixes_by_package(row, finding.package_name):
             continue
         for package, bucket in buckets.items():
             if row.osv_found and _advisory_mentions(row, package):

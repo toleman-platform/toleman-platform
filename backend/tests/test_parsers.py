@@ -69,6 +69,29 @@ def test_parse_trivy_vulnerabilities_and_misconfigs():
     assert misconfig["line_start"] == 5
 
 
+def test_parse_trivy_vulnerability_carries_its_package_name():
+    """#521: app.core.remediation needs this to attribute a fix when OSV's
+    own record names none."""
+    raw = {
+        "Results": [
+            {
+                "Target": "go.mod",
+                "Vulnerabilities": [
+                    {"VulnerabilityID": "CVE-2024-1234", "PkgName": "gin", "InstalledVersion": "1.0.0"}
+                ],
+            }
+        ]
+    }
+    out = parse_trivy(raw)
+    assert out[0]["package_name"] == "gin"
+
+
+def test_parse_trivy_vulnerability_with_no_pkgname_is_none_not_empty_string():
+    raw = {"Results": [{"Target": "go.mod", "Vulnerabilities": [{"VulnerabilityID": "CVE-1"}]}]}
+    out = parse_trivy(raw)
+    assert out[0]["package_name"] is None
+
+
 def test_parse_gosec_extracts_start_line_from_range():
     raw = {"Issues": [{"rule_id": "G101", "details": "hardcoded creds", "file": "main.go", "line": "12-14", "severity": "HIGH", "code": "pw := \"x\""}]}
     out = parse_gosec(raw)

@@ -589,6 +589,17 @@ class Finding(SQLModel, table=True):
     # point.
     dependency_scope: str = Field(default="unknown", index=True)
 
+    # (#521) The dependency this finding is about, e.g. "loader-utils" --
+    # trivy already reports it (parsers.py's PkgName) but it used to be
+    # thrown away after dedup-hash computation. Populated for trivy
+    # vulnerability findings; None for every other tool and for pre-#521
+    # rows until their next scan. Exists so app.core.remediation can
+    # attribute a fix to a package when the CVE's own OSV/NVD record names
+    # a fixed version but no package (common for CVE-ID-keyed lookups of
+    # NVD-auto-converted advisories) -- the alternative is silently
+    # dropping a real, known fix.
+    package_name: Optional[str] = None
+
     branch: str = Field(default="main", index=True)
     state: FindingState = Field(default=FindingState.OPEN, index=True)
     state_reason: str = ""

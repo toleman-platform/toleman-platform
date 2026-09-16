@@ -274,6 +274,11 @@ def ingest_findings(
             # isn't worth the network cost; MVP tradeoff, staleness is acceptable.
             existing.last_seen = utcnow()
             existing.scan_id = scan.id
+            # (#521) Backfilled on rescan rather than only at creation, so the
+            # existing backlog picks this up without needing every dedup_hash to
+            # change; a stable dependency's package name does not change between
+            # scans, so this is a no-op write once set.
+            existing.package_name = item.get("package_name")
             # (#201) Re-score every time a scan observes the finding again.
             #
             # priority_score used to be write-once at creation, which was
@@ -321,6 +326,7 @@ def ingest_findings(
             # findings whose package could not be resolved; the column's
             # default says "unknown" for both, which is the honest answer.
             dependency_scope=item.get("dependency_scope", "unknown"),
+            package_name=item.get("package_name"),
             branch=branch,
             cve_id=finding_cve_id,
             epss_score=epss_score,

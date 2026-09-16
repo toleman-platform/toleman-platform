@@ -243,6 +243,7 @@ def parse_trivy(raw: dict) -> list[dict]:
                 "severity": _map_severity(v.get("Severity", "")),
                 "snippet": f"{v.get('PkgName','')}@{v.get('InstalledVersion','')}",
                 "cve_id": v.get("VulnerabilityID"),
+                "package_name": v.get("PkgName") or None,
                 "dependency_scope": scopes.get(v.get("PkgID"), SCOPE_UNKNOWN),
             })
         for m in result.get("Misconfigurations", []) or []:

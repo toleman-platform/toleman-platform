@@ -106,4 +106,8 @@ export type GitHubAppInstallation = {
   manage_url: string;
   webhook_secret_set: boolean;
   installations: GitHubAppInstalledAccount[];
+  /** null = the platform-wide default App (#506 follow-up). */
+  workspace_id: number | null;
+  /** Present only when workspace_id is set; the name to label this App with. */
+  workspace_name: string | null;
 };

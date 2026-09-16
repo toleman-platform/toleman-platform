@@ -54,19 +54,18 @@ def warm_cve_enrichment(session: Session, cve_ids: list[str]) -> int:
     """Populate the enrichment cache for CVEs that scoring is about to need
     (#201). Returns how many were actually fetched.
 
-    The CVSS-exploitability and fixability signals both read `CveEnrichment`
-    and never write it. Its only writer used to be `GET /api/findings/{id}/
-    enrichment`, i.e. a human clicking a specific finding -- so those two
-    signals could only ever fire for the subset of CVEs somebody had already
-    browsed, no matter how high their weight. A configurable signal that
-    silently cannot fire is worse than no signal, so ingestion warms the
-    cache for the CVEs in its own batch.
+    The CVSS-exploitability and fixability scoring signals, and the Fix Plan
+    tab's remediation grouping (`app.core.remediation`), all read
+    `CveEnrichment` and never write it. Its only other writer is `GET
+    /api/findings/{id}/enrichment`, i.e. a human clicking a specific
+    finding -- so without this warm-up, both the scoring signals and Fix
+    Plan could only ever cover the subset of CVEs somebody had already
+    browsed, no matter how many findings a scan turned up.
 
-    Called only when the workspace actually weights one of those signals
-    above zero (see `app.core.ingestion`). On the shipped baseline both are
-    0.0, so this does nothing and an ordinary scan makes exactly the network
-    calls it made before #201 -- the cost arrives with the feature, not with
-    the upgrade.
+    Called unconditionally by ingestion for every CVE-bearing batch (see
+    `app.core.ingestion`), so a target's Fix Plan starts filling in from its
+    very first scan rather than waiting on someone to click through
+    findings one at a time or opt in via scoring config.
 
     Best-effort throughout: anything unexpected is logged and skipped. A
     scan must not fail because NVD is down.

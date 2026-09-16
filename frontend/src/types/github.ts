@@ -27,7 +27,7 @@ export type OrgActivityEvent = CommitEvent & {
  * Filter parameters for querying organization activity.
  */
 export type OrgActivityQuery = {
-  target_id?: number;
+  target_id?: number[];
   date_from?: string;
   date_to?: string;
   page?: number;

@@ -1,17 +1,29 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import ReportsPage from "./page";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
-const { targets, groups, findingTools, findingCategories, findingEnvironments, findingOwners, reportSections } =
-  vi.hoisted(() => ({
-    targets: vi.fn(),
-    groups: vi.fn(),
-    findingTools: vi.fn(),
-    findingCategories: vi.fn(),
-    findingEnvironments: vi.fn(),
-    findingOwners: vi.fn(),
-    reportSections: vi.fn(),
-  }));
+const {
+  targets,
+  groups,
+  findingTools,
+  findingCategories,
+  findingEnvironments,
+  findingOwners,
+  reportSections,
+  workspaces,
+} = vi.hoisted(() => ({
+  targets: vi.fn(),
+  groups: vi.fn(),
+  findingTools: vi.fn(),
+  findingCategories: vi.fn(),
+  findingEnvironments: vi.fn(),
+  findingOwners: vi.fn(),
+  reportSections: vi.fn(),
+  // The Scope picker now reads the global workspace switcher (#520), which
+  // needs a WorkspaceProvider ancestor -- see renderWithWorkspace below.
+  workspaces: vi.fn(),
+}));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -22,9 +34,14 @@ vi.mock("@/lib/api", () => ({
     findingEnvironments,
     findingOwners,
     reportSections,
+    workspaces,
     exportPostureReport: vi.fn(),
   },
 }));
+
+beforeEach(() => {
+  workspaces.mockResolvedValue([]);
+});
 
 // These are decoration (#302): the page degrades to "no filter offered" if
 // any of them fail, which is not what item 2 is about, so every test below
@@ -46,7 +63,7 @@ describe("Reports page targets fetch", () => {
     resolveDecorativeFacets();
     targets.mockRejectedValue(new Error("network error"));
 
-    render(<ReportsPage />);
+    renderWithWorkspace(<ReportsPage />);
 
     const banner = await screen.findByRole("alert");
     expect(banner.textContent).toContain("Targets");
@@ -61,7 +78,7 @@ describe("Reports page targets fetch", () => {
     resolveDecorativeFacets();
     targets.mockRejectedValue(new Error("network error"));
 
-    render(<ReportsPage />);
+    renderWithWorkspace(<ReportsPage />);
 
     // The rest of the generator (format toggle, severity/state filters) must
     // still render: only the Scope control degrades, not the whole page.
@@ -74,7 +91,7 @@ describe("Reports page targets fetch", () => {
     resolveDecorativeFacets();
     targets.mockResolvedValue([]);
 
-    render(<ReportsPage />);
+    renderWithWorkspace(<ReportsPage />);
 
     await waitFor(() => expect(targets).toHaveBeenCalled());
     expect(screen.queryByRole("alert")).toBeNull();
@@ -93,7 +110,7 @@ describe("Reports page targets fetch", () => {
     targets.mockRejectedValueOnce(new Error("network error"));
     targets.mockResolvedValue([{ id: 1, name: "acme/repo", default_branch: "main" }]);
 
-    render(<ReportsPage />);
+    renderWithWorkspace(<ReportsPage />);
     await screen.findByRole("alert");
     const callsBeforeRetry = targets.mock.calls.length;
 

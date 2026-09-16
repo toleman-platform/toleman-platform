@@ -6,6 +6,7 @@ import Link from "next/link";
 import { api, ApiError, type Target, type PullRequest, type PullRequestState } from "@/lib/api";
 import { safeHref } from "@/lib/security/safe-href";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -129,11 +130,16 @@ function scanBadgeStatus(scanStatus: string) {
 function PrRow({
   pr,
   targetId,
+  repoName,
   expanded,
   onToggle,
 }: {
   pr: PullRequest;
   targetId: number | null;
+  /** Shown as a badge next to the title when several repos' PRs are merged
+   * into one list; omitted for the single-repo view, where every row is
+   * already known to belong to the one selected repo. */
+  repoName?: string;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -161,14 +167,21 @@ function PrRow({
               <span className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             )}
             <div className="min-w-0">
-              <a
-                href={safeHref(pr.url)}
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-foreground hover:underline"
-              >
-                #{pr.number} {pr.title}
-              </a>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={safeHref(pr.url)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-foreground hover:underline"
+                >
+                  #{pr.number} {pr.title}
+                </a>
+                {repoName && (
+                  <Badge variant="outline" className="shrink-0 text-[10px]">
+                    {repoName}
+                  </Badge>
+                )}
+              </div>
               <div className="mt-1 text-xs text-muted-foreground">
                 {pr.author} · opened <Timestamp value={pr.created_at} mode="date" />
                 {pr.merged_at ? (
@@ -235,20 +248,22 @@ function PrRow({
 }
 
 export default function PrHistoryPage() {
+  const { activeWorkspaceId } = useWorkspaceContext();
   const prSearchParams = useSearchParams();
   // Deep-linking from a PR comment's "view"/"request ignore" links (#385):
   // seeded once from the URL so the page opens on the right repo instead of
   // whichever target happens to be first in the list. Only the initial
   // value; a later manual repo switch is a real state change afterward.
-  const [chosenTargetId, setChosenTargetId] = useState<number | null>(() =>
-    positiveIntParam(prSearchParams, "target_id"),
-  );
+  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>(() => {
+    const seeded = positiveIntParam(prSearchParams, "target_id");
+    return seeded !== null ? [seeded] : [];
+  });
   const linkedScanId = positiveIntParam(prSearchParams, "pr_scan_id");
   const linkedIgnoreFindingId = positiveIntParam(prSearchParams, "ignore_finding");
 
   // useSearchParams cannot supply this: a URL fragment never leaves the
   // browser, so the server genuinely does not have it. Read once at mount,
-  // the same "initial value only" treatment as chosenTargetId above. The
+  // the same "initial value only" treatment as chosenTargetIds above. The
   // server-side pass sees no window and yields null, which changes nothing
   // it renders -- the findings this points into are fetched client-side and
   // do not exist in the server markup at all.
@@ -263,12 +278,21 @@ export default function PrHistoryPage() {
   // other repo's PR of the same number.
   const [expandedPr, setExpandedPr] = useState<{ targetId: number; prNumber: number } | null>(null);
 
-  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
-  const targets = targetsData ?? [];
-  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
-  const setTargetId = setChosenTargetId;
+  // (#520) Workspace-scoped, same pattern as sbom/page.tsx.
+  const { data: targetsRaw } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
+    deps: [activeWorkspaceId],
+  });
+  const targets = (targetsRaw ?? []).filter(
+    (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
+  );
+  const targetIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+  const setTargetId = setChosenTargetIds;
 
-  const isOrgWide = targetId === ALL_TARGETS;
+  const isOrgWide = targetIds.includes(ALL_TARGETS);
+  const multiSelected = !isOrgWide && targetIds.length > 1;
+  // Single-repo view keeps the page's original shape; `targetId` is that one
+  // repo, or null while org-wide/multi-select has taken over below.
+  const targetId = !isOrgWide && targetIds.length === 1 ? targetIds[0] : null;
 
   // GitHub's PR API is inherently single-repo, so "All repositories" has no
   // PR list to fetch here; it only drives the aggregated PR Guardrail scan
@@ -280,13 +304,13 @@ export default function PrHistoryPage() {
     isInitialLoading: loading,
     refetch: loadPrs,
   } = useAsyncData<PullRequest[]>(() => api.prs(targetId!, prState), {
-    enabled: targetId !== null && !isOrgWide,
-    deps: [targetId, isOrgWide, prState],
+    enabled: targetId !== null,
+    deps: [targetId, prState],
   });
   // GitHub answers the state filter (see api.prs): narrowing a fetched page
   // here instead would report "no open pull requests" on any repo that closes
   // PRs faster than a page of them is opened.
-  const prs = isOrgWide ? [] : (prsData ?? []);
+  const prs = targetId === null ? [] : (prsData ?? []);
 
   // The `?? []` above exists so the pager has a length, not because an unread
   // list is an empty one. Rendering "No open pull requests" off the back of it
@@ -295,8 +319,33 @@ export default function PrHistoryPage() {
   // `useAsyncData` retains the last good data across a refetch, so `prsData
   // !== null` is exactly "this list has been read successfully at least
   // once", which is the gate the empty state needs.
-  const prsRead = !isOrgWide && prsData !== null;
+  const prsRead = targetId !== null && prsData !== null;
   const listFailed = prsStatus === "error" && prsData === null;
+
+  // Several repos selected at once (not "All", not a single repo): N
+  // parallel per-repo PR fetches, merged and tagged with which repo each PR
+  // belongs to -- there is no batch/multi-repo variant of GitHub's PR API to
+  // call instead.
+  const {
+    data: mergedPrsRaw,
+    error: mergedError,
+    isInitialLoading: mergedLoading,
+  } = useAsyncData(
+    () =>
+      Promise.all(
+        targetIds.map((id) =>
+          api.prs(id, prState).then((items) => ({
+            targetId: id,
+            targetName: targets.find((t) => t.id === id)?.name ?? `target #${id}`,
+            items,
+          })),
+        ),
+      ),
+    { enabled: multiSelected, deps: [targetIds.join(","), prState] },
+  );
+  const mergedPrs = (mergedPrsRaw ?? [])
+    .flatMap((r) => r.items.map((pr) => ({ pr, targetId: r.targetId, targetName: r.targetName })))
+    .sort((a, b) => b.pr.created_at.localeCompare(a.pr.created_at));
 
   // A 401 is not a page error; it means the GitHub session lapsed, and the
   // page has a dedicated reconnect affordance for it.
@@ -320,7 +369,7 @@ export default function PrHistoryPage() {
         layout="stacked"
         steps={[
           <DocGenStep key="target" n={1} label="Repo">
-            <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+            <TargetPicker targets={targets} value={targetIds} onChange={setTargetId} allowAll />
           </DocGenStep>,
           <DocGenStep key="state" n={2} label="PR state">
             <select
@@ -345,6 +394,43 @@ export default function PrHistoryPage() {
           its open PRs. Showing the aggregated PR Guardrail scan history across all repositories
           below.
         </p>
+      ) : multiSelected ? (
+        <div className="flex flex-col gap-2">
+          {mergedError && <ErrorState description={mergedError.message} />}
+          {!mergedError && mergedLoading && <SkeletonList count={4} />}
+          {!mergedError && !mergedLoading && (
+            <>
+              <p className="text-sm text-muted-foreground">
+                {mergedPrs.length} pull request{mergedPrs.length === 1 ? "" : "s"} across{" "}
+                {targetIds.length} repositories
+              </p>
+              {mergedPrs.map(({ pr, targetId: prTargetId, targetName }) => (
+                <PrRow
+                  key={`${prTargetId}-${pr.number}`}
+                  pr={pr}
+                  targetId={prTargetId}
+                  repoName={targetName}
+                  expanded={expandedPr?.targetId === prTargetId && expandedPr?.prNumber === pr.number}
+                  onToggle={() =>
+                    setExpandedPr((open) =>
+                      open?.targetId === prTargetId && open?.prNumber === pr.number
+                        ? null
+                        : { targetId: prTargetId, prNumber: pr.number },
+                    )
+                  }
+                />
+              ))}
+              {mergedPrs.length === 0 && (
+                <EmptyState
+                  icon={GitPullRequest}
+                  title={prState === "all" ? "No pull requests found" : `No ${prState} pull requests`}
+                  description="Nothing matches across the selected repositories right now."
+                  bare
+                />
+              )}
+            </>
+          )}
+        </div>
       ) : (
         <>
           {sessionExpired && (
@@ -424,7 +510,11 @@ export default function PrHistoryPage() {
       )}
 
       <PrGuardrailLog
-        targetId={targetId}
+        // PrGuardrailLog only knows "one repo" or "every repo" (ALL_TARGETS);
+        // there is no subset variant, so several specific repos selected at
+        // once falls back to the org-wide aggregate rather than fetching
+        // nothing at all.
+        targetId={multiSelected ? ALL_TARGETS : targetId}
         initialScanId={linkedScanId}
         initialIgnoreFindingId={linkedIgnoreFindingId}
         initialFindingId={linkedFindingId}

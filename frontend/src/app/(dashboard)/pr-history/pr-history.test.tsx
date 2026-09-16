@@ -1,12 +1,13 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 import PrHistoryPage from "./page";
 import type { PullRequest, PrGuardrailFinding } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 // Only the API and routing boundaries are mocked; the PR list, its state
 // filter and the findings a row expands into are the real ones the page
 // renders.
-const { targets, prs, getPrGuardrailLog, getPrGuardrailOrgLog, getPrGuardrailFindings, activePrScans } =
+const { targets, prs, getPrGuardrailLog, getPrGuardrailOrgLog, getPrGuardrailFindings, activePrScans, workspaces } =
   vi.hoisted(() => ({
     targets: vi.fn(),
     prs: vi.fn(),
@@ -14,6 +15,9 @@ const { targets, prs, getPrGuardrailLog, getPrGuardrailOrgLog, getPrGuardrailFin
     getPrGuardrailOrgLog: vi.fn(),
     getPrGuardrailFindings: vi.fn(),
     activePrScans: vi.fn(),
+    // The repo picker now reads the global workspace switcher (#520), which
+    // needs a WorkspaceProvider ancestor -- see renderWithWorkspace below.
+    workspaces: vi.fn(),
   }));
 
 vi.mock("@/lib/api", () => ({
@@ -24,6 +28,7 @@ vi.mock("@/lib/api", () => ({
     getPrGuardrailOrgLog,
     getPrGuardrailFindings,
     activePrScans,
+    workspaces,
     runPrGuardrailScan: vi.fn(),
     overridePrGuardrail: vi.fn(),
     requestIgnoreFinding: vi.fn(),
@@ -96,6 +101,7 @@ beforeEach(() => {
   getPrGuardrailOrgLog.mockResolvedValue({ scans: [], stats: null });
   getPrGuardrailFindings.mockResolvedValue([]);
   activePrScans.mockResolvedValue([]);
+  workspaces.mockResolvedValue([]);
 });
 
 // A reviewer opening PR History is asking about work in flight. Closed and
@@ -124,7 +130,7 @@ describe("PR list paging", () => {
   it("pages a list longer than one page instead of rendering all of it", async () => {
     prsByState({ open: manyPrs(60) });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/#1 pr 1/);
 
     // 25 is the default page size, so the 26th row belongs to page two.
@@ -135,7 +141,7 @@ describe("PR list paging", () => {
   it("puts a pager below the rows, not only above them", async () => {
     prsByState({ open: manyPrs(60) });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/#1 pr 1/);
 
     // Two controls: one before the rows and one after. A reader who has
@@ -149,7 +155,7 @@ describe("PR list paging", () => {
     // page rather than concluding this is all there is.
     prsByState({ open: manyPrs(10) });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/#1 pr 1/);
 
     expect(screen.getAllByRole("button", { name: /next/i }).length).toBe(1);
@@ -161,7 +167,7 @@ describe("PR list paging", () => {
     // history of the repository.
     prsByState({ open: manyPrs(100) });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/#1 pr 1/);
 
     expect(screen.queryByText(/Showing the 100 most recent pull requests/)).not.toBeNull();
@@ -170,7 +176,7 @@ describe("PR list paging", () => {
   it("claims no truncation when the fetch came back short", async () => {
     prsByState({ open: manyPrs(99) });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/#1 pr 1/);
 
     expect(screen.queryByText(/most recent pull requests/)).toBeNull();
@@ -181,7 +187,7 @@ describe("PR state filter", () => {
   it("opens on the open PRs only", async () => {
     prsByState(MIXED);
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
 
     await screen.findByText(/still open/);
     expect(screen.queryByText(/was merged/)).toBeNull();
@@ -195,7 +201,7 @@ describe("PR state filter", () => {
     // closes PRs faster than a page of them is opened.
     prsByState(MIXED);
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/still open/);
 
     expect(prs).toHaveBeenCalledWith(1, "open");
@@ -209,7 +215,7 @@ describe("PR state filter", () => {
   it("shows merged PRs on their own, not lumped in with closed ones", async () => {
     prsByState(MIXED);
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/still open/);
 
     fireEvent.change(screen.getByLabelText("PR state"), { target: { value: "merged" } });
@@ -222,7 +228,7 @@ describe("PR state filter", () => {
   it("puts every state back with All", async () => {
     prsByState(MIXED);
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/still open/);
 
     fireEvent.change(screen.getByLabelText("PR state"), { target: { value: "all" } });
@@ -242,7 +248,7 @@ describe("expanding a PR into its findings", () => {
     });
     getPrGuardrailFindings.mockResolvedValue([finding(7), finding(8)]);
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/a pr/);
 
     expect(screen.queryByText("finding 7")).toBeNull();
@@ -259,7 +265,7 @@ describe("expanding a PR into its findings", () => {
       open: [pr({ number: 1, scan_status: "blocked", latest_scan_id: 55, new_findings_count: 2, highest_new_severity: "High" })],
     });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
 
     await screen.findByText(/2 net-new vulnerability findings/);
     expect(screen.getByText("High")).toBeTruthy();
@@ -278,13 +284,20 @@ describe("expanding a PR into its findings", () => {
     });
     getPrGuardrailFindings.mockResolvedValue([finding(7)]);
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/a pr/);
 
     fireEvent.click(screen.getByLabelText("Show findings for PR #1"));
     await screen.findByText("finding 7");
 
-    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "2" } });
+    // The repo picker is a searchable multi-select checkbox list now, not a
+    // native <select>: switch from repo-a to repo-b by adding repo-b to the
+    // selection, then removing repo-a from it, landing on exactly repo-b
+    // selected -- the same "switched repos" state the old fireEvent.change
+    // produced.
+    fireEvent.click(screen.getByLabelText("Repository"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "repo-b" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "repo-a" }));
 
     await waitFor(() => expect(screen.queryByText("finding 7")).toBeNull());
     expect(screen.getByLabelText("Show findings for PR #1")).toBeTruthy();
@@ -298,7 +311,7 @@ describe("expanding a PR into its findings", () => {
       open: [pr({ number: 1, scan_status: "blocked", latest_scan_id: 55, new_findings_count: 1 })],
     });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
 
     await screen.findByText("blocked");
     expect(screen.getByText(/Scan This PR/i)).toBeTruthy();
@@ -307,7 +320,7 @@ describe("expanding a PR into its findings", () => {
   it("offers no expander on a PR that was never scanned", async () => {
     prsByState({ open: [pr({ number: 1 })] });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/a pr/);
 
     expect(screen.queryByLabelText("Show findings for PR #1")).toBeNull();
@@ -326,7 +339,7 @@ describe("scan verdict badge distinguishes states StatusBadge already models", (
   it("reads a never-scanned PR as unknown posture, not as queued for a scan that isn't coming", async () => {
     prsByState({ open: [pr({ number: 1, scan_status: "not scanned" })] });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     const label = await screen.findByText("not scanned");
 
     // StatusBadge's "unknown" variant (neutral, HelpCircle) -- not "queued"
@@ -340,7 +353,7 @@ describe("scan verdict badge distinguishes states StatusBadge already models", (
       open: [pr({ number: 1, scan_status: "overridden", latest_scan_id: 55 })],
     });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     const label = await screen.findByText("overridden");
 
     // chart-3, matching LOG_STATUS_COLOR.overridden in the PR Guardrail audit
@@ -366,7 +379,7 @@ describe("scan verdict badge distinguishes states StatusBadge already models", (
       ],
     });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     const blockedLabel = await screen.findByText("blocked");
     const errorLabel = await screen.findByText("error");
 
@@ -405,7 +418,7 @@ describe("pull request state badge", () => {
   it("renders an open PR with nothing spinning on it", async () => {
     prsByState({ open: [pr({ number: 1, title: "still open" })] });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/still open/);
 
     const row = rowFor(/still open/);
@@ -416,7 +429,7 @@ describe("pull request state badge", () => {
   it("gives each of the three states its own label", async () => {
     prsByState(MIXED);
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     await screen.findByText(/still open/);
     fireEvent.change(screen.getByLabelText("PR state"), { target: { value: "all" } });
     await screen.findByText(/was closed/);
@@ -451,7 +464,7 @@ describe("pull request state badge", () => {
       open: [pr({ number: 1, title: "still open", scan_status: "running", latest_scan_id: 55 })],
     });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
     const scanLabel = await screen.findByText("running");
 
     const scanBadge = scanLabel.parentElement;
@@ -474,7 +487,7 @@ describe("a PR list read that failed", () => {
   it("reports the failure instead of also claiming the repo has nothing open", async () => {
     prs.mockRejectedValue(new Error("github is unavailable"));
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
 
     expect(await screen.findByText("github is unavailable")).toBeTruthy();
     expect(screen.queryByText("No open pull requests")).toBeNull();
@@ -485,7 +498,7 @@ describe("a PR list read that failed", () => {
     // must not silence it for the repo that genuinely has nothing open.
     prsByState({ open: [] });
 
-    render(<PrHistoryPage />);
+    renderWithWorkspace(<PrHistoryPage />);
 
     expect(await screen.findByText("No open pull requests")).toBeTruthy();
     expect(screen.queryByText("github is unavailable")).toBeNull();

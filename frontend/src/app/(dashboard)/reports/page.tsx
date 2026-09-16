@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Group, type PostureReportOptions, type ReportSection, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { FINDING_STATE_ORDER, SEVERITY_ORDER } from "@/lib/severity";
 import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
 import { MultiSelectDropdown } from "@/components/multi-select-filter";
@@ -33,12 +34,19 @@ const FALLBACK_INCLUDED = [
 ];
 
 export default function ReportsPage() {
+  const { activeWorkspaceId } = useWorkspaceContext();
   const {
     data: targetsData,
     status: targetsStatus,
     refetch: reloadTargets,
-  } = useAsyncData<Target[]>(() => api.targets());
-  const targets = targetsData ?? [];
+  } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
+    deps: [activeWorkspaceId],
+  });
+  // (#520) Workspace-scoped, same pattern as sbom/page.tsx.
+  const targets = useMemo(
+    () => (targetsData ?? []).filter((t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId),
+    [targetsData, activeWorkspaceId],
+  );
   // Unlike the facet fetches below (groups/tools/categories/...), which are
   // decoration the generator can run without, Targets *is* the Scope step:
   // `targets ?? []` used to make a rejected request indistinguishable from a
@@ -48,9 +56,9 @@ export default function ReportsPage() {
   // bug was this page reading only `data` and throwing that status away one
   // line later -- the same shape `settledOr` exists to prevent in std-lib.
   const targetsFailed = targetsStatus === "error";
-  const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null);
-  const targetId = selectedTargetId ?? (targets.length > 0 ? ALL_TARGETS : null);
-  const setTargetId = setSelectedTargetId;
+  const [selectedTargetIds, setSelectedTargetIds] = useState<number[]>([]);
+  const targetIds = selectedTargetIds.length > 0 ? selectedTargetIds : targets.length > 0 ? [ALL_TARGETS] : [];
+  const setTargetId = setSelectedTargetIds;
   const [format, setFormat] = useState<ExportFormat>("csv");
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,9 +135,19 @@ export default function ReportsPage() {
     loadFacets();
   }, [loadFacets]);
 
-  const currentTarget = targets.find((t) => t.id === targetId);
-  const scopeLabel =
-    targetId === ALL_TARGETS ? "org-wide" : (currentTarget?.name ?? "target");
+  const isOrgWide = targetIds.includes(ALL_TARGETS);
+  const selectedTargets = isOrgWide ? [] : targets.filter((t) => targetIds.includes(t.id));
+  // Single-repo scope keeps its own branch line below ("default branch
+  // (main)"); with more than one repo selected there is no one branch to
+  // name, so that line is only shown for exactly one.
+  const currentTarget = selectedTargets.length === 1 ? selectedTargets[0] : undefined;
+  const scopeLabel = isOrgWide
+    ? "org-wide"
+    : selectedTargets.length === 1
+      ? (currentTarget?.name ?? "target")
+      : selectedTargets.length > 1
+        ? `${selectedTargets.length} repositories`
+        : "target";
 
   const allSectionsChosen = sectionCatalog.length > 0 && sections.length === sectionCatalog.length;
   const chosenSections = useMemo(
@@ -186,7 +204,7 @@ export default function ReportsPage() {
   }
 
   async function generate() {
-    if (targetId === null) return;
+    if (targetIds.length === 0) return;
     setExporting(true);
     setError(null);
     setLastDownload(null);
@@ -209,7 +227,7 @@ export default function ReportsPage() {
         // that case).
         sections: allSectionsChosen || sections.length === 0 ? undefined : sections,
       };
-      const { blob, filename: serverFilename } = await api.exportPostureReport(targetId, format, options);
+      const { blob, filename: serverFilename } = await api.exportPostureReport(targetIds, format, options);
       const url = URL.createObjectURL(blob);
       // The backend names the file and that name wins. The fallback is only
       // for a response that arrived without a readable Content-Disposition,
@@ -235,7 +253,7 @@ export default function ReportsPage() {
 
   const steps = [
     <DocGenField key="scope" label="Scope">
-      <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+      <TargetPicker targets={targets} value={targetIds} onChange={setTargetId} allowAll />
     </DocGenField>,
     <DocGenField key="format" label="Format">
       <DocGenToggle
@@ -420,13 +438,13 @@ export default function ReportsPage() {
         onGenerate={generate}
         generating={exporting}
         generateDisabled={
-          targetId === null || (sectionCatalog.length > 0 && sections.length === 0) || invalidWindow
+          targetIds.length === 0 || (sectionCatalog.length > 0 && sections.length === 0) || invalidWindow
         }
         extra={
           <div className="basis-full">
             <p className="text-xs text-muted-foreground">
               Scope: <span className="font-medium text-foreground">{scopeLabel}</span>
-              {targetId === ALL_TARGETS
+              {isOrgWide
                 ? ", every target in the platform"
                 : currentTarget
                   ? `, default branch (${currentTarget.default_branch})`

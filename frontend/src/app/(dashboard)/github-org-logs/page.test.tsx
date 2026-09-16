@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import GithubOrgLogsPage from "./page";
 
 /**
@@ -23,6 +23,14 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/github-org-logs",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
+// The page reads the active-workspace cookie server-side (#506); a plain
+// render has no real request to pull cookies from, so there's no
+// workspace filter here -- same as every other read in this suite defaulting
+// to "unfiltered".
+vi.mock("next/headers", () => ({
+  cookies: () => Promise.resolve({ get: () => undefined }),
 }));
 
 afterEach(() => {
@@ -66,7 +74,10 @@ describe("GitHub Org Logs, when the repository list can't be loaded", () => {
     await renderPage();
 
     expect(screen.queryByText("Repository list")).toBeNull();
-    expect(screen.getByRole("option", { name: "acme/api" })).toBeTruthy();
+    // TargetPicker is a closed-by-default listbox (#520): its options only
+    // render once opened, unlike the native <select> this replaced.
+    fireEvent.click(screen.getByLabelText("Filter by repository"));
+    expect(screen.getByRole("checkbox", { name: "acme/api" })).toBeTruthy();
   });
 });
 

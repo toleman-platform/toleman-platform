@@ -145,7 +145,7 @@ function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
 
 export default function SbomPage() {
   const { activeWorkspaceId } = useWorkspaceContext();
-  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
+  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -160,8 +160,8 @@ export default function SbomPage() {
   const [lastWorkspaceId, setLastWorkspaceId] = useState(activeWorkspaceId);
   if (lastWorkspaceId !== activeWorkspaceId) {
     setLastWorkspaceId(activeWorkspaceId);
-    if (chosenTargetId !== ALL_TARGETS) {
-      setChosenTargetId(null);
+    if (!chosenTargetIds.includes(ALL_TARGETS)) {
+      setChosenTargetIds([]);
     }
   }
 
@@ -178,8 +178,15 @@ export default function SbomPage() {
   // Derived rather than seeded in an effect, same reasoning as
   // WorkspaceContext's activeWorkspaceId: the user's choice wins and a
   // reload cannot move them.
-  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
-  const setTargetId = setChosenTargetId;
+  const targetIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+  const isOrgWide = targetIds.includes(ALL_TARGETS);
+  // Generate/export/import/upload all write one repo's persisted inventory
+  // (POST /api/sbom/{id}/...), so they -- and the tabbed single-repo view
+  // below -- stay scoped to exactly one repo. `targetId` is that repo, or
+  // null while org-wide or several-selected has taken over.
+  const targetId = !isOrgWide && targetIds.length === 1 ? targetIds[0] : null;
+  const multiSelected = !isOrgWide && targetIds.length > 1;
+  const setTargetId = setChosenTargetIds;
   // Only meaningful relative to a scan just triggered in this session; the
   // plain GET on load always reports is_new: false, so we don't show the
   // "New" badge at all until a POST has completed here (same convention as
@@ -218,9 +225,35 @@ export default function SbomPage() {
     isInitialLoading: orgInitialLoading,
     isRefreshing: orgRefreshing,
   } = useAsyncData<OrgSbomResult>(() => api.getOrgSbom(activeWorkspaceId), {
-    enabled: targetId === ALL_TARGETS,
-    deps: [targetId, activeWorkspaceId],
+    enabled: isOrgWide,
+    deps: [isOrgWide, activeWorkspaceId],
   });
+
+  // Several specific repos selected at once (not "All", not one repo): N
+  // parallel per-repo SBOM fetches, merged and tagged with which repo each
+  // component came from -- each GET already returns that repo's full
+  // unpaginated component list, so this is a plain client-side concat rather
+  // than a new backend aggregate endpoint duplicating getOrgSbom's.
+  const {
+    data: multiSbom,
+    error: multiSbomError,
+    isInitialLoading: multiSbomLoading,
+  } = useAsyncData(
+    () =>
+      Promise.all(
+        targetIds.map((id) =>
+          api.getSbom(id).then((res) => ({
+            targetId: id,
+            targetName: targets.find((t) => t.id === id)?.name ?? `target #${id}`,
+            components: res.components ?? [],
+          })),
+        ),
+      ),
+    { enabled: multiSelected, deps: [targetIds.join(","), multiSelected] },
+  );
+  const mergedComponents = (multiSbom ?? []).flatMap((r) =>
+    r.components.map((c) => ({ ...c, repoTargetId: r.targetId, repoName: r.targetName })),
+  );
   // A workspace switch re-triggers this fetch (activeWorkspaceId is a dep)
   // but useAsyncData keeps the previous workspace's org SBOM visible while it
   // is in flight; treated as loading too so that stale cross-workspace data
@@ -257,7 +290,7 @@ export default function SbomPage() {
     isInitialLoading: loading,
     refetch: reloadPersisted,
   } = useAsyncData(() => api.getSbom(targetId!), {
-    enabled: targetId !== null && targetId !== ALL_TARGETS,
+    enabled: targetId !== null,
     deps: [targetId],
   });
   const components = persisted?.components ?? null;
@@ -312,7 +345,7 @@ export default function SbomPage() {
         page_size: ossPageSize,
       }),
     {
-      enabled: targetId !== null && targetId !== ALL_TARGETS,
+      enabled: targetId !== null,
       deps: [targetId, ossPageRaw, ossPageSize],
     },
   );
@@ -445,9 +478,9 @@ export default function SbomPage() {
         layout="stacked"
         steps={[
           <DocGenStep key="target" n={1} label="Target">
-            <TargetPicker targets={targets} value={targetId} onChange={setTargetId} allowAll />
+            <TargetPicker targets={targets} value={targetIds} onChange={setTargetId} allowAll />
           </DocGenStep>,
-          ...(targetId !== ALL_TARGETS
+          ...(targetId !== null
             ? [
                 <DocGenStep key="scope" n={2} label="Scope">
                   <div className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground">
@@ -468,12 +501,12 @@ export default function SbomPage() {
               ]
             : []),
         ]}
-        generateLabel={targetId !== ALL_TARGETS ? "Generate SBOM" : undefined}
-        onGenerate={targetId !== ALL_TARGETS ? run : undefined}
+        generateLabel={targetId !== null ? "Generate SBOM" : undefined}
+        onGenerate={targetId !== null ? run : undefined}
         generating={running}
         generateDisabled={targetId === null || targetDeactivated}
         extra={
-          targetId !== ALL_TARGETS ? (
+          targetId !== null ? (
             <div className="flex flex-col gap-2">
               {targetDeactivated && (
                 <p className="text-xs text-warning">
@@ -516,7 +549,7 @@ export default function SbomPage() {
                 aria-label="Upload SBOM document"
               />
             </div>
-          ) : (
+          ) : isOrgWide ? (
             <Button
               variant="outline"
               className="w-full justify-center"
@@ -525,11 +558,58 @@ export default function SbomPage() {
             >
               {orgExporting ? "Exporting..." : "Export Org SBOM (JSON)"}
             </Button>
-          )
+          ) : null
         }
       />
 
-      {targetId === ALL_TARGETS && (
+      {multiSelected && (
+        <p className="text-sm text-muted-foreground">
+          Generating, exporting, importing and uploading an SBOM all act on one repository at a time --
+          select a single repository above to use them. Showing already-persisted components across the{" "}
+          {targetIds.length} selected repositories below.
+        </p>
+      )}
+
+      {multiSelected && (
+        <div className="flex flex-col gap-4">
+          {multiSbomError && <p className="text-sm text-destructive">{multiSbomError.message}</p>}
+          {multiSbomLoading && <SkeletonList count={4} />}
+          {!multiSbomLoading && !multiSbomError && (
+            <PaginatedList
+              items={mergedComponents}
+              total={mergedComponents.length}
+              page={1}
+              pageSize={Math.max(mergedComponents.length, 1)}
+              summary={`${mergedComponents.length} component${mergedComponents.length === 1 ? "" : "s"} across ${targetIds.length} repositories`}
+              getKey={(c) => `${c.repoTargetId}-${c.id}`}
+              renderItem={(c) => (
+                <ListRow>
+                  <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <span className="truncate font-mono text-sm text-foreground" title={c.name}>
+                      {c.name}
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-foreground">{c.version}</span>
+                  </div>
+                  <Badge variant="outline" className="shrink-0 text-[10px]">
+                    {c.repoName}
+                  </Badge>
+                  <span className="w-20 shrink-0 truncate text-xs text-muted-foreground">{c.package_type}</span>
+                </ListRow>
+              )}
+              empty={
+                <EmptyState
+                  icon={Package}
+                  title="No SBOM data yet"
+                  description="Select a single repository above and generate an SBOM to see its dependency inventory here."
+                  bare
+                />
+              }
+            />
+          )}
+        </div>
+      )}
+
+      {isOrgWide && (
         <div className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
             Aggregated from every already-scanned target&apos;s persisted SBOM
@@ -588,7 +668,7 @@ export default function SbomPage() {
         </div>
       )}
 
-      {targetId !== null && targetId !== ALL_TARGETS && (
+      {targetId !== null && (
         <>
           {/* Scan/export failures and the persisted-SBOM load failure share
               one slot; a load failure must not be swallowed just because no
@@ -692,7 +772,7 @@ export default function SbomPage() {
             </>
           )}
 
-          {tab === "aibom" && targetId !== null && targetId !== ALL_TARGETS && (
+          {tab === "aibom" && targetId !== null && (
             <AiBomPanel targetId={targetId} targetName={currentTarget?.name} />
           )}
 

@@ -9,6 +9,7 @@ import { getErrorMessage } from "@/std-lib";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWriteAction } from "@/hooks/use-write-action";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { useScanRun } from "@/hooks/features/use-scan-run";
 import { ScanHealthBadge, ScanProgress } from "@/components/features/scans";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
@@ -55,12 +56,22 @@ const AI_TOOLS: readonly AiTool[] = ["modelscan", "semgrep-llm"];
 const DEACTIVATED_TITLE = "This target is deactivated; scanning is off. Reactivate it on the target page.";
 
 export default function AiSecurityPage() {
+  const { activeWorkspaceId } = useWorkspaceContext();
   const {
-    data: targets,
+    data: targetsRaw,
     error: targetsError,
     isInitialLoading: targetsLoading,
     refetch: refetchTargets,
-  } = useAsyncData<Target[]>(() => api.targets());
+  } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
+    deps: [activeWorkspaceId],
+  });
+  // (#520) Workspace-scoped, same pattern as sbom/page.tsx: filtered again
+  // client-side to cover the window where a workspace switch's refetch is
+  // still in flight and useAsyncData is still showing the previous
+  // workspace's targets.
+  const targets = (targetsRaw ?? []).filter(
+    (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
+  );
 
   // Per-target "which tools have ever run" (backend/app/api/scans.py's
   // scans_summary: one row per (target, tool) EVER completed, not just the
@@ -145,62 +156,14 @@ export default function AiSecurityPage() {
     return base;
   }
 
-  // AI Bill of Materials: which AI-flagged target the panel below shows.
+  // AI Bill of Materials: which AI-flagged target(s) the panel(s) below show.
   // Falls back to the first AI target rather than tracking "unset" as a
   // separate state -- with 0 AI targets this is never read (the section
   // renders its own empty state first), and with exactly 1 there is nothing
   // to pick.
-  const [aibomTargetId, setAibomTargetId] = useState<number | null>(null);
-  const aibomTarget = aiTargets.find((t) => t.id === aibomTargetId) ?? aiTargets[0] ?? null;
-  // Bumped on a completed generation to force AiBomPanel to remount and
-  // refetch -- its own useAsyncData only keys off targetId, which does not
-  // change when the user regenerates the same repo's AIBOM.
-  const [aibomGeneration, setAibomGeneration] = useState(0);
-  const cancelPollRef = useRef<(() => void) | null>(null);
-  const generateAction = useWriteAction("AI Bill of Materials generation failed");
-
-  // Same unmount guard as sbom/page.tsx's `run()`: a poll left running past
-  // navigation would resolve/reject into a component that no longer exists.
-  useEffect(() => {
-    return () => {
-      cancelPollRef.current?.();
-    };
-  }, []);
-
-  async function generateAiBom() {
-    if (!aibomTarget) return;
-    const targetId = aibomTarget.id;
-    await generateAction.run(
-      () =>
-        new Promise<void>((resolve, reject) => {
-          // Same dispatch-then-poll shape as sbom/page.tsx's `run()`: POST
-          // /api/sbom/{id} returns immediately with a run id, and the AIBOM
-          // rows are upserted server-side as part of that same task (see
-          // backend/app/tasks/sbom_tasks.py's extract_ai_components call) --
-          // there is no separate "generate AIBOM" endpoint to call instead.
-          api
-            .generateSbom(targetId)
-            .then((dispatch) => {
-              cancelPollRef.current?.();
-              cancelPollRef.current = pollUntilSettled(
-                () => api.getSbomRun(targetId, dispatch.run_id),
-                (run) => {
-                  if (run.status === "completed") {
-                    setAibomGeneration((g) => g + 1);
-                    resolve();
-                  } else if (run.status === "failed") {
-                    reject(new Error(run.error || "AI Bill of Materials generation failed"));
-                  }
-                },
-                { onError: reject },
-              );
-            })
-            .catch(reject);
-        }),
-    );
-  }
-
-  const aibomTargetDeactivated = aibomTarget?.is_active === false;
+  const [aibomTargetIds, setAibomTargetIds] = useState<number[]>([]);
+  const selectedAibomTargets = aiTargets.filter((t) => aibomTargetIds.includes(t.id));
+  const aibomTargets = selectedAibomTargets.length > 0 ? selectedAibomTargets : aiTargets.slice(0, 1);
 
   return (
     <div className="flex flex-col gap-6">
@@ -353,9 +316,9 @@ export default function AiSecurityPage() {
           {aiTargets.length > 1 && (
             <TargetPicker
               targets={aiTargets}
-              value={aibomTarget?.id ?? null}
-              onChange={setAibomTargetId}
-              label="AI/ML repository"
+              value={aibomTargetIds}
+              onChange={setAibomTargetIds}
+              label="AI/ML repositories"
             />
           )}
         </div>
@@ -373,42 +336,105 @@ export default function AiSecurityPage() {
             description="Once a repo is flagged as AI/ML, its models and datasets can be extracted and exported here."
           />
         ) : (
-          aibomTarget && (
-            <Card className="border-border bg-card">
-              <CardContent className="flex flex-col gap-3 px-4 py-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground">
-                    Models and datasets {aibomTarget.name} depends on, extracted from the same checkout as its
-                    SBOM. Generating refreshes both.
-                  </p>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 shrink-0 text-xs"
-                    onClick={generateAiBom}
-                    disabled={generateAction.submitting || aibomTargetDeactivated}
-                    title={aibomTargetDeactivated ? DEACTIVATED_TITLE : undefined}
-                  >
-                    {generateAction.submitting ? "Generating..." : "Generate AI Bill of Materials"}
-                  </Button>
-                </div>
-
-                {aibomTargetDeactivated && (
-                  <p className="text-xs text-warning">
-                    This target is deactivated; scanning is off, so generating a new AI Bill of Materials is
-                    disabled. The one already on file stays readable and exportable.
-                  </p>
-                )}
-
-                {generateAction.error && <AlertBanner tone="critical">{generateAction.error}</AlertBanner>}
-
-                <AiBomPanel key={`${aibomTarget.id}-${aibomGeneration}`} targetId={aibomTarget.id} targetName={aibomTarget.name} />
-              </CardContent>
-            </Card>
-          )
+          <div className="flex flex-col gap-4">
+            {aibomTargets.map((t) => (
+              <AiBomGeneratePanel key={t.id} target={t} />
+            ))}
+          </div>
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * One repo's AI Bill of Materials: generate button, its own dispatch-then-poll
+ * state, and the panel itself. Split out from AiSecurityPage so picking
+ * several AI/ML repos above renders one of these per repo rather than one
+ * generation running for whichever repo happened to be selected last.
+ */
+function AiBomGeneratePanel({ target }: { target: Target }) {
+  // Bumped on a completed generation to force AiBomPanel to remount and
+  // refetch -- its own useAsyncData only keys off targetId, which does not
+  // change when the user regenerates the same repo's AIBOM.
+  const [generation, setGeneration] = useState(0);
+  const cancelPollRef = useRef<(() => void) | null>(null);
+  const generateAction = useWriteAction("AI Bill of Materials generation failed");
+
+  // Same unmount guard as sbom/page.tsx's `run()`: a poll left running past
+  // navigation would resolve/reject into a component that no longer exists.
+  useEffect(() => {
+    return () => {
+      cancelPollRef.current?.();
+    };
+  }, []);
+
+  async function generateAiBom() {
+    const targetId = target.id;
+    await generateAction.run(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          // Same dispatch-then-poll shape as sbom/page.tsx's `run()`: POST
+          // /api/sbom/{id} returns immediately with a run id, and the AIBOM
+          // rows are upserted server-side as part of that same task (see
+          // backend/app/tasks/sbom_tasks.py's extract_ai_components call) --
+          // there is no separate "generate AIBOM" endpoint to call instead.
+          api
+            .generateSbom(targetId)
+            .then((dispatch) => {
+              cancelPollRef.current?.();
+              cancelPollRef.current = pollUntilSettled(
+                () => api.getSbomRun(targetId, dispatch.run_id),
+                (run) => {
+                  if (run.status === "completed") {
+                    setGeneration((g) => g + 1);
+                    resolve();
+                  } else if (run.status === "failed") {
+                    reject(new Error(run.error || "AI Bill of Materials generation failed"));
+                  }
+                },
+                { onError: reject },
+              );
+            })
+            .catch(reject);
+        }),
+    );
+  }
+
+  const deactivated = target.is_active === false;
+
+  return (
+    <Card className="border-border bg-card">
+      <CardContent className="flex flex-col gap-3 px-4 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            Models and datasets {target.name} depends on, extracted from the same checkout as its SBOM.
+            Generating refreshes both.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 shrink-0 text-xs"
+            onClick={generateAiBom}
+            disabled={generateAction.submitting || deactivated}
+            title={deactivated ? DEACTIVATED_TITLE : undefined}
+          >
+            {generateAction.submitting ? "Generating..." : "Generate AI Bill of Materials"}
+          </Button>
+        </div>
+
+        {deactivated && (
+          <p className="text-xs text-warning">
+            This target is deactivated; scanning is off, so generating a new AI Bill of Materials is
+            disabled. The one already on file stays readable and exportable.
+          </p>
+        )}
+
+        {generateAction.error && <AlertBanner tone="critical">{generateAction.error}</AlertBanner>}
+
+        <AiBomPanel key={`${target.id}-${generation}`} targetId={target.id} targetName={target.name} />
+      </CardContent>
+    </Card>
   );
 }
 

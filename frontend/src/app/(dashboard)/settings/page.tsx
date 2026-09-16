@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWriteAction } from "@/hooks/use-write-action";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { AsyncContent } from "@/components/ui/async-content";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Card, CardContent } from "@/components/ui/card";
@@ -632,7 +633,8 @@ function NotificationPreferencesSection() {
 }
 
 function WorkspaceSection() {
-  const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
+  const { activeWorkspaceId } = useWorkspaceContext();
+  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>([]);
   // Was `try`/`finally` with no `catch`: a rejected PATCH said nothing at all
   // and left the rejection as an unhandled promise rejection escaping the
   // click handler. The draft itself was already preserved -- the clear sat
@@ -647,18 +649,30 @@ function WorkspaceSection() {
   const [draft, setDraft] = useState<{ targetId: number; values: Partial<Target> } | null>(null);
   const [savedTargetId, setSavedTargetId] = useState<number | null>(null);
 
-  const { data: targetsData, refetch: reloadTargets } = useAsyncData<Target[]>(() => api.targets());
-  const targets = targetsData ?? [];
-  const targetId = chosenTargetId ?? targets[0]?.id ?? null;
+  // (#520) Workspace-scoped, same pattern as sbom/page.tsx: the global
+  // workspace switcher narrows which repos this section can even see, and
+  // the client-side filter covers the window where a switch's refetch is
+  // still in flight and useAsyncData is still showing the previous
+  // workspace's targets.
+  const { data: targetsData, refetch: reloadTargets } = useAsyncData<Target[]>(
+    () => api.targets({ workspace_id: activeWorkspaceId }),
+    { deps: [activeWorkspaceId] },
+  );
+  const targets = (targetsData ?? []).filter(
+    (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
+  );
+  const targetIds = chosenTargetIds.length > 0 ? chosenTargetIds : targets[0] ? [targets[0].id] : [];
+  const targetId = targetIds.length === 1 ? targetIds[0] : null;
 
-  function chooseTarget(id: number) {
-    // A failure banner belongs to the target it was raised on; carrying it
+  function chooseTargets(ids: number[]) {
+    // A failure banner belongs to the target(s) it was raised on; carrying it
     // across a switch would accuse the next repo of a save it never ran.
     saveAction.clearError();
-    setChosenTargetId(id);
+    bulkAction.clearError();
+    setChosenTargetIds(ids);
   }
 
-  const selectedTarget = targets.find((t) => t.id === targetId) ?? null;
+  const selectedTarget = targetId !== null ? (targets.find((t) => t.id === targetId) ?? null) : null;
   const form: Partial<Target> =
     draft && draft.targetId === targetId ? draft.values : (selectedTarget ?? {});
   const saved = savedTargetId !== null && savedTargetId === targetId;
@@ -683,12 +697,125 @@ function WorkspaceSection() {
     });
   }
 
+  // Bulk editing (#520): picking more than one repo switches from the
+  // single-target editor above (whose default branch and label are
+  // genuinely per-repo) to a narrower set of fields worth setting identically
+  // across several repos at once -- label and criticality weight, not the
+  // default branch, which bulk-setting would almost always get wrong for at
+  // least one repo in the selection.
+  const [bulkLabel, setBulkLabel] = useState<string>(LABELS[0]);
+  const [bulkCriticality, setBulkCriticality] = useState(1);
+  const [bulkApplyLabel, setBulkApplyLabel] = useState(false);
+  const [bulkApplyCriticality, setBulkApplyCriticality] = useState(false);
+  const [bulkResult, setBulkResult] = useState<{ succeeded: number; failed: number } | null>(null);
+  const bulkAction = useWriteAction("Couldn't save the bulk update");
+
+  async function saveBulk() {
+    if (targetIds.length === 0 || (!bulkApplyLabel && !bulkApplyCriticality)) return;
+    setBulkResult(null);
+    await bulkAction.run(async () => {
+      const patch: Partial<Target> = {};
+      if (bulkApplyLabel) patch.label = bulkLabel;
+      if (bulkApplyCriticality) patch.criticality_weight = bulkCriticality;
+      const results = await Promise.allSettled(targetIds.map((id) => api.updateTarget(id, patch)));
+      const succeeded = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.length - succeeded;
+      reloadTargets();
+      setBulkResult({ succeeded, failed });
+      if (failed > 0) {
+        throw new Error(`${failed} of ${results.length} repositories failed to update.`);
+      }
+    });
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h2 className="mb-3 text-sm font-medium text-foreground">Target Configuration</h2>
-        <TargetPicker targets={targets} value={targetId} onChange={chooseTarget} />
+        <TargetPicker targets={targets} value={targetIds} onChange={chooseTargets} />
       </div>
+
+      {targetIds.length > 1 && (
+        <Card className="border-border bg-card">
+          <CardContent className="flex flex-col gap-4 px-4 py-4">
+            <div>
+              <h3 className="text-sm font-medium text-foreground">
+                Bulk edit {targetIds.length} repositories
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Only fields checked below are applied; the default branch is left alone since it&apos;s
+                genuinely per-repo. Each repo is saved independently, so a failure on one doesn&apos;t
+                block the rest.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="bulk-apply-label"
+                  className="h-4 w-4 accent-primary"
+                  checked={bulkApplyLabel}
+                  onChange={(e) => setBulkApplyLabel(e.target.checked)}
+                />
+                <label htmlFor="bulk-apply-label" className="w-32 text-xs text-muted-foreground">
+                  Label
+                </label>
+                <select
+                  className="rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground disabled:opacity-50"
+                  value={bulkLabel}
+                  disabled={!bulkApplyLabel}
+                  onChange={(e) => setBulkLabel(e.target.value)}
+                >
+                  {LABELS.map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="bulk-apply-criticality"
+                  className="h-4 w-4 accent-primary"
+                  checked={bulkApplyCriticality}
+                  onChange={(e) => setBulkApplyCriticality(e.target.checked)}
+                />
+                <label htmlFor="bulk-apply-criticality" className="w-32 text-xs text-muted-foreground">
+                  Criticality weight (1-5)
+                </label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={5}
+                  disabled={!bulkApplyCriticality}
+                  className="w-24 bg-secondary"
+                  value={bulkCriticality}
+                  onChange={(e) => setBulkCriticality(Number(e.target.value))}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={saveBulk}
+                disabled={bulkAction.submitting || (!bulkApplyLabel && !bulkApplyCriticality)}
+              >
+                {bulkAction.submitting ? "Saving..." : `Apply to ${targetIds.length} repositories`}
+              </Button>
+              {bulkResult && bulkResult.failed === 0 && (
+                <span role="status" className="text-xs text-chart-5">
+                  Saved {bulkResult.succeeded} repositories
+                </span>
+              )}
+            </div>
+            {bulkAction.error && (
+              <AlertBanner tone="critical" title="Couldn't save the bulk update">
+                {bulkAction.error}
+              </AlertBanner>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {targetId !== null && (
         <Card className="border-border bg-card">

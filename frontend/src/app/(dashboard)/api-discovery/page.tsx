@@ -152,10 +152,12 @@ export default function ApiDiscoveryPage() {
   // `targetId` comment above), but browsing what's already been discovered
   // for a handful of repos at once is a plain N-parallel-call merge -- each
   // GET already returns that repo's full endpoint list, unpaginated.
+  const multiSelectionKey = targetIds.join(",");
   const {
     data: multiEndpoints,
     error: multiError,
-    isInitialLoading: multiLoading,
+    isInitialLoading: multiInitialLoading,
+    isRefreshing: multiRefreshing,
   } = useAsyncData(
     () =>
       Promise.allSettled(
@@ -167,6 +169,12 @@ export default function ApiDiscoveryPage() {
           })),
         ),
       ).then((settled) => ({
+        // Tagged with the selection it was fetched for: useAsyncData keeps
+        // the previous result on screen while a selection-change refetch is
+        // in flight, and without this key the merged view below would
+        // render the previous selection's endpoints under the new one's
+        // repo names for that window.
+        selectionKey: multiSelectionKey,
         // One repo's request failing must not blank out every other
         // selected repo's endpoints -- Promise.all would reject the whole
         // batch on a single rejection, hiding fulfilled results behind an
@@ -174,18 +182,22 @@ export default function ApiDiscoveryPage() {
         fulfilled: settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
         failedTargetIds: targetIds.filter((_, i) => settled[i].status === "rejected"),
       })),
-    { enabled: multiSelected, deps: [targetIds.join(",")] },
+    { enabled: multiSelected, deps: [multiSelectionKey] },
   );
+  const multiResultStale = multiEndpoints !== null && multiEndpoints.selectionKey !== multiSelectionKey;
+  const multiLoading = multiInitialLoading || multiRefreshing || multiResultStale;
   const mergedEndpoints = useMemo(
     () =>
-      (multiEndpoints?.fulfilled ?? []).flatMap((r) =>
-        r.endpoints.map((e) => ({ ...e, repoTargetId: r.targetId, repoName: r.targetName })),
-      ),
-    [multiEndpoints],
+      multiResultStale
+        ? []
+        : (multiEndpoints?.fulfilled ?? []).flatMap((r) =>
+            r.endpoints.map((e) => ({ ...e, repoTargetId: r.targetId, repoName: r.targetName })),
+          ),
+    [multiEndpoints, multiResultStale],
   );
-  const multiFailedTargetNames = (multiEndpoints?.failedTargetIds ?? []).map(
-    (id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`,
-  );
+  const multiFailedTargetNames = multiResultStale
+    ? []
+    : (multiEndpoints?.failedTargetIds ?? []).map((id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`);
   const mergedGroupedByMethod = useMemo(() => groupByMethod(mergedEndpoints), [mergedEndpoints]);
 
   useEffect(() => {

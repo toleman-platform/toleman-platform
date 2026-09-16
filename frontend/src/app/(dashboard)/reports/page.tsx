@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Group, type PostureReportOptions, type ReportSection, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
@@ -36,6 +36,15 @@ const FALLBACK_INCLUDED = [
 
 export default function ReportsPage() {
   const { activeWorkspaceId } = useWorkspaceContext();
+  // A ref, not a plain read of `activeWorkspaceId` after the await in
+  // generate() below: that closure captures the workspace id from the
+  // render `generate` was created in, which never changes even if the user
+  // switches workspaces mid-request. The ref is the one thing in that
+  // closure that can reflect a *later* render's value.
+  const activeWorkspaceIdRef = useRef(activeWorkspaceId);
+  useEffect(() => {
+    activeWorkspaceIdRef.current = activeWorkspaceId;
+  }, [activeWorkspaceId]);
   const {
     data: targetsData,
     status: targetsStatus,
@@ -208,6 +217,13 @@ export default function ReportsPage() {
 
   async function generate() {
     if (targetIds.length === 0) return;
+    // A workspace switch mid-export must not land this download (or its
+    // "Downloaded ..." confirmation) under the workspace the reader has
+    // since moved to: exportPostureReport has no cancellation, and
+    // ReportsPage stays mounted across the switch (DashboardShell keeps the
+    // same client tree), so the request just keeps running for whichever
+    // workspace it was scoped to. Captured before the await, checked after.
+    const requestedWorkspaceId = activeWorkspaceId;
     setExporting(true);
     setError(null);
     setLastDownload(null);
@@ -231,6 +247,7 @@ export default function ReportsPage() {
         sections: allSectionsChosen || sections.length === 0 ? undefined : sections,
       };
       const { blob, filename: serverFilename } = await api.exportPostureReport(targetIds, format, options);
+      if (activeWorkspaceIdRef.current !== requestedWorkspaceId) return;
       const url = URL.createObjectURL(blob);
       // The backend names the file and that name wins. The fallback is only
       // for a response that arrived without a readable Content-Disposition,

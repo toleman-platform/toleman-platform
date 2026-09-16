@@ -9,6 +9,7 @@ import { getErrorMessage } from "@/std-lib";
 import { useActiveScans } from "@/hooks/features/use-active-scans";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWriteAction } from "@/hooks/use-write-action";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { useScanRun } from "@/hooks/features/use-scan-run";
 import { ScanHealthBadge, ScanProgress } from "@/components/features/scans";
@@ -172,13 +173,21 @@ export default function AiSecurityPage() {
   }
 
   // AI Bill of Materials: which AI-flagged target(s) the panel(s) below show.
-  // Falls back to the first AI target rather than tracking "unset" as a
-  // separate state -- with 0 AI targets this is never read (the section
-  // renders its own empty state first), and with exactly 1 there is nothing
-  // to pick.
-  const [aibomTargetIds, setAibomTargetIds] = useState<number[]>([]);
+  // (#519 review) Resets on a workspace switch -- this picker has no "All
+  // repositories" pseudo-value, so any selection is workspace-specific; a
+  // stale id from the previous workspace would otherwise disappear from
+  // `selectedAibomTargets` (filtered against the new `aiTargets`) and fall
+  // through to the "nothing explicitly selected" branch below, same as an
+  // honest empty selection.
+  const [aibomTargetIds, setAibomTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId);
   const selectedAibomTargets = aiTargets.filter((t) => aibomTargetIds.includes(t.id));
-  const aibomTargets = selectedAibomTargets.length > 0 ? selectedAibomTargets : aiTargets.slice(0, 1);
+  // Falls back to the single AI target rather than tracking "unset" as a
+  // separate state only when there is exactly one -- nothing to pick, so
+  // implicitly offering to generate its AIBOM is not offering an action for
+  // a repo the reader never chose. With more than one AI target and nothing
+  // explicitly selected, the picker above is the one choosing, not this
+  // fallback -- see the "select a repository" empty state below.
+  const aibomTargets = selectedAibomTargets.length > 0 ? selectedAibomTargets : aiTargets.length === 1 ? aiTargets : [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -349,6 +358,12 @@ export default function AiSecurityPage() {
             icon={Boxes}
             title="No AI/ML repos to bill yet"
             description="Once a repo is flagged as AI/ML, its models and datasets can be extracted and exported here."
+          />
+        ) : aibomTargets.length === 0 ? (
+          <EmptyState
+            icon={Boxes}
+            title="Select a repository"
+            description="Pick one or more AI/ML repositories above to generate or view their AI Bill of Materials."
           />
         ) : (
           <div className="flex flex-col gap-4">

@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -145,25 +146,12 @@ function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
 
 export default function SbomPage() {
   const { activeWorkspaceId } = useWorkspaceContext();
-  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>([]);
+  // (#506/#519) A specific chosen target belongs to whichever workspace was
+  // active when it was picked; resets on a workspace switch, "All
+  // repositories" (ALL_TARGETS) exempted -- see the hook's own doc comment.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId, ALL_TARGETS);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // (#506) A specific chosen target belongs to whichever workspace was
-  // active when it was picked; switching the global active workspace must
-  // not leave that (now likely out-of-scope) target selected underneath a
-  // freshly-scoped list. "All repositories" (ALL_TARGETS) is exempt: an
-  // org-wide view re-scopes cleanly to the new workspace on its own and a
-  // switch shouldn't kick the reader out of it. React's documented "adjust
-  // state when a prop changes" pattern (see sidebar.tsx's `lastPathname`),
-  // not an effect, so the reset lands the same render the switch does.
-  const [lastWorkspaceId, setLastWorkspaceId] = useState(activeWorkspaceId);
-  if (lastWorkspaceId !== activeWorkspaceId) {
-    setLastWorkspaceId(activeWorkspaceId);
-    if (!chosenTargetIds.includes(ALL_TARGETS)) {
-      setChosenTargetIds([]);
-    }
-  }
 
   const { data: targetsData } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
     deps: [activeWorkspaceId],
@@ -240,7 +228,7 @@ export default function SbomPage() {
     isInitialLoading: multiSbomLoading,
   } = useAsyncData(
     () =>
-      Promise.all(
+      Promise.allSettled(
         targetIds.map((id) =>
           api.getSbom(id).then((res) => ({
             targetId: id,
@@ -248,11 +236,20 @@ export default function SbomPage() {
             components: res.components ?? [],
           })),
         ),
-      ),
+      ).then((settled) => ({
+        // One repo's SBOM fetch failing must not blank out every other
+        // selected repo's components -- Promise.all would reject the whole
+        // batch on a single rejection.
+        fulfilled: settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
+        failedTargetIds: targetIds.filter((_, i) => settled[i].status === "rejected"),
+      })),
     { enabled: multiSelected, deps: [targetIds.join(","), multiSelected] },
   );
-  const mergedComponents = (multiSbom ?? []).flatMap((r) =>
+  const mergedComponents = (multiSbom?.fulfilled ?? []).flatMap((r) =>
     r.components.map((c) => ({ ...c, repoTargetId: r.targetId, repoName: r.targetName })),
+  );
+  const multiSbomFailedTargetNames = (multiSbom?.failedTargetIds ?? []).map(
+    (id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`,
   );
   // A workspace switch re-triggers this fetch (activeWorkspaceId is a dep)
   // but useAsyncData keeps the previous workspace's org SBOM visible while it
@@ -305,6 +302,19 @@ export default function SbomPage() {
   const sbomTotalPages = Math.max(1, Math.ceil((components?.length ?? 0) / sbomPageSize));
   const sbomPage = Math.min(sbomPageRaw, sbomTotalPages);
   const visibleComponents = (components ?? []).slice((sbomPage - 1) * sbomPageSize, sbomPage * sbomPageSize);
+
+  // The merged multi-repo view pages off the same URL params as the
+  // single-target Components tab above (mutually exclusive views, never
+  // both on screen). `getSbom` returns a repo's full unpaginated component
+  // list -- on a target with thousands of components, rendering
+  // `mergedComponents` in one unpaged PaginatedList call would put the
+  // entire merged set in the DOM at once.
+  const mergedTotalPages = Math.max(1, Math.ceil(mergedComponents.length / sbomPageSize));
+  const mergedPage = Math.min(sbomPageRaw, mergedTotalPages);
+  const visibleMergedComponents = mergedComponents.slice(
+    (mergedPage - 1) * sbomPageSize,
+    mergedPage * sbomPageSize,
+  );
 
   // The org-wide list pages off the same URL params. Only one of the two
   // views is ever on screen -- the tabs below exist only for a single target
@@ -572,15 +582,18 @@ export default function SbomPage() {
 
       {multiSelected && (
         <div className="flex flex-col gap-4">
+          {/* The whole batch only fails to load when the aggregate fetcher
+              itself throws; an individual repo's SBOM fetch failing is
+              reported per-repo below instead. */}
           {multiSbomError && <p className="text-sm text-destructive">{multiSbomError.message}</p>}
           {multiSbomLoading && <SkeletonList count={4} />}
           {!multiSbomLoading && !multiSbomError && (
             <PaginatedList
-              items={mergedComponents}
+              items={visibleMergedComponents}
               total={mergedComponents.length}
-              page={1}
-              pageSize={Math.max(mergedComponents.length, 1)}
-              summary={`${mergedComponents.length} component${mergedComponents.length === 1 ? "" : "s"} across ${targetIds.length} repositories`}
+              page={mergedPage}
+              pageSize={sbomPageSize}
+              summary={`${mergedComponents.length} component${mergedComponents.length === 1 ? "" : "s"} across ${targetIds.length} repositories${multiSbomFailedTargetNames.length > 0 ? ` (couldn't load ${multiSbomFailedTargetNames.join(", ")})` : ""}`}
               getKey={(c) => `${c.repoTargetId}-${c.id}`}
               renderItem={(c) => (
                 <ListRow>

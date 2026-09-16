@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
 import { useWriteAction } from "@/hooks/use-write-action";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { AsyncContent } from "@/components/ui/async-content";
 import { AlertBanner } from "@/components/ui/alert-banner";
@@ -634,7 +635,9 @@ function NotificationPreferencesSection() {
 
 function WorkspaceSection() {
   const { activeWorkspaceId } = useWorkspaceContext();
-  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>([]);
+  // (#519) Resets on a workspace switch -- this picker has no "All
+  // repositories" pseudo-value, so any selection is workspace-specific.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId);
   // Was `try`/`finally` with no `catch`: a rejected PATCH said nothing at all
   // and left the rejection as an unhandled promise rejection escaping the
   // click handler. The draft itself was already preserved -- the clear sat

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Group, type PostureReportOptions, type ReportSection, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { FINDING_STATE_ORDER, SEVERITY_ORDER } from "@/lib/severity";
 import { TargetPicker, ALL_TARGETS } from "@/components/features/targets";
@@ -56,7 +57,9 @@ export default function ReportsPage() {
   // bug was this page reading only `data` and throwing that status away one
   // line later -- the same shape `settledOr` exists to prevent in std-lib.
   const targetsFailed = targetsStatus === "error";
-  const [selectedTargetIds, setSelectedTargetIds] = useState<number[]>([]);
+  // (#519) Resets on a workspace switch, "All repositories" (ALL_TARGETS)
+  // exempted -- see the hook's own doc comment.
+  const [selectedTargetIds, setSelectedTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId, ALL_TARGETS);
   const targetIds = selectedTargetIds.length > 0 ? selectedTargetIds : targets.length > 0 ? [ALL_TARGETS] : [];
   const setTargetId = setSelectedTargetIds;
   const [format, setFormat] = useState<ExportFormat>("csv");

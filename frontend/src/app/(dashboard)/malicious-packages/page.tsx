@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { api, ApiError, type Finding, type Target } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { StatCard, StatGrid } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
@@ -50,8 +51,13 @@ const OSV_SOURCE_NOTE =
 
 export default function MaliciousPackagesPage() {
   const { activeWorkspaceId } = useWorkspaceContext();
-  const findingsQuery = useAsyncData<Finding[]>(() =>
-    api.findings({ tool: "osv-malware", page_size: 500 }).then((r) => r.items),
+  // (#519) Also scoped by workspace, same bug class the picker's own fix is
+  // about: this predates the multi-select work, but an OSV finding from a
+  // repo outside the active workspace has no business in this page's
+  // headline stats or detected-package list either.
+  const findingsQuery = useAsyncData<Finding[]>(
+    () => api.findings({ tool: "osv-malware", page_size: 500, workspace_id: activeWorkspaceId }).then((r) => r.items),
+    { deps: [activeWorkspaceId] },
   );
   // (#520) Workspace-scoped, same pattern as sbom/page.tsx.
   const targetsQuery = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
@@ -59,13 +65,19 @@ export default function MaliciousPackagesPage() {
   });
   const [checkState, setCheckState] = useState<Record<number, string>>({});
   const [importWarning, setImportWarning] = useState<Record<number, string>>({});
-  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>([]);
+  // (#519) Resets on a workspace switch -- this picker has no "All
+  // repositories" pseudo-value, so any selection is workspace-specific.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId);
 
-  const findings = findingsQuery.data ?? [];
   const targets = (targetsQuery.data ?? []).filter(
     (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
   );
   const targetById = new Map(targets.map((t) => [t.id, t]));
+  // Filtered again client-side, same reasoning as `targets`: a workspace
+  // switch's refetch keeps the previous workspace's findings on screen
+  // while it's in flight.
+  const targetIdSet = new Set(targets.map((t) => t.id));
+  const findings = (findingsQuery.data ?? []).filter((f) => targetIdSet.has(f.target_id));
 
   const affectedTargetIds = Array.from(new Set(findings.map((f) => f.target_id)));
   const openCount = findings.filter((f) => f.state === "Open").length;

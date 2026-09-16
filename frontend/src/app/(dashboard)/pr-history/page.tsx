@@ -6,6 +6,7 @@ import Link from "next/link";
 import { api, ApiError, type Target, type PullRequest, type PullRequestState } from "@/lib/api";
 import { safeHref } from "@/lib/security/safe-href";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -254,7 +255,9 @@ export default function PrHistoryPage() {
   // seeded once from the URL so the page opens on the right repo instead of
   // whichever target happens to be first in the list. Only the initial
   // value; a later manual repo switch is a real state change afterward.
-  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>(() => {
+  // (#519) Resets on a workspace switch, "All repositories" (ALL_TARGETS)
+  // exempted -- see the hook's own doc comment.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId, ALL_TARGETS, () => {
     const seeded = positiveIntParam(prSearchParams, "target_id");
     return seeded !== null ? [seeded] : [];
   });
@@ -332,7 +335,7 @@ export default function PrHistoryPage() {
     isInitialLoading: mergedLoading,
   } = useAsyncData(
     () =>
-      Promise.all(
+      Promise.allSettled(
         targetIds.map((id) =>
           api.prs(id, prState).then((items) => ({
             targetId: id,
@@ -340,12 +343,27 @@ export default function PrHistoryPage() {
             items,
           })),
         ),
-      ),
+      ).then((settled) => ({
+        // One repo's PR fetch failing must not blank out every other
+        // selected repo's PRs -- Promise.all would reject the whole batch on
+        // a single rejection.
+        fulfilled: settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
+        failedTargetIds: targetIds.filter((_, i) => settled[i].status === "rejected"),
+      })),
     { enabled: multiSelected, deps: [targetIds.join(","), prState] },
   );
-  const mergedPrs = (mergedPrsRaw ?? [])
+  const mergedPrs = (mergedPrsRaw?.fulfilled ?? [])
     .flatMap((r) => r.items.map((pr) => ({ pr, targetId: r.targetId, targetName: r.targetName })))
     .sort((a, b) => b.pr.created_at.localeCompare(a.pr.created_at));
+  const mergedFailedTargetNames = (mergedPrsRaw?.failedTargetIds ?? []).map(
+    (id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`,
+  );
+  // Each api.prs call is independently capped at PR_LIST_PAGE_SIZE; a repo
+  // that hit the cap may have older PRs GitHub never returned, the same
+  // truncation the single-repo view already warns about below.
+  const mergedTruncatedTargetNames = (mergedPrsRaw?.fulfilled ?? [])
+    .filter((r) => r.items.length === PR_LIST_PAGE_SIZE)
+    .map((r) => r.targetName);
 
   // A 401 is not a page error; it means the GitHub session lapsed, and the
   // page has a dedicated reconnect affordance for it.
@@ -396,14 +414,29 @@ export default function PrHistoryPage() {
         </p>
       ) : multiSelected ? (
         <div className="flex flex-col gap-2">
+          {/* The whole batch only fails to load when the aggregate fetcher
+              itself throws; an individual repo's PR fetch failing is
+              reported per-repo below instead, so it can't blank out every
+              other repo's PRs. */}
           {mergedError && <ErrorState description={mergedError.message} />}
           {!mergedError && mergedLoading && <SkeletonList count={4} />}
           {!mergedError && !mergedLoading && (
             <>
+              {mergedFailedTargetNames.length > 0 && (
+                <p className="text-sm text-destructive">
+                  Couldn&apos;t load pull requests for {mergedFailedTargetNames.join(", ")}. Showing the rest.
+                </p>
+              )}
               <p className="text-sm text-muted-foreground">
                 {mergedPrs.length} pull request{mergedPrs.length === 1 ? "" : "s"} across{" "}
                 {targetIds.length} repositories
               </p>
+              {mergedTruncatedTargetNames.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Showing the {PR_LIST_PAGE_SIZE} most recent pull requests for this state on{" "}
+                  {mergedTruncatedTargetNames.join(", ")}. Older ones on those repos are not fetched.
+                </p>
+              )}
               {mergedPrs.map(({ pr, targetId: prTargetId, targetName }) => (
                 <PrRow
                   key={`${prTargetId}-${pr.number}`}
@@ -509,16 +542,24 @@ export default function PrHistoryPage() {
         </>
       )}
 
-      <PrGuardrailLog
-        // PrGuardrailLog only knows "one repo" or "every repo" (ALL_TARGETS);
-        // there is no subset variant, so several specific repos selected at
-        // once falls back to the org-wide aggregate rather than fetching
-        // nothing at all.
-        targetId={multiSelected ? ALL_TARGETS : targetId}
-        initialScanId={linkedScanId}
-        initialIgnoreFindingId={linkedIgnoreFindingId}
-        initialFindingId={linkedFindingId}
-      />
+      {/* PrGuardrailLog only knows "one repo" or "every repo" (ALL_TARGETS);
+          there is no subset variant. Widening a subset selection to
+          ALL_TARGETS would show unrelated repos' scan history under a log
+          that reads as scoped to the picked repos, so it's hidden for that
+          case instead rather than showing the wrong thing (#519 review). */}
+      {multiSelected ? (
+        <p className="text-sm text-muted-foreground">
+          The PR Guardrail scan log covers a single repository or every repository, not a specific subset --
+          select just one repository above, or none, to see it.
+        </p>
+      ) : (
+        <PrGuardrailLog
+          targetId={targetId}
+          initialScanId={linkedScanId}
+          initialIgnoreFindingId={linkedIgnoreFindingId}
+          initialFindingId={linkedFindingId}
+        />
+      )}
     </div>
   );
 }

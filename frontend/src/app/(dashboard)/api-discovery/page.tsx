@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Target, type ScanRun, type Endpoint } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceScopedSelection } from "@/hooks/use-workspace-scoped-selection";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { useScanRun } from "@/hooks/features/use-scan-run";
 import { ScanProgress } from "@/components/features/scans";
@@ -93,7 +94,9 @@ function groupByMethod<T extends Endpoint>(endpoints: T[]): { method: string; it
 
 export default function ApiDiscoveryPage() {
   const { activeWorkspaceId } = useWorkspaceContext();
-  const [chosenTargetIds, setChosenTargetIds] = useState<number[]>([]);
+  // (#519) Resets on a workspace switch -- this picker has no "All
+  // repositories" pseudo-value, so any selection is workspace-specific.
+  const [chosenTargetIds, setChosenTargetIds] = useWorkspaceScopedSelection(activeWorkspaceId);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // "" means no facet: every framework shown. A specific value narrows the
@@ -155,7 +158,7 @@ export default function ApiDiscoveryPage() {
     isInitialLoading: multiLoading,
   } = useAsyncData(
     () =>
-      Promise.all(
+      Promise.allSettled(
         targetIds.map((id) =>
           api.getDiscoveredEndpoints(id).then((res) => ({
             targetId: id,
@@ -163,15 +166,25 @@ export default function ApiDiscoveryPage() {
             endpoints: res.endpoints.filter((e) => !isExtractionArtefact(e)),
           })),
         ),
-      ),
+      ).then((settled) => ({
+        // One repo's request failing must not blank out every other
+        // selected repo's endpoints -- Promise.all would reject the whole
+        // batch on a single rejection, hiding fulfilled results behind an
+        // error message that names none of them.
+        fulfilled: settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : [])),
+        failedTargetIds: targetIds.filter((_, i) => settled[i].status === "rejected"),
+      })),
     { enabled: multiSelected, deps: [targetIds.join(",")] },
   );
   const mergedEndpoints = useMemo(
     () =>
-      (multiEndpoints ?? []).flatMap((r) =>
+      (multiEndpoints?.fulfilled ?? []).flatMap((r) =>
         r.endpoints.map((e) => ({ ...e, repoTargetId: r.targetId, repoName: r.targetName })),
       ),
     [multiEndpoints],
+  );
+  const multiFailedTargetNames = (multiEndpoints?.failedTargetIds ?? []).map(
+    (id) => targets.find((t) => t.id === id)?.name ?? `target #${id}`,
   );
   const mergedGroupedByMethod = useMemo(() => groupByMethod(mergedEndpoints), [mergedEndpoints]);
 
@@ -408,10 +421,19 @@ export default function ApiDiscoveryPage() {
 
       {multiSelected && (
         <div className="flex flex-col gap-3">
+          {/* The whole batch only fails to load when the aggregate fetcher
+              itself throws (e.g. before any per-repo call runs); an
+              individual repo's request failing is reported per-repo below
+              instead, so it can't blank out every other repo's endpoints. */}
           {multiError && <p className="text-sm text-destructive">{multiError.message}</p>}
           {multiLoading && <SkeletonList count={3} />}
           {!multiLoading && !multiError && (
             <>
+              {multiFailedTargetNames.length > 0 && (
+                <p className="text-sm text-destructive">
+                  Couldn&apos;t load endpoints for {multiFailedTargetNames.join(", ")}. Showing the rest.
+                </p>
+              )}
               <p className="text-sm text-muted-foreground">
                 {mergedEndpoints.length} endpoint{mergedEndpoints.length === 1 ? "" : "s"} found across{" "}
                 {targetIds.length} repositories

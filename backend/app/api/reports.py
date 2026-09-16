@@ -372,7 +372,11 @@ def _resolve_targets(
         else f"org-wide, narrowed by {filters.target_level_summary()} (see '{APPLIED_FILTERS_HEADING}')"
     )
 
-    target_ids = filters.target_id
+    # Deduplicated, preserving first-occurrence order: a caller repeating an
+    # id (`target_id=1&target_id=1`) must not see "2 repositories (repo,
+    # repo)" next to a `matching` list of one -- the label and the count it
+    # describes have to agree.
+    target_ids = list(dict.fromkeys(filters.target_id))
 
     if ws_ids is not None and not ws_ids and not target_ids:
         # No memberships and no named target(s): an empty org-wide report.

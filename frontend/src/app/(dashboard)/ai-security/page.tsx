@@ -99,21 +99,36 @@ export default function AiSecurityPage() {
   // open-only is exactly the "number and the list behind it disagree" bug
   // this page exists to not have.
   const {
-    data: modelscanFindings,
+    data: modelscanFindingsRaw,
     error: modelscanError,
     isInitialLoading: modelscanLoading,
     refetch: refetchModelscan,
   } = useAsyncData(
-    () => api.findings({ tool: "modelscan", resolved: false, page_size: 500 }).then((r) => r.items)
+    () =>
+      api
+        .findings({ tool: "modelscan", resolved: false, page_size: 500, workspace_id: activeWorkspaceId })
+        .then((r) => r.items),
+    { deps: [activeWorkspaceId] },
   );
   const {
-    data: semgrepLlmFindings,
+    data: semgrepLlmFindingsRaw,
     error: semgrepLlmError,
     isInitialLoading: semgrepLlmLoading,
     refetch: refetchSemgrepLlm,
   } = useAsyncData(
-    () => api.findings({ tool: "semgrep-llm", resolved: false, page_size: 500 }).then((r) => r.items)
+    () =>
+      api
+        .findings({ tool: "semgrep-llm", resolved: false, page_size: 500, workspace_id: activeWorkspaceId })
+        .then((r) => r.items),
+    { deps: [activeWorkspaceId] },
   );
+  // (#520) Filtered again client-side, same reasoning as `targets` above: a
+  // workspace switch's refetch keeps the previous workspace's findings on
+  // screen while it is in flight, and these headline stats must not count
+  // them against the new workspace's repos in that window.
+  const targetIdSet = new Set(targets.map((t) => t.id));
+  const modelscanFindings = (modelscanFindingsRaw ?? []).filter((f) => targetIdSet.has(f.target_id));
+  const semgrepLlmFindings = (semgrepLlmFindingsRaw ?? []).filter((f) => targetIdSet.has(f.target_id));
 
   const loading = targetsLoading || modelscanLoading || semgrepLlmLoading || scanSummaryLoading;
   // Server-side truth about what is already running, so the row does not

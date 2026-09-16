@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
@@ -176,10 +176,16 @@ def sla_compliance(
 @router.get("/security-score")
 def security_score(
     target_id: int | None = None,
+    # (dashboard scope picker follow-up) A caller-chosen set of repos, as
+    # opposed to target_id's single repo or group_id's saved group --
+    # mutually exclusive with both. Repeated query params
+    # (?target_ids=1&target_ids=2), FastAPI's native list-param convention.
+    target_ids: list[int] | None = Query(None),
     group_id: int | None = None,
-    # (#506) Only applies when neither of the two explicit, more specific
-    # scopes above is given -- a target_id/group_id is a deliberate narrower
-    # scope than "the active workspace" and must not be overridden by it.
+    # (#506) Only applies when none of the three explicit, more specific
+    # scopes above is given -- a target_id/target_ids/group_id is a
+    # deliberate narrower scope than "the active workspace" and must not be
+    # overridden by it.
     workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
@@ -188,19 +194,19 @@ def security_score(
     letter grade + component breakdown (open findings by severity, SLA
     compliance reused from #70, scan coverage, FP rate, week-over-week
     trend; see app.core.security_score for the full formula/constants).
-    Computable at org (no filter), group, or single-target scope, mirroring
-    #61's `findings.py` group_id filtering convention, `target_id` and
-    `group_id` are mutually exclusive (neither means org-wide). Scoped to
-    the caller's workspaces via accessible_workspace_ids (issue #57). The
-    same scope resolution backs the `security_score` widget
-    (app.core.widgets) so the dashboard-widget and standalone-endpoint
-    numbers for the same scope always agree."""
-    if target_id is not None or group_id is not None:
+    Computable at org (no filter), group, single-target, or multi-target
+    scope, mirroring #61's `findings.py` group_id filtering convention,
+    `target_id`/`target_ids`/`group_id` are mutually exclusive (none of them
+    means org-wide). Scoped to the caller's workspaces via
+    accessible_workspace_ids (issue #57). The same scope resolution backs the
+    `security_score` widget (app.core.widgets) so the dashboard-widget and
+    standalone-endpoint numbers for the same scope always agree."""
+    if target_id is not None or target_ids is not None or group_id is not None:
         ws_ids = accessible_workspace_ids(session, user)
     else:
         ws_ids = narrow_workspace_scope(session, user, workspace_id)
-    target_ids = resolve_target_ids_for_scope(session, ws_ids, target_id, group_id)
-    return compute_security_score(session, target_ids)
+    resolved_ids = resolve_target_ids_for_scope(session, ws_ids, target_id, group_id, target_ids)
+    return compute_security_score(session, resolved_ids)
 
 
 # ---------------------------------------------------------------------------

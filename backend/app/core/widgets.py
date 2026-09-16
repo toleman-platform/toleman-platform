@@ -150,7 +150,15 @@ def resolve_findings_trend(session: Session, ws_ids, config: dict) -> dict:
             for f in findings
             if f.first_seen.date() <= day and (f.mitigated_at is None or f.mitigated_at.date() > day)
         )
-        points.append({"date": day.isoformat(), "open": open_count})
+        # Cumulative, not "mitigated that day": pairs with `open` above (also
+        # an as-of-day snapshot, not a daily delta) so the two lines are
+        # directly comparable -- open trending down and mitigated trending up
+        # over the same window, rather than one being a level and the other a
+        # rate.
+        mitigated_count = sum(
+            1 for f in findings if f.mitigated_at is not None and f.mitigated_at.date() <= day
+        )
+        points.append({"date": day.isoformat(), "open": open_count, "mitigated": mitigated_count})
     return {"points": points}
 
 

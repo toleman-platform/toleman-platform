@@ -616,8 +616,9 @@ def resolve_target_ids_for_scope(
     ws_ids: list[int] | None,
     target_id: int | None,
     group_id: int | None,
+    target_ids: list[int] | None = None,
 ) -> list[int]:
-    """Resolves the org/group/target scoping shared by
+    """Resolves the org/group/target/multi-target scoping shared by
     GET /api/dashboard/security-score and the `security_score` dashboard
     widget resolver (app.core.widgets), same mutually-exclusive
     target_id/group_id filter convention as #61's findings.py group_id
@@ -626,9 +627,17 @@ def resolve_target_ids_for_scope(
     access; an inaccessible/empty group_id resolves to an empty list rather
     than 404 (mirrors findings.py's group_id handling, which doesn't
     validate group ownership either; the workspace filter alone already
-    excludes it)."""
-    if target_id is not None and group_id is not None:
-        raise HTTPException(400, "target_id and group_id are mutually exclusive")
+    excludes it).
+
+    `target_ids` (dashboard scope picker follow-up) is the multi-select
+    sibling of `target_id`: same 404-on-any-inaccessible-or-deleted-id
+    behavior as the single-target case, rather than silently dropping the
+    ones the caller can't see -- a picker that let someone select a repo
+    and then quietly scored something narrower than what it displayed would
+    be its own bug."""
+    given = [x is not None for x in (target_id, group_id, target_ids)]
+    if sum(given) > 1:
+        raise HTTPException(400, "target_id, target_ids and group_id are mutually exclusive")
 
     if ws_ids is not None and not ws_ids:
         return []
@@ -644,6 +653,22 @@ def resolve_target_ids_for_scope(
         ):
             raise HTTPException(404, "Target not found")
         return [target_id]
+
+    if target_ids is not None:
+        if not target_ids:
+            return []
+        unique_ids = list(dict.fromkeys(target_ids))
+        found = {
+            t.id: t
+            for t in session.exec(
+                target_lifecycle.live_targets(select(Target)).where(Target.id.in_(unique_ids))
+            ).all()
+        }
+        for tid in unique_ids:
+            t = found.get(tid)
+            if not t or (ws_ids is not None and t.workspace_id not in ws_ids):
+                raise HTTPException(404, "Target not found")
+        return unique_ids
 
     if group_id is not None:
         query = target_lifecycle.live_targets(

@@ -144,7 +144,7 @@ export type KpiCardsData = {
 };
 
 export type FindingsTrendData = {
-  points: { date: string; open: number }[];
+  points: { date: string; open: number; mitigated: number }[];
 };
 
 export type CveTimelineItem = {

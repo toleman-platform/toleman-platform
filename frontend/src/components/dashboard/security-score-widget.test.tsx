@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { WidgetBody } from "./widgets";
 import type { SecurityScore } from "@/lib/api";
+import { renderWithWorkspace as render } from "@/test/render-with-workspace";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -14,6 +15,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
       // its org-wide default rather than reaching for the network.
       targets: () => Promise.resolve([]),
       groups: () => Promise.resolve([]),
+      // No active workspace, same as an admin with the global switcher on
+      // "All workspaces" -- keeps this file's existing "org" default intact.
+      workspaces: () => Promise.resolve([]),
     },
   };
 });
@@ -173,6 +177,182 @@ describe("Security Score widget - component breakdown columns", () => {
     // The gauge is the headline the scope describes, and it reports the same
     // score the breakdown rolls up to.
     expect(screen.getByRole("img", { name: /Security score 72 out of 100/ })).not.toBeNull();
+  });
+});
+
+// (dashboard scope picker follow-up) Previously "org-wide" was the only
+// option and it silently meant "the caller's whole accessible set" even
+// with a specific workspace active in the global switcher, and the
+// Groups/Repositories lists it populated were never scoped to that
+// workspace either -- an unsorted, cross-workspace dump with no way to
+// tell which repo belonged to the workspace actually being looked at.
+describe("Security Score widget - scoped to the active workspace", () => {
+  it("defaults to the active workspace, not the full org, and needs no extra fetch for it", async () => {
+    const securityScore = vi.fn();
+    vi.doMock("@/lib/api", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/api")>();
+      return {
+        ...actual,
+        api: {
+          ...actual.api,
+          targets: () => Promise.resolve([]),
+          groups: () => Promise.resolve([]),
+          workspaces: () => Promise.resolve([{ id: 7, name: "acme-prod", organization_id: 1, enforcement_mode: null }]),
+          securityScore,
+        },
+      };
+    });
+    vi.resetModules();
+    const { WidgetBody: FreshWidgetBody } = await import("./widgets");
+    const { renderWithWorkspace: freshRender } = await import("@/test/render-with-workspace");
+
+    freshRender(<FreshWidgetBody entry={{ widget_id: "security_score", data: baseScore() }} />);
+
+    const select = (await screen.findByLabelText("Scope")) as HTMLSelectElement;
+    expect(select.value).toBe("workspace:7");
+    expect(screen.getByRole("option", { name: "This workspace (acme-prod)" })).toBeDefined();
+    // The default (active-workspace) view reuses the batched widget-data
+    // payload -- no separate GET /api/dashboard/security-score call.
+    expect(securityScore).not.toHaveBeenCalled();
+
+    vi.doUnmock("@/lib/api");
+  });
+
+  it("fetches the true full-org score only when explicitly chosen, since a workspace is active", async () => {
+    const securityScore = vi.fn().mockResolvedValue(baseScore());
+    vi.doMock("@/lib/api", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/api")>();
+      return {
+        ...actual,
+        api: {
+          ...actual.api,
+          targets: () => Promise.resolve([]),
+          groups: () => Promise.resolve([]),
+          workspaces: () => Promise.resolve([{ id: 7, name: "acme-prod", organization_id: 1, enforcement_mode: null }]),
+          securityScore,
+        },
+      };
+    });
+    vi.resetModules();
+    const { WidgetBody: FreshWidgetBody } = await import("./widgets");
+    const { renderWithWorkspace: freshRender } = await import("@/test/render-with-workspace");
+
+    freshRender(<FreshWidgetBody entry={{ widget_id: "security_score", data: baseScore() }} />);
+
+    const select = (await screen.findByLabelText("Scope")) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "org" } });
+
+    await screen.findByRole("img", { name: /Security score/ });
+    expect(securityScore).toHaveBeenCalledWith({});
+
+    vi.doUnmock("@/lib/api");
+  });
+
+  it("does not get stuck on a stale skeleton after switching back before an abandoned fetch resolves", async () => {
+    // CodeRabbit review, PR #517: useAsyncData's cleanup aborts an in-flight
+    // request when a scope stops being fetched, but an aborted request's
+    // promise never dispatches -- so `isInitialLoading` freezes at whatever
+    // it was the instant that happened, rather than resetting. A fetch that
+    // never resolves during this test stands in for "still in flight when
+    // the reader switches away".
+    const securityScore = vi.fn(() => new Promise<SecurityScore>(() => {}));
+    vi.doMock("@/lib/api", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/api")>();
+      return {
+        ...actual,
+        api: {
+          ...actual.api,
+          targets: () => Promise.resolve([]),
+          groups: () => Promise.resolve([]),
+          workspaces: () => Promise.resolve([{ id: 7, name: "acme-prod", organization_id: 1, enforcement_mode: null }]),
+          securityScore,
+        },
+      };
+    });
+    vi.resetModules();
+    const { WidgetBody: FreshWidgetBody } = await import("./widgets");
+    const { renderWithWorkspace: freshRender } = await import("@/test/render-with-workspace");
+
+    freshRender(<FreshWidgetBody entry={{ widget_id: "security_score", data: baseScore() }} />);
+
+    const select = (await screen.findByLabelText("Scope")) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "org" } }); // starts the never-resolving fetch
+    fireEvent.change(select, { target: { value: "workspace:7" } }); // switches away before it settles
+
+    // Back on the default, fetch-free tier: the gauge must show initialData
+    // immediately, not the abandoned "org" fetch's forever-loading skeleton.
+    expect(await screen.findByRole("img", { name: /Security score 72 out of 100/ })).not.toBeNull();
+    expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
+
+    vi.doUnmock("@/lib/api");
+  });
+});
+
+describe("Security Score widget - multi-select repositories", () => {
+  it("scores nothing, without a request, until at least one repo is picked", async () => {
+    const securityScore = vi.fn();
+    vi.doMock("@/lib/api", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/api")>();
+      return {
+        ...actual,
+        api: {
+          ...actual.api,
+          targets: () => Promise.resolve([{ id: 1, name: "repo-a" }, { id: 2, name: "repo-b" }]),
+          groups: () => Promise.resolve([]),
+          workspaces: () => Promise.resolve([]),
+          securityScore,
+        },
+      };
+    });
+    vi.resetModules();
+    const { WidgetBody: FreshWidgetBody } = await import("./widgets");
+    const { renderWithWorkspace: freshRender } = await import("@/test/render-with-workspace");
+
+    freshRender(<FreshWidgetBody entry={{ widget_id: "security_score", data: baseScore() }} />);
+
+    fireEvent.change(await screen.findByLabelText("Scope"), { target: { value: "targets" } });
+
+    expect(await screen.findByText("No targets in scope.")).toBeDefined();
+    expect(securityScore).not.toHaveBeenCalled();
+
+    vi.doUnmock("@/lib/api");
+  });
+
+  it("sends every selected repo id once repos are picked", async () => {
+    const securityScore = vi.fn().mockResolvedValue(baseScore());
+    vi.doMock("@/lib/api", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("@/lib/api")>();
+      return {
+        ...actual,
+        api: {
+          ...actual.api,
+          targets: () => Promise.resolve([{ id: 1, name: "repo-a" }, { id: 2, name: "repo-b" }]),
+          groups: () => Promise.resolve([]),
+          workspaces: () => Promise.resolve([]),
+          securityScore,
+        },
+      };
+    });
+    vi.resetModules();
+    const { WidgetBody: FreshWidgetBody } = await import("./widgets");
+    const { renderWithWorkspace: freshRender } = await import("@/test/render-with-workspace");
+
+    freshRender(<FreshWidgetBody entry={{ widget_id: "security_score", data: baseScore() }} />);
+
+    fireEvent.change(await screen.findByLabelText("Scope"), { target: { value: "targets" } });
+    const picker = (await screen.findByLabelText(
+      /Repositories \(all workspaces, Cmd\/Ctrl-click for multiple\)/,
+    )) as HTMLSelectElement;
+
+    Array.from(picker.options).forEach((o) => {
+      o.selected = o.value === "1" || o.value === "2";
+    });
+    fireEvent.change(picker);
+
+    await screen.findByRole("img", { name: /Security score/ });
+    expect(securityScore).toHaveBeenCalledWith({ targetIds: [1, 2] });
+
+    vi.doUnmock("@/lib/api");
   });
 });
 

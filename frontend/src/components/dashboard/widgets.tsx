@@ -41,6 +41,7 @@ import { FindingsTrendLine } from "@/components/charts/findings-trend-line";
 import { SecurityScoreGauge } from "@/components/charts/security-score-gauge";
 import { api } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import type {
   WidgetId,
   WidgetDataEntry,
@@ -640,10 +641,33 @@ function scoreComponentDetail(key: string, c: ScoreComponent): string | null {
   }
 }
 
-type ScoreScope = { kind: "org" } | { kind: "group"; id: number } | { kind: "target"; id: number };
+// (dashboard scope picker follow-up) "org" is the true, explicit full-org
+// score (every workspace the caller can access) -- previously the only
+// "org-wide" option there was, and it silently meant "the caller's whole
+// accessible set" even when the global workspace switcher had one workspace
+// active, which is what made the picker's own Groups/Repositories lists
+// (unscoped to that workspace) read as a random cross-workspace dump.
+// "workspace" is the new default: the globally active workspace, backed by
+// `initialData` (already scoped to it via GET /api/dashboard/widget-data's
+// own workspace_id) rather than a second fetch. "targets" replaces the old
+// single-target option with a caller-chosen set.
+type ScoreScope =
+  | { kind: "org" }
+  | { kind: "workspace"; id: number }
+  | { kind: "group"; id: number }
+  | { kind: "targets"; ids: number[] };
 
-function scoreScopeKey(s: ScoreScope) {
-  return s.kind === "org" ? "org" : `${s.kind}:${s.id}`;
+function scoreScopeKey(s: ScoreScope): string {
+  switch (s.kind) {
+    case "org":
+      return "org";
+    case "workspace":
+      return `workspace:${s.id}`;
+    case "group":
+      return `group:${s.id}`;
+    case "targets":
+      return `targets:${[...s.ids].sort((a, b) => a - b).join(",")}`;
+  }
 }
 
 // No icon is ever drawn for a direction that was never established: a flat
@@ -734,14 +758,24 @@ function ScoreComponentRow({
 }
 
 // Issue #63: composite security health score gauge, with a scope selector
-// (org-wide / a Group / a single Target) for drill-down; reuses the same
-// scoping concepts as #61's group filtering. The widget's own batched data
-// (`initialData`, from GET /api/dashboard/widget-data) covers the org-wide
-// default view; switching scope calls GET /api/dashboard/security-score
-// directly client-side, since #69's dashboard has no per-widget-instance
-// config editor yet for a saved scoped layout. Targets/groups for the
-// picker are fetched once on mount (WidgetBody only receives this widget's
-// own data, not the whole page's).
+// (full org / the active workspace / a Group / a caller-chosen set of
+// repos) for drill-down; reuses the same scoping concepts as #61's group
+// filtering. The widget's own batched data (`initialData`, from
+// GET /api/dashboard/widget-data) covers the default view -- the globally
+// active workspace, or the full org when no workspace is active -- and
+// needs no request of its own; switching to any other scope calls
+// GET /api/dashboard/security-score directly client-side, since #69's
+// dashboard has no per-widget-instance config editor yet for a saved scoped
+// layout.
+//
+// (dashboard scope picker follow-up) Groups/repos for the picker are scoped
+// to the global workspace switcher's active workspace, refetched when it
+// changes -- previously these were the caller's *entire* accessible set
+// regardless of which workspace was active, an unsorted cross-workspace
+// list with no way to tell which repo belonged to the workspace actually
+// being looked at. The scope resets to the newly active workspace on every
+// switch, the same "adjust state during render" pattern sbom/page.tsx uses
+// for its own target selection.
 //
 // Layout: a fixed-width headline column (gauge, grade, and the scope control
 // that says what they describe) beside a breakdown column that takes all the
@@ -752,33 +786,82 @@ function ScoreComponentRow({
 // column -- where it read as filtering those rows -- and sits under the
 // number it actually rescopes.
 function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
-  const [scope, setScope] = useState<ScoreScope>({ kind: "org" });
+  const { activeWorkspaceId, workspaces } = useWorkspaceContext();
+  const [scope, setScope] = useState<ScoreScope>(() =>
+    activeWorkspaceId !== null ? { kind: "workspace", id: activeWorkspaceId } : { kind: "org" },
+  );
+  // Resets the picker to the newly active workspace (or full org, if the
+  // switcher moved to "All workspaces") every time the global switcher
+  // changes, rather than silently going on scoring whichever workspace was
+  // active when a Group/repo selection was made.
+  const [lastActiveWorkspaceId, setLastActiveWorkspaceId] = useState(activeWorkspaceId);
+  if (lastActiveWorkspaceId !== activeWorkspaceId) {
+    setLastActiveWorkspaceId(activeWorkspaceId);
+    setScope(activeWorkspaceId !== null ? { kind: "workspace", id: activeWorkspaceId } : { kind: "org" });
+  }
   const scopeSelectId = useId();
+  const targetsSelectId = useId();
 
-  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
-  const { data: groupsData } = useAsyncData<Group[]>(() => api.groups());
+  const { data: targetsData } = useAsyncData<Target[]>(
+    () => api.targets({ workspace_id: activeWorkspaceId ?? undefined }),
+    { deps: [activeWorkspaceId] },
+  );
+  const { data: groupsData } = useAsyncData<Group[]>(() => api.groups(activeWorkspaceId ?? undefined), {
+    deps: [activeWorkspaceId],
+  });
   const targets = targetsData ?? [];
   const groups = groupsData ?? [];
+  const activeWorkspaceName = workspaces?.find((w) => w.id === activeWorkspaceId)?.name ?? null;
+
+  // "targets" with nothing picked yet needs no request -- there is nothing
+  // to score, and firing one would either 404 with no ids or (worse) read as
+  // "no target_ids given at all" and silently score the whole org.
+  const noTargetsPicked = scope.kind === "targets" && scope.ids.length === 0;
+  // See the score derivation below for why "org" only qualifies once no
+  // workspace is active.
+  const usesInitialData = scope.kind === "workspace" || (scope.kind === "org" && activeWorkspaceId === null);
+  const shouldFetchScopedScore = !usesInitialData && !noTargetsPicked;
 
   const {
     data: scopedScore,
     error: loadError,
-    isInitialLoading: loading,
+    isInitialLoading: scopedLoading,
   } = useAsyncData<SecurityScore>(
-    () =>
-      scope.kind === "group"
-        ? api.securityScore({ groupId: scope.id })
-        : api.securityScore({ targetId: (scope as { id: number }).id }),
-    { enabled: scope.kind !== "org", deps: [scoreScopeKey(scope)] },
+    () => {
+      if (scope.kind === "group") return api.securityScore({ groupId: scope.id });
+      if (scope.kind === "targets") return api.securityScore({ targetIds: scope.ids });
+      // "org": the explicit full-org score, deliberately bypassing
+      // initialData (which reflects the *active* workspace, not the whole
+      // org, whenever one is selected).
+      return api.securityScore({});
+    },
+    { enabled: shouldFetchScopedScore, deps: [scoreScopeKey(scope)] },
   );
+  // useAsyncData's own effect aborts an in-flight request when `enabled`
+  // flips to false (switching scope away mid-fetch), but an aborted
+  // request's promise never dispatches -- so `scopedLoading`/`loadError`
+  // freeze at whatever they were the instant this scope stopped being
+  // fetched, rather than resetting. Gating both on `shouldFetchScopedScore`
+  // is what stops that frozen, unrelated state from leaking into the
+  // workspace/no-selection render below once the scoped fetch is disabled.
+  const loading = shouldFetchScopedScore && scopedLoading;
 
-  // Org scope is already batched into `initialData` by
-  // GET /api/dashboard/widget-data, so it needs no request of its own.
-  // Switching back to it must show that data again rather than whichever
-  // repo was last selected; deriving here makes that automatic, where the
-  // previous version had to remember to write `initialData` back.
-  const score = scope.kind === "org" ? initialData : (scopedScore ?? initialData);
-  const error = loadError?.message ?? null;
+  // "workspace" scope is always batched into `initialData` by
+  // GET /api/dashboard/widget-data (scoped to the same activeWorkspaceId).
+  // "org" also is, but *only* while the global switcher has no workspace
+  // active -- in that case `initialData` already covers the full org (a
+  // `workspace_id` of None narrows to nothing), which is the default,
+  // fetch-free state this widget has always started in. Once a specific
+  // workspace *is* active, "org" means something `initialData` no longer
+  // is, and needs the explicit fetch above. Switching back to whichever of
+  // these applies must show that data again rather than whichever
+  // repo/group was last selected, deriving here makes that automatic.
+  const score = usesInitialData
+    ? initialData
+    : noTargetsPicked
+      ? { ...initialData, target_count: 0 }
+      : (scopedScore ?? initialData);
+  const error = shouldFetchScopedScore ? (loadError?.message ?? null) : null;
   const scored = score.target_count > 0;
   const coverage = score.components.coverage as SecurityScore["components"]["coverage"] | undefined;
 
@@ -819,15 +902,24 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
             <select
               id={scopeSelectId}
               className={SCOPE_SELECT_CLASS}
-              value={scoreScopeKey(scope)}
+              value={scope.kind === "targets" ? "targets" : scoreScopeKey(scope)}
               onChange={(e) => {
                 const [kind, id] = e.target.value.split(":");
                 if (kind === "org") setScope({ kind: "org" });
+                else if (kind === "workspace") setScope({ kind: "workspace", id: Number(id) });
                 else if (kind === "group") setScope({ kind: "group", id: Number(id) });
-                else setScope({ kind: "target", id: Number(id) });
+                else setScope({ kind: "targets", ids: [] });
               }}
             >
-              <option value="org">All repositories (org-wide)</option>
+              <option value="org">Full org (all workspaces)</option>
+              {/* Only offered once a specific workspace is active -- with the
+                  switcher on "All workspaces" there is nothing narrower than
+                  "Full org" above for this option to mean. */}
+              {activeWorkspaceId !== null && (
+                <option value={`workspace:${activeWorkspaceId}`}>
+                  This workspace{activeWorkspaceName ? ` (${activeWorkspaceName})` : ""}
+                </option>
+              )}
               {groups.length > 0 && (
                 <optgroup label="Groups">
                   {groups.map((g) => (
@@ -837,17 +929,38 @@ function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
                   ))}
                 </optgroup>
               )}
-              {targets.length > 0 && (
-                <optgroup label="Repositories">
+              <option value="targets">Choose repositories...</option>
+            </select>
+          </div>
+
+          {scope.kind === "targets" && (
+            <div className="flex w-full flex-col gap-1">
+              <label htmlFor={targetsSelectId} className="text-micro text-muted-foreground">
+                Repositories ({activeWorkspaceName ?? "all workspaces"}, Cmd/Ctrl-click for multiple)
+              </label>
+              {targets.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No repositories in scope.</p>
+              ) : (
+                <select
+                  id={targetsSelectId}
+                  multiple
+                  size={Math.min(6, Math.max(3, targets.length))}
+                  className={`${SCOPE_SELECT_CLASS} h-auto py-1`}
+                  value={scope.ids.map(String)}
+                  onChange={(e) => {
+                    const ids = Array.from(e.target.selectedOptions, (o) => Number(o.value));
+                    setScope({ kind: "targets", ids });
+                  }}
+                >
                   {targets.map((t) => (
-                    <option key={`target:${t.id}`} value={`target:${t.id}`}>
+                    <option key={t.id} value={t.id}>
                       {t.name}
                     </option>
                   ))}
-                </optgroup>
+                </select>
               )}
-            </select>
-          </div>
+            </div>
+          )}
         </div>
 
         <div className="min-w-0 flex-1 basis-[320px]">

@@ -36,15 +36,18 @@ export function stats(workspaceId?: number | null): Promise<{
 }
 
 /**
- * Retrieves the composite security score (org-wide, or scoped to a target,
- * group, or the workspace switcher's active workspace -- targetId/groupId
- * take precedence over workspaceId server-side when more than one is given).
+ * Retrieves the composite security score (org-wide, or scoped to a target, a
+ * caller-chosen set of targets, a group, or the workspace switcher's active
+ * workspace -- targetId/targetIds/groupId take precedence over workspaceId
+ * server-side when more than one is given, and are mutually exclusive with
+ * each other).
  */
 export function securityScore(
-  scope: { targetId?: number; groupId?: number; workspaceId?: number | null } = {},
+  scope: { targetId?: number; targetIds?: number[]; groupId?: number; workspaceId?: number | null } = {},
 ): Promise<SecurityScore> {
   const params = new URLSearchParams();
   if (scope.targetId) params.set("target_id", String(scope.targetId));
+  if (scope.targetIds) for (const id of scope.targetIds) params.append("target_ids", String(id));
   if (scope.groupId) params.set("group_id", String(scope.groupId));
   if (scope.workspaceId != null) params.set("workspace_id", String(scope.workspaceId));
   const qs = params.toString();

@@ -30,13 +30,21 @@ export function FpRules() {
   const {
     data,
     status,
+    isRefreshing,
     error: loadError,
     refetch,
   } = useAsyncData<[FalsePositiveRule[], FpRuleStats]>(
     () => Promise.all([api.fpRules(workspaceId!), api.fpRuleStats(workspaceId!)]),
     { enabled: workspaceId != null, deps: [workspaceId] },
   );
-  const [rules, stats] = data ?? [null, null];
+  // useAsyncData keeps the previous workspace's rules on screen while the
+  // new workspace's request is in flight; without this, a widen/delete click
+  // during that window would submit the previous workspace's rule id. Not a
+  // cross-tenant write (the backend re-derives the rule's own workspace_id
+  // and enforce_workspace_role on it, not the client's active workspace),
+  // but stale rows and a rule id going stale under the reader's cursor is a
+  // real correctness bug on its own.
+  const [rules, stats] = isRefreshing ? [null, null] : (data ?? [null, null]);
 
   // "No false-positive rules learned yet" claims nothing in this workspace is
   // being auto-suppressed. A read that failed claims nothing at all, and on

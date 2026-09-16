@@ -168,7 +168,13 @@ export default function SbomPage() {
   const { data: targetsData } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
     deps: [activeWorkspaceId],
   });
-  const targets = targetsData ?? [];
+  // Filtered, not just fetched-with-workspace_id: useAsyncData keeps the
+  // previous workspace's targets on screen while the new request is still in
+  // flight, and this filter is what stops targetId below from falling back
+  // to one of those stale rows during that window.
+  const targets = (targetsData ?? []).filter(
+    (t) => activeWorkspaceId === null || t.workspace_id === activeWorkspaceId,
+  );
   // Derived rather than seeded in an effect, same reasoning as
   // WorkspaceContext's activeWorkspaceId: the user's choice wins and a
   // reload cannot move them.
@@ -209,11 +215,17 @@ export default function SbomPage() {
   const {
     data: orgSbom,
     error: orgLoadError,
-    isInitialLoading: orgLoading,
+    isInitialLoading: orgInitialLoading,
+    isRefreshing: orgRefreshing,
   } = useAsyncData<OrgSbomResult>(() => api.getOrgSbom(activeWorkspaceId), {
     enabled: targetId === ALL_TARGETS,
     deps: [targetId, activeWorkspaceId],
   });
+  // A workspace switch re-triggers this fetch (activeWorkspaceId is a dep)
+  // but useAsyncData keeps the previous workspace's org SBOM visible while it
+  // is in flight; treated as loading too so that stale cross-workspace data
+  // is never on screen, not just on first mount.
+  const orgLoading = orgInitialLoading || orgRefreshing;
 
   async function exportOrgJson() {
     setOrgExporting(true);

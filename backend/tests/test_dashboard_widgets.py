@@ -243,6 +243,22 @@ def test_findings_trend_clamps_days(engine):
     assert len(data["points"]) == 90
 
 
+def test_findings_trend_mitigated_line_is_cumulative(engine):
+    """The mitigated series pairs with `open` (both as-of-day snapshots, not
+    daily deltas): the one finding _seed mitigates 1 day ago should count on
+    every day from then through today, and be absent from every day before."""
+    _seed(engine)
+    with Session(engine) as session:
+        data = resolve_findings_trend(session, None, {"days": 7})
+    points = {p["date"]: p["mitigated"] for p in data["points"]}
+    dates = sorted(points)
+    # Mitigated 1 day ago: today and yesterday both count it; every earlier
+    # day in the window does not.
+    assert points[dates[-1]] == 1
+    assert points[dates[-2]] == 1
+    assert points[dates[-3]] == 0
+
+
 def test_cve_timeline_only_cve_findings_most_recent_first(engine):
     _seed(engine)
     with Session(engine) as session:

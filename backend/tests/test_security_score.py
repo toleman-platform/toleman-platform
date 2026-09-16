@@ -862,6 +862,60 @@ def test_endpoint_404_for_inaccessible_target(client, engine):
     assert res.status_code == 404
 
 
+def test_endpoint_multi_target_scope(client, engine):
+    """(dashboard scope picker follow-up) target_ids is the multi-select
+    sibling of target_id -- scores exactly the chosen repos, not the whole
+    workspace."""
+    client, uid = _login(client, engine, role=UserRole.ADMIN)
+    ws_id = _make_workspace(engine)
+    picked_a = _make_target(engine, ws_id)
+    picked_b = _make_target(engine, ws_id)
+    not_picked = _make_target(engine, ws_id)
+    _make_scan(engine, picked_a)
+    _make_scan(engine, picked_b)
+    _make_finding(engine, not_picked, severity=Severity.CRITICAL)
+
+    res = client.get(f"/api/dashboard/security-score?target_ids={picked_a}&target_ids={picked_b}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["target_count"] == 2
+    # The unpicked target's Critical finding must not appear in this score.
+    assert body["components"]["findings"]["open_findings"] == 0
+
+
+def test_endpoint_multi_target_404_for_any_inaccessible_id(client, engine):
+    client, uid = _login(client, engine, role=UserRole.USER)
+    my_ws = _make_workspace(engine, name="mine")
+    other_ws = _make_workspace(engine, name="other")
+    _membership(engine, uid, my_ws, WorkspaceRole.VIEWER)
+    my_target = _make_target(engine, my_ws)
+    other_target = _make_target(engine, other_ws)
+
+    res = client.get(f"/api/dashboard/security-score?target_ids={my_target}&target_ids={other_target}")
+    assert res.status_code == 404
+
+
+def test_resolve_target_ids_empty_list_scores_nothing(engine):
+    """Unit-level, not through the HTTP endpoint: FastAPI's repeated-param
+    convention has no way to send "target_ids explicitly empty" separately
+    from "omitted" over the wire, but the frontend scope picker's own
+    zero-selected-repos state calls this with target_ids=[] directly, and
+    that must score zero targets rather than falling through to org-wide."""
+    from app.core.security_score import resolve_target_ids_for_scope
+
+    ws_id = _make_workspace(engine)
+    _make_target(engine, ws_id)
+    with Session(engine) as session:
+        result = resolve_target_ids_for_scope(session, None, None, None, target_ids=[])
+    assert result == []
+
+
+def test_endpoint_rejects_target_ids_and_group_id_together(client, engine):
+    client, uid = _login(client, engine, role=UserRole.ADMIN)
+    res = client.get("/api/dashboard/security-score?target_ids=1&group_id=1")
+    assert res.status_code == 400
+
+
 def test_endpoint_workspace_scoped_org_wide(client, engine):
     """A non-admin viewer only sees their own workspace's targets in the
     org-wide (no filter) score; another workspace's Critical findings

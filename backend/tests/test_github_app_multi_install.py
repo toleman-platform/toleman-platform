@@ -364,6 +364,21 @@ def test_resolve_config_for_installation_falls_back_to_platform_default(engine):
         assert resolved.id == platform_default.id
 
 
+def test_resolve_config_for_installation_does_not_fall_through_to_platform_default_when_workspace_match_is_ambiguous(engine):
+    """Two configs both scoped to this installation's own workspace is a
+    real ambiguity (data-integrity bug elsewhere, not a case to guess
+    through) -- falling back to a single platform-default config here would
+    hand this installation an App that doesn't own it."""
+    with Session(engine) as session:
+        ws = _make_workspace(session)
+        _make_config(session, "1", "ws-app-a", workspace_id=ws.id)
+        _make_config(session, "2", "ws-app-b", workspace_id=ws.id)
+        _make_config(session, "3", "platform-app", workspace_id=None)
+        inst = _make_installation(session, ws.id, 111, "org-a", config_id=None)
+
+        assert resolve_config_for_installation(session, inst) is None
+
+
 def test_status_filters_to_platform_default_and_accessible_workspaces(client, engine):
     """A non-admin sees the platform-default App plus only the workspace-
     scoped Apps for workspaces they belong to -- previously /status

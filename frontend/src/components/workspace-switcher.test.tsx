@@ -18,6 +18,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...actual, api: { ...actual.api, workspaces } };
 });
 
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+
 afterEach(() => {
   workspaces.mockReset();
 });

@@ -215,17 +215,21 @@ export async function exportSbom(targetId: number, format: SbomExportFormat = "c
 }
 
 /**
- * Retrieves the organization-wide aggregated SBOM inventory.
+ * Retrieves the organization-wide aggregated SBOM inventory, optionally
+ * narrowed to the global workspace switcher's active workspace.
  */
-export function getOrgSbom(): Promise<OrgSbomResult> {
-  return jsonFetch<OrgSbomResult>("/api/sbom/org");
+export function getOrgSbom(workspaceId?: number | null): Promise<OrgSbomResult> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  return jsonFetch<OrgSbomResult>(`/api/sbom/org${qs}`);
 }
 
 /**
- * Exports the organization-wide SBOM catalog as a file blob.
+ * Exports the organization-wide SBOM catalog as a file blob, optionally
+ * narrowed to the global workspace switcher's active workspace.
  */
-export async function exportOrgSbom(): Promise<Blob> {
-  const res = await fetch(`${apiBaseUrl()}/api/sbom/org/export`, { credentials: "include" });
+export async function exportOrgSbom(workspaceId?: number | null): Promise<Blob> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  const res = await fetch(`${apiBaseUrl()}/api/sbom/org/export${qs}`, { credentials: "include" });
   if (!res.ok) throw new Error(`export failed: ${res.status}`);
   return res.blob();
 }

@@ -7,6 +7,7 @@
  * there is no Radix/shadcn Select here).
  */
 
+import { useRouter } from "next/navigation";
 import { Building2, ChevronDown } from "lucide-react";
 import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { workspaceDisplayName } from "@/lib/api";
@@ -16,6 +17,7 @@ const ALL_WORKSPACES_VALUE = "__all__";
 
 export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
   const { workspaces, activeWorkspaceId, setActiveWorkspaceId, isLoading } = useWorkspaceContext();
+  const router = useRouter();
 
   // Nothing to switch between yet (still loading, or the org genuinely has
   // zero workspaces this caller can see) -- render nothing rather than a
@@ -49,6 +51,14 @@ export function WorkspaceSwitcher({ collapsed }: { collapsed?: boolean }) {
         onChange={(e) => {
           const value = e.target.value;
           setActiveWorkspaceId(value === ALL_WORKSPACES_VALUE ? null : Number(value));
+          // Dashboard/Findings/Targets/Scans fetch server-side; that only
+          // re-runs on a real navigation, so the cookie write above is
+          // invisible to whichever of those the reader is already sitting
+          // on until something asks Next.js to re-render it. This is that
+          // ask -- re-runs the current route's Server Component tree
+          // against the cookie just written, without a full page reload or
+          // losing client-side state the tree doesn't own.
+          router.refresh();
         }}
         className={cn(
           "absolute inset-0 cursor-pointer appearance-none opacity-0",

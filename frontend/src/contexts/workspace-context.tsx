@@ -145,7 +145,14 @@ export function WorkspaceProvider({
   }, [userId]);
 
   const activeWorkspaceId = useMemo<number | null>(() => {
-    if (chosen !== undefined) return chosen;
+    // `chosen` wins only while it's still a real choice: "All workspaces"
+    // (null) always is, and a specific id is until the list has loaded and
+    // no longer contains it (access revoked, or the workspace was deleted)
+    // -- an explicit pick from earlier in the session must not outlive the
+    // membership it depended on once a fresher list says otherwise.
+    if (chosen !== undefined && (chosen === null || data === null || data.some((w) => w.id === chosen))) {
+      return chosen;
+    }
     const stored = readStored(userId);
     if (stored !== undefined && (stored === null || (data ?? []).some((w) => w.id === stored))) {
       return stored;
@@ -158,6 +165,13 @@ export function WorkspaceProvider({
       setChosen(id);
       writeStored(userId, id);
       writeWorkspaceCookie(id);
+      // Dashboard/Findings/Targets/Scans fetch their data server-side in a
+      // Server Component; writing the cookie above is invisible to a page
+      // the reader is already sitting on until something asks Next.js to
+      // re-render it, which is why the switcher itself follows this call
+      // with a `router.refresh()` -- not done here, so this context has no
+      // App Router dependency for callers that don't need it (most of this
+      // module's test coverage renders without one).
     },
     [userId],
   );
@@ -166,9 +180,15 @@ export function WorkspaceProvider({
   // for a reason other than an explicit pick above (the per-user default on
   // first load, or a different user's storage taking over on a shared
   // machine) -- see the file-level comment for why this mirrors ThemeInit.
+  // Gated on `data !== null`: before the workspace list has loaded,
+  // `activeWorkspaceId` reads as null ("All workspaces") for lack of
+  // anything better, not because that's the resolved answer -- writing that
+  // placeholder here would clobber a real, already-correct cookie value for
+  // the brief window before the fetch above resolves.
   useEffect(() => {
+    if (data === null) return;
     writeWorkspaceCookie(activeWorkspaceId);
-  }, [activeWorkspaceId]);
+  }, [activeWorkspaceId, data]);
 
   return (
     <WorkspaceContext.Provider

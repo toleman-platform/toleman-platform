@@ -12,6 +12,7 @@ import {
 } from "@/lib/api";
 import { pollUntilSettled } from "@/lib/poll";
 import { useAsyncData } from "@/hooks/use-async-data";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,11 +144,30 @@ function OrgSbomRow({ component }: { component: OrgSbomComponent }) {
 }
 
 export default function SbomPage() {
+  const { activeWorkspaceId } = useWorkspaceContext();
   const [chosenTargetId, setChosenTargetId] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets());
+  // (#506) A specific chosen target belongs to whichever workspace was
+  // active when it was picked; switching the global active workspace must
+  // not leave that (now likely out-of-scope) target selected underneath a
+  // freshly-scoped list. "All repositories" (ALL_TARGETS) is exempt: an
+  // org-wide view re-scopes cleanly to the new workspace on its own and a
+  // switch shouldn't kick the reader out of it. React's documented "adjust
+  // state when a prop changes" pattern (see sidebar.tsx's `lastPathname`),
+  // not an effect, so the reset lands the same render the switch does.
+  const [lastWorkspaceId, setLastWorkspaceId] = useState(activeWorkspaceId);
+  if (lastWorkspaceId !== activeWorkspaceId) {
+    setLastWorkspaceId(activeWorkspaceId);
+    if (chosenTargetId !== ALL_TARGETS) {
+      setChosenTargetId(null);
+    }
+  }
+
+  const { data: targetsData } = useAsyncData<Target[]>(() => api.targets({ workspace_id: activeWorkspaceId }), {
+    deps: [activeWorkspaceId],
+  });
   const targets = targetsData ?? [];
   // Derived rather than seeded in an effect, same reasoning as
   // WorkspaceContext's activeWorkspaceId: the user's choice wins and a
@@ -190,16 +210,16 @@ export default function SbomPage() {
     data: orgSbom,
     error: orgLoadError,
     isInitialLoading: orgLoading,
-  } = useAsyncData<OrgSbomResult>(() => api.getOrgSbom(), {
+  } = useAsyncData<OrgSbomResult>(() => api.getOrgSbom(activeWorkspaceId), {
     enabled: targetId === ALL_TARGETS,
-    deps: [targetId],
+    deps: [targetId, activeWorkspaceId],
   });
 
   async function exportOrgJson() {
     setOrgExporting(true);
     setOrgExportError(null);
     try {
-      const blob = await api.exportOrgSbom();
+      const blob = await api.exportOrgSbom(activeWorkspaceId);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;

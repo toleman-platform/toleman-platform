@@ -31,17 +31,26 @@ export function useActiveScans(): UseActiveScansResult {
   const { activeWorkspaceId } = useWorkspaceContext();
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stoppedRef = useRef(false);
   const anyActiveRef = useRef(false);
   const loopRef = useRef<() => void>(() => {});
 
   useEffect(() => {
-    stoppedRef.current = false;
+    // Effect-local, not a ref: a ref shared across effect re-runs is
+    // exactly the bug this replaced. Switching the active workspace tears
+    // down this effect and mounts a new one in the same commit; the old
+    // cleanup set a *shared* stoppedRef to true, and the new effect's own
+    // body immediately reset that same ref back to false -- so a poll
+    // in flight for the *previous* workspace, if it resolved after the
+    // switch, saw `stoppedRef.current === false` (the new effect's doing)
+    // and applied the old workspace's scan data over the new one's. Each
+    // effect instance now closes over its own `cancelled`, so a stale
+    // instance's in-flight request can only ever see its own flag.
+    let cancelled = false;
 
     async function pollOnce() {
       try {
         const data = await api.activeScans(activeWorkspaceId);
-        if (stoppedRef.current) return;
+        if (cancelled) return;
         setActiveScans(data);
         anyActiveRef.current = Object.keys(data).length > 0;
       } catch {
@@ -50,7 +59,7 @@ export function useActiveScans(): UseActiveScansResult {
     }
 
     function schedule() {
-      if (stoppedRef.current) return;
+      if (cancelled) return;
       const delay = anyActiveRef.current ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS;
       timerRef.current = setTimeout(() => {
         void pollOnce().then(schedule);
@@ -65,7 +74,7 @@ export function useActiveScans(): UseActiveScansResult {
     loopRef.current();
 
     return () => {
-      stoppedRef.current = true;
+      cancelled = true;
       if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [activeWorkspaceId]);

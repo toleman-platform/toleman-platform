@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Pencil, Save, Plus, X, LayoutGrid, SlidersHorizontal } from "lucide-react";
 import {
   api,
@@ -107,6 +107,29 @@ export function DashboardBoard({
   // needs the same scope or it would silently widen back to "everything"
   // until the next full page load.
   const { activeWorkspaceId } = useWorkspaceContext();
+
+  // `initialData` reflects whatever workspace was active when the server
+  // rendered this page; a switch from the sidebar afterward, without a full
+  // navigation, previously left that stale data on screen indefinitely --
+  // this is a Server Component prop, and nothing here re-ran the server
+  // fetch just because a client-side cookie changed. Skips the very first
+  // run (initialData already matches activeWorkspaceId on mount) so mounting
+  // doesn't cost a redundant, immediate re-fetch of what the server already
+  // sent.
+  const isFirstWorkspaceRenderRef = useRef(true);
+  useEffect(() => {
+    if (isFirstWorkspaceRenderRef.current) {
+      isFirstWorkspaceRenderRef.current = false;
+      return;
+    }
+    let cancelled = false;
+    api.dashboardWidgetData(activeWorkspaceId).then((fresh) => {
+      if (!cancelled) setData(fresh);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId]);
 
   // A layout read that failed must never be treated as "the user
   // saved zero widgets" -- `initialWidgets` here is just the fallback `[]`

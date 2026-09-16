@@ -4,6 +4,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
@@ -297,7 +298,21 @@ def callback(code: str, state: str | None = None, session: Session = Depends(get
         workspace_id=workspace_id,
     )
     session.add(config)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # (#506) Two concurrent manifest flows for the same scope (the same
+        # workspace, or both for the platform default) -- the DB's
+        # partial-unique indexes on githubappconfig.workspace_id catch what
+        # a race between this request's own `add` and `commit` let through.
+        # GitHub already created a real App on its side for this attempt
+        # (the manifest-conversion POST above already happened); there is
+        # nothing to undo there, so the best recovery is to say so plainly
+        # rather than 500 on a raw constraint violation the operator can't
+        # act on.
+        session.rollback()
+        scope = "workspace" if workspace_id is not None else "platform-default"
+        return RedirectResponse(f"{FRONTEND_URL}/targets?error=app_already_registered&scope={scope}")
 
     return RedirectResponse(f"https://github.com/apps/{config.slug}/installations/new")
 

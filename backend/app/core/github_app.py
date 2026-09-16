@@ -411,6 +411,12 @@ def resolve_config_for_installation(session: Session, installation: GitHubInstal
     workspace_matches = [c for c in configs if c.workspace_id == installation.workspace_id]
     if len(workspace_matches) == 1:
         return workspace_matches[0]
+    if workspace_matches:
+        # Ambiguous within the installation's own workspace: falling
+        # through to the platform default here would hand this
+        # installation credentials from an App that doesn't own it, not a
+        # safer guess than the workspace-scoped ambiguity itself.
+        return None
     platform_defaults = [c for c in configs if c.workspace_id is None]
     if len(platform_defaults) == 1:
         return platform_defaults[0]

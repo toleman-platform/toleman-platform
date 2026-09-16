@@ -103,7 +103,7 @@ export default async function FindingsPage({
     // pills can't tell different stories about the same query. `null` when
     // it fails; see the fallback below.
     api.findingFacets(listQuery).catch(() => null),
-    api.groups().catch(() => []),
+    api.groups(workspace_id).catch(() => []),
     // One count per queue, each under the same non-queue filters that are
     // active now, so the tab counts describe what clicking them would show.
     Promise.all(

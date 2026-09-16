@@ -65,7 +65,7 @@ export default async function TargetsPage({
     // log: an empty group list and a group list that could not be fetched
     // render as the same filter, and the reader cannot tell that the repo
     // groups they organise by are simply missing from the control.
-    settledOr(api.groups(), [] as Group[]),
+    settledOr(api.groups(workspace_id), [] as Group[]),
     settledOr(api.scanSummary(workspace_id), {}),
     settledOr(api.targetsSummary(workspace_id), {}),
     // (#356) The add-target form's empty-workspace state differs by role:

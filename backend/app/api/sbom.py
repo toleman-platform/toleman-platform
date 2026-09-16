@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlmodel import Session, select
 
-from app.api.auth import accessible_workspace_ids, current_user, require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, narrow_workspace_scope, require_workspace_role
 from app.api.deps import get_session
 from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
 from app.core.async_jobs import create_running_row
@@ -153,12 +153,17 @@ def _aggregate_org_components(
 # "/{target_id}" and only fail afterwards, at FastAPI's int-parsing
 # validation step, returning a 422 instead of ever reaching this handler.
 @router.get("/org")
-def get_org_sbom(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def get_org_sbom(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Aggregate ALREADY-PERSISTED SbomComponent rows across every target's
     default branch; read-only, does not trigger any scan. Lets a security
     engineer answer 'which of my repos still use package X@version' across
-    every workspace they belong to at once."""
-    ws_ids = accessible_workspace_ids(session, user)
+    every workspace they belong to at once, or (#506) narrowed to the
+    global workspace switcher's active workspace via `workspace_id`."""
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     ordered, summary, _targets, targets_by_id = _aggregate_org_components(session, ws_ids)
     components = [
         {
@@ -176,11 +181,16 @@ def get_org_sbom(session: Session = Depends(get_session), user: User = Depends(c
 
 
 @router.get("/org/export")
-def export_org_sbom(session: Session = Depends(get_session), user: User = Depends(current_user)):
+def export_org_sbom(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Downloadable JSON of the org-wide aggregation; same persisted data as
     GET /api/sbom/org, just as a file. Not CycloneDX since it spans multiple
-    repos; a custom schema is reasonable here."""
-    ws_ids = accessible_workspace_ids(session, user)
+    repos; a custom schema is reasonable here. (#506) `workspace_id`
+    narrows the same way GET /api/sbom/org does."""
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     ordered, summary, targets, _targets_by_id = _aggregate_org_components(session, ws_ids)
     document = {
         "generated_at": utcnow().isoformat() + "Z",

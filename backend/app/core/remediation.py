@@ -289,8 +289,13 @@ def _group_by_package(findings: list[Finding], by_cve: dict[str, CveEnrichment])
         })
 
     # Most findings closed first; ties broken by severity, so a single
-    # Critical outranks a single Low.
-    results.sort(key=lambda r: (r["fixes_count"], _severity_rank(r["highest_severity"])), reverse=True)
+    # Critical outranks a single Low; ties on BOTH broken by package name.
+    # `_open_cve_findings` has no ORDER BY, so without this last tiebreak,
+    # two packages tied on both keys could land in either order depending
+    # on the DB's own row order -- harmless for an unpaginated caller, but
+    # paginating a sort with no stable total order can return a package on
+    # two different pages, or on none, across separate page requests.
+    results.sort(key=lambda r: (-r["fixes_count"], -_severity_rank(r["highest_severity"]), r["package"].casefold()))
     return results
 
 

@@ -802,6 +802,98 @@ def test_raise_package_fix_pr_uses_package_level_version_not_per_finding_lowest(
     assert sorted(json.loads(row.finding_ids)) == sorted([f1_id, f2_id])
 
 
+def test_raise_package_fix_pr_is_idempotent_for_an_already_covered_package(engine, monkeypatch):
+    """A second call for a package whose findings are already fully covered
+    by a prior RemediationFixPr row must not open a second PR -- it raises
+    AlreadyRaisedError carrying the FIRST PR's info, checked at
+    raise_package_fix_pr's own boundary so every caller (manual endpoint,
+    bulk batch, sweep) gets this protection for free."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f)
+        session.commit()
+        session.refresh(f)
+        finding_id = f.id
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.39.0\n", "sha1"))
+
+    calls = {"n": 0}
+
+    def fake_commit(session, target, ref, branch_name, files, commit_message, pr_title, pr_body):
+        calls["n"] += 1
+        return {"pr_url": f"https://github.com/a/b/pull/{calls['n']}", "pr_number": calls["n"], "branch": branch_name}
+
+    monkeypatch.setattr(autofix, "_commit_files_and_open_pr", fake_commit)
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        first = remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+        assert first["pr_number"] == 1
+
+        with pytest.raises(remediation_autofix.AlreadyRaisedError) as exc_info:
+            remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+        assert exc_info.value.pr_number == 1
+        assert exc_info.value.pr_url == "https://github.com/a/b/pull/1"
+
+    # Only the first call actually committed anything to GitHub.
+    assert calls["n"] == 1
+    with Session(engine) as session:
+        rows = session.exec(select(RemediationFixPr)).all()
+    assert len(rows) == 1
+
+
+def test_raise_package_fix_pr_raises_again_for_a_genuinely_new_finding_on_the_same_package(engine, monkeypatch):
+    """A second CVE lands on a package that already has a covering PR --
+    the new finding is not a subset of what was covered, so this must
+    raise a real second PR, not AlreadyRaisedError."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f1 = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln 1",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f1)
+        session.commit()
+        session.refresh(f1)
+        f1_id = f1.id
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.39.0"}])
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.38.0\n", "sha1"))
+    monkeypatch.setattr(
+        autofix, "_commit_files_and_open_pr",
+        lambda *a, **k: {"pr_url": "https://github.com/a/b/pull/1", "pr_number": 1, "branch": "b1"},
+    )
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+
+    with Session(engine) as session:
+        f2 = Finding(
+            target_id=target_id, dedup_hash="h2", tool="trivy", rule_id="CVE-2024-2", title="Vuln 2",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-2",
+        )
+        session.add(f2)
+        session.commit()
+    _cve_row(engine, "CVE-2024-2", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+    monkeypatch.setattr(
+        autofix, "_commit_files_and_open_pr",
+        lambda *a, **k: {"pr_url": "https://github.com/a/b/pull/2", "pr_number": 2, "branch": "b2"},
+    )
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        second = remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+    assert second["pr_number"] == 2
+
+
 def test_raise_package_fix_pr_refuses_when_no_manifest_could_be_bumped(engine, monkeypatch):
     target_id = _make_target(engine)
     with Session(engine) as session:

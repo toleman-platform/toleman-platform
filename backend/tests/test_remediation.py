@@ -427,6 +427,23 @@ class TestEnrichmentCoverage:
         }
 
 
+class TestTieBreaking:
+    def test_packages_tied_on_fixes_count_and_severity_sort_by_name(self, engine):
+        """No ORDER BY behind _open_cve_findings means two tied packages
+        could land in either order depending on DB row order alone -- which
+        is harmless for the unpaginated caller but breaks a stable total
+        order for pagination (a package could appear on two page requests,
+        or on neither). The package-name tiebreak makes the order the same
+        regardless of DB row order."""
+        tid = _target(engine)
+        # Both single-finding, both High -- tied on every key except name.
+        _finding(engine, tid, "CVE-1", severity=Severity.HIGH, fixes=[("zzz-package", "1.0")])
+        _finding(engine, tid, "CVE-2", severity=Severity.HIGH, fixes=[("aaa-package", "1.0")])
+        with Session(engine) as session:
+            plan = remediation_plan(session, tid)
+        assert [p["package"] for p in plan["plans"]] == ["aaa-package", "zzz-package"]
+
+
 class TestPagination:
     """`_group_by_package` has to see every open CVE finding to compute a
     single package's fixes_count/upgrade_to/unresolved correctly, so

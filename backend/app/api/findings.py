@@ -22,7 +22,7 @@ from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
 from app.core.remediation import group_remediations, remediation_plan
-from app.core.remediation_autofix import raise_package_fix_pr
+from app.core.remediation_autofix import AlreadyRaisedError, raise_package_fix_pr
 from app.core.staleness import mark_stale_if_needed
 from app.core.grouping import (
     DEFAULT_SORT,
@@ -1531,8 +1531,13 @@ def raise_package_fix_pr_endpoint(
 
     try:
         pr = raise_package_fix_pr(session, target, plan, raised_by=f"user:{user.email}")
+    except AlreadyRaisedError as exc:
+        # Idempotent, not an error: a double-click (or a retry after the
+        # first click's response was lost) returns the SAME PR that's
+        # already open for this package rather than opening a duplicate.
+        pr = {"pr_url": exc.pr_url, "pr_number": exc.pr_number, "branch": exc.branch}
     except AutofixError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return RaisePackageFixPrResponse(**pr)
 
 
@@ -1596,11 +1601,31 @@ def raise_all_remediation_prs_endpoint(
     session.commit()
     session.refresh(batch)
 
-    for plan in plans:
-        session.add(RemediationPrBatchItem(batch_id=batch.id, package=plan["package"], status="pending"))
+    items = [RemediationPrBatchItem(batch_id=batch.id, package=plan["package"], status="pending") for plan in plans]
+    for item in items:
+        session.add(item)
     session.commit()
 
-    run_raise_all_batch.delay(batch_id=batch.id)
+    try:
+        run_raise_all_batch.delay(batch_id=batch.id)
+    except Exception as exc:
+        # A broker publish failure (Redis unreachable, etc) means the task
+        # will never run -- left as "running", the batch would only get
+        # marked failed once mark_stale_if_needed's timeout elapses on a
+        # later poll. Fail it immediately and visibly instead: the caller
+        # gets a real 502 right away rather than a spinner that looks
+        # "in progress" for up to the stale-job window.
+        batch.status = "completed"
+        batch.failed = batch.total
+        batch.completed_at = utcnow()
+        session.add(batch)
+        for item in items:
+            item.status = "failed"
+            item.error = f"failed to dispatch: {exc}"
+            item.completed_at = utcnow()
+            session.add(item)
+        session.commit()
+        raise HTTPException(status_code=502, detail=f"failed to dispatch raise-all batch: {exc}") from exc
 
     return JSONResponse(
         status_code=202,

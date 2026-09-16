@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 from app.core.autofix import AutofixError
 from app.core.db import engine
 from app.core.remediation import group_remediations
-from app.core.remediation_autofix import raise_package_fix_pr, sweep_auto_raise_prs
+from app.core.remediation_autofix import AlreadyRaisedError, raise_package_fix_pr, sweep_auto_raise_prs
 from app.core.time import utcnow
 from app.models.models import RemediationPrBatch, RemediationPrBatchItem, Target, User
 from app.tasks.celery_app import celery_app
@@ -79,6 +79,15 @@ def run_raise_all_batch(self, batch_id: int):
                 session.commit()
                 continue
 
+            # Captured before the commit below: session.commit() expires
+            # every attribute on `item` (SQLAlchemy's default
+            # expire_on_commit), and if the exception handlers below need
+            # to re-fetch this row after a FAILED, rolled-back commit
+            # (raise_package_fix_pr's own final commit), reading `item.id`
+            # at that point would re-trigger a lazy DB access on an object
+            # whose session may still be settling from the rollback. Read
+            # it once now, while it's cheap and safe.
+            item_id = item.id
             item.status = "running"
             session.add(item)
             session.commit()
@@ -93,9 +102,25 @@ def run_raise_all_batch(self, batch_id: int):
                 batch.succeeded += 1
                 session.add(batch)
                 session.commit()
+            except AlreadyRaisedError as exc:
+                # Idempotent, not a failure: this package already has a PR
+                # open from an earlier raise (a re-run of the batch, or one
+                # raised by hand in the meantime) -- record it as the
+                # outcome rather than opening a duplicate. No rollback
+                # needed: AlreadyRaisedError is raised before
+                # raise_package_fix_pr does any writes.
+                item = session.get(RemediationPrBatchItem, item_id)
+                item.status = "succeeded"
+                item.pr_url = exc.pr_url
+                item.pr_number = exc.pr_number
+                item.completed_at = utcnow()
+                session.add(item)
+                batch.succeeded += 1
+                session.add(batch)
+                session.commit()
             except AutofixError as exc:
                 session.rollback()
-                item = session.get(RemediationPrBatchItem, item.id)
+                item = session.get(RemediationPrBatchItem, item_id)
                 item.status = "failed"
                 item.error = str(exc)
                 item.completed_at = utcnow()
@@ -107,9 +132,9 @@ def run_raise_all_batch(self, batch_id: int):
                 # package's unexpected error can't leave the whole batch
                 # stuck at "running" forever; see run_pipeline_integration_batch's
                 # identical catch-all for the same reasoning.
-                logger.exception("raise-all batch item %s failed unexpectedly", item.id)
+                logger.exception("raise-all batch item %s failed unexpectedly", item_id)
                 session.rollback()
-                item = session.get(RemediationPrBatchItem, item.id)
+                item = session.get(RemediationPrBatchItem, item_id)
                 item.status = "failed"
                 item.error = f"unexpected error: {exc}"
                 item.completed_at = utcnow()

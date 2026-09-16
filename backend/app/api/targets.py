@@ -149,6 +149,16 @@ class UpdateTargetRequest(BaseModel):
             raise ValueError("diff_scoped_pr_scans must be true or false; omit the field to leave it unchanged")
         return v
 
+    @field_validator("auto_raise_fix_prs")
+    @classmethod
+    def _check_auto_raise_fix_prs(cls, v: bool | None) -> bool | None:
+        # Same reasoning as _check_diff_scoped above: the column is NOT
+        # NULL, so an explicit null in the request body would 500 rather
+        # than cleanly 422 -- reject it here instead.
+        if v is None:
+            raise ValueError("auto_raise_fix_prs must be true or false; omit the field to leave it unchanged")
+        return v
+
     @field_validator("enforcement_mode")
     @classmethod
     def _check_enforcement_mode(cls, v: str | None) -> str | None:

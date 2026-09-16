@@ -209,6 +209,39 @@ def test_raise_pr_404s_for_a_target_outside_the_callers_workspaces(client, engin
     assert res.status_code == 404
 
 
+def test_raise_pr_is_idempotent_end_to_end_through_the_endpoint(client, engine, monkeypatch):
+    """A second POST for the same already-covered package returns the SAME
+    PR (200), rather than opening a duplicate or 502ing -- exercised
+    through the real endpoint and the real raise_package_fix_pr, with only
+    the GitHub-API boundary (autofix._fetch_file/_commit_files_and_open_pr)
+    mocked, so this covers the actual AlreadyRaisedError wiring end to end
+    rather than a unit-level mock of raise_package_fix_pr itself."""
+    target_id = _dev_client_with_target(client, engine)
+    _finding_with_fix(engine, target_id, "CVE-2024-1", "starlette", "0.40.0")
+
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.39.0\n", "sha1"))
+    calls = {"n": 0}
+
+    def fake_commit(session, target, ref, branch_name, files, commit_message, pr_title, pr_body):
+        calls["n"] += 1
+        return {"pr_url": f"https://github.com/a/t/pull/{calls['n']}", "pr_number": calls["n"], "branch": branch_name}
+
+    monkeypatch.setattr(autofix, "_commit_files_and_open_pr", fake_commit)
+
+    first = client.post(
+        "/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "starlette"}
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["pr_number"] == 1
+
+    second = client.post(
+        "/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "starlette"}
+    )
+    assert second.status_code == 200, second.text
+    assert second.json() == first.json()
+    assert calls["n"] == 1
+
+
 def test_raise_pr_404s_for_an_unknown_target(client, engine):
     _dev_client_with_target(client, engine)
     res = client.post("/api/findings/remediations/raise-pr", json={"target_id": 9999, "package": "starlette"})

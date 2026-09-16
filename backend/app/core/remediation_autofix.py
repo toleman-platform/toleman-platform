@@ -108,15 +108,46 @@ def _slugify(name: str) -> str:
     return slug or "package"
 
 
+class AlreadyRaisedError(Exception):
+    """raise_package_fix_pr refused: every finding `plan["fixes"]` names is
+    already covered by an existing RemediationFixPr row for this package,
+    so opening another PR would be a redundant duplicate of one already
+    open. Carries the existing PR's info so a caller can link to it (or
+    treat a retry as a no-op success) instead of treating this as a
+    failure.
+
+    Checked at this function's own boundary rather than only by
+    sweep_auto_raise_prs's pre-check, so EVERY caller (the manual
+    single-package endpoint, the bulk "Raise all" batch, and the sweep)
+    is protected the same way -- a double-click on "Raise PR", or a batch
+    re-run before the first PR merges, must not open a second PR for the
+    exact same fix."""
+
+    def __init__(self, pr_url: str, pr_number: int, branch: str):
+        self.pr_url = pr_url
+        self.pr_number = pr_number
+        self.branch = branch
+        super().__init__(f"already covered by an existing PR: {pr_url}")
+
+
 def raise_package_fix_pr(session: Session, target: Target, plan: dict, raised_by: str) -> dict:
     """Opens one PR bumping `plan["package"]` to `plan["upgrade_to"]` across
     every manifest file that names it, covering every finding in
-    `plan["fixes"]`. Raises AutofixError if no manifest file could be
+    `plan["fixes"]`. Raises AlreadyRaisedError if every one of those
+    findings is already covered by a prior raise for this package (see
+    AlreadyRaisedError), and AutofixError if no manifest file could be
     bumped at all (never opens an empty PR). Records the PR in
-    RemediationFixPr on success -- the record both the manual "Raise PR"
-    endpoint and the auto-raise sweep read to recognize a package as
-    already addressed.
+    RemediationFixPr on success -- the record both this check and the
+    auto-raise sweep read to recognize a package as already addressed.
     """
+    current_ids = {f["finding_id"] for f in plan["fixes"]}
+    covered_ids = _already_raised_finding_ids(session, target.id, plan["package"])
+    if covered_ids is not None and current_ids <= covered_ids:
+        prior = _latest_raised_pr(session, target.id, plan["package"])
+        # prior cannot be None here: covered_ids came from at least one
+        # RemediationFixPr row for this exact (target, package).
+        raise AlreadyRaisedError(prior.pr_url, prior.pr_number, prior.branch)
+
     patches = build_package_patch_files(session, target, plan)
     if not patches:
         raise autofix.AutofixError(
@@ -206,6 +237,19 @@ def _already_raised_finding_ids(session: Session, target_id: int, package: str) 
     return covered
 
 
+def _latest_raised_pr(session: Session, target_id: int, package: str) -> RemediationFixPr | None:
+    """The most recently raised PR on record for this `(target_id,
+    package)`, to link back to when raise_package_fix_pr refuses a
+    duplicate (AlreadyRaisedError). None only when _already_raised_finding_ids
+    also returned None for the same pair, so callers that already checked
+    coverage can treat this as always-present."""
+    return session.exec(
+        select(RemediationFixPr)
+        .where(RemediationFixPr.target_id == target_id, RemediationFixPr.package == package)
+        .order_by(RemediationFixPr.created_at.desc())
+    ).first()
+
+
 def sweep_auto_raise_prs(session: Session) -> dict:
     """The auto-raise sweep (#247 follow-up): for every target with
     `Target.auto_raise_fix_prs` on, raise a PR for every package in its Fix
@@ -265,6 +309,13 @@ def sweep_auto_raise_prs(session: Session) -> dict:
             try:
                 raise_package_fix_pr(session, target, plan, raised_by="sweep")
                 summary["prs_raised"] += 1
+            except AlreadyRaisedError:
+                # Race with a manual raise (or a concurrent sweep pass)
+                # between the pre-check above and this call -- the shared
+                # helper's own check (see AlreadyRaisedError) is what
+                # actually prevents the duplicate PR; this is just the
+                # summary counting it the same way the pre-check does.
+                summary["prs_skipped_already_raised"] += 1
             except autofix.AutofixError:
                 logger.warning(
                     "auto-raise sweep: failed to raise PR for %s on target %s",

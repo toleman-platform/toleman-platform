@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlmodel import Session, select
 
-from app.api.auth import require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, narrow_workspace_scope, require_workspace_role
 from app.api.deps import get_session
 from app.core.aibom import UNKNOWN as AIBOM_UNKNOWN
 from app.core.async_jobs import create_running_row
@@ -44,7 +44,7 @@ MAX_SBOM_UPLOAD_BYTES = 25 * 1024 * 1024
 # tests) keeps working unchanged.
 
 
-def _get_target(target_id: int, session: Session) -> Target:
+def _get_target(target_id: int, session: Session, user: User) -> Target:
     target = session.get(Target, target_id)
     # (#273) Soft-deleted targets 404; deactivation is checked at the
     # generation route only, so an existing SBOM/AIBOM stays readable and
@@ -52,6 +52,11 @@ def _get_target(target_id: int, session: Session) -> Target:
     # you stopped scanning is often exactly why you deactivated rather than
     # deleted it.
     if not target or target_lifecycle.is_deleted(target):
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        # 404, not 403 -- matches get_target's reasoning in targets.py: don't
+        # confirm the target exists in a workspace the caller can't see.
         raise HTTPException(status_code=404, detail="target not found")
     return target
 
@@ -88,13 +93,20 @@ def _serialize(components: list[SbomComponent], new_ids: set[int]) -> list[dict]
     ]
 
 
-def _aggregate_org_components(session: Session) -> tuple[list[dict], dict, list[Target], dict[int, Target]]:
+def _aggregate_org_components(
+    session: Session, ws_ids: list[int] | None
+) -> tuple[list[dict], dict, list[Target], dict[int, Target]]:
     """Group every persisted SbomComponent (default branch, per target) by
-    (name, version, purl) across all targets; read-only, no scans triggered.
-    Mirrors the per-target GET's persisted-state-only pattern, just widened to
-    every Target row (this app has no workspace-scoping on list_targets() yet,
-    so 'org-wide' here means every Target in the DB, matching that)."""
-    targets = session.exec(target_lifecycle.live_targets(select(Target))).all()
+    (name, version, purl) across every target the caller can see; read-only,
+    no scans triggered. Mirrors the per-target GET's persisted-state-only
+    pattern, just widened to every accessible Target row. `ws_ids=None`
+    (admin) means no filter; a non-admin only ever sees their own
+    workspaces' targets here, same accessible_workspace_ids scope as
+    everywhere else."""
+    query = target_lifecycle.live_targets(select(Target))
+    if ws_ids is not None:
+        query = query.where(Target.workspace_id.in_(ws_ids))
+    targets = session.exec(query).all()
     targets_by_id = {t.id: t for t in targets}
 
     # Only the target's own default branch counts as "current" SBOM state,
@@ -141,12 +153,18 @@ def _aggregate_org_components(session: Session) -> tuple[list[dict], dict, list[
 # "/{target_id}" and only fail afterwards, at FastAPI's int-parsing
 # validation step, returning a 422 instead of ever reaching this handler.
 @router.get("/org")
-def get_org_sbom(session: Session = Depends(get_session)):
+def get_org_sbom(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Aggregate ALREADY-PERSISTED SbomComponent rows across every target's
     default branch; read-only, does not trigger any scan. Lets a security
     engineer answer 'which of my repos still use package X@version' across
-    the whole account at once."""
-    ordered, summary, _targets, targets_by_id = _aggregate_org_components(session)
+    every workspace they belong to at once, or (#506) narrowed to the
+    global workspace switcher's active workspace via `workspace_id`."""
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
+    ordered, summary, _targets, targets_by_id = _aggregate_org_components(session, ws_ids)
     components = [
         {
             "name": g["name"],
@@ -163,11 +181,17 @@ def get_org_sbom(session: Session = Depends(get_session)):
 
 
 @router.get("/org/export")
-def export_org_sbom(session: Session = Depends(get_session)):
+def export_org_sbom(
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Downloadable JSON of the org-wide aggregation; same persisted data as
     GET /api/sbom/org, just as a file. Not CycloneDX since it spans multiple
-    repos; a custom schema is reasonable here."""
-    ordered, summary, targets, _targets_by_id = _aggregate_org_components(session)
+    repos; a custom schema is reasonable here. (#506) `workspace_id`
+    narrows the same way GET /api/sbom/org does."""
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
+    ordered, summary, targets, _targets_by_id = _aggregate_org_components(session, ws_ids)
     document = {
         "generated_at": utcnow().isoformat() + "Z",
         "targets": [{"id": t.id, "name": t.name} for t in targets],
@@ -205,7 +229,7 @@ def generate_sbom(
     GET /api/sbom/{target_id}/runs/{run_id} until status leaves "running" to
     get the same components/new_count payload this used to return
     synchronously."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     # (#273) SBOM generation clones the repo and runs a tool over the
     # checkout; same refusal as every other dispatch path.
     refusal = target_lifecycle.scan_refusal_reason(target)
@@ -237,7 +261,7 @@ def malware_check(
     subprocess) and persists hits as Critical `Finding` rows (tool=
     "osv-malware"). Returns a distinct "failed" status when OSV is
     unreachable, so a network outage is never reported as clean."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     # (#273) This persists Critical `Finding` rows and fans out to Jira,
     # SIEM and notifications (see check_and_ingest_malware ->
     # ingest_malicious_packages). No clone and no subprocess, which is why
@@ -268,7 +292,7 @@ def import_github_sbom(
     the dependency graph is unavailable (no token, disabled, or the request
     was rejected); distinct from an empty import, which is a legitimate
     "repo has no dependencies" result and is reported as count 0."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     # (#273) Writes the dependency inventory AND runs the OSV malware check
     # over the freshly-merged components, so it is a finding-producing path
     # for a repo whose scanning is switched off.
@@ -322,7 +346,7 @@ async def upload_sbom(
     materialise the whole upload in memory (json.loads on top roughly
     doubles that), so a large or concurrent upload could exhaust a worker.
     """
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     # (#273) The exact analogue of POST /api/ingest/{id}: an outside party
     # handing us scan-derived data for this target, which lands as
     # persisted components and then as Critical malware findings via the
@@ -361,7 +385,12 @@ async def upload_sbom(
 
 
 @router.get("/{target_id}/runs/{run_id}")
-def get_sbom_run(target_id: int, run_id: int, session: Session = Depends(get_session)):
+def get_sbom_run(
+    target_id: int,
+    run_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Poll target for an async SBOM generation run dispatched by POST
     above. Once status leaves "running", also returns the same
     components/new_count payload the old synchronous POST used to return
@@ -371,7 +400,7 @@ def get_sbom_run(target_id: int, run_id: int, session: Session = Depends(get_ses
         raise HTTPException(status_code=404, detail="sbom run not found")
     mark_stale_if_needed(session, run)
 
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     payload = {
         "run_id": run.id,
         "target_id": run.target_id,
@@ -394,10 +423,12 @@ def get_sbom_run(target_id: int, run_id: int, session: Session = Depends(get_ses
 
 
 @router.get("/{target_id}")
-def list_sbom_components(target_id: int, session: Session = Depends(get_session)):
+def list_sbom_components(
+    target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)
+):
     """Persisted results without re-running a scan; same GET-reads-persisted-
     state pattern as GET /api/discovery/{target_id}."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     components = session.exec(
         select(SbomComponent)
         .where(SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch)
@@ -547,7 +578,7 @@ def _render_sbom_pdf(target: Target, components: list[SbomComponent]) -> bytes:
 
 
 @router.get("/{target_id}/aibom")
-def get_aibom(target_id: int, session: Session = Depends(get_session)):
+def get_aibom(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
     """AI Bill of Materials for a target (issue #190), models and datasets,
     the parts a package SBOM is blind to.
 
@@ -560,7 +591,7 @@ def get_aibom(target_id: int, session: Session = Depends(get_session)):
     with no AI dependencies, which is the failure mode this whole feature is
     supposed to prevent.
     """
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     rows = session.exec(
         select(AiBomComponent)
         .where(AiBomComponent.target_id == target_id, AiBomComponent.branch == target.default_branch)
@@ -606,11 +637,11 @@ def get_aibom(target_id: int, session: Session = Depends(get_session)):
 
 
 @router.get("/{target_id}/aibom/export")
-def export_aibom(target_id: int, session: Session = Depends(get_session)):
+def export_aibom(target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Downloadable CycloneDX 1.6 AIBOM. Validated against the published
     schema in tests, a malformed BOM offered as a compliance artifact is
     worse than none."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     rows = session.exec(
         select(AiBomComponent)
         .where(AiBomComponent.target_id == target_id, AiBomComponent.branch == target.default_branch)
@@ -652,13 +683,14 @@ def export_sbom(
     target_id: int,
     format: str = Query(default="cyclonedx-json", pattern="^(cyclonedx-json|spdx-json|csv|pdf)$"),
     session: Session = Depends(get_session),
+    user: User = Depends(current_user),
 ):
     """Downloadable SBOM built from persisted components, the same real
     data shown on the page, not a re-fetch or re-scan. Issue #121: export-
     format parity with Reports (CSV/PDF) plus the two real SBOM standards
     (CycloneDX, and the SPDX JSON that GitHub's dependency graph and most
     compliance tooling speak)."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     components = session.exec(
         select(SbomComponent)
         .where(SbomComponent.target_id == target_id, SbomComponent.branch == target.default_branch)

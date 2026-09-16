@@ -43,7 +43,13 @@ def client(engine):
     deps_module.engine = original_engine
 
 
-def _login(client, engine, role=UserRole.USER, email=None):
+def _login(client, engine, role=UserRole.ADMIN, email=None):
+    # Issue #506: SBOM export routes are now workspace-scoped
+    # (accessible_workspace_ids), same as the rest of the app -- this file
+    # tests export *format* correctness, not workspace isolation (that's
+    # tests/test_workspace_scoped_reads.py's job), so default to an admin
+    # caller (global no-filter bypass) rather than assigning every test's
+    # target a WorkspaceMembership it has no other reason to need.
     email = email or f"{role.value}@example.com"
     with Session(engine) as session:
         user = User(email=email, name="Test", password_hash=hash_password("whatever123"), role=role)

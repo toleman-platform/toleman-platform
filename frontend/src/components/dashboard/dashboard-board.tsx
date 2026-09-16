@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Pencil, Save, Plus, X, LayoutGrid, SlidersHorizontal } from "lucide-react";
 import {
   api,
@@ -21,6 +21,7 @@ import { ErrorState } from "@/components/ui/error-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { ReloadButton } from "@/components/reload-button";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { WidgetShell } from "@/components/dashboard/widget-shell";
 import { WidgetBody, WIDGET_META } from "@/components/dashboard/widgets";
 import { useStoredWidgetVisibility } from "@/components/dashboard/use-widget-visibility";
@@ -101,6 +102,34 @@ export function DashboardBoard({
   const [saving, startSaving] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const storedVisibility = useStoredWidgetVisibility(userId);
+  // (#506) page.tsx's server-side fetch already used the cookie mirror of
+  // this for `initialData`; the client-side refetch after saving a layout
+  // needs the same scope or it would silently widen back to "everything"
+  // until the next full page load.
+  const { activeWorkspaceId } = useWorkspaceContext();
+
+  // `initialData` reflects whatever workspace was active when the server
+  // rendered this page; a switch from the sidebar afterward, without a full
+  // navigation, previously left that stale data on screen indefinitely --
+  // this is a Server Component prop, and nothing here re-ran the server
+  // fetch just because a client-side cookie changed. Skips the very first
+  // run (initialData already matches activeWorkspaceId on mount) so mounting
+  // doesn't cost a redundant, immediate re-fetch of what the server already
+  // sent.
+  const isFirstWorkspaceRenderRef = useRef(true);
+  useEffect(() => {
+    if (isFirstWorkspaceRenderRef.current) {
+      isFirstWorkspaceRenderRef.current = false;
+      return;
+    }
+    let cancelled = false;
+    api.dashboardWidgetData(activeWorkspaceId).then((fresh) => {
+      if (!cancelled) setData(fresh);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId]);
 
   // A layout read that failed must never be treated as "the user
   // saved zero widgets" -- `initialWidgets` here is just the fallback `[]`
@@ -219,7 +248,7 @@ export function DashboardBoard({
       try {
         const saved = await api.saveDashboardLayout(widgets);
         setWidgets(saved.widgets);
-        const fresh = await api.dashboardWidgetData();
+        const fresh = await api.dashboardWidgetData(activeWorkspaceId);
         setData(fresh);
         setEditMode(false);
       } catch (e) {

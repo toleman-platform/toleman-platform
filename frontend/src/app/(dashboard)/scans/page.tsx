@@ -1,5 +1,7 @@
+import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { SCAN_TOOLS } from "@/lib/scan-tools";
+import { WORKSPACE_COOKIE_KEY, parseWorkspaceCookie } from "@/lib/workspace-cookie";
 import { ScansFilterBar } from "@/components/features/scans";
 import { ScansList } from "./scans-list";
 import { ErrorState } from "@/components/ui/error-state";
@@ -13,15 +15,18 @@ import { settleOrNull, settledOr } from "@/std-lib";
 // CriticalityChip and a Prod-aware confirmation step; see scans-list.tsx
 // and components/scans-filter-bar.tsx for the actual behavior.
 export default async function OnDemandScanPage() {
+  // (#506) The global workspace switcher's active workspace, read from the
+  // cookie WorkspaceContext keeps in sync -- see lib/workspace-cookie.ts.
+  const workspace_id = parseWorkspaceCookie((await cookies()).get(WORKSPACE_COOKIE_KEY)?.value) ?? undefined;
   const [targetsResult, summarySettled] = await Promise.all([
-    settleOrNull(api.targets()),
+    settleOrNull(api.targets({ workspace_id })),
     // `settledOr` rather than `?? {}`: an empty scan summary is not a fact
     // about the estate. This line used to discard the failure, and every row
     // below then evaluated `entry?.last_scan_at ? ... : "never scanned"`
     // against an empty map — so a single failed request told a security
     // operator that nothing in the estate had ever been scanned, with nothing
     // anywhere on the page indicating that something had gone wrong.
-    settledOr(api.scanSummary(), {}),
+    settledOr(api.scanSummary(workspace_id), {}),
   ]);
   const targetsFailed = targetsResult === null;
   const targets = targetsResult ?? [];

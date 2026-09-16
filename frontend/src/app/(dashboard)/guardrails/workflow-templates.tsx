@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { api, PIPELINE_WORKFLOW_TOOLS, PipelineWorkflowStep, PipelineWorkflowTemplate, workspaceDisplayName } from "@/lib/api";
+import { api, PIPELINE_WORKFLOW_TOOLS, PipelineWorkflowStep, PipelineWorkflowTemplate } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -90,7 +90,10 @@ function StepEditor({ steps, onChange }: { steps: PipelineWorkflowStep[]; onChan
 }
 
 export function WorkflowTemplates() {
-  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  // (#506) Follows the global workspace switcher; workflow templates are
+  // per-workspace, so a null activeWorkspaceId ("All workspaces") renders a
+  // prompt below rather than fetching anything.
+  const { activeWorkspaceId: workspaceId, error: workspacesError } = useWorkspaceContext();
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const {
@@ -114,6 +117,20 @@ export function WorkflowTemplates() {
     setName("");
     setSteps(defaultSteps());
     setEditingId(null);
+  }
+
+  // (#506) The in-progress edit/create form belongs to whichever workspace
+  // was active when it was opened; switching the global active workspace
+  // (previously only possible via this page's own picker, whose onChange
+  // called resetForm directly) must still clear it. React's documented
+  // "adjust state when a prop changes" pattern (see sidebar.tsx's
+  // `lastPathname`), not an effect -- setState during an effect body causes
+  // an extra cascading render for a change that's already known at render
+  // time.
+  const [lastWorkspaceId, setLastWorkspaceId] = useState(workspaceId);
+  if (lastWorkspaceId !== workspaceId) {
+    setLastWorkspaceId(workspaceId);
+    resetForm();
   }
 
   async function save() {
@@ -177,31 +194,13 @@ export function WorkflowTemplates() {
             </div>
           </div>
 
-          {workspaces === null ? (
-            <SkeletonList count={1} />
-          ) : workspaces.length === 0 ? (
+          {workspaceId == null && (
             <EmptyState
               icon={Building2}
-              title="No workspaces yet"
-              description="Connect a target first to create a workspace."
+              title="Pick a workspace"
+              description="Workflow templates are per-workspace; choose one from the switcher in the sidebar to view them."
               bare
             />
-          ) : (
-            <select
-              className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
-              value={workspaceId ?? ""}
-              onChange={(e) => {
-                resetForm();
-                setWorkspaceId(Number(e.target.value));
-              }}
-              aria-label="Workspace"
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {workspaceDisplayName(w, workspaces)}
-                </option>
-              ))}
-            </select>
           )}
 
           {workspaceId != null && (

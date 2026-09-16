@@ -1,7 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { DashboardBoard } from "./dashboard-board";
 import type { LayoutWidget, WidgetCatalogEntry } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
+
+// (#506) DashboardBoard now reads the global workspace switcher
+// (useWorkspaceContext), which needs a WorkspaceProvider ancestor and a
+// mocked api.workspaces() -- this file otherwise never mocks @/lib/api,
+// since none of its own assertions touch server data.
+const workspaces = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return { ...actual, api: { ...actual.api, workspaces } };
+});
 
 // A layout covering both readings of this page: the reporting cards and the
 // work cards. `security_score` is deliberately left out -- that widget makes
@@ -34,7 +45,7 @@ function renderBoard({
   widgets?: LayoutWidget[];
   catalog?: WidgetCatalogEntry[];
 }) {
-  return render(
+  return renderWithWorkspace(
     <DashboardBoard
       initialWidgets={widgets}
       catalog={catalog}
@@ -64,6 +75,8 @@ function openWidgetMenu() {
 
 beforeEach(() => {
   window.localStorage.clear();
+  workspaces.mockReset();
+  workspaces.mockResolvedValue([]);
 });
 
 afterEach(() => {

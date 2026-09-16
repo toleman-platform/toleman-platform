@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { Sidebar } from "@/components/sidebar";
+import { DashboardShell } from "@/components/dashboard-shell";
 import { AuthUser, fetchWithConnectionRetry } from "@/lib/api";
 // Plain module, not theme-toggle.tsx; see @/lib/theme for why a Server
 // Component must not import these from a "use client" file.
@@ -50,16 +50,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const initialTheme = await getInitialTheme();
 
   return (
-    <div className="flex h-screen w-full overflow-hidden">
-      <Sidebar user={user} initialTheme={initialTheme} />
-      <main className="flex-1 overflow-y-auto">
-        <div
-          className="mx-auto max-w-6xl px-6 pt-14 md:pt-[var(--density-page-py)]"
-          style={{ paddingBottom: "var(--density-page-py)" }}
-        >
-          {children}
-        </div>
-      </main>
-    </div>
+    <DashboardShell user={user} initialTheme={initialTheme}>
+      {children}
+    </DashboardShell>
   );
 }

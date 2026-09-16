@@ -392,13 +392,34 @@ def get_installation_account(config: GitHubAppConfig, installation_id: int) -> d
 
 def resolve_config_for_installation(session: Session, installation: GitHubInstallation) -> GitHubAppConfig | None:
     """Which GitHubAppConfig owns this installation (needed to sign the JWT
-    that mints an installation access token)."""
+    that mints an installation access token).
+
+    (#506) An unlinked (legacy) installation now resolves in workspace-
+    aware order: prefer a config scoped to the installation's own
+    workspace, then the platform-level default (workspace_id is None),
+    and only fall back to the pre-#506 "exactly one config total" guess
+    when neither resolves -- keeps an existing single-App deployment
+    working unchanged while a multi-App, multi-workspace one resolves
+    correctly instead of picking arbitrarily."""
     if installation.github_app_config_id is not None:
         return session.get(GitHubAppConfig, installation.github_app_config_id)
     # Legacy installation row created before github_app_config_id existed.
-    # Only safe to guess when there's exactly one App configured; with
-    # multiple Apps an unlinked installation is genuinely ambiguous.
+    # Only safe to guess when a candidate set is unambiguous (exactly one
+    # match); with more than one, which App is "the" right one is a real
+    # unknown, not a 50/50 the code should pick for the caller.
     configs = session.exec(select(GitHubAppConfig)).all()
+    workspace_matches = [c for c in configs if c.workspace_id == installation.workspace_id]
+    if len(workspace_matches) == 1:
+        return workspace_matches[0]
+    if workspace_matches:
+        # Ambiguous within the installation's own workspace: falling
+        # through to the platform default here would hand this
+        # installation credentials from an App that doesn't own it, not a
+        # safer guess than the workspace-scoped ambiguity itself.
+        return None
+    platform_defaults = [c for c in configs if c.workspace_id is None]
+    if len(platform_defaults) == 1:
+        return platform_defaults[0]
     return configs[0] if len(configs) == 1 else None
 
 

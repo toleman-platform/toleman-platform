@@ -1,10 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { api, ToolAssignment, ToolRegistryEntry, workspaceDisplayName } from "@/lib/api";
+import { api, ToolAssignment, ToolRegistryEntry } from "@/lib/api";
 import { safeHref } from "@/lib/utils";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { useToolInstall } from "@/hooks/features/use-tool-install";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +37,11 @@ const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License",
 // button. The endpoint takes a registry key rather than a package name;
 // see app.core.tool_install for why that is what makes this safe.
 export function ToolMarketplace() {
-  const { workspaces, workspaceId, setWorkspaceId, error: workspacesError } = useWorkspacePicker();
+  // (#506) Follows the global workspace switcher; the tool registry itself
+  // is org-wide, only the per-tool usage-assignment matrix is per-workspace
+  // (see the "unknown" assignmentState branch below for the no-workspace
+  // case).
+  const { workspaces, activeWorkspaceId: workspaceId, error: workspacesError } = useWorkspaceContext();
   const [savingTool, setSavingTool] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
 
@@ -141,28 +145,6 @@ export function ToolMarketplace() {
           Installation is shown as a copyable command, not executed from the browser.
         </p>
         <div className="flex items-center gap-2">
-          <label htmlFor="marketplace-workspace" className="text-xs text-muted-foreground">
-            Workspace
-          </label>
-          <select
-            id="marketplace-workspace"
-            aria-label="Workspace for usage assignment"
-            className="h-8 rounded-md border border-border bg-secondary px-2 text-xs text-foreground"
-            value={workspaceId ?? ""}
-            onChange={(e) => setWorkspaceId(Number(e.target.value))}
-          >
-            {/* Bare `w.name` collided whenever two workspaces shared a name
-                (e.g. two orgs both called "default") -- the option list showed
-                two identical strings with no way to tell which one would
-                actually receive the usage-assignment toggles below.
-                `workspaceDisplayName` appends `(#id)` only to the duplicates,
-                matching the other workspace pickers on this platform. */}
-            {workspaces?.map((w) => (
-              <option key={w.id} value={w.id}>
-                {workspaceDisplayName(w, workspaces ?? [])}
-              </option>
-            ))}
-          </select>
           <Button size="sm" variant="outline" onClick={refreshRegistry}>
             Recheck all
           </Button>
@@ -375,7 +357,7 @@ export function ToolMarketplace() {
                               // request.
                               "Workspaces couldn't be loaded, so usage assignment is unknown."
                             : workspaceId == null
-                              ? "No workspace selected, so usage assignment is unknown."
+                              ? "Pick a workspace from the sidebar switcher to see usage assignment."
                               : "Usage assignment couldn't be read for this workspace."}
                         </p>
                       ) : assignmentState === "pending" ? (

@@ -118,7 +118,7 @@ def test_fetch_app_owner_returns_none_on_github_error(monkeypatch):
 
 def test_callback_persists_owner_login_and_type(client, engine, monkeypatch):
     state = "test-state-123"
-    github_app_api._pending_states.add(state)
+    github_app_api._pending_states[state] = None
 
     fake_response = MagicMock()
     fake_response.raise_for_status = lambda: None
@@ -154,7 +154,7 @@ def test_callback_persists_none_owner_fields_when_github_omits_it(client, engine
     until a later backfill (or never, if it truly has no owner, which
     shouldn't happen for a real App but the code must not assume)."""
     state = "test-state-456"
-    github_app_api._pending_states.add(state)
+    github_app_api._pending_states[state] = None
 
     fake_response = MagicMock()
     fake_response.raise_for_status = lambda: None
@@ -180,3 +180,43 @@ def test_callback_persists_none_owner_fields_when_github_omits_it(client, engine
         configs = session.exec(select(GitHubAppConfig)).all()
         assert configs[0].owner_login is None
         assert configs[0].owner_type is None
+
+
+def test_callback_reports_conflict_instead_of_500_on_a_racing_registration(client, engine, monkeypatch):
+    """(#506) The two partial-unique indexes on githubappconfig.workspace_id
+    (one App per workspace, at most one platform-default row) are enforced
+    by Postgres, not by the SQLite this suite runs against -- so this pins
+    the code's *handling* of the resulting IntegrityError directly, by
+    forcing the commit to raise one, rather than the constraint itself.
+    GitHub has already created a real App by the time this commit runs (the
+    manifest-conversion POST above already happened), so the only thing
+    left to get right is not 500ing on the write race."""
+    from sqlalchemy.exc import IntegrityError
+
+    state = "test-state-conflict"
+    github_app_api._pending_states[state] = None
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = lambda: None
+    fake_response.json = lambda: {
+        "id": 1001,
+        "slug": "toleman-devsecops-conflict",
+        "client_id": "cid",
+        "client_secret": "csecret",
+        "pem": "test-fixture-not-a-real-key",
+        "webhook_secret": "whsec",
+        "html_url": "https://github.com/apps/toleman-devsecops-conflict",
+        "owner": {"login": "acme-corp", "type": "Organization"},
+    }
+    monkeypatch.setattr(github_app_api.httpx, "post", lambda *a, **kw: fake_response)
+
+    def failing_commit(self):
+        raise IntegrityError("insert into githubappconfig", {}, Exception("unique violation"))
+
+    monkeypatch.setattr(Session, "commit", failing_commit)
+
+    res = client.get("/api/github-app/callback", params={"code": "onetime", "state": state}, follow_redirects=False)
+
+    assert res.status_code in (302, 307)
+    assert "error=app_already_registered" in res.headers["location"]
+    assert "scope=platform-default" in res.headers["location"]

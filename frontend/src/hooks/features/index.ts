@@ -9,4 +9,3 @@ export * from "./use-active-scans";
 export * from "./use-active-pr-scans";
 export * from "./use-scan-run";
 export * from "./use-tool-install";
-export * from "./use-workspace-picker";

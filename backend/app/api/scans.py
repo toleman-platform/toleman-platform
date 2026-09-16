@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, func, select
 
-from app.api.auth import accessible_workspace_ids, current_user
+from app.api.auth import accessible_workspace_ids, current_user, narrow_workspace_scope
 from app.api.deps import get_session
 from app.core import scan_eta
 from app.core.async_jobs import create_running_row
@@ -22,6 +22,7 @@ PARSER_MAP = parsers.PARSER_MAP
 
 @router.get("/summary")
 def scans_summary(
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -52,7 +53,7 @@ def scans_summary(
     which is additive -- those tests assert per key rather than comparing
     whole dicts, which is what let it be added without rewriting them.
     """
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return {}
 
@@ -219,6 +220,7 @@ def run_native_scan(
 
 @router.get("/active")
 def active_scans(
+    workspace_id: int | None = None,
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -239,7 +241,7 @@ def active_scans(
     Workspace-scoped like every other GET/list over workspace-owned
     resources (None = admin/no filter, [] = no memberships yet).
     """
-    ws_ids = accessible_workspace_ids(session, user)
+    ws_ids = narrow_workspace_scope(session, user, workspace_id)
     if ws_ids is not None and not ws_ids:
         return {}
 

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 import AiSecurityPage from "./page";
 import type { Target } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * This page used to be the one dashboard surface with no destination on it:
@@ -19,17 +20,29 @@ import type { Target } from "@/lib/api";
  *      happened to that dispatch -- queued, failed, or refused -- rather
  *      than going quiet.
  */
-const { targetsFn, scanSummaryFn, findingsFn, generateSbomFn, getSbomRunFn, aibomFn, runScanFn, getScanFn } =
-  vi.hoisted(() => ({
-    targetsFn: vi.fn(),
-    scanSummaryFn: vi.fn(),
-    findingsFn: vi.fn(),
-    generateSbomFn: vi.fn(),
-    getSbomRunFn: vi.fn(),
-    aibomFn: vi.fn(),
-    runScanFn: vi.fn(),
-    getScanFn: vi.fn(),
-  }));
+const {
+  targetsFn,
+  scanSummaryFn,
+  findingsFn,
+  generateSbomFn,
+  getSbomRunFn,
+  aibomFn,
+  runScanFn,
+  getScanFn,
+  activeScansFn,
+  workspacesFn,
+} = vi.hoisted(() => ({
+  targetsFn: vi.fn(),
+  scanSummaryFn: vi.fn(),
+  findingsFn: vi.fn(),
+  generateSbomFn: vi.fn(),
+  getSbomRunFn: vi.fn(),
+  aibomFn: vi.fn(),
+  runScanFn: vi.fn(),
+  getScanFn: vi.fn(),
+  activeScansFn: vi.fn(),
+  workspacesFn: vi.fn(),
+}));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -41,6 +54,10 @@ vi.mock("@/lib/api", () => ({
     aibom: aibomFn,
     runScan: runScanFn,
     getScan: getScanFn,
+    // (#506) useActiveScans (shared across dashboard surfaces) now also
+    // needs a WorkspaceProvider ancestor -- see renderWithWorkspace below.
+    activeScans: activeScansFn,
+    workspaces: workspacesFn,
   },
 }));
 
@@ -98,7 +115,11 @@ beforeEach(() => {
   aibomFn.mockReset();
   runScanFn.mockReset();
   getScanFn.mockReset();
+  activeScansFn.mockReset();
+  workspacesFn.mockReset();
 
+  activeScansFn.mockResolvedValue({});
+  workspacesFn.mockResolvedValue([]);
   scanSummaryFn.mockResolvedValue({});
   findingsFn.mockResolvedValue({ items: [], total: 0 });
   aibomFn.mockResolvedValue({
@@ -115,7 +136,7 @@ describe("AiSecurityPage - counters and repo destinations", () => {
   it("links the sole AI/ML repo counter straight to that target, not to a list", async () => {
     targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     // The label renders during loading too, when aiTargets is still empty and
     // StatCard therefore has no href to wrap itself in. Waiting on the label
@@ -131,7 +152,7 @@ describe("AiSecurityPage - counters and repo destinations", () => {
       target({ id: 8, name: "chat-svc" }),
     ]);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     await waitFor(() => {
       expect(screen.getByText("AI/ML repos").closest("a")?.getAttribute("href")).toBe("#ai-flagged-repos");
@@ -141,7 +162,7 @@ describe("AiSecurityPage - counters and repo destinations", () => {
   it("links the ModelScan and LLM ruleset counters to Findings, pre-filtered and queue-matched to the count", async () => {
     targetsFn.mockResolvedValue([target({ id: 7 })]);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     const modelscanLabel = await screen.findByText("ModelScan findings");
     expect(modelscanLabel.closest("a")!.getAttribute("href")).toBe("/findings?tool=modelscan&queue=all");
@@ -153,7 +174,7 @@ describe("AiSecurityPage - counters and repo destinations", () => {
   it("does not render the removed 'not yet available' LLM red-teaming section", async () => {
     targetsFn.mockResolvedValue([target({ id: 7 })]);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
     await screen.findByText("AI/ML repos");
 
     expect(screen.queryByText("Not yet available")).toBeNull();
@@ -173,7 +194,7 @@ describe("AiSecurityPage - per-repo tool badge honesty (0 scanned-clean vs 0 nev
     );
     scanSummaryFn.mockResolvedValue({ "7": { last_scan_at: "2026-09-01T00:00:00Z", tools: ["modelscan"], suspect_tools: [] } });
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     const badge = await screen.findByText("2 ModelScan");
     expect(badge.closest("a")!.getAttribute("href")).toBe("/findings?tool=modelscan&target_id=7&queue=all");
@@ -191,7 +212,7 @@ describe("AiSecurityPage - per-repo tool badge honesty (0 scanned-clean vs 0 nev
       "7": { last_scan_at: "2026-09-01T00:00:00Z", tools: ["modelscan", "semgrep-llm"], suspect_tools: [] },
     });
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     // Wait on the badge, not the repo name: the name appears in more than one
     // place on this page, so findByText on it throws "found multiple elements"
@@ -217,7 +238,7 @@ describe("AiSecurityPage - per-repo tool badge honesty (0 scanned-clean vs 0 nev
         : Promise.resolve({ items: [], total: 0 }),
     );
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     const badge = await screen.findByText("ModelScan: unknown");
     expect(badge.getAttribute("title")).toMatch(/could not be loaded/i);
@@ -228,7 +249,7 @@ describe("AiSecurityPage - per-repo tool badge honesty (0 scanned-clean vs 0 nev
     targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
     scanSummaryFn.mockRejectedValue(new Error("scan history down"));
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     const badge = await screen.findByText("ModelScan: unknown");
     expect(badge.getAttribute("title")).toMatch(/not known whether/i);
@@ -240,7 +261,7 @@ describe("AiSecurityPage - aggregate counter honesty", () => {
     targetsFn.mockResolvedValue([target({ id: 7 }), target({ id: 8 })]);
     scanSummaryFn.mockResolvedValue({}); // neither target has a row for any tool
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     await screen.findByText(/no AI\/ML repo has been scanned by ModelScan yet/);
   });
@@ -252,7 +273,7 @@ describe("AiSecurityPage - aggregate counter honesty", () => {
       // target 8 has no row: never scanned by anything.
     });
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     await screen.findByText(/measured across 1 of 2 AI\/ML repos scanned/);
   });
@@ -316,7 +337,7 @@ describe("AiSecurityPage - AI Bill of Materials generates and exports in place",
         ],
       });
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     await screen.findByText("No AIBOM generated yet");
 
@@ -333,7 +354,7 @@ describe("AiSecurityPage - AI Bill of Materials generates and exports in place",
   it("disables the export-in-place generate action for a deactivated target", async () => {
     targetsFn.mockResolvedValue([target({ id: 7, name: "frozen", is_active: false })]);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     const button = await screen.findByRole("button", { name: "Generate AI Bill of Materials" });
     expect(button.hasAttribute("disabled")).toBe(true);
@@ -358,7 +379,7 @@ describe("AiSecurityPage - running the AI scanners from the repo list", () => {
     ]);
     acceptedDispatch(42);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on chat-svc" }));
 
@@ -371,7 +392,7 @@ describe("AiSecurityPage - running the AI scanners from the repo list", () => {
     targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
     acceptedDispatch(43);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Run LLM rules on model-server" }));
 
@@ -382,7 +403,7 @@ describe("AiSecurityPage - running the AI scanners from the repo list", () => {
     targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
     acceptedDispatch(42);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on model-server" }));
 
@@ -398,7 +419,7 @@ describe("AiSecurityPage - running the AI scanners from the repo list", () => {
   it("does not let a deactivated repo be scanned", async () => {
     targetsFn.mockResolvedValue([target({ id: 7, name: "frozen", is_active: false })]);
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     const modelscan = await screen.findByRole("button", { name: "Run ModelScan on frozen" });
     const llmRules = screen.getByRole("button", { name: "Run LLM rules on frozen" });
@@ -415,7 +436,7 @@ describe("AiSecurityPage - running the AI scanners from the repo list", () => {
     // no scan id, so there is nothing to poll and nothing to report later.
     runScanFn.mockResolvedValue({ error: "modelscan is not enabled for this workspace" });
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on model-server" }));
 
@@ -428,7 +449,7 @@ describe("AiSecurityPage - running the AI scanners from the repo list", () => {
     targetsFn.mockResolvedValue([target({ id: 7, name: "model-server" })]);
     runScanFn.mockRejectedValue(new Error("Failed to fetch"));
 
-    render(<AiSecurityPage />);
+    renderWithWorkspace(<AiSecurityPage />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Run ModelScan on model-server" }));
 

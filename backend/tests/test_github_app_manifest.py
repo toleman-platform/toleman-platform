@@ -16,11 +16,23 @@ name) so GitHub derived a bot login of `osp-devsecops-*[bot]`, which signed
 every PR comment in every adopting org.
 """
 
+from types import SimpleNamespace
+
 from app.core.github_app import build_manifest
 
 
 def _manifest(app_url="https://toleman.example.com", backend_url="https://api.toleman.example.com"):
     return build_manifest(app_url, backend_url, "abc123", setup_token="tok")
+
+
+# (#506) manifest_data is now an ordinary auth-gated route (admin for the
+# platform-default App, the workspace_id branch these tests don't exercise
+# otherwise) rather than open to any logged-in caller, so calling it
+# directly (bypassing FastAPI's DI) needs a `user` with .role. A
+# duck-typed stand-in rather than a real User row: with workspace_id
+# omitted, the handler never touches `session` either, so these
+# manifest-content tests don't need a database at all.
+_ADMIN_USER = SimpleNamespace(role="admin")
 
 
 def test_app_subscribes_to_pull_request_events():
@@ -94,17 +106,17 @@ def test_manifest_data_flags_an_unreachable_webhook_host(monkeypatch):
     import app.api.github_app as github_app
 
     monkeypatch.setattr(github_app, "BACKEND_URL", "http://localhost:8000")
-    assert github_app.manifest_data()["webhook_reachable"] is False
+    assert github_app.manifest_data(user=_ADMIN_USER)["webhook_reachable"] is False
 
     monkeypatch.setattr(github_app, "BACKEND_URL", "http://127.0.0.1:8000")
-    assert github_app.manifest_data()["webhook_reachable"] is False
+    assert github_app.manifest_data(user=_ADMIN_USER)["webhook_reachable"] is False
 
 
 def test_manifest_data_accepts_a_real_public_host(monkeypatch):
     import app.api.github_app as github_app
 
     monkeypatch.setattr(github_app, "BACKEND_URL", "https://api.toleman.example.com")
-    result = github_app.manifest_data()
+    result = github_app.manifest_data(user=_ADMIN_USER)
 
     assert result["webhook_reachable"] is True
     assert result["webhook_url"] == "https://api.toleman.example.com/api/webhooks/github"
@@ -120,7 +132,7 @@ def test_manifest_data_still_returns_a_usable_manifest_when_unreachable(monkeypa
     import app.api.github_app as github_app
 
     monkeypatch.setattr(github_app, "BACKEND_URL", "http://localhost:8000")
-    result = github_app.manifest_data()
+    result = github_app.manifest_data(user=_ADMIN_USER)
 
     assert "pull_request" in result["manifest"]["default_events"]
     assert result["post_url"].startswith("https://github.com/")

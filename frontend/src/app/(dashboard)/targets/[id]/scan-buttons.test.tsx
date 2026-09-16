@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { ScanButtons } from "./scan-buttons";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * A scan that failed and a scan that worked used to render identically: one
@@ -11,14 +12,15 @@ import { ScanButtons } from "./scan-buttons";
  * that produced it.
  */
 
-const { runScan, getScan, toolAssignments, activeScans } = vi.hoisted(() => ({
+const { runScan, getScan, toolAssignments, activeScans, workspaces } = vi.hoisted(() => ({
   runScan: vi.fn(),
   getScan: vi.fn(),
   toolAssignments: vi.fn(),
   activeScans: vi.fn(),
+  workspaces: vi.fn(),
 }));
 
-vi.mock("@/lib/api", () => ({ api: { runScan, getScan, toolAssignments, activeScans } }));
+vi.mock("@/lib/api", () => ({ api: { runScan, getScan, toolAssignments, activeScans, workspaces } }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 
 function scanRow(over: Record<string, unknown> = {}) {
@@ -44,6 +46,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   toolAssignments.mockResolvedValue([]);
   activeScans.mockResolvedValue({});
+  workspaces.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -52,6 +55,7 @@ afterEach(() => {
   getScan.mockReset();
   toolAssignments.mockReset();
   activeScans.mockReset();
+  workspaces.mockReset();
 });
 
 /** Lets the mounted reads (tool assignments, active scans) settle. */
@@ -80,7 +84,7 @@ describe("ScanButtons, a scan that failed", () => {
     runScan.mockResolvedValue({ scan_id: 5, status: "running" });
     getScan.mockResolvedValue(scanRow({ status: "failed", error_message: "clone timed out after 300s" }));
 
-    render(<ScanButtons targetId={1} workspaceId={2} />);
+    renderWithWorkspace(<ScanButtons targetId={1} workspaceId={2} />);
     await settleMount();
     await runSemgrep();
 
@@ -96,7 +100,7 @@ describe("ScanButtons, a scan that failed", () => {
     runScan.mockResolvedValue({ scan_id: 5, status: "running" });
     getScan.mockResolvedValue(scanRow({ status: "failed", error_message: "clone timed out after 300s" }));
 
-    render(<ScanButtons targetId={1} workspaceId={2} />);
+    renderWithWorkspace(<ScanButtons targetId={1} workspaceId={2} />);
     await settleMount();
     await runSemgrep();
 
@@ -117,7 +121,7 @@ describe("ScanButtons, a scan that failed", () => {
     // never polls; it must still be as loud as a run that failed mid-flight.
     runScan.mockResolvedValue({ error: "rate limited, try again in 60s" });
 
-    render(<ScanButtons targetId={1} workspaceId={2} />);
+    renderWithWorkspace(<ScanButtons targetId={1} workspaceId={2} />);
     await settleMount();
     fireEvent.click(screen.getByRole("button", { name: "Run semgrep" }));
     await act(async () => {
@@ -136,7 +140,7 @@ describe("ScanButtons, a scan that completed", () => {
     runScan.mockResolvedValue({ scan_id: 5, status: "running" });
     getScan.mockResolvedValue(scanRow({ status: "completed", findings_count: 4 }));
 
-    render(<ScanButtons targetId={1} workspaceId={2} />);
+    renderWithWorkspace(<ScanButtons targetId={1} workspaceId={2} />);
     await settleMount();
     await runSemgrep();
 
@@ -148,7 +152,7 @@ describe("ScanButtons, a scan that completed", () => {
     runScan.mockResolvedValue({ scan_id: 5, status: "running" });
     getScan.mockResolvedValue(scanRow({ status: "completed", findings_count: 0 }));
 
-    render(<ScanButtons targetId={1} workspaceId={2} />);
+    renderWithWorkspace(<ScanButtons targetId={1} workspaceId={2} />);
     await settleMount();
     await runSemgrep();
 

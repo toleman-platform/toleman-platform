@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { ToolMarketplace } from "./tool-marketplace";
 import type { ToolAssignment, ToolRegistryEntry } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * admin M1/M2: the marketplace's per-tool badge used to have only two
@@ -21,11 +22,9 @@ const { workspaces, toolsRegistry, toolAssignments, activeToolInstalls } = vi.ho
   activeToolInstalls: vi.fn(() => Promise.resolve({})),
 }));
 
-// Spread the real module rather than enumerating its exports: this file holds
-// two suites (health badges and the workspace picker) that need different
-// parts of @/lib/api, and a hand-listed mock silently drops whatever the other
-// suite depends on -- `workspaceDisplayName` is a pure helper the picker
-// asserts the real behaviour of, not something worth stubbing.
+// Spread the real module rather than enumerating its exports: hand-listing
+// api's exports here would silently drop whatever a future suite in this
+// file depends on that this one doesn't.
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
@@ -75,7 +74,7 @@ async function renderMarketplace(entries: ToolRegistryEntry[]) {
   workspaces.mockResolvedValue([{ id: 1, name: "default", organization_id: 1, enforcement_mode: null }]);
   toolsRegistry.mockResolvedValue(entries);
   toolAssignments.mockResolvedValue([]);
-  render(<ToolMarketplace />);
+  renderWithWorkspace(<ToolMarketplace />);
   // Wait for the registry fetch to resolve and the grouped cards to render.
   await screen.findByText(entries[0].display_name);
 }
@@ -149,33 +148,10 @@ describe("ToolMarketplace install/health badge", () => {
   });
 });
 
-
-describe("ToolMarketplace workspace picker", () => {
-  it("disambiguates two workspaces that share a name", async () => {
-    workspaces.mockResolvedValue([
-      { id: 1, name: "default", organization_id: 1, enforcement_mode: null },
-      { id: 2, name: "default", organization_id: 2, enforcement_mode: null },
-    ]);
-    render(<ToolMarketplace />);
-
-    expect(await screen.findByRole("option", { name: "default (#1)" })).toBeDefined();
-    expect(screen.getByRole("option", { name: "default (#2)" })).toBeDefined();
-    // A bare "default" with no id suffix would mean the old, ambiguous label
-    // is still leaking through for one of the two rows.
-    expect(screen.queryByRole("option", { name: "default" })).toBeNull();
-  });
-
-  it("leaves a workspace's name alone when nothing else in the list collides", async () => {
-    workspaces.mockResolvedValue([
-      { id: 1, name: "production", organization_id: 1, enforcement_mode: null },
-      { id: 2, name: "staging", organization_id: 1, enforcement_mode: null },
-    ]);
-    render(<ToolMarketplace />);
-
-    expect(await screen.findByRole("option", { name: "production" })).toBeDefined();
-    expect(screen.getByRole("option", { name: "staging" })).toBeDefined();
-  });
-});
+// The page-local workspace picker this suite used to test here (option-list
+// disambiguation via workspaceDisplayName) was removed by issue #506 in
+// favor of the global sidebar switcher; that coverage now lives in
+// components/workspace-switcher.test.tsx.
 
 
 /**
@@ -213,7 +189,7 @@ describe("ToolMarketplace usage assignment, unread vs off", () => {
     toolsRegistry.mockResolvedValue([entry({ tool: "semgrep", display_name: "Semgrep" })]);
     const settle = deferredAssignments();
 
-    render(<ToolMarketplace />);
+    renderWithWorkspace(<ToolMarketplace />);
     await screen.findByText("Semgrep");
 
     // Nothing on screen can be read as a setting yet. The surface labels are
@@ -238,7 +214,7 @@ describe("ToolMarketplace usage assignment, unread vs off", () => {
     toolsRegistry.mockResolvedValue([entry({ tool: "semgrep", display_name: "Semgrep" })]);
     toolAssignments.mockRejectedValue(new Error("assignments endpoint unavailable"));
 
-    render(<ToolMarketplace />);
+    renderWithWorkspace(<ToolMarketplace />);
     await screen.findByText("Semgrep");
 
     expect(

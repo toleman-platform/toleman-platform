@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import { Policies } from "./policies";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * M14: the rule-type `<select>` used to show only each type's own label
@@ -36,7 +37,7 @@ describe("Policies, rule type explanations", () => {
     workspaces.mockResolvedValue([{ id: 1, name: "Acme", organization_id: 1, enforcement_mode: null }]);
     listPolicies.mockResolvedValue([]);
 
-    render(<Policies />);
+    renderWithWorkspace(<Policies />);
 
     const select = await screen.findByLabelText("Rule type");
 

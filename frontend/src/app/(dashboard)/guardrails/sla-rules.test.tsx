@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { SlaRules } from "./sla-rules";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * M16: the days-to-fix field used to be `<Input defaultValue={...} onBlur={...}>`,
@@ -61,7 +62,7 @@ const daysInput = async () =>
 describe("SlaRules, editing days-to-fix inline", () => {
   it("does not save on blur alone, unlike the field it replaced", async () => {
     setup();
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     const input = await daysInput();
     fireEvent.change(input, { target: { value: "14" } });
@@ -76,7 +77,7 @@ describe("SlaRules, editing days-to-fix inline", () => {
   it("commits only once Enter is pressed", async () => {
     setup();
     updateSlaRule.mockResolvedValue(rule({ days_to_fix: 14 }));
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     const input = await daysInput();
     fireEvent.change(input, { target: { value: "14" } });
@@ -90,7 +91,7 @@ describe("SlaRules, editing days-to-fix inline", () => {
   it("commits only once the checkmark is clicked, as an alternative to Enter", async () => {
     setup();
     updateSlaRule.mockResolvedValue(rule({ days_to_fix: 21 }));
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     const input = await daysInput();
     fireEvent.change(input, { target: { value: "21" } });
@@ -101,7 +102,7 @@ describe("SlaRules, editing days-to-fix inline", () => {
 
   it("discards the draft on Escape without saving anything", async () => {
     setup();
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     const input = await daysInput();
     fireEvent.change(input, { target: { value: "99" } });
@@ -116,7 +117,7 @@ describe("SlaRules, editing days-to-fix inline", () => {
 
   it("discards the draft on an explicit click of the X, restoring the committed value", async () => {
     setup();
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     const input = await daysInput();
     fireEvent.change(input, { target: { value: "30" } });
@@ -130,7 +131,7 @@ describe("SlaRules, editing days-to-fix inline", () => {
 
   it("never saves the zero-day SLA the create form was hardened against, even from Enter", async () => {
     setup();
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     const input = await daysInput();
     fireEvent.change(input, { target: { value: "0" } });
@@ -145,7 +146,7 @@ describe("SlaRules, editing days-to-fix inline", () => {
 
   it("never saves an emptied field, mirroring the create form's own guard", async () => {
     setup();
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     const input = await daysInput();
     fireEvent.change(input, { target: { value: "" } });
@@ -175,7 +176,7 @@ describe("SlaRules, a read that failed vs a workspace with no rules", () => {
 
   it("reports the failure rather than claiming the workspace has no SLA rules", async () => {
     setupFailing();
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     expect(await screen.findByText("Couldn't load SLA rules")).toBeTruthy();
     expect(screen.queryByText("No SLA rules yet")).toBeNull();
@@ -186,7 +187,7 @@ describe("SlaRules, a read that failed vs a workspace with no rules", () => {
     // from the same load error; getByText throws on a second match, so this
     // fails if the sentence is printed in both places.
     setupFailing("sla endpoint unavailable");
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     await screen.findByText("Couldn't load SLA rules");
     expect(screen.getByText("sla endpoint unavailable")).toBeTruthy();
@@ -197,7 +198,7 @@ describe("SlaRules, a read that failed vs a workspace with no rules", () => {
     groups.mockResolvedValue([]);
     slaRules.mockRejectedValueOnce(new Error("sla endpoint unavailable")).mockResolvedValue([rule()]);
 
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
     fireEvent.click(await screen.findByRole("button", { name: "Try again" }));
 
     expect(await screen.findByLabelText("Days to fix for Critical in Workspace default")).toBeTruthy();
@@ -209,7 +210,7 @@ describe("SlaRules, a read that failed vs a workspace with no rules", () => {
     // The other half of the pair: gating the empty state on a successful read
     // must not silence it for the workspace that genuinely has no rules.
     setup([]);
-    render(<SlaRules />);
+    renderWithWorkspace(<SlaRules />);
 
     expect(await screen.findByText("No SLA rules yet")).toBeTruthy();
     expect(screen.queryByText("Couldn't load SLA rules")).toBeNull();

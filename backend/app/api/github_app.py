@@ -4,9 +4,10 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.auth import current_user, require_admin
+from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.crypto import encrypt_secret
@@ -20,7 +21,7 @@ from app.core.github_app import (
     resolve_config_for_installation,
     webhook_reachable,
 )
-from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, User, Workspace
+from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Target, User, Workspace, WorkspaceRole
 from app.core import target_lifecycle
 from app.tasks.sbom_tasks import queue_dependency_graph_sync
 from app.tasks.scan_tasks import queue_full_scan
@@ -36,10 +37,33 @@ BACKEND_URL = settings.public_api_url.rstrip("/")
 # back on /callback before we trust the code exchange. In-memory is fine for
 # this single-process dev/OSS deployment; a multi-worker production deploy
 # would need this in Redis/DB instead (module state isn't shared across workers).
-_pending_states: set[str] = set()
+#
+# (#506) Also carries the workspace_id (if any) the App being created should
+# be scoped to, so /callback can set it on the row it creates -- None means
+# the platform-level default App, same meaning as
+# GitHubAppConfig.workspace_id itself.
+_pending_states: dict[str, int | None] = {}
 
 router = APIRouter(prefix="/api/github-app", tags=["github-app"], dependencies=[Depends(current_user)])
 public_router = APIRouter(prefix="/api/github-app", tags=["github-app"])
+
+
+def _require_app_config_manager(session: Session, user: User, config: GitHubAppConfig) -> None:
+    """(#506) Platform-default config (workspace_id is None) stays
+    require_admin-only, the same gate every write here had before this
+    issue. A workspace-scoped config is managed by that workspace's
+    security-engineer-or-higher members -- enforce_workspace_role's own
+    global-admin bypass still applies, so a platform admin can always
+    manage either kind. There is no separate WorkspaceRole.ADMIN on this
+    platform; SECURITY_ENGINEER (the top per-workspace rank) is the
+    existing precedent for "workspace admin"-class actions (fp_rules.py,
+    scoring_weights.py, scan_schedules.py, sla_rules.py all gate the same
+    way)."""
+    if config.workspace_id is None:
+        if user.role != "admin":
+            raise HTTPException(status_code=403, detail="admin role required")
+        return
+    enforce_workspace_role(session, user, WorkspaceRole.SECURITY_ENGINEER, workspace_id=config.workspace_id)
 
 
 def _get_or_create_workspace(session: Session) -> Workspace:
@@ -57,12 +81,38 @@ def _get_or_create_workspace(session: Session) -> Workspace:
     return workspace
 
 
+def _workspace_for_new_installation(session: Session, config: GitHubAppConfig) -> Workspace:
+    """(#506) A fresh install of a workspace-scoped App belongs to that
+    workspace, not "whichever workspace happens to be first in the table"
+    -- _get_or_create_workspace's original single-tenant assumption, kept
+    here as the fallback for the platform-default App (workspace_id is
+    None) and for a config whose workspace has since been deleted."""
+    if config.workspace_id is not None:
+        workspace = session.get(Workspace, config.workspace_id)
+        if workspace:
+            return workspace
+    return _get_or_create_workspace(session)
+
+
 @router.get("/manifest-data")
-def manifest_data(org: str | None = None):
+def manifest_data(
+    org: str | None = None,
+    # (#506) Present -> registering a workspace-scoped App, gated to that
+    # workspace's security engineers; absent -> the platform-level default
+    # App, admin-only. Every existing caller (pre-#506, always omitted this)
+    # keeps getting the admin-only platform-default App.
+    workspace_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Frontend uses this to build the hidden form it POSTs to GitHub. Requires login."""
+    if workspace_id is not None:
+        enforce_workspace_role(session, user, WorkspaceRole.SECURITY_ENGINEER, workspace_id=workspace_id)
+    elif user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin role required")
     suffix = secrets.token_hex(3)
     state = secrets.token_urlsafe(24)
-    _pending_states.add(state)
+    _pending_states[state] = workspace_id
     # `state` doubles as the App's permanent setup_token (#34); see
     # build_manifest's docstring for why this is safe and durable.
     manifest = build_manifest(FRONTEND_URL, BACKEND_URL, suffix, setup_token=state)
@@ -84,7 +134,7 @@ def manifest_data(org: str | None = None):
 
 
 @router.get("/status")
-def status(session: Session = Depends(get_session)):
+def status(session: Session = Depends(get_session), user: User = Depends(current_user)):
     """Multi-App aware (#34): returns every registered App and its
     installations under ``apps``, plus the original single-app fields
     (first configured app / first installation) for back-compat with
@@ -92,9 +142,18 @@ def status(session: Session = Depends(get_session)):
 
     Also carries ``webhook_reachable``/``public_api_url`` (#355), which are
     about the App that does *not* exist yet: whether creating one can work
-    at all from this deployment's address. See the return block below."""
+    at all from this deployment's address. See the return block below.
+
+    (#506) Filtered to the platform-default App plus configs/installations
+    in the caller's accessible workspaces -- previously this returned every
+    App platform-wide, including another workspace's webhook_secret_set
+    state and installation account, to any authenticated viewer."""
+    ws_ids = accessible_workspace_ids(session, user)
     configs = session.exec(select(GitHubAppConfig)).all()
     installations = session.exec(select(GitHubInstallation)).all()
+    if ws_ids is not None:
+        configs = [c for c in configs if c.workspace_id is None or c.workspace_id in ws_ids]
+        installations = [i for i in installations if i.workspace_id in ws_ids]
 
     apps = []
     for config in configs:
@@ -164,7 +223,11 @@ class UpdateWebhookSecretRequest(BaseModel):
 
 
 @router.patch("/webhook-secret")
-def update_webhook_secret(payload: UpdateWebhookSecretRequest, session: Session = Depends(get_session)):
+def update_webhook_secret(
+    payload: UpdateWebhookSecretRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Pairs with the webhook secret set manually in the App's GitHub settings
     page (Settings > Developer settings > GitHub Apps > <app> > Webhook) -
     there's no API to configure a GitHub App's webhook URL/secret post-creation,
@@ -172,7 +235,11 @@ def update_webhook_secret(payload: UpdateWebhookSecretRequest, session: Session 
 
     ``config_id`` selects which App (#34: there may be more than one); when
     omitted it only succeeds if exactly one App is configured, matching the
-    original single-App behavior."""
+    original single-App behavior.
+
+    (#506) Gated by _require_app_config_manager -- previously any
+    authenticated user, of any role, could rotate the platform's single
+    webhook secret."""
     if payload.config_id is not None:
         config = session.get(GitHubAppConfig, payload.config_id)
     else:
@@ -182,6 +249,7 @@ def update_webhook_secret(payload: UpdateWebhookSecretRequest, session: Session 
         config = configs[0] if configs else None
     if not config:
         raise HTTPException(status_code=400, detail="GitHub App not configured yet")
+    _require_app_config_manager(session, user, config)
     config.webhook_secret = encrypt_secret(payload.webhook_secret)
     session.add(config)
     session.commit()
@@ -198,7 +266,7 @@ def callback(code: str, state: str | None = None, session: Session = Depends(get
     """
     if not state or state not in _pending_states:
         raise HTTPException(status_code=400, detail="missing or invalid state")
-    _pending_states.discard(state)
+    workspace_id = _pending_states.pop(state)
 
     res = httpx.post(
         f"https://api.github.com/app-manifests/{code}/conversions",
@@ -225,9 +293,26 @@ def callback(code: str, state: str | None = None, session: Session = Depends(get
         # docstring for why "Manage on GitHub" needs this.
         owner_login=owner.get("login"),
         owner_type=owner.get("type"),
+        # (#506) None -> platform-level default App, same as every App
+        # created before this column existed.
+        workspace_id=workspace_id,
     )
     session.add(config)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        # (#506) Two concurrent manifest flows for the same scope (the same
+        # workspace, or both for the platform default) -- the DB's
+        # partial-unique indexes on githubappconfig.workspace_id catch what
+        # a race between this request's own `add` and `commit` let through.
+        # GitHub already created a real App on its side for this attempt
+        # (the manifest-conversion POST above already happened); there is
+        # nothing to undo there, so the best recovery is to say so plainly
+        # rather than 500 on a raw constraint violation the operator can't
+        # act on.
+        session.rollback()
+        scope = "workspace" if workspace_id is not None else "platform-default"
+        return RedirectResponse(f"{FRONTEND_URL}/targets?error=app_already_registered&scope={scope}")
 
     return RedirectResponse(f"https://github.com/apps/{config.slug}/installations/new")
 
@@ -264,7 +349,7 @@ def setup_callback(
     account = get_installation_account(config, installation_id)
     existing = session.exec(select(GitHubInstallation).where(GitHubInstallation.installation_id == installation_id)).first()
     if not existing:
-        workspace = _get_or_create_workspace(session)
+        workspace = _workspace_for_new_installation(session, config)
         session.add(GitHubInstallation(
             installation_id=installation_id,
             account_login=account["account"]["login"],
@@ -365,21 +450,23 @@ def sync_now(session: Session = Depends(get_session)):
 def delete_app_config(
     config_id: int,
     session: Session = Depends(get_session),
-    _admin: User = Depends(require_admin),
+    user: User = Depends(current_user),
 ):
     """Removes a registered GitHub App and any installation rows tied to it.
 
-    Admin-only: this drops the App's stored private key/client secret and
-    every installation record under it, the same blast radius as the
-    workspace-role removal this mirrors. Does not revoke or uninstall the
-    App on GitHub's side -- that still has to happen in GitHub's own
-    settings -- this only clears Toleman's record of it, so a stale or
-    misconfigured App can be removed and re-registered instead of
-    accumulating dead rows forever.
+    Gated by _require_app_config_manager: the platform-default App stays
+    admin-only (this route's original blanket gate), but a workspace's
+    security-engineer-or-higher members can now remove their own
+    workspace-scoped App without needing global admin (#506). Does not
+    revoke or uninstall the App on GitHub's side -- that still has to
+    happen in GitHub's own settings -- this only clears Toleman's record of
+    it, so a stale or misconfigured App can be removed and re-registered
+    instead of accumulating dead rows forever.
     """
     config = session.get(GitHubAppConfig, config_id)
     if not config:
         raise HTTPException(status_code=404, detail="GitHub App not found")
+    _require_app_config_manager(session, user, config)
     installations = session.exec(
         select(GitHubInstallation).where(GitHubInstallation.github_app_config_id == config_id)
     ).all()

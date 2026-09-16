@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from app.api.auth import accessible_workspace_ids, current_user
 from app.api.deps import get_session
 from app.core.github import github_get, repo_slug_from_url
 from app.core.github_token import resolve_github_token
 from app.core import target_lifecycle
-from app.models.models import PRGuardrailScan, Target
+from app.models.models import PRGuardrailScan, Target, User
 
 router = APIRouter(prefix="/api/github", tags=["github"])
 
@@ -28,17 +29,22 @@ class OrgActivityResponse(BaseModel):
     total: int
 
 
-def _get_target(target_id: int, session: Session) -> Target:
+def _get_target(target_id: int, session: Session, user: User) -> Target:
     target = session.get(Target, target_id)
     if not target:
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
         raise HTTPException(status_code=404, detail="target not found")
     return target
 
 
 @router.get("/activity/{target_id}")
-def repo_activity(target_id: int, session: Session = Depends(get_session)):
+def repo_activity(
+    target_id: int, session: Session = Depends(get_session), user: User = Depends(current_user)
+):
     """Recent commit activity on a target's default branch, real GitHub API data."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     slug = repo_slug_from_url(target.repo_url)
     res = github_get(f"/repos/{slug}/commits", params={"sha": target.default_branch, "per_page": 20}, token=resolve_github_token(session, target.workspace_id, slug) or "")
     if res.status_code != 200:
@@ -110,7 +116,12 @@ def _latest_guardrail_scans(
 
 
 @router.get("/prs/{target_id}")
-def repo_prs(target_id: int, state: str = "open", session: Session = Depends(get_session)):
+def repo_prs(
+    target_id: int,
+    state: str = "open",
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Pull requests on a target repo, real GitHub API data, joined to this
     target's own PR Guardrail scan history.
 
@@ -138,7 +149,7 @@ def repo_prs(target_id: int, state: str = "open", session: Session = Depends(get
             status_code=400,
             detail=f"state must be one of {', '.join(sorted(_GITHUB_PR_STATE))}",
         )
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     slug = repo_slug_from_url(target.repo_url)
     res = github_get(
         f"/repos/{slug}/pulls",
@@ -175,6 +186,7 @@ def org_activity(
     page: int = 1,
     page_size: int = DEFAULT_PAGE_SIZE,
     session: Session = Depends(get_session),
+    user: User = Depends(current_user),
 ) -> OrgActivityResponse:
     """Recent commit activity across every integrated target, substitutes for a
     GitHub Org audit log, which requires an Enterprise/paid-org audit log API
@@ -193,7 +205,10 @@ def org_activity(
     # (#273) Live targets only: this makes a real GitHub API call per target,
     # and a deleted one is both a wasted call and a repo that shouldn't be
     # appearing in an org activity feed at all.
+    ws_ids = accessible_workspace_ids(session, user)
     query = target_lifecycle.live_targets(select(Target))
+    if ws_ids is not None:
+        query = query.where(Target.workspace_id.in_(ws_ids))
     if target_id is not None:
         query = query.where(Target.id == target_id)
     targets = session.exec(query).all()

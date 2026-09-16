@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import SbomPage from "./page";
 import type { SbomComponent, Target } from "@/lib/api";
+import { renderWithWorkspace } from "@/test/render-with-workspace";
 
 /**
  * The Components tab rendered 717 components as one large card each, with the
@@ -11,15 +12,16 @@ import type { SbomComponent, Target } from "@/lib/api";
  * screen, and the "New" badge still only appears after a scan run in this
  * session, because a plain GET always reports is_new: false.
  */
-const { targets, getSbom, findingGroups } = vi.hoisted(() => ({
+const { targets, getSbom, findingGroups, workspaces } = vi.hoisted(() => ({
   targets: vi.fn(),
   getSbom: vi.fn(),
   findingGroups: vi.fn(),
+  workspaces: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, api: { ...actual.api, targets, getSbom, findingGroups } };
+  return { ...actual, api: { ...actual.api, targets, getSbom, findingGroups, workspaces } };
 });
 
 vi.mock("next/navigation", () => ({
@@ -64,8 +66,10 @@ beforeEach(() => {
   targets.mockReset();
   getSbom.mockReset();
   findingGroups.mockReset();
+  workspaces.mockReset();
   targets.mockResolvedValue([target()]);
   findingGroups.mockResolvedValue({ items: [], total: 0, total_findings: 0, truncated: false });
+  workspaces.mockResolvedValue([]);
 });
 
 describe("SBOM components tab", () => {
@@ -79,7 +83,7 @@ describe("SBOM components tab", () => {
       ],
     });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     expect(await screen.findByText("2 components")).not.toBeNull();
     // Name, version, ecosystem, purl and the first-seen date, one component
@@ -98,7 +102,7 @@ describe("SBOM components tab", () => {
   it("keeps the full purl available even though the column is capped", async () => {
     getSbom.mockResolvedValue({ target_id: 1, count: 1, components: [component()] });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     const purl = await screen.findByText("pkg:npm/lodash@4.17.21");
     // Truncation is what stops the longest and least discriminating string in
@@ -114,7 +118,7 @@ describe("SBOM components tab", () => {
       components: [component({ source: "github,upload" })],
     });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     expect(await screen.findByText("github,upload")).not.toBeNull();
   });
@@ -128,7 +132,7 @@ describe("SBOM components tab", () => {
       components: [component({ source: undefined })],
     });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     await screen.findByText("lodash");
     expect(screen.queryByText("github")).toBeNull();
@@ -139,7 +143,7 @@ describe("SBOM components tab", () => {
     // py-0 is the whole reason the rows collapse.
     getSbom.mockResolvedValue({ target_id: 1, count: 1, components: [component()] });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     const row = (await screen.findByText("lodash")).closest("[data-slot='card']") as HTMLElement;
     expect(row).not.toBeNull();
@@ -155,7 +159,7 @@ describe("SBOM components tab", () => {
       ),
     });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     expect(await screen.findByText("30 components")).not.toBeNull();
     expect(screen.getByText("pkg-25")).not.toBeNull();
@@ -173,7 +177,7 @@ describe("SBOM components tab", () => {
       components: [component({ is_new: true })],
     });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     await screen.findByText("lodash");
     expect(screen.queryByText("New")).toBeNull();
@@ -182,7 +186,7 @@ describe("SBOM components tab", () => {
   it("offers the empty state, not a list, when nothing has been recorded", async () => {
     getSbom.mockResolvedValue({ target_id: 1, count: 0, components: [] });
 
-    render(<SbomPage />);
+    renderWithWorkspace(<SbomPage />);
 
     expect(await screen.findByText("No components recorded yet")).not.toBeNull();
     expect(screen.getByText("0 components")).not.toBeNull();

@@ -1,5 +1,7 @@
+import { cookies } from "next/headers";
 import { GitBranch } from "lucide-react";
 import { api, type Group } from "@/lib/api";
+import { WORKSPACE_COOKIE_KEY, parseWorkspaceCookie } from "@/lib/workspace-cookie";
 import { AddTargetToggle } from "./add-target-toggle";
 import { ConnectedRefresher } from "./connected-refresher";
 import { IntegrationSummary } from "./integration-summary";
@@ -27,6 +29,9 @@ export default async function TargetsPage({
   const sp = await searchParams;
   const groupIdRaw = firstValue(sp.group_id);
   const group_id = groupIdRaw ? Number(groupIdRaw) : undefined;
+  // (#506) The global workspace switcher's active workspace, read from the
+  // cookie WorkspaceContext keeps in sync -- see lib/workspace-cookie.ts.
+  const workspace_id = parseWorkspaceCookie((await cookies()).get(WORKSPACE_COOKIE_KEY)?.value) ?? undefined;
 
   // Issue #174: scan history + open-finding counts alongside the inventory,
   // so a Repo Sync card can say which repos actually need attention instead
@@ -39,7 +44,7 @@ export default async function TargetsPage({
   // "most findings" sort silently collapsed to alphabetical. See
   // targets-list.tsx for what each boolean now suppresses.
   const [targetsResult, [githubStatus, githubStatusFailed], [groupsList, groupsFailed], scanSettled, targetSettled, me] = await Promise.all([
-    settleOrNull(api.targets({ group_id })),
+    settleOrNull(api.targets({ group_id, workspace_id })),
     // settledOr, not `.catch(() => ({ installed: false }))`: that fallback is
     // not a neutral default, it is a factual claim that the GitHub App is not
     // installed. A transient status failure therefore told an admin their
@@ -60,9 +65,9 @@ export default async function TargetsPage({
     // log: an empty group list and a group list that could not be fetched
     // render as the same filter, and the reader cannot tell that the repo
     // groups they organise by are simply missing from the control.
-    settledOr(api.groups(), [] as Group[]),
-    settledOr(api.scanSummary(), {}),
-    settledOr(api.targetsSummary(), {}),
+    settledOr(api.groups(workspace_id), [] as Group[]),
+    settledOr(api.scanSummary(workspace_id), {}),
+    settledOr(api.targetsSummary(workspace_id), {}),
     // (#356) The add-target form's empty-workspace state differs by role:
     // GET /api/workspaces is scoped by accessible_workspace_ids, so an empty
     // list means "none exist" to an admin and "you're a member of none" to

@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Building2 } from "lucide-react";
 import { api, workspaceDisplayName } from "@/lib/api";
 import type { WorkspaceSummary } from "@/lib/api";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -31,11 +31,32 @@ export function NewTargetForm({
   // the default was a lie on any fresh deployment: with no workspace rows
   // at all, submitting sent workspace_id=1 into a real FK column and the
   // resulting backend 500 reached the browser as a CORS error (see
-  // create_target in backend/app/api/targets.py). The same hook every admin
-  // panel already uses gives the actual list, so the id is chosen, never
-  // typed, and every other state of that list is handled below by
-  // AsyncContent rather than hand-rolled here.
-  const { workspaceId, setWorkspaceId, state } = useWorkspacePicker();
+  // create_target in backend/app/api/targets.py). The workspace list comes
+  // from the same WorkspaceContext every page reads (#506), so the id is
+  // chosen, never typed, and every other state of that list is handled below
+  // by AsyncContent rather than hand-rolled here.
+  //
+  // Which workspace a *new target* belongs to is this form's own decision,
+  // not the global active workspace: it starts there as a sensible default
+  // (seeded once below) but picking a different one here must not silently
+  // switch what every other page on screen is showing.
+  const { activeWorkspaceId, state } = useWorkspaceContext();
+  const [workspaceId, setWorkspaceId] = useState<number | null>(null);
+  // Seed once, the moment the workspace list first loads -- React's
+  // documented "adjust state when a prop changes" pattern (see sidebar.tsx's
+  // `lastPathname`), not an effect, so the seeded value is present on the
+  // very same render rather than one tick later. Falls back to the list's
+  // first workspace when the global switcher is on "All workspaces"
+  // (activeWorkspaceId null): that selection has no meaning for "which
+  // workspace does a *new* target belong to", and leaving this form's select
+  // on a value React doesn't believe is chosen (the browser still shows the
+  // first <option> visually) left "Add Target" silently, permanently
+  // disabled with no visible cause.
+  const [seeded, setSeeded] = useState(false);
+  if (!seeded && state.data !== null) {
+    setSeeded(true);
+    setWorkspaceId(activeWorkspaceId ?? state.data[0]?.id ?? null);
+  }
 
   const [name, setName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");

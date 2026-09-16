@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, EnforcementMode, Group, workspaceDisplayName } from "@/lib/api";
 import { useAsyncData } from "@/hooks/use-async-data";
-import { useWorkspacePicker } from "@/hooks/features/use-workspace-picker";
+import { useWorkspaceContext } from "@/contexts/workspace-context";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -34,13 +34,15 @@ const SWATCHES = [
 // group-level policy (#62) and group-level SLA (#70). Mirrors the
 // Policies tab's workspace-picker-then-CRUD-list shape.
 export function Groups() {
+  // (#506) Follows the global workspace switcher; repo groups are
+  // per-workspace, so a null activeWorkspaceId ("All workspaces") renders a
+  // prompt below rather than fetching anything.
   const {
     workspaces,
-    workspaceId,
-    setWorkspaceId,
+    activeWorkspaceId: workspaceId,
     error: workspacesError,
     reload: reloadWorkspaces,
-  } = useWorkspacePicker();
+  } = useWorkspaceContext();
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const {
@@ -99,7 +101,7 @@ export function Groups() {
     try {
       await api.updateWorkspace(workspaceId, { enforcement_mode: mode });
       // Refetch rather than patching the row in place: the workspace list is
-      // owned by useWorkspacePicker, and a second source of truth for it is
+      // owned by WorkspaceContext, and a second source of truth for it is
       // how these panels drifted apart in the first place.
       reloadWorkspaces();
       setPendingWsMode(null);
@@ -176,28 +178,13 @@ export function Groups() {
             </div>
           </div>
 
-          {workspaces === null ? (
-            <SkeletonList count={1} />
-          ) : workspaces.length === 0 ? (
+          {workspaceId == null && (
             <EmptyState
               icon={Building2}
-              title="No workspaces yet"
-              description="Connect a target first to create a workspace."
+              title="Pick a workspace"
+              description="Repo groups are per-workspace; choose one from the switcher in the sidebar to view them."
               bare
             />
-          ) : (
-            <select
-              aria-label="Workspace"
-              className="w-fit rounded-md border border-input bg-secondary px-3 py-2 text-sm text-foreground"
-              value={workspaceId ?? ""}
-              onChange={(e) => setWorkspaceId(Number(e.target.value))}
-            >
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {workspaceDisplayName(w, workspaces)}
-                </option>
-              ))}
-            </select>
           )}
 
           {activeWorkspace && (

@@ -45,17 +45,21 @@ export function getScan(scanId: number): Promise<ScanRun | { error: string }> {
 }
 
 /**
- * Retrieves summary metadata for the latest scans across all targets.
+ * Retrieves summary metadata for the latest scans across all targets,
+ * optionally narrowed to the global workspace switcher's active workspace.
  */
-export function scanSummary(): Promise<ScanSummary> {
-  return jsonFetch<ScanSummary>("/api/scans/summary");
+export function scanSummary(workspaceId?: number | null): Promise<ScanSummary> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  return jsonFetch<ScanSummary>(`/api/scans/summary${qs}`);
 }
 
 /**
- * Fetches all currently executing scans across all targets.
+ * Fetches all currently executing scans, optionally narrowed to the global
+ * workspace switcher's active workspace.
  */
-export function activeScans(): Promise<ActiveScans> {
-  return jsonFetch<ActiveScans>("/api/scans/active");
+export function activeScans(workspaceId?: number | null): Promise<ActiveScans> {
+  const qs = workspaceId != null ? `?workspace_id=${workspaceId}` : "";
+  return jsonFetch<ActiveScans>(`/api/scans/active${qs}`);
 }
 
 /**

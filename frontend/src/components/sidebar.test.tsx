@@ -22,6 +22,7 @@ vi.mock("next/navigation", () => ({
 // anchors in the rendered tree the nav's own, so an href assertion cannot be
 // satisfied by a link somewhere else in the sidebar chrome.
 vi.mock("@/components/global-search", () => ({ GlobalSearch: () => null }));
+vi.mock("@/components/workspace-switcher", () => ({ WorkspaceSwitcher: () => null }));
 vi.mock("@/components/density-toggle", () => ({ DensityToggle: () => null }));
 vi.mock("@/components/theme-toggle", () => ({ ThemeToggle: () => null }));
 vi.mock("@/components/brand-mark", () => ({ BrandLockup: () => null }));

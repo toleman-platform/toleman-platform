@@ -1615,17 +1615,26 @@ def raise_all_remediation_prs_endpoint(
         # later poll. Fail it immediately and visibly instead: the caller
         # gets a real 502 right away rather than a spinner that looks
         # "in progress" for up to the stale-job window.
+        #
+        # The raw exception is logged server-side only, never put in the
+        # response: unlike AutofixError (a deliberately crafted, safe
+        # user-facing message), this is whatever the Celery/Redis client
+        # library raised, which can carry internal connection details a
+        # DEVELOPER-role caller has no business seeing.
+        logger.exception("failed to dispatch raise-all batch %s", batch.id)
         batch.status = "completed"
         batch.failed = batch.total
         batch.completed_at = utcnow()
         session.add(batch)
         for item in items:
             item.status = "failed"
-            item.error = f"failed to dispatch: {exc}"
+            item.error = "failed to dispatch: internal error, see server logs"
             item.completed_at = utcnow()
             session.add(item)
         session.commit()
-        raise HTTPException(status_code=502, detail=f"failed to dispatch raise-all batch: {exc}") from exc
+        raise HTTPException(
+            status_code=502, detail="failed to dispatch raise-all batch; check server logs"
+        ) from exc
 
     return JSONResponse(
         status_code=202,

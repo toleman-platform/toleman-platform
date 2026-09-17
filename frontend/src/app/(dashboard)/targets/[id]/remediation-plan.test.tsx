@@ -227,6 +227,9 @@ describe("RemediationPlanView", () => {
     expect(container.textContent).not.toContain("Fix coverage unknown");
     const link = screen.getByRole("link", { name: /Go to page 1/i }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/targets/7?tab=fix-plan");
+    // No pager: ActivityPagination's "Showing X-Y of Z" range math assumes
+    // `page` is in range, which this state is defined by NOT being.
+    expect(screen.queryByText(/Showing/)).toBeNull();
   });
 
   it("states what an upgrade leaves behind, not just what it fixes", () => {

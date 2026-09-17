@@ -286,6 +286,36 @@ def test_raise_all_refuses_an_empty_plan(client, engine):
     assert res.status_code == 400
 
 
+def test_raise_all_dispatch_failure_fails_the_batch_without_leaking_the_raw_exception(client, engine, monkeypatch):
+    """A broker publish failure (Redis unreachable, etc) must not leave the
+    batch stuck "running" until mark_stale_if_needed's timeout, and must
+    not put the raw exception text -- which can carry internal connection
+    details -- in front of a DEVELOPER-role caller (flagged by Toleman's
+    own PR Guardrail on this PR)."""
+    target_id = _dev_client_with_target(client, engine)
+    _finding_with_fix(engine, target_id, "CVE-2024-1", "starlette", "0.40.0")
+
+    def boom(**kwargs):
+        raise ConnectionError("redis://internal-host:6379 refused")
+
+    monkeypatch.setattr(findings_module.run_raise_all_batch, "delay", boom)
+
+    res = client.post("/api/findings/remediations/raise-all", json={"target_id": target_id})
+    assert res.status_code == 502
+    assert "redis://internal-host" not in res.json()["detail"]
+    assert "check server logs" in res.json()["detail"]
+
+    with Session(engine) as session:
+        batch = session.exec(select(RemediationPrBatch)).first()
+        assert batch.status == "completed"
+        assert batch.failed == batch.total
+        items = session.exec(
+            select(RemediationPrBatchItem).where(RemediationPrBatchItem.batch_id == batch.id)
+        ).all()
+        assert all(i.status == "failed" for i in items)
+        assert all("redis://internal-host" not in i.error for i in items)
+
+
 def test_raise_all_requires_developer_role(client, engine, monkeypatch):
     ws = _workspace(engine)
     target_id = _target(engine, ws)

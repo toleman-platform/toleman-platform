@@ -301,20 +301,22 @@ export function RemediationPlanView({
   // target": rendering emptyPlanCopy here would claim things about
   // coverage/fixes that have nothing to do with why THIS page is blank.
   if (plans.length === 0) {
+    // No pager here, deliberately: ActivityPagination's own range math
+    // ("Showing X-Y of Z") assumes `page` is within range, and an
+    // out-of-range `page` (that's the whole reason this branch exists)
+    // would render a nonsensical range instead of a usable control. The
+    // "Go to page 1" action below is the only navigation this state needs.
     return (
-      <div className="flex flex-col gap-3">
-        <ActivityPagination total={resolvedTotal} page={page} pageSize={pageSize} position="top" />
-        <EmptyState
-          icon={PackageSearch}
-          title="No upgrades on this page"
-          description={`Page ${page} is past the end of this target's ${resolvedTotal} upgrade${resolvedTotal === 1 ? "" : "s"}.`}
-          action={
-            <Button asChild size="sm" variant="outline">
-              <Link href={`/targets/${targetId}?tab=fix-plan`}>Go to page 1</Link>
-            </Button>
-          }
-        />
-      </div>
+      <EmptyState
+        icon={PackageSearch}
+        title="No upgrades on this page"
+        description={`Page ${page} is past the end of this target's ${resolvedTotal} upgrade${resolvedTotal === 1 ? "" : "s"}.`}
+        action={
+          <Button asChild size="sm" variant="outline">
+            <Link href={`/targets/${targetId}?tab=fix-plan`}>Go to page 1</Link>
+          </Button>
+        }
+      />
     );
   }
 

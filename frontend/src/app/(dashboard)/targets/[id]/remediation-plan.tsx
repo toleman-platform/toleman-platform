@@ -278,7 +278,7 @@ export function RemediationPlanView({
     return <ErrorState description="The fix plan couldn't be loaded from the API." action={<ReloadButton />} />;
   }
 
-  if (plans.length === 0) {
+  if (resolvedTotal === 0) {
     const { title, description } = emptyPlanCopy(coverage);
     return (
       <EmptyState
@@ -291,6 +291,30 @@ export function RemediationPlanView({
           </Button>
         }
       />
+    );
+  }
+
+  // Real upgrades exist (resolvedTotal > 0) but this specific page has none
+  // -- a stale/hand-edited `?page=` past the last one, most likely after
+  // the plan shrank (a package got fixed elsewhere, a finding triaged
+  // away). This is NOT the same fact as "no upgrades exist for this
+  // target": rendering emptyPlanCopy here would claim things about
+  // coverage/fixes that have nothing to do with why THIS page is blank.
+  if (plans.length === 0) {
+    return (
+      <div className="flex flex-col gap-3">
+        <ActivityPagination total={resolvedTotal} page={page} pageSize={pageSize} position="top" />
+        <EmptyState
+          icon={PackageSearch}
+          title="No upgrades on this page"
+          description={`Page ${page} is past the end of this target's ${resolvedTotal} upgrade${resolvedTotal === 1 ? "" : "s"}.`}
+          action={
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/targets/${targetId}?tab=fix-plan`}>Go to page 1</Link>
+            </Button>
+          }
+        />
+      </div>
     );
   }
 

@@ -213,6 +213,22 @@ describe("RemediationPlanView", () => {
     expect(container.textContent).not.toContain("names a fixed version");
   });
 
+  it("treats an out-of-range page as distinct from a genuinely empty plan", () => {
+    // resolvedTotal (5) > 0, but this specific page has nothing on it --
+    // must not borrow emptyPlanCopy's wording, which is about the whole
+    // target having no fixes, not about which page was requested.
+    const { container } = render(
+      <RemediationPlanView targetId={7} plans={[]} coverage={makeCoverage()} failed={false} total={5} page={3} pageSize={25} />,
+    );
+
+    expect(screen.getByText("No upgrades on this page")).not.toBeNull();
+    expect(container.textContent).toContain("Page 3 is past the end of this target's 5 upgrades");
+    expect(container.textContent).not.toContain("No fixed versions published");
+    expect(container.textContent).not.toContain("Fix coverage unknown");
+    const link = screen.getByRole("link", { name: /Go to page 1/i }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/targets/7?tab=fix-plan");
+  });
+
   it("states what an upgrade leaves behind, not just what it fixes", () => {
     const plan = makePlan({
       package: "axios",

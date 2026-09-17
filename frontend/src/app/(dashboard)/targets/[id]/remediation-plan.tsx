@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PackageSearch } from "lucide-react";
+import { ChevronRight, PackageSearch } from "lucide-react";
 import { findingRemediations } from "@/lib/api";
 import type { PackageRemediation, RemediationCoverage, RemediationPlanResponse } from "@/types";
 import { settledOr } from "@/std-lib";
@@ -123,17 +123,30 @@ function PackageRow({ targetId, plan }: { targetId: number; plan: PackageRemedia
 
         <p className="text-sm text-muted-foreground">{summarize(plan)}</p>
 
-        <ul className="flex flex-col gap-0.5">
-          {plan.fixes.map((fix) => (
-            <FixRow
-              key={fix.finding_id}
-              targetId={targetId}
-              cve_id={fix.cve_id}
-              severity={fix.severity}
-              title={fix.title}
-            />
-          ))}
-        </ul>
+        {/* Collapsed by default: the sentence above already states the
+            honest count ("fixes N of M"), so the per-CVE link list below it
+            is drill-down detail, not the one place that count lives -- a
+            package with a dozen findings on the same rule (a nodejs-debug
+            ReDoS repeated across every file that pins it, say) was several
+            screens tall before this. Native <details> so no client
+            component is needed just to toggle visibility. */}
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center gap-1 text-xs text-muted-foreground marker:content-none hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" />
+            {plan.fixes.length} finding{plan.fixes.length === 1 ? "" : "s"} fixed by this upgrade
+          </summary>
+          <ul className="mt-2 flex flex-col gap-0.5">
+            {plan.fixes.map((fix) => (
+              <FixRow
+                key={fix.finding_id}
+                targetId={targetId}
+                cve_id={fix.cve_id}
+                severity={fix.severity}
+                title={fix.title}
+              />
+            ))}
+          </ul>
+        </details>
 
         {/* Deliberately unconditional whenever the array is non-empty: this
             block is the one place #247's whole reason for existing shows up

@@ -509,6 +509,29 @@ class TestWorkspacePlan:
         assert by_target[t1]["upgrade_to"] == "0.40.0"
         assert by_target[t2]["upgrade_to"] == "0.41.0"
 
+    def test_target_id_breaks_ties_when_two_targets_share_a_name(self, engine):
+        """Target names aren't unique -- two targets tied on package,
+        severity and fixes_count, with the SAME display name, still need a
+        fully deterministic order or separate page requests can duplicate
+        or drop the tied row depending on the DB's own row order."""
+        t1 = _target(engine)
+        t2 = _target(engine)
+        with Session(engine) as session:
+            for tid in (t1, t2):
+                target = session.get(Target, tid)
+                target.name = "same-name"
+                session.add(target)
+            session.commit()
+        _finding(engine, t1, "CVE-1", fixes=[("pkg-a", "1.0")])
+        _finding(engine, t2, "CVE-2", fixes=[("pkg-a", "1.0")])
+
+        with Session(engine) as session:
+            first = workspace_remediation_plan(session, [t1, t2])
+            second = workspace_remediation_plan(session, [t2, t1])
+        # Same order regardless of the order target_ids was passed in.
+        assert [r["target_id"] for r in first["plans"]] == [r["target_id"] for r in second["plans"]]
+        assert [r["target_id"] for r in first["plans"]] == sorted([t1, t2])
+
     def test_carries_the_target_name_on_every_row(self, engine):
         t1 = _target(engine)
         _finding(engine, t1, "CVE-1", fixes=[("starlette", "0.40.0")])

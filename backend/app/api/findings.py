@@ -1577,7 +1577,7 @@ def raise_package_fix_pr_endpoint(
         # being down. This call sat unguarded even though
         # sweep_auto_raise_prs already wraps the identical call.
         logger.exception("failed to build the fix plan for target %s", target.id)
-        raise HTTPException(status_code=502, detail="failed to build the fix plan; check server logs") from exc
+        raise HTTPException(status_code=422, detail="failed to build the fix plan; check server logs") from exc
     plan = next((p for p in plans if p["package"] == payload.package), None)
     if plan is None:
         raise HTTPException(status_code=404, detail="package not found in this target's current fix plan")
@@ -1590,7 +1590,19 @@ def raise_package_fix_pr_endpoint(
         # already open for this package rather than opening a duplicate.
         pr = {"pr_url": exc.pr_url, "pr_number": exc.pr_number, "branch": exc.branch}
     except AutofixError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        # 422, never 502/504: this is an application-level "couldn't
+        # complete the GitHub-side write" condition (no App installed,
+        # couldn't decrypt a stored credential, no manifest could be
+        # bumped), not an actual gateway/upstream failure -- and
+        # Cloudflare's edge intercepts 502/504 responses and replaces them
+        # with its own generic error page, stripping the body AND every
+        # header including CORS. That's indistinguishable from the API
+        # being unreachable to a browser's fetch(), which is exactly what
+        # this status code was doing before it was reproduced live: a
+        # clean, intentional 502 whose body/headers the browser never
+        # actually got to see, indistinguishable from the backend being
+        # down.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return RaisePackageFixPrResponse(**pr)
 
 
@@ -1648,8 +1660,10 @@ def raise_all_remediation_prs_endpoint(
     except Exception as exc:
         # Same reasoning as raise_package_fix_pr_endpoint's identical guard
         # just above: this call must not be allowed to escape uncaught.
+        # 422, not 502 -- see that guard's comment for why 502/504 get
+        # eaten by Cloudflare's edge before the browser ever sees them.
         logger.exception("failed to build the fix plan for target %s", target.id)
-        raise HTTPException(status_code=502, detail="failed to build the fix plan; check server logs") from exc
+        raise HTTPException(status_code=422, detail="failed to build the fix plan; check server logs") from exc
     if not plans:
         raise HTTPException(status_code=400, detail="this target's fix plan is empty")
 
@@ -1672,8 +1686,12 @@ def raise_all_remediation_prs_endpoint(
         # will never run -- left as "running", the batch would only get
         # marked failed once mark_stale_if_needed's timeout elapses on a
         # later poll. Fail it immediately and visibly instead: the caller
-        # gets a real 502 right away rather than a spinner that looks
-        # "in progress" for up to the stale-job window.
+        # gets a real error right away rather than a spinner that looks
+        # "in progress" for up to the stale-job window. 422, not 502/504:
+        # same Cloudflare-edge-interception reasoning as every other
+        # AutofixError response in this file -- those status codes get
+        # replaced with a generic edge error page before the browser ever
+        # sees the body, indistinguishable from the API being unreachable.
         #
         # The raw exception is logged server-side only, never put in the
         # response: unlike AutofixError (a deliberately crafted, safe
@@ -1692,7 +1710,7 @@ def raise_all_remediation_prs_endpoint(
             session.add(item)
         session.commit()
         raise HTTPException(
-            status_code=502, detail="failed to dispatch raise-all batch; check server logs"
+            status_code=422, detail="failed to dispatch raise-all batch; check server logs"
         ) from exc
 
     return JSONResponse(
@@ -2006,7 +2024,15 @@ def raise_fix_pr_endpoint(
     try:
         pr = open_fix_pr(session, target, finding, patch)
     except AutofixError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        # 422, not 502/504: an application-level "couldn't complete the
+        # GitHub-side write" condition (no App installed, branch/PR-open
+        # failure), not an actual gateway/upstream failure -- and
+        # Cloudflare's edge intercepts 502/504 responses and replaces them
+        # with its own generic error page, stripping the body and every
+        # header including CORS, which a browser's fetch() then reports as
+        # a plain network failure indistinguishable from the API being
+        # unreachable. Reproduced live and traced to exactly this.
+        raise HTTPException(status_code=422, detail=str(exc))
     return RaiseFixPrResponse(**pr)
 
 

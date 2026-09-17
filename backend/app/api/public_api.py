@@ -335,7 +335,11 @@ def raise_fix_pr_endpoint(
             summary=f"failed to open PR for finding #{finding.id} (strategy={payload.strategy})",
             target_id=finding.target_id, finding_id=finding.id, success=False, error=str(exc),
         )
-        raise HTTPException(status_code=502, detail=str(exc))
+        # 422, not 502/504 -- same Cloudflare-edge-interception reasoning
+        # as the internal /api/findings/{id}/raise-pr endpoint this mirrors
+        # (app/api/findings.py): those status codes get replaced with a
+        # generic edge error page before the caller ever sees the body.
+        raise HTTPException(status_code=422, detail=str(exc))
 
     log_mcp_action(
         session, user, agent=agent, tool="raise_fix_pr",

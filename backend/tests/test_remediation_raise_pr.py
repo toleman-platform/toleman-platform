@@ -168,7 +168,44 @@ def test_raise_pr_404s_for_a_package_not_in_the_current_plan(client, engine):
     assert res.status_code == 404
 
 
-def test_raise_pr_surfaces_autofix_error_as_502(client, engine, monkeypatch):
+def test_raise_pr_converts_a_group_remediations_failure_to_422_not_an_uncaught_crash(client, engine, monkeypatch):
+    """#527's guard: group_remediations must not be allowed to escape
+    uncaught (past CORSMiddleware, into a bare 500) -- and the response it
+    converts that into is 422, not 502/504, for the same Cloudflare-edge
+    reason every other AutofixError response in this file now uses."""
+    target_id = _dev_client_with_target(client, engine)
+
+    def boom(session, target_id):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(findings_module, "group_remediations", boom)
+
+    res = client.post(
+        "/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "starlette"}
+    )
+    assert res.status_code == 422
+    assert "boom" not in res.json()["detail"]
+
+
+def test_raise_all_converts_a_group_remediations_failure_to_422_not_an_uncaught_crash(client, engine, monkeypatch):
+    target_id = _dev_client_with_target(client, engine)
+
+    def boom(session, target_id):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(findings_module, "group_remediations", boom)
+
+    res = client.post("/api/findings/remediations/raise-all", json={"target_id": target_id})
+    assert res.status_code == 422
+    assert "boom" not in res.json()["detail"]
+
+
+def test_raise_pr_surfaces_autofix_error_as_422(client, engine, monkeypatch):
+    """422, not 502/504: Cloudflare's edge intercepts and replaces 502/504
+    responses with its own generic error page (stripping the body and
+    every header, CORS included), which a browser's fetch() then reports
+    as a plain network failure indistinguishable from the API being
+    unreachable -- reproduced live against a real deployment."""
     target_id = _dev_client_with_target(client, engine)
     _finding_with_fix(engine, target_id, "CVE-2024-1", "starlette", "0.40.0")
 
@@ -180,7 +217,7 @@ def test_raise_pr_surfaces_autofix_error_as_502(client, engine, monkeypatch):
     res = client.post(
         "/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "starlette"}
     )
-    assert res.status_code == 502
+    assert res.status_code == 422
     assert "no GitHub App installed" in res.json()["detail"]
 
 
@@ -301,7 +338,9 @@ def test_raise_all_dispatch_failure_fails_the_batch_without_leaking_the_raw_exce
     monkeypatch.setattr(findings_module.run_raise_all_batch, "delay", boom)
 
     res = client.post("/api/findings/remediations/raise-all", json={"target_id": target_id})
-    assert res.status_code == 502
+    # 422, not 502/504 -- Cloudflare's edge intercepts and replaces those,
+    # stripping the body/CORS headers before the browser ever sees them.
+    assert res.status_code == 422
     assert "redis://internal-host" not in res.json()["detail"]
     assert "check server logs" in res.json()["detail"]
 

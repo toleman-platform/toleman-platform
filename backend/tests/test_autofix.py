@@ -599,7 +599,12 @@ def test_raise_pr_endpoint_rejects_a_suppression_comment_on_the_flagged_line(cli
     assert called["open_fix_pr"] is False
 
 
-def test_raise_pr_endpoint_surfaces_autofix_error_as_502(client, engine, monkeypatch):
+def test_raise_pr_endpoint_surfaces_autofix_error_as_422(client, engine, monkeypatch):
+    """422, not 502/504: Cloudflare's edge intercepts and replaces 502/504
+    responses with its own generic error page (stripping the body and
+    every header, CORS included), which a browser's fetch() then reports
+    as a plain network failure indistinguishable from the API being
+    unreachable -- reproduced live against a real deployment."""
     _login(client, engine)
     target_id = _make_target(engine)
     finding_id = _make_finding(engine, target_id, tool="trivy", file_path="requirements.txt")
@@ -618,7 +623,7 @@ def test_raise_pr_endpoint_surfaces_autofix_error_as_502(client, engine, monkeyp
             "strategy": "deterministic_sca",
         },
     )
-    assert resp.status_code == 502
+    assert resp.status_code == 422
     assert "no GitHub App installed" in resp.json()["detail"]
 
 

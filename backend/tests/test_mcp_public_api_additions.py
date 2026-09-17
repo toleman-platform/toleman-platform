@@ -303,7 +303,9 @@ def test_public_raise_pr_rejects_file_path_mismatch(client, engine):
     assert res.status_code == 400
 
 
-def test_public_raise_pr_surfaces_autofix_error_as_502(client, engine, monkeypatch):
+def test_public_raise_pr_surfaces_autofix_error_as_422(client, engine, monkeypatch):
+    """422, not 502/504 -- same Cloudflare-edge-interception reasoning as
+    the internal /api/findings/{id}/raise-pr endpoint this mirrors."""
     ws_id, target_id = _make_workspace_and_target(engine)
     client, uid = _login(client, engine)
     _assign(engine, uid, ws_id)
@@ -322,7 +324,7 @@ def test_public_raise_pr_surfaces_autofix_error_as_502(client, engine, monkeypat
         headers={"Authorization": f"Bearer {token}"},
         json={"file_path": "requirements.txt", "new_content": "x==2.0\n", "ref": "main", "strategy": "deterministic_sca"},
     )
-    assert res.status_code == 502
+    assert res.status_code == 422
     assert "no GitHub App installed" in res.json()["detail"]
 
 

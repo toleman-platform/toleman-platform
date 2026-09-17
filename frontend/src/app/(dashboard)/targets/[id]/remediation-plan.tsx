@@ -96,12 +96,32 @@ function FixRow({ targetId, cve_id, severity, title }: {
   );
 }
 
-function PackageRow({ targetId, plan }: { targetId: number; plan: PackageRemediation }) {
+export function PackageRow({
+  targetId,
+  plan,
+  targetName,
+}: {
+  targetId: number;
+  plan: PackageRemediation;
+  // Set only by the workspace-wide Fix Plan (Findings page): a package row
+  // there can be about any target in the estate, so the card has to say
+  // which one before the reader can act on it. The per-target Fix Plan tab
+  // never passes this -- the target is already the whole page's context.
+  targetName?: string;
+}) {
   return (
     <Card className={cn("border-l-4 bg-card", SEVERITY_BORDER_COLOR[plan.highest_severity])}>
       <CardContent className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2 text-sm">
+            {targetName && (
+              <Link
+                href={`/targets/${targetId}?tab=fix-plan`}
+                className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                {targetName}
+              </Link>
+            )}
             <span className="font-semibold text-foreground">{plan.package}</span>
             <span className="text-muted-foreground">upgrade to</span>
             <span className="text-code font-medium text-foreground">{plan.upgrade_to}</span>

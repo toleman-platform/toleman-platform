@@ -35,7 +35,7 @@ from collections import defaultdict
 
 from sqlmodel import Session, select
 
-from app.models.models import CveEnrichment, Finding, FindingState
+from app.models.models import CveEnrichment, Finding, FindingState, Target
 
 
 def parse_version(raw: str) -> tuple:
@@ -196,6 +196,89 @@ def remediation_plan(session: Session, target_id: int, page: int = 1, page_size:
         "plans": plans[start:start + page_size],
         "coverage": enrichment_coverage(findings, by_cve),
         "total": len(plans),
+    }
+
+
+def workspace_remediation_plan(session: Session, target_ids: list[int], page: int = 1, page_size: int = 25) -> dict:
+    """The Fix Plan aggregated across every target in `target_ids` (#247
+    follow-up) -- the Findings page's workspace-wide companion to the
+    per-target `remediation_plan`, for a security engineer triaging a
+    whole estate rather than one repo at a time.
+
+    Fans out to `_group_by_package` one target at a time rather than
+    running a single cross-target query: a fix is inherently target-
+    scoped (raising a PR needs one specific repo), so a package is never
+    merged across targets the way findings ARE merged across one target's
+    own plan. "starlette" needing an upgrade on target A and on target B
+    are two independent rows here, each tagged with `target_id`/
+    `target_name`, never collapsed into one -- this is the one place this
+    module's grouping key changes from "package" to "(target, package)".
+
+    `coverage` is computed once over the COMBINED finding set across every
+    target, not summed per-target: `distinct_cves` counts a CVE hitting
+    three targets once, the same "count what's actually distinct" rule
+    `enrichment_coverage` already applies within a single target.
+
+    Batched to a flat 3 queries total (targets, one findings query across
+    every target_id, one enrichment query over the combined finding set)
+    rather than fanning `_open_cve_findings`/`_enrichment_by_cve` out once
+    per target -- the naive per-target loop this replaced made `2N + 2`
+    queries for N targets, which is the whole page load's query count on
+    every request to this endpoint.
+
+    Same pagination shape as `remediation_plan`: `plans` is a page-sliced,
+    already-sorted list; `total` is the whole cross-target row count.
+    """
+    if not target_ids:
+        return {"plans": [], "coverage": enrichment_coverage([], {}), "total": 0}
+
+    targets = {t.id: t for t in session.exec(select(Target).where(Target.id.in_(target_ids))).all()}
+
+    all_findings = list(
+        session.exec(
+            select(Finding).where(
+                Finding.target_id.in_(list(targets)),
+                Finding.state == FindingState.OPEN,
+                Finding.cve_id.is_not(None),
+            )
+        ).all()
+    )
+    by_cve = _enrichment_by_cve(session, all_findings)
+    findings_by_target: dict[int, list[Finding]] = defaultdict(list)
+    for finding in all_findings:
+        findings_by_target[finding.target_id].append(finding)
+
+    rows: list[dict] = []
+    for target_id in target_ids:
+        target = targets.get(target_id)
+        if target is None:
+            continue
+        for row in _group_by_package(findings_by_target[target_id], by_cve):
+            rows.append({**row, "target_id": target_id, "target_name": target.name})
+
+    coverage = enrichment_coverage(all_findings, by_cve)
+
+    # Same ordering rule _group_by_package's own sort uses, with target
+    # name and then target_id as the final tiebreaks: names aren't unique
+    # (two targets can share a display name), so a package tied on
+    # everything else including name still needs one fully deterministic
+    # cross-target order, or pagination can duplicate or drop a tied row
+    # across separate requests depending on the DB's own row order.
+    rows.sort(
+        key=lambda r: (
+            -r["fixes_count"], -_severity_rank(r["highest_severity"]),
+            r["package"].casefold(), r["target_name"].casefold(), r["target_id"],
+        )
+    )
+
+    page = max(page, 1)
+    page_size = max(min(page_size, 500), 1)
+    start = (page - 1) * page_size
+
+    return {
+        "plans": rows[start:start + page_size],
+        "coverage": coverage,
+        "total": len(rows),
     }
 
 

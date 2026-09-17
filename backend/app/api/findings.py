@@ -21,7 +21,7 @@ from app.core.autofix import AutofixError, Patch, find_suppression_comment, open
 from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
-from app.core.remediation import group_remediations, remediation_plan
+from app.core.remediation import group_remediations, remediation_plan, workspace_remediation_plan
 from app.core.remediation_autofix import AlreadyRaisedError, raise_package_fix_pr
 from app.core.staleness import mark_stale_if_needed
 from app.core.grouping import (
@@ -1480,6 +1480,46 @@ def list_remediations(
         # itself information.
         raise HTTPException(status_code=404, detail="target not found")
     return RemediationPlanResponse(**remediation_plan(session, target_id, page=page, page_size=page_size))
+
+
+@router.get("/remediations/workspace")
+def list_workspace_remediations(
+    workspace_id: int | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=500),
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> RemediationPlanResponse:
+    """(#247 follow-up) The Fix Plan aggregated across every target the
+    caller can see -- the Findings page's workspace-wide companion to the
+    per-target GET /remediations, for a security engineer triaging a
+    whole estate rather than one repo at a time. Each row carries which
+    target it's for (`target_id`/`target_name`); a package needing an
+    upgrade on two different repos is two independent rows, never merged
+    into one.
+
+    `workspace_id` narrows to one workspace, the same cookie-driven scope
+    the rest of the Findings page reads (WorkspaceContext); omitted, it's
+    every workspace the caller can access -- same `None`-means-unfiltered
+    convention `accessible_workspace_ids` uses everywhere else. A
+    `workspace_id` outside the caller's access 404s, same as an
+    inaccessible `target_id` does on the per-target endpoint above.
+    """
+    ws_ids = accessible_workspace_ids(session, user)
+    target_query = select(Target)
+    if workspace_id is not None:
+        if ws_ids is not None and workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="workspace not found")
+        target_query = target_query.where(Target.workspace_id == workspace_id)
+    elif ws_ids is not None:
+        target_query = target_query.where(Target.workspace_id.in_(ws_ids))
+    # (#273) Soft-deleted targets drop out of the aggregate the same way
+    # they drop out of every other list/aggregate in this codebase.
+    target_ids = [t.id for t in session.exec(target_lifecycle.live_targets(target_query)).all()]
+
+    return RemediationPlanResponse(
+        **workspace_remediation_plan(session, target_ids, page=page, page_size=page_size)
+    )
 
 
 class RaisePackageFixPrRequest(BaseModel):

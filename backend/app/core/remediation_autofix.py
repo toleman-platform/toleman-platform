@@ -35,6 +35,7 @@ from sqlmodel import Session, select
 
 import app.core.autofix as autofix
 from app.core import target_lifecycle
+from app.core.crypto import SecretDecryptionError
 from app.core.remediation import group_remediations
 from app.models.models import Finding, RemediationFixPr, Target
 
@@ -148,7 +149,43 @@ def raise_package_fix_pr(session: Session, target: Target, plan: dict, raised_by
         # RemediationFixPr row for this exact (target, package).
         raise AlreadyRaisedError(prior.pr_url, prior.pr_number, prior.branch)
 
-    patches = build_package_patch_files(session, target, plan)
+    try:
+        patches = build_package_patch_files(session, target, plan)
+    except autofix.AutofixError:
+        raise
+    except SecretDecryptionError as exc:
+        # Same PLATFORM_ENCRYPTION_KEY-mismatch failure mode
+        # app.tasks.pipeline_tasks guards against explicitly: reading a
+        # manifest file can resolve a stored GitHub token
+        # (app.core.github_token.resolve_github_token), and a bare
+        # ValueError subclass escaping this far would reach the API layer
+        # uncaught -- past CORSMiddleware, past every AutofixError handler
+        # every caller here relies on -- and surface to a browser as a
+        # plain network failure with no CORS headers at all (see
+        # app.api.targets.create_target's own comment on this exact class
+        # of bug). Converted to AutofixError so it's always handled the
+        # normal way instead.
+        logger.exception(
+            "raise_package_fix_pr: PLATFORM_ENCRYPTION_KEY mismatch reading %s's manifest on target %s",
+            plan["package"], target.id,
+        )
+        raise autofix.AutofixError(
+            "PLATFORM_ENCRYPTION_KEY mismatch -- the stored GitHub credentials for this target "
+            "cannot be decrypted with the currently configured key. Reconnect the GitHub App or "
+            "clone credential in Admin/Settings."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001, last-resort catch so an
+        # unexpected failure reading GitHub (a library exception neither
+        # _fetch_file nor resolve_github_token already turns into a clean
+        # None/AutofixError) can't escape uncaught the same way -- see the
+        # SecretDecryptionError branch above for why that matters here
+        # specifically, not just as defensive boilerplate.
+        logger.exception(
+            "raise_package_fix_pr: unexpected error building a patch for %s on target %s",
+            plan["package"], target.id,
+        )
+        raise autofix.AutofixError(f"failed to read {plan['package']}'s manifest file(s) from GitHub") from exc
+
     if not patches:
         raise autofix.AutofixError(
             f"could not locate a version pin for {plan['package']} in any manifest file "
@@ -189,16 +226,40 @@ def raise_package_fix_pr(session: Session, target: Target, plan: dict, raised_by
     pr_body = "\n".join(body_lines)
 
     branch_name = f"toleman/fix-pkg-{target.id}-{_slugify(package)}-{int(time.time())}"
-    pr = autofix._commit_files_and_open_pr(
-        session,
-        target,
-        ref=base_ref,
-        branch_name=branch_name,
-        files=files,
-        commit_message=f"Fix: upgrade {package} to {version}",
-        pr_title=f"Fix: upgrade {package} to {version}",
-        pr_body=pr_body,
-    )
+    try:
+        pr = autofix._commit_files_and_open_pr(
+            session,
+            target,
+            ref=base_ref,
+            branch_name=branch_name,
+            files=files,
+            commit_message=f"Fix: upgrade {package} to {version}",
+            pr_title=f"Fix: upgrade {package} to {version}",
+            pr_body=pr_body,
+        )
+    except autofix.AutofixError:
+        raise
+    except SecretDecryptionError as exc:
+        # Same class of bug as build_package_patch_files' identical guard
+        # above, here for the GitHub App's own private key (minted via
+        # _installation_token_or_none -> get_installation_token) rather
+        # than a stored clone token.
+        logger.exception(
+            "raise_package_fix_pr: could not decrypt the GitHub App key opening a PR for %s on target %s",
+            package, target.id,
+        )
+        raise autofix.AutofixError(
+            "PLATFORM_ENCRYPTION_KEY mismatch -- the GitHub App credentials for this target's "
+            "workspace cannot be decrypted with the currently configured key. Reconnect the GitHub "
+            "App in Admin > Global Integrations."
+        ) from exc
+    except Exception as exc:  # noqa: BLE001, see build_package_patch_files'
+        # identical catch-all above for why this can't be allowed to
+        # escape uncaught.
+        logger.exception(
+            "raise_package_fix_pr: unexpected error opening a PR for %s on target %s", package, target.id,
+        )
+        raise autofix.AutofixError(f"failed to open a PR for {package}") from exc
 
     session.add(RemediationFixPr(
         target_id=target.id,

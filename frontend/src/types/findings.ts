@@ -297,6 +297,14 @@ export type PackageRemediation = {
   fixes_count: number;
   unresolved: RemediationUnresolved[];
   highest_severity: Finding["severity"];
+  // (#247 follow-up) Only set by GET /api/findings/remediations/workspace,
+  // the Findings page's cross-target aggregate -- a package fix is
+  // inherently one-target-scoped (raising a PR needs a specific repo), so
+  // the same package needing an upgrade on two targets is two rows here,
+  // each tagged with which target it's for. Absent on the per-target Fix
+  // Plan tab's own rows, where the target is already the page's context.
+  target_id?: number;
+  target_name?: string;
 };
 
 /**

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { cookies } from "next/headers";
 import { api } from "@/lib/api";
 import { WORKSPACE_COOKIE_KEY, parseWorkspaceCookie } from "@/lib/workspace-cookie";
@@ -13,6 +14,8 @@ import { PageHeader } from "@/components/ui/page-header";
 import { HelpHint } from "@/components/ui/help-hint";
 import { HELP_CONTENT } from "@/lib/help-content";
 import { settleOrNull } from "@/std-lib";
+import { cn } from "@/lib/utils";
+import { WorkspaceRemediationPlan } from "./workspace-remediation-plan";
 // Plain modules, not "use client" components; a Server Component cannot call
 // a function exported from a client module.
 import {
@@ -57,6 +60,51 @@ export default async function FindingsPage({
     newSinceRaw,
   } = parseFindingsView(sp);
   const target_id = targetIdRaw.map(Number);
+
+  // (#247 follow-up) "Fix Plan" is a second page-level mode, not another
+  // queue/category filter over the same findings list -- different data
+  // source (workspace_remediation_plan, not _filtered_findings_query),
+  // different card shape. `tab`, not `queue`: `queue` already means "which
+  // findings-state bucket" everywhere else on this page.
+  const tab = Array.isArray(sp.tab) ? sp.tab[0] : sp.tab;
+  const showFixPlan = tab === "fix-plan";
+
+  const modeTabs = (
+    <div className="flex gap-1 border-b border-border">
+      <Link
+        href="/findings"
+        scroll={false}
+        aria-current={showFixPlan ? undefined : "page"}
+        className={cn(
+          "px-3 py-2 text-sm font-medium transition-colors",
+          showFixPlan ? "text-muted-foreground hover:text-foreground" : "border-b-2 border-primary text-foreground",
+        )}
+      >
+        Findings
+      </Link>
+      <Link
+        href="/findings?tab=fix-plan"
+        scroll={false}
+        aria-current={showFixPlan ? "page" : undefined}
+        className={cn(
+          "px-3 py-2 text-sm font-medium transition-colors",
+          showFixPlan ? "border-b-2 border-primary text-foreground" : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        Fix Plan
+      </Link>
+    </div>
+  );
+
+  if (showFixPlan) {
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Findings" badge={<HelpHint topic={HELP_CONTENT.findings} />} />
+        {modeTabs}
+        <WorkspaceRemediationPlan workspaceId={workspace_id} page={page} pageSize={pageSize} />
+      </div>
+    );
+  }
 
   // Category tabs only mean something inside the "All findings" queue; the
   // other three already pin the category dimension, and showing a second,
@@ -248,6 +296,7 @@ export default async function FindingsPage({
         }
       />
 
+      {modeTabs}
       <FindingsCategoryTabs tabs={queueTabs} active={queue} />
       {queue === "all" && <FindingsCategoryTabs tabs={categoryTabs} active={category ?? ""} />}
 

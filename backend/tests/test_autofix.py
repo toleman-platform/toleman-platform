@@ -23,6 +23,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 import app.api.deps as deps_module
 import app.core.autofix as autofix
 import app.core.remediation_autofix as remediation_autofix
+from app.core.crypto import SecretDecryptionError
 from app.api.deps import get_session
 from app.core.remediation import group_remediations
 from app.core.security import create_session_token, hash_password
@@ -892,6 +893,88 @@ def test_raise_package_fix_pr_raises_again_for_a_genuinely_new_finding_on_the_sa
         plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
         second = remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
     assert second["pr_number"] == 2
+
+
+def test_raise_package_fix_pr_converts_a_secret_decryption_error_to_autofix_error(engine, monkeypatch):
+    """The real production bug this pins down: a PLATFORM_ENCRYPTION_KEY
+    mismatch decrypting a stored GitHub credential (SecretDecryptionError,
+    a bare ValueError subclass, raised deep inside _fetch_file's token
+    resolution) escaping raise_package_fix_pr uncaught would reach the API
+    layer past every AutofixError handler, past CORSMiddleware, and
+    Starlette's ServerErrorMiddleware would emit a bare response with no
+    CORS headers at all -- which a browser's fetch() reports as a plain
+    network failure, indistinguishable from the backend being unreachable.
+    Must come back as a clean AutofixError instead, at both points that can
+    raise it: reading the manifest and opening the PR."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f)
+        session.commit()
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+
+    def boom(*a, **k):
+        raise SecretDecryptionError("PLATFORM_ENCRYPTION_KEY mismatch")
+
+    monkeypatch.setattr(autofix, "_fetch_file", boom)
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        with pytest.raises(autofix.AutofixError, match="PLATFORM_ENCRYPTION_KEY"):
+            remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+
+
+def test_raise_package_fix_pr_converts_a_secret_decryption_error_opening_the_pr(engine, monkeypatch):
+    """Same failure mode as the test above, at the second point it can
+    happen: minting the GitHub App installation token (inside
+    _commit_files_and_open_pr) rather than reading the manifest."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f)
+        session.commit()
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.39.0\n", "sha1"))
+
+    def boom(*a, **k):
+        raise SecretDecryptionError("PLATFORM_ENCRYPTION_KEY mismatch")
+
+    monkeypatch.setattr(autofix, "_commit_files_and_open_pr", boom)
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        with pytest.raises(autofix.AutofixError, match="PLATFORM_ENCRYPTION_KEY"):
+            remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+
+
+def test_raise_package_fix_pr_converts_any_unexpected_error_reading_the_manifest(engine, monkeypatch):
+    """Defense in depth beyond the specific SecretDecryptionError case: no
+    exception building a patch should be able to escape as anything other
+    than AutofixError, regardless of what raised it."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f)
+        session.commit()
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        with pytest.raises(autofix.AutofixError):
+            remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
 
 
 def test_raise_package_fix_pr_refuses_when_no_manifest_could_be_bumped(engine, monkeypatch):

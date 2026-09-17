@@ -184,6 +184,16 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
     time *this* App is installed/reconfigured, for the life of the App, so
     the token reliably tells /setup-callback which GitHubAppConfig row a new
     installation belongs to without needing to guess or brute-force it.
+
+    No field here sets the App's avatar -- the manifest schema has none, and
+    there is no REST endpoint for it either. Left unset, GitHub defaults a
+    newly created App's avatar to the avatar of whoever clicked through this
+    manifest-conversion flow, not a Toleman logo (this is exactly why a
+    ``toleman/pr-guardrail`` commit status can show the App creator's
+    personal photo instead of Toleman branding). One-time manual fix per
+    App, not automatable from here: its owner uploads a logo at
+    github.com/settings/apps/<app-slug> (or the org's Developer Settings for
+    an org-owned App).
     """
     return {
         # (GH-05) "Toleman", not "Rikugan", and not the older "OSP

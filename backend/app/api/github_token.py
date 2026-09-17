@@ -138,7 +138,7 @@ def test_github_token(
         res = httpx.get("https://api.github.com/user", headers=headers, timeout=15)
     except Exception:
         # workspace_id only, never the token (payload.token or the resolved one).
-        logger.warning("GitHub token test request failed (network) for workspace %s", wid)  # nosemgrep: python.lang.security.audit.logging.python-logger-credential-disclosure
+        logger.warning("GitHub token test request failed (network) for workspace %s", wid)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
         raise HTTPException(status_code=502, detail="Could not reach api.github.com")
 
     if res.status_code == 200:

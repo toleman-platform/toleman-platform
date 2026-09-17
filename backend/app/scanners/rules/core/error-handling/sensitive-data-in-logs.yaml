@@ -23,8 +23,9 @@
 ##   that a naive "logger call inside a function about tokens" heuristic
 ##   WOULD flag -- in fact a generic community rule already does, each
 ##   site carries a `# nosemgrep:
-##   python.lang.security.audit.logging.python-logger-credential-disclosure`
-##   suppression. Read all 5 by hand: none of them interpolate the token
+##   python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure`
+##   suppression (semgrep's registry renamed this rule; kept current -- see
+##   #527). Read all 5 by hand: none of them interpolate the token
 ##   itself, only workspace_id/slug/the exception object
 ##   (e.g. `logger.warning("Failed to mint installation token for %s: %s",
 ##   slug, exc)`). Because this rule binds $VAR to the actual interpolated

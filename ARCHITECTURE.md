@@ -9,6 +9,47 @@ Frontend: Next.js 16 (App Router) + TypeScript + Tailwind, dark-theme "Toleman" 
 Deployment: `docker-compose.yml` at repo root (postgres, redis, backend, celery-worker, frontend); see `README.md` Quickstart.
 Migrations: Alembic (`backend/alembic/`), `init_db()` in `backend/app/core/db.py` runs `alembic upgrade head` on startup, not `create_all()`. **Any model change needs a real migration** (`alembic revision --autogenerate`, then hand-check it).
 
+## Architecture at a glance
+
+```mermaid
+flowchart TB
+    subgraph clients["Clients"]
+        UI["frontend/\nNext.js App Router"]
+        CI["CI/CD push\n(Workspace API key)"]
+        MCP["mcp-server/\n(standalone process,\nown deps -- #108)"]
+        GH["GitHub\n(App: PRs, commit statuses,\ncontents, webhooks)"]
+    end
+
+    subgraph backend["backend/app -- FastAPI"]
+        API["api/*.py routers\n(one file per resource)"]
+        PUBAPI["public_api.py\n/api/public/v1 (#109)\nPAT-authenticated"]
+        CORE["core/\nscoring, dedup, crypto,\nscanner HTTP clients"]
+    end
+
+    subgraph async["tasks/ -- Celery + Redis"]
+        Q["queue: scans"]
+        SCANNERS["scanners/runner.py\ngit clone + tool subprocess\n(semgrep, trivy, gosec, nuclei...)"]
+    end
+
+    DB[("PostgreSQL via SQLModel\nOrganization -> Workspace -> Target\n-> Finding / Scan / ApiEndpoint / SbomComponent\nAlembic migrations, backend/alembic/")]
+
+    UI <-- "session cookie" --> API
+    CI -- "ingest" --> API
+    MCP -- "Bearer PAT" --> PUBAPI --> API
+    API --> CORE
+    API -- ".delay(), create tracking row\n(status=running), 202 + poll" --> Q
+    Q --> SCANNERS -- "raw findings" --> API
+    API <--> DB
+    API -- "App installation token" --> GH
+    GH -- "PR opened / webhook (HMAC)" --> API
+```
+
+Same one loop as the product: **scan -> dedup -> prioritize -> block/fix**, plus
+the two side doors into it (`public_api.py` for the MCP server and external
+agents, `webhooks.py` for GitHub-initiated events). Everything under
+"Established patterns" below is a rule about how something crosses one of
+these arrows, not a separate architecture.
+
 ## Directory map
 
 ```

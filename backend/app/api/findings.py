@@ -1564,7 +1564,20 @@ def raise_package_fix_pr_endpoint(
         raise HTTPException(status_code=404, detail="target not found")
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, target_id=payload.target_id)
 
-    plans = group_remediations(session, target.id)
+    try:
+        plans = group_remediations(session, target.id)
+    except Exception as exc:
+        # Same class of bug #526 fixed inside raise_package_fix_pr itself
+        # (see that function's SecretDecryptionError/Exception handlers):
+        # an exception escaping this far reaches the API layer uncaught,
+        # past CORSMiddleware, and Starlette's ServerErrorMiddleware emits
+        # the resulting bare 500 with no CORS headers attached -- a
+        # browser's fetch() then reports it as a plain "could not reach
+        # the API" network failure, indistinguishable from the backend
+        # being down. This call sat unguarded even though
+        # sweep_auto_raise_prs already wraps the identical call.
+        logger.exception("failed to build the fix plan for target %s", target.id)
+        raise HTTPException(status_code=502, detail="failed to build the fix plan; check server logs") from exc
     plan = next((p for p in plans if p["package"] == payload.package), None)
     if plan is None:
         raise HTTPException(status_code=404, detail="package not found in this target's current fix plan")
@@ -1630,7 +1643,13 @@ def raise_all_remediation_prs_endpoint(
         raise HTTPException(status_code=404, detail="target not found")
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, target_id=payload.target_id)
 
-    plans = group_remediations(session, target.id)
+    try:
+        plans = group_remediations(session, target.id)
+    except Exception as exc:
+        # Same reasoning as raise_package_fix_pr_endpoint's identical guard
+        # just above: this call must not be allowed to escape uncaught.
+        logger.exception("failed to build the fix plan for target %s", target.id)
+        raise HTTPException(status_code=502, detail="failed to build the fix plan; check server logs") from exc
     if not plans:
         raise HTTPException(status_code=400, detail="this target's fix plan is empty")
 

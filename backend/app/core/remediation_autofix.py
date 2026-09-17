@@ -166,7 +166,7 @@ def raise_package_fix_pr(session: Session, target: Target, plan: dict, raised_by
         # of bug). Converted to AutofixError so it's always handled the
         # normal way instead.
         logger.exception(
-            "raise_package_fix_pr: could not decrypt a stored secret while reading %s's manifest on target %s",
+            "raise_package_fix_pr: PLATFORM_ENCRYPTION_KEY mismatch reading %s's manifest on target %s",
             plan["package"], target.id,
         )
         raise autofix.AutofixError(

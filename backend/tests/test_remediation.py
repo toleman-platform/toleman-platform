@@ -29,7 +29,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
-from app.core.remediation import group_remediations, parse_version, remediation_plan
+from app.core.remediation import group_remediations, parse_version, remediation_plan, workspace_remediation_plan
 from app.core.security import create_session_token, hash_password
 from app.main import app as fastapi_app
 from app.models.models import (
@@ -485,6 +485,83 @@ class TestPagination:
         assert zero_page["total"] == 1
 
 
+class TestWorkspacePlan:
+    """workspace_remediation_plan (#247 follow-up): the same grouping, fanned
+    out across every target in the list, tagged with which target each row
+    is for rather than merged across targets the way findings ARE merged
+    within one target's own plan."""
+
+    def test_never_merges_the_same_package_across_targets(self, engine):
+        t1 = _target(engine)
+        t2 = _target(engine)
+        _finding(engine, t1, "CVE-1", fixes=[("starlette", "0.40.0")])
+        _finding(engine, t2, "CVE-2", fixes=[("starlette", "0.41.0")])
+
+        with Session(engine) as session:
+            result = workspace_remediation_plan(session, [t1, t2])
+        rows = result["plans"]
+        assert len(rows) == 2
+        assert {r["target_id"] for r in rows} == {t1, t2}
+        assert all(r["package"] == "starlette" for r in rows)
+        # Independent recommendations: each target's own lowest fix, not
+        # merged into one combined answer.
+        by_target = {r["target_id"]: r for r in rows}
+        assert by_target[t1]["upgrade_to"] == "0.40.0"
+        assert by_target[t2]["upgrade_to"] == "0.41.0"
+
+    def test_carries_the_target_name_on_every_row(self, engine):
+        t1 = _target(engine)
+        _finding(engine, t1, "CVE-1", fixes=[("starlette", "0.40.0")])
+        with Session(engine) as session:
+            target = session.get(Target, t1)
+            target.name = "acme-api"
+            session.add(target)
+            session.commit()
+
+        with Session(engine) as session:
+            result = workspace_remediation_plan(session, [t1])
+        assert result["plans"][0]["target_name"] == "acme-api"
+
+    def test_distinct_cves_are_deduped_across_targets_not_summed(self, engine):
+        """The same CVE hitting two targets is one distinct CVE, not two --
+        the same "count what's actually distinct" rule enrichment_coverage
+        applies within a single target, extended across the whole set."""
+        t1 = _target(engine)
+        t2 = _target(engine)
+        _finding(engine, t1, "CVE-1", fixes=[("starlette", "0.40.0")])
+        _finding(engine, t2, "CVE-1", enrich=False, suffix="-t2")
+
+        with Session(engine) as session:
+            result = workspace_remediation_plan(session, [t1, t2])
+        assert result["coverage"]["cve_findings"] == 2
+        assert result["coverage"]["distinct_cves"] == 1
+
+    def test_paginates_the_combined_cross_target_list(self, engine):
+        t1 = _target(engine)
+        t2 = _target(engine)
+        _finding(engine, t1, "CVE-1", severity=Severity.CRITICAL, fixes=[("pkg-a", "1.0")])
+        _finding(engine, t2, "CVE-2", severity=Severity.HIGH, fixes=[("pkg-b", "1.0")])
+
+        with Session(engine) as session:
+            page1 = workspace_remediation_plan(session, [t1, t2], page=1, page_size=1)
+            page2 = workspace_remediation_plan(session, [t1, t2], page=2, page_size=1)
+        assert page1["total"] == 2
+        assert page1["plans"][0]["package"] == "pkg-a"
+        assert page2["plans"][0]["package"] == "pkg-b"
+
+    def test_empty_target_list_is_an_empty_plan_not_an_error(self, engine):
+        with Session(engine) as session:
+            result = workspace_remediation_plan(session, [])
+        assert result == {
+            "plans": [],
+            "coverage": {
+                "cve_findings": 0, "distinct_cves": 0, "enriched_findings": 0,
+                "findings_with_advisory": 0, "findings_with_fix_data": 0,
+            },
+            "total": 0,
+        }
+
+
 class TestApi:
     def test_endpoint_returns_groups(self, client, engine):
         _admin(client, engine)
@@ -534,3 +611,96 @@ class TestApi:
     def test_requires_authentication(self, client, engine):
         tid = _target(engine)
         assert client.get(f"/api/findings/remediations?target_id={tid}").status_code in (401, 403)
+
+
+def _workspace(engine, name="ws2") -> int:
+    with Session(engine) as session:
+        org = Organization(name=f"org-{name}")
+        session.add(org); session.commit(); session.refresh(org)
+        ws = Workspace(organization_id=org.id, name=name, api_key=f"key-{name}")
+        session.add(ws); session.commit(); session.refresh(ws)
+        return ws.id
+
+
+def _target_in(engine, workspace_id: int, name="t2") -> int:
+    with Session(engine) as session:
+        t = Target(name=name, repo_url=f"https://github.com/a/{name}", workspace_id=workspace_id)
+        session.add(t); session.commit(); session.refresh(t)
+        return t.id
+
+
+def _dev_login(client, engine, workspace_id: int) -> None:
+    from app.models.models import WorkspaceMembership, WorkspaceRole
+
+    with Session(engine) as session:
+        user = User(email="dev@e.com", name="D", password_hash=hash_password("whatever123"), role=UserRole.USER)
+        session.add(user); session.commit(); session.refresh(user)
+        session.add(WorkspaceMembership(user_id=user.id, workspace_id=workspace_id, role=WorkspaceRole.DEVELOPER))
+        session.commit()
+        token = create_session_token(user.id, user.token_version)
+    client.cookies.set("toleman_session", token)
+
+
+class TestWorkspaceApi:
+    """GET /api/findings/remediations/workspace (#247 follow-up): the same
+    plan, fanned out across targets, scoped the way every other list in
+    this file is scoped."""
+
+    def test_admin_with_no_workspace_id_sees_every_target(self, client, engine):
+        _admin(client, engine)
+        ws1 = _workspace(engine, "ws1")
+        ws2 = _workspace(engine, "ws2")
+        t1 = _target_in(engine, ws1, "t1")
+        t2 = _target_in(engine, ws2, "t2")
+        _finding(engine, t1, "CVE-1", fixes=[("pkg-a", "1.0")])
+        _finding(engine, t2, "CVE-2", fixes=[("pkg-b", "1.0")])
+
+        res = client.get("/api/findings/remediations/workspace")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["total"] == 2
+        assert {p["target_id"] for p in body["plans"]} == {t1, t2}
+
+    def test_workspace_id_narrows_to_that_workspace_only(self, client, engine):
+        _admin(client, engine)
+        ws1 = _workspace(engine, "ws1")
+        ws2 = _workspace(engine, "ws2")
+        t1 = _target_in(engine, ws1, "t1")
+        t2 = _target_in(engine, ws2, "t2")
+        _finding(engine, t1, "CVE-1", fixes=[("pkg-a", "1.0")])
+        _finding(engine, t2, "CVE-2", fixes=[("pkg-b", "1.0")])
+
+        res = client.get(f"/api/findings/remediations/workspace?workspace_id={ws1}")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["total"] == 1
+        assert body["plans"][0]["target_id"] == t1
+
+    def test_non_member_gets_only_their_own_workspaces_targets(self, client, engine):
+        """No explicit workspace_id: a non-admin caller sees the aggregate
+        over their own accessible workspaces, not every workspace on the
+        instance -- same accessible_workspace_ids scoping list_findings
+        already applies."""
+        ws1 = _workspace(engine, "mine")
+        ws2 = _workspace(engine, "not-mine")
+        mine = _target_in(engine, ws1, "mine-t")
+        other = _target_in(engine, ws2, "other-t")
+        _finding(engine, mine, "CVE-1", fixes=[("pkg-a", "1.0")])
+        _finding(engine, other, "CVE-2", fixes=[("pkg-b", "1.0")])
+        _dev_login(client, engine, ws1)
+
+        res = client.get("/api/findings/remediations/workspace")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["total"] == 1
+        assert body["plans"][0]["target_id"] == mine
+
+    def test_workspace_id_outside_caller_access_is_404(self, client, engine):
+        ws1 = _workspace(engine, "mine")
+        ws2 = _workspace(engine, "not-mine")
+        _dev_login(client, engine, ws1)
+        res = client.get(f"/api/findings/remediations/workspace?workspace_id={ws2}")
+        assert res.status_code == 404
+
+    def test_requires_authentication(self, client, engine):
+        assert client.get("/api/findings/remediations/workspace").status_code in (401, 403)

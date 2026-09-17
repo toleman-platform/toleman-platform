@@ -183,6 +183,27 @@ export function findingRemediations(
 }
 
 /**
+ * (#247 follow-up) The Fix Plan aggregated across every target the caller
+ * can see -- the Findings page's workspace-wide companion to
+ * findingRemediations. `workspaceId` narrows to one workspace (the same
+ * cookie-driven scope the rest of the Findings page reads); omitted, it's
+ * every workspace the caller can access. Each returned plan carries which
+ * target it's for (`target_id`/`target_name`) -- see PackageRemediation.
+ */
+export function findingRemediationsWorkspace(
+  workspaceId?: number,
+  page?: number,
+  pageSize?: number,
+): Promise<RemediationPlanResponse> {
+  const params = new URLSearchParams();
+  if (workspaceId != null) params.set("workspace_id", String(workspaceId));
+  if (page) params.set("page", String(page));
+  if (pageSize) params.set("page_size", String(pageSize));
+  const qs = params.toString();
+  return jsonFetch<RemediationPlanResponse>(`/api/findings/remediations/workspace${qs ? `?${qs}` : ""}`);
+}
+
+/**
  * (#247 follow-up) Opens one PR bumping `package` to whatever version the
  * target's CURRENT fix plan recommends, covering every open finding that
  * upgrade resolves -- no AI, no diff to review first, since the fix plan

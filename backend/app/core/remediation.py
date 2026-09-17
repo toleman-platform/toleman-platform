@@ -35,7 +35,7 @@ from collections import defaultdict
 
 from sqlmodel import Session, select
 
-from app.models.models import CveEnrichment, Finding, FindingState
+from app.models.models import CveEnrichment, Finding, FindingState, Target
 
 
 def parse_version(raw: str) -> tuple:
@@ -196,6 +196,69 @@ def remediation_plan(session: Session, target_id: int, page: int = 1, page_size:
         "plans": plans[start:start + page_size],
         "coverage": enrichment_coverage(findings, by_cve),
         "total": len(plans),
+    }
+
+
+def workspace_remediation_plan(session: Session, target_ids: list[int], page: int = 1, page_size: int = 25) -> dict:
+    """The Fix Plan aggregated across every target in `target_ids` (#247
+    follow-up) -- the Findings page's workspace-wide companion to the
+    per-target `remediation_plan`, for a security engineer triaging a
+    whole estate rather than one repo at a time.
+
+    Fans out to `_group_by_package` one target at a time rather than
+    running a single cross-target query: a fix is inherently target-
+    scoped (raising a PR needs one specific repo), so a package is never
+    merged across targets the way findings ARE merged across one target's
+    own plan. "starlette" needing an upgrade on target A and on target B
+    are two independent rows here, each tagged with `target_id`/
+    `target_name`, never collapsed into one -- this is the one place this
+    module's grouping key changes from "package" to "(target, package)".
+
+    `coverage` is computed once over the COMBINED finding set across every
+    target, not summed per-target: `distinct_cves` counts a CVE hitting
+    three targets once, the same "count what's actually distinct" rule
+    `enrichment_coverage` already applies within a single target. This
+    costs one extra enrichment query beyond the per-target ones already
+    needed for grouping.
+
+    Same pagination shape as `remediation_plan`: `plans` is a page-sliced,
+    already-sorted list; `total` is the whole cross-target row count.
+    """
+    if not target_ids:
+        return {"plans": [], "coverage": enrichment_coverage([], {}), "total": 0}
+
+    targets = {t.id: t for t in session.exec(select(Target).where(Target.id.in_(target_ids))).all()}
+
+    all_findings: list[Finding] = []
+    rows: list[dict] = []
+    for target_id in target_ids:
+        target = targets.get(target_id)
+        if target is None:
+            continue
+        findings = _open_cve_findings(session, target_id)
+        by_cve = _enrichment_by_cve(session, findings)
+        all_findings.extend(findings)
+        for row in _group_by_package(findings, by_cve):
+            rows.append({**row, "target_id": target_id, "target_name": target.name})
+
+    coverage = enrichment_coverage(all_findings, _enrichment_by_cve(session, all_findings))
+
+    # Same ordering rule _group_by_package's own sort uses, with target
+    # name as the final tiebreak: packages tied on everything else,
+    # including name, still need one stable cross-target order so
+    # pagination never returns a row on two pages or on none.
+    rows.sort(
+        key=lambda r: (-r["fixes_count"], -_severity_rank(r["highest_severity"]), r["package"].casefold(), r["target_name"].casefold())
+    )
+
+    page = max(page, 1)
+    page_size = max(min(page_size, 500), 1)
+    start = (page - 1) * page_size
+
+    return {
+        "plans": rows[start:start + page_size],
+        "coverage": coverage,
+        "total": len(rows),
     }
 
 

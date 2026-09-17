@@ -19,20 +19,26 @@
 ## toleman-sensitive-variable-logged:
 ## - toleman-platform: true negative, and a meaningful one. This codebase
 ##   has several logger.warning/error calls inside token-handling functions
-##   (app/core/github_token.py:55,62,79,86 and app/api/github_token.py:141)
+##   (app/core/github_token.py:55,62,90 and app/api/github_token.py:141)
 ##   that a naive "logger call inside a function about tokens" heuristic
-##   WOULD flag -- in fact a generic community rule already does, each
-##   site carries a `# nosemgrep:
-##   python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure`
-##   suppression (semgrep's registry renamed this rule; kept current -- see
-##   #527). Read all 5 by hand: none of them interpolate the token
-##   itself, only workspace_id/slug/the exception object
-##   (e.g. `logger.warning("Failed to mint installation token for %s: %s",
-##   slug, exc)`). Because this rule binds $VAR to the actual interpolated
-##   metavariable and regexes *that*, `slug`/`exc`/`workspace_id` never
-##   match the sensitive-name list and none of these 5 fire. Correct
-##   outcome, and the reason this rule doesn't just grep for "token" near
-##   "logger".
+##   WOULD flag. Because THIS rule binds $VAR to the actual interpolated
+##   metavariable and regexes *that*, `workspace_id`/`slug`/the exception
+##   object never match the sensitive-name list and none of these 4 fire.
+##   Correct outcome, and the reason this rule doesn't just grep for
+##   "token" near "logger".
+##
+##   A generic community rule (python.lang.security.audit.logging.
+##   logger-credential-leak.python-logger-credential-disclosure) is not so
+##   careful: it flagged all 4 anyway, on the static message text alone
+##   ("token" appearing in the string) regardless of what is actually
+##   interpolated. This repo runs semgrep with --disable-nosem on every
+##   scan (see runner.py's own comment on that flag: inline suppression
+##   comments can't be trusted from a security *scanner*, since anyone who
+##   can edit a file could use one to blind it to their own vulnerable
+##   line), so a confirmed false positive like this one gets fixed by
+##   rewording the message to drop the community rule's trigger words --
+##   not by adding a `# nosemgrep` comment, which this scanner ignores
+##   entirely (#527).
 ## - pygoat: true negative for this specific rule shape. pygoat's one real
 ##   analogue -- introduction/playground/A9/api.py:16,
 ##   `L.info(f"POST request with username {username} and password

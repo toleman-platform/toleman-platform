@@ -334,10 +334,62 @@ export type RemediationCoverage = {
  * coverage they were computed from. The two are read together -- see
  * `RemediationCoverage` for why the plans alone cannot answer the empty
  * case honestly.
+ *
+ * `plans` is one page of the whole-target list (`page`/`page_size` params);
+ * `total` is the WHOLE-target package count, not this page's length -- a
+ * "N upgrades would close..." summary needs the whole-target number even
+ * when only a page of them is on screen. `coverage` is unaffected by
+ * paging: it is an honesty counter about the target, not a page stat.
  */
 export type RemediationPlanResponse = {
   plans: PackageRemediation[];
   coverage: RemediationCoverage;
+  total: number;
+};
+
+/**
+ * (#247 follow-up) POST /api/findings/remediations/raise-pr's response:
+ * the PR opened for one package's upgrade, covering every finding it
+ * resolves in a single commit-and-open-PR call.
+ */
+export type RaisePackageFixPrResult = {
+  pr_url: string;
+  pr_number: number;
+  branch: string;
+};
+
+/**
+ * (#247 follow-up) One package's outcome within a RemediationPrBatch (the
+ * async "Raise all" run) -- mirrors PipelineIntegrationBatchItem's shape.
+ */
+export type RemediationPrBatchItem = {
+  package: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  error: string;
+  pr_url: Nullable<string>;
+  pr_number: Nullable<number>;
+  completed_at: Nullable<string>;
+};
+
+/**
+ * (#247 follow-up) GET /api/findings/remediations/raise-all-batches/{id}'s
+ * response: the async "Raise all" run's live status, one item per package
+ * in the plan at the time it was dispatched. `status` on the batch itself
+ * follows the same PollableStatus shape lib/poll.ts's pollUntilSettled
+ * expects ("running" | "completed" -- "failed" never appears at the batch
+ * level, only per-item; a batch with every item failed still finishes
+ * "completed", the same distinction PipelineIntegrationBatch draws).
+ */
+export type RemediationPrBatch = {
+  batch_id: number;
+  target_id: number;
+  status: "running" | "completed";
+  total: number;
+  succeeded: number;
+  failed: number;
+  started_at: string;
+  completed_at: Nullable<string>;
+  items: RemediationPrBatchItem[];
 };
 
 /**

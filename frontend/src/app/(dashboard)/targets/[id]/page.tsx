@@ -21,6 +21,8 @@ import { TargetOverview } from "./target-overview";
 import { TargetDependencies } from "./target-dependencies";
 import { TargetHistory } from "./target-history";
 import { RemediationPlan } from "./remediation-plan";
+import { TargetAutoRaiseFixPrs } from "./target-auto-raise-fix-prs";
+import { pageSizeFromParams } from "@/lib/pagination";
 // Both settle helpers, deliberately: `settleOrNull` where `null` is a usable
 // sentinel on its own (the list and group fetches, each of which renders an
 // ErrorState when it is null), and `settledOr` where the fallback is an empty
@@ -259,7 +261,18 @@ export default async function TargetDetailPage({
         />
       )}
 
-      {tab === "fix-plan" && <RemediationPlan targetId={targetId} />}
+      {tab === "fix-plan" && (
+        <RemediationPlan
+          targetId={targetId}
+          // Same "page"/"page_size" query param names the vulnerabilities
+          // tab uses; safe to share since TargetTabs' <Link> drops every
+          // other param on a tab switch (see target-tabs.tsx), so the two
+          // tabs' pagers never see each other's state.
+          page={Math.max(1, Number(Array.isArray(sp.page) ? sp.page[0] : sp.page) || 1)}
+          pageSize={pageSizeFromParams(sp.page_size)}
+          autoRaiseEnabled={target.auto_raise_fix_prs ?? false}
+        />
+      )}
 
       {tab === "vulnerabilities" && (
         // Reuses the shared findings components rather than forking them, so
@@ -339,6 +352,14 @@ export default async function TargetDetailPage({
                 initialEnabled={target.diff_scoped_pr_scans ?? false}
               />
             </div>
+          </div>
+
+          <div>
+            <h2 className="mb-3 text-sm font-medium text-muted-foreground">Fix Plan automation</h2>
+            <TargetAutoRaiseFixPrs
+              targetId={targetId}
+              initialEnabled={target.auto_raise_fix_prs ?? false}
+            />
           </div>
 
           <div>

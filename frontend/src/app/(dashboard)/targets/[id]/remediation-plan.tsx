@@ -5,6 +5,7 @@ import type { PackageRemediation, RemediationCoverage, RemediationPlanResponse }
 import { settledOr } from "@/std-lib";
 import { cn } from "@/lib/utils";
 import { SEVERITY_BORDER_COLOR } from "@/lib/severity";
+import { DEFAULT_PAGE_SIZE } from "@/lib/pagination";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,10 @@ import { TruncateTooltip } from "@/components/ui/truncate-tooltip";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorState } from "@/components/ui/error-state";
 import { ReloadButton } from "@/components/reload-button";
+import { ActivityPagination } from "@/components/ui/activity-pagination";
+import { RemediationRaisePrButton } from "./remediation-raise-pr-button";
+import { RemediationBulkRaise } from "./remediation-bulk-raise";
+import { TargetAutoRaiseFixPrs } from "./target-auto-raise-fix-prs";
 
 // (#247) "Fix plan" tab: what closes the most open findings for the least
 // work, which a findings list -- flat OR grouped -- cannot answer. Grouping
@@ -106,7 +111,14 @@ function PackageRow({ targetId, plan }: { targetId: number; plan: PackageRemedia
               </Badge>
             )}
           </div>
-          <SeverityChip severity={plan.highest_severity} size="sm" />
+          <div className="flex items-center gap-2">
+            <SeverityChip severity={plan.highest_severity} size="sm" />
+            {/* (#247 follow-up) No AI here -- the fix plan already knows the
+                exact target version, so this opens the PR directly rather
+                than a diff-review dialog like the per-finding Suggest Fix
+                flow. */}
+            <RemediationRaisePrButton targetId={targetId} packageName={plan.package} />
+          </div>
         </div>
 
         <p className="text-sm text-muted-foreground">{summarize(plan)}</p>
@@ -243,17 +255,30 @@ export function RemediationPlanView({
   plans,
   coverage,
   failed,
+  total,
+  page = 1,
+  pageSize = DEFAULT_PAGE_SIZE,
+  autoRaiseEnabled = false,
 }: {
   targetId: number;
   plans: PackageRemediation[];
   coverage: RemediationCoverage | null;
   failed: boolean;
+  // Whole-target package count, not `plans.length` -- `plans` is one page
+  // of it. Defaults to `plans.length` so a caller rendering the full,
+  // unpaginated list (as every existing test here does) needs no change.
+  total?: number;
+  page?: number;
+  pageSize?: number;
+  autoRaiseEnabled?: boolean;
 }) {
+  const resolvedTotal = total ?? plans.length;
+
   if (failed) {
     return <ErrorState description="The fix plan couldn't be loaded from the API." action={<ReloadButton />} />;
   }
 
-  if (plans.length === 0) {
+  if (resolvedTotal === 0) {
     const { title, description } = emptyPlanCopy(coverage);
     return (
       <EmptyState
@@ -263,6 +288,32 @@ export function RemediationPlanView({
         action={
           <Button asChild size="sm" variant="outline">
             <Link href={`/targets/${targetId}?tab=vulnerabilities`}>Go to Vulnerabilities</Link>
+          </Button>
+        }
+      />
+    );
+  }
+
+  // Real upgrades exist (resolvedTotal > 0) but this specific page has none
+  // -- a stale/hand-edited `?page=` past the last one, most likely after
+  // the plan shrank (a package got fixed elsewhere, a finding triaged
+  // away). This is NOT the same fact as "no upgrades exist for this
+  // target": rendering emptyPlanCopy here would claim things about
+  // coverage/fixes that have nothing to do with why THIS page is blank.
+  if (plans.length === 0) {
+    // No pager here, deliberately: ActivityPagination's own range math
+    // ("Showing X-Y of Z") assumes `page` is within range, and an
+    // out-of-range `page` (that's the whole reason this branch exists)
+    // would render a nonsensical range instead of a usable control. The
+    // "Go to page 1" action below is the only navigation this state needs.
+    return (
+      <EmptyState
+        icon={PackageSearch}
+        title="No upgrades on this page"
+        description={`Page ${page} is past the end of this target's ${resolvedTotal} upgrade${resolvedTotal === 1 ? "" : "s"}.`}
+        action={
+          <Button asChild size="sm" variant="outline">
+            <Link href={`/targets/${targetId}?tab=fix-plan`}>Go to page 1</Link>
           </Button>
         }
       />
@@ -294,23 +345,43 @@ export function RemediationPlanView({
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-sm text-muted-foreground">
-        {plans.length} upgrade{plans.length === 1 ? "" : "s"} would close open findings on this target.
-      </p>
-      {coverageNote && <p className="text-sm text-muted-foreground">{coverageNote}</p>}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <p className="text-sm text-muted-foreground">
+            {resolvedTotal} upgrade{resolvedTotal === 1 ? "" : "s"} would close open findings on this target.
+          </p>
+          {coverageNote && <p className="text-sm text-muted-foreground">{coverageNote}</p>}
+          <TargetAutoRaiseFixPrs targetId={targetId} initialEnabled={autoRaiseEnabled} compact />
+        </div>
+        <RemediationBulkRaise targetId={targetId} totalPackages={resolvedTotal} />
+      </div>
+      <ActivityPagination total={resolvedTotal} page={page} pageSize={pageSize} position="top" />
       {/* Rendered in the order the backend returns: most findings closed
           first, ties broken by severity. Re-sorting here would be a second,
-          possibly-drifting copy of that rule. */}
+          possibly-drifting copy of that rule -- and this is exactly one
+          page of that order, sliced server-side; never re-paginate `plans`
+          itself, it is already the page the API returned. */}
       <div className="flex flex-col gap-3">
         {plans.map((plan) => (
           <PackageRow key={plan.package} targetId={targetId} plan={plan} />
         ))}
       </div>
+      <ActivityPagination total={resolvedTotal} page={page} pageSize={pageSize} position="bottom" />
     </div>
   );
 }
 
-export async function RemediationPlan({ targetId }: { targetId: number }) {
+export async function RemediationPlan({
+  targetId,
+  page,
+  pageSize,
+  autoRaiseEnabled = false,
+}: {
+  targetId: number;
+  page?: number;
+  pageSize?: number;
+  autoRaiseEnabled?: boolean;
+}) {
   // `null` rather than an empty response: a failed fetch must not decay into
   // zero plans with zero coverage, which would render as the strongest
   // negative this tab can state ("no CVE findings on this target") for a
@@ -318,7 +389,7 @@ export async function RemediationPlan({ targetId }: { targetId: number }) {
   // coverage keeps them apart a second time if the value is ever read
   // without it.
   const [result, failed] = await settledOr<RemediationPlanResponse | null>(
-    findingRemediations(targetId),
+    findingRemediations(targetId, page, pageSize),
     null,
   );
   return (
@@ -327,6 +398,10 @@ export async function RemediationPlan({ targetId }: { targetId: number }) {
       plans={result?.plans ?? []}
       coverage={result?.coverage ?? null}
       failed={failed}
+      total={result?.total}
+      page={page}
+      pageSize={pageSize}
+      autoRaiseEnabled={autoRaiseEnabled}
     />
   );
 }

@@ -17,6 +17,8 @@ import type {
   ScoringWeights,
   FindingScoreBreakdown,
   RemediationPlanResponse,
+  RaisePackageFixPrResult,
+  RemediationPrBatch,
 } from "@/types";
 import type { Nullable } from "@/std-lib";
 
@@ -169,8 +171,49 @@ export function findingEnrichment(findingId: number): Promise<FindingEnrichment>
  * Workspace-scoped like every other read here: a target_id outside the
  * caller's workspace 404s rather than returning another tenant's plan.
  */
-export function findingRemediations(targetId: number): Promise<RemediationPlanResponse> {
-  return jsonFetch<RemediationPlanResponse>(`/api/findings/remediations?target_id=${targetId}`);
+export function findingRemediations(
+  targetId: number,
+  page?: number,
+  pageSize?: number,
+): Promise<RemediationPlanResponse> {
+  const params = new URLSearchParams({ target_id: String(targetId) });
+  if (page) params.set("page", String(page));
+  if (pageSize) params.set("page_size", String(pageSize));
+  return jsonFetch<RemediationPlanResponse>(`/api/findings/remediations?${params.toString()}`);
+}
+
+/**
+ * (#247 follow-up) Opens one PR bumping `package` to whatever version the
+ * target's CURRENT fix plan recommends, covering every open finding that
+ * upgrade resolves -- no AI, no diff to review first, since the fix plan
+ * already knows the exact target version. Recomputed server-side from the
+ * live plan, so the caller only ever needs the package name.
+ */
+export function raisePackageFixPr(targetId: number, packageName: string): Promise<RaisePackageFixPrResult> {
+  return jsonFetch<RaisePackageFixPrResult>("/api/findings/remediations/raise-pr", {
+    method: "POST",
+    body: JSON.stringify({ target_id: targetId, package: packageName }),
+  });
+}
+
+/**
+ * (#247 follow-up) Dispatches an async batch that raises a PR for every
+ * package currently in the target's fix plan. Returns immediately with a
+ * batch id to poll via getRaiseAllFixPrsBatch, same shape as
+ * bulkPipelineIntegrate/getPipelineIntegrationBatch.
+ */
+export function raiseAllFixPrs(targetId: number): Promise<{ batch_id: number; total: number; status: string }> {
+  return jsonFetch<{ batch_id: number; total: number; status: string }>(
+    "/api/findings/remediations/raise-all",
+    { method: "POST", body: JSON.stringify({ target_id: targetId }) },
+  );
+}
+
+/**
+ * Polls the status and per-package outcomes of a raise-all-fix-PRs batch.
+ */
+export function getRaiseAllFixPrsBatch(batchId: number): Promise<RemediationPrBatch> {
+  return jsonFetch<RemediationPrBatch>(`/api/findings/remediations/raise-all-batches/${batchId}`);
 }
 
 /**

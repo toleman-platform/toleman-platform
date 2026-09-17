@@ -498,12 +498,30 @@ def _installation_token_or_none(session: Session, target: Target) -> str | None:
         return None
 
 
-def open_fix_pr(session: Session, target: Target, finding: Finding, patch: Patch) -> dict:
-    """Opens a PR with `patch` applied, branched off patch.ref (the same
-    ref its content was read from) and targeting patch.ref as the PR base.
-    Returns {"pr_url", "pr_number", "branch"}. Raises AutofixError (never a
-    bare httpx exception) on any failure, so callers can fall back to
-    returning the diff instead of failing the whole request."""
+def _commit_files_and_open_pr(
+    session: Session,
+    target: Target,
+    ref: str,
+    branch_name: str,
+    files: list[tuple[str, str]],
+    commit_message: str,
+    pr_title: str,
+    pr_body: str,
+) -> dict:
+    """Creates `branch_name` off `ref`, commits each `(file_path,
+    new_content)` in `files` to it (one PUT per file, all on the same
+    branch), then opens a PR from `branch_name` into `ref`. Returns
+    {"pr_url", "pr_number", "branch"}. Raises AutofixError (never a bare
+    httpx exception) on any failure, so callers can fall back to something
+    less than a PR instead of failing the whole request.
+
+    Factored out of `open_fix_pr` (#247 follow-up) so a Fix Plan package
+    upgrade -- which can touch more than one manifest file for one package,
+    e.g. requirements.txt AND requirements-dev.txt -- commits every file on
+    one branch and opens exactly one PR, via the exact same GitHub call
+    sequence a single-finding fix already uses, rather than a second,
+    drifting copy of it.
+    """
     slug = repo_slug_from_url(target.repo_url)
     token = _installation_token_or_none(session, target)
     if not token:
@@ -513,16 +531,13 @@ def open_fix_pr(session: Session, target: Target, finding: Finding, patch: Patch
         )
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
 
-    ref_res = httpx.get(
-        f"https://api.github.com/repos/{slug}/git/ref/heads/{patch.ref}", headers=headers, timeout=15
-    )
+    ref_res = httpx.get(f"https://api.github.com/repos/{slug}/git/ref/heads/{ref}", headers=headers, timeout=15)
     if ref_res.status_code != 200:
         raise AutofixError(
-            f"failed to read branch '{patch.ref}' from GitHub: {ref_res.status_code} {ref_res.text[:200]}"
+            f"failed to read branch '{ref}' from GitHub: {ref_res.status_code} {ref_res.text[:200]}"
         )
     base_sha = ref_res.json()["object"]["sha"]
 
-    branch_name = f"toleman/fix-finding-{finding.id}-{int(time.time())}"
     create_ref_res = httpx.post(
         f"https://api.github.com/repos/{slug}/git/refs",
         headers=headers,
@@ -534,37 +549,36 @@ def open_fix_pr(session: Session, target: Target, finding: Finding, patch: Patch
             f"failed to create branch '{branch_name}': {create_ref_res.status_code} {create_ref_res.text[:200]}"
         )
 
-    existing_res = httpx.get(
-        f"https://api.github.com/repos/{slug}/contents/{patch.file_path}",
-        headers=headers,
-        params={"ref": patch.ref},
-        timeout=15,
-    )
-    existing_sha = existing_res.json().get("sha") if existing_res.status_code == 200 else None
-
-    content_b64 = base64.b64encode(patch.new_content.encode("utf-8")).decode("ascii")
-    put_body = {"message": f"Fix: {finding.title}"[:250], "content": content_b64, "branch": branch_name}
-    if existing_sha:
-        put_body["sha"] = existing_sha
-    put_res = httpx.put(
-        f"https://api.github.com/repos/{slug}/contents/{patch.file_path}", headers=headers, json=put_body, timeout=15
-    )
-    if put_res.status_code not in (200, 201):
-        raise AutofixError(
-            f"failed to write {patch.file_path} on GitHub: {put_res.status_code} {put_res.text[:200]}"
+    for file_path, new_content in files:
+        # Read the sha off `branch_name`, not `ref`: once an earlier file in
+        # this same loop has been committed, `branch_name` may already have
+        # diverged from `ref` (a manifest containing more than one bumped
+        # package), and PUT .../contents rejects a write whose `sha` doesn't
+        # match the branch's current version of that file.
+        existing_res = httpx.get(
+            f"https://api.github.com/repos/{slug}/contents/{file_path}",
+            headers=headers,
+            params={"ref": branch_name},
+            timeout=15,
         )
+        existing_sha = existing_res.json().get("sha") if existing_res.status_code == 200 else None
 
-    strategy_label = _strategy_label(patch.strategy)
-    pr_body = (
-        f"Automated fix for finding #{finding.id}: **{finding.title}** "
-        f"({finding.severity}, `{finding.tool}` / `{finding.rule_id}`).\n\n"
-        f"{patch.explanation}\n\n"
-        f"Opened automatically by Toleman's Autofix, via {strategy_label} patch. Review the diff before merging."
-    )
+        content_b64 = base64.b64encode(new_content.encode("utf-8")).decode("ascii")
+        put_body = {"message": commit_message[:250], "content": content_b64, "branch": branch_name}
+        if existing_sha:
+            put_body["sha"] = existing_sha
+        put_res = httpx.put(
+            f"https://api.github.com/repos/{slug}/contents/{file_path}", headers=headers, json=put_body, timeout=15
+        )
+        if put_res.status_code not in (200, 201):
+            raise AutofixError(
+                f"failed to write {file_path} on GitHub: {put_res.status_code} {put_res.text[:200]}"
+            )
+
     pr_res = httpx.post(
         f"https://api.github.com/repos/{slug}/pulls",
         headers=headers,
-        json={"title": f"Fix: {finding.title}"[:250], "head": branch_name, "base": patch.ref, "body": pr_body},
+        json={"title": pr_title[:250], "head": branch_name, "base": ref, "body": pr_body},
         timeout=15,
     )
     if pr_res.status_code not in (200, 201):
@@ -572,6 +586,31 @@ def open_fix_pr(session: Session, target: Target, finding: Finding, patch: Patch
 
     pr = pr_res.json()
     return {"pr_url": pr["html_url"], "pr_number": pr["number"], "branch": branch_name}
+
+
+def open_fix_pr(session: Session, target: Target, finding: Finding, patch: Patch) -> dict:
+    """Opens a PR with `patch` applied, branched off patch.ref (the same
+    ref its content was read from) and targeting patch.ref as the PR base.
+    Returns {"pr_url", "pr_number", "branch"}. Raises AutofixError (never a
+    bare httpx exception) on any failure, so callers can fall back to
+    returning the diff instead of failing the whole request."""
+    strategy_label = _strategy_label(patch.strategy)
+    pr_body = (
+        f"Automated fix for finding #{finding.id}: **{finding.title}** "
+        f"({finding.severity}, `{finding.tool}` / `{finding.rule_id}`).\n\n"
+        f"{patch.explanation}\n\n"
+        f"Opened automatically by Toleman's Autofix, via {strategy_label} patch. Review the diff before merging."
+    )
+    return _commit_files_and_open_pr(
+        session,
+        target,
+        ref=patch.ref,
+        branch_name=f"toleman/fix-finding-{finding.id}-{int(time.time())}",
+        files=[(patch.file_path, patch.new_content)],
+        commit_message=f"Fix: {finding.title}",
+        pr_title=f"Fix: {finding.title}",
+        pr_body=pr_body,
+    )
 
 
 # ---------------------------------------------------------------------------

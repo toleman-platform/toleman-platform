@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel import Session, and_, func, or_, select
 
@@ -20,7 +21,9 @@ from app.core.autofix import AutofixError, Patch, find_suppression_comment, open
 from app.core.cve_enrichment import get_cve_enrichment
 from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
-from app.core.remediation import remediation_plan
+from app.core.remediation import group_remediations, remediation_plan
+from app.core.remediation_autofix import AlreadyRaisedError, raise_package_fix_pr
+from app.core.staleness import mark_stale_if_needed
 from app.core.grouping import (
     DEFAULT_SORT,
     SORT_KEYS,
@@ -50,6 +53,8 @@ from app.models.models import (
     FindingStateLog,
     NotificationEventType,
     OPEN_FINDING_STATES,
+    RemediationPrBatch,
+    RemediationPrBatchItem,
     RESOLVED_FINDING_STATES,
     SEVERITY_WEIGHT,
     Severity,
@@ -58,6 +63,7 @@ from app.models.models import (
     User,
     WorkspaceRole,
 )
+from app.tasks.remediation_tasks import run_raise_all_batch
 
 logger = logging.getLogger(__name__)
 
@@ -1432,17 +1438,23 @@ class RemediationCoverage(BaseModel):
 class RemediationPlanResponse(BaseModel):
     """(#247) A target's fix plan plus the coverage behind it.
 
-    `plans` carries the same objects this endpoint has always returned; the
+    `plans` carries the same objects this endpoint has always returned,
+    now paginated; `total` is the whole-target package count (not just this
+    page's length) -- a caller rendering "N upgrades would close..." needs
+    the whole-target number even when only a page of them is on screen. The
     response became an object so `coverage` could travel with them, since the
     two have to be read together to say anything true about an empty plan.
     """
     plans: list[dict]
     coverage: RemediationCoverage
+    total: int
 
 
 @router.get("/remediations")
 def list_remediations(
     target_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=DEFAULT_PAGE_SIZE, ge=1, le=500),
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ) -> RemediationPlanResponse:
@@ -1452,6 +1464,11 @@ def list_remediations(
 
     Workspace-scoped like every other read here (#57), a target id from
     another tenant returns 404, not that tenant's remediation plan.
+
+    Paginated (`page`/`page_size`, same clamping as list_findings) since a
+    target with dozens of upgrade candidates used to ship the whole plan in
+    one response. `coverage` is unaffected by paging -- see
+    remediation_plan's docstring.
     """
     target = session.get(Target, target_id)
     # (#273) A soft-deleted target 404s like a missing one.
@@ -1462,7 +1479,211 @@ def list_remediations(
         # 404 rather than 403: the existence of another tenant's target is
         # itself information.
         raise HTTPException(status_code=404, detail="target not found")
-    return RemediationPlanResponse(**remediation_plan(session, target_id))
+    return RemediationPlanResponse(**remediation_plan(session, target_id, page=page, page_size=page_size))
+
+
+class RaisePackageFixPrRequest(BaseModel):
+    target_id: int
+    package: str
+
+
+class RaisePackageFixPrResponse(BaseModel):
+    pr_url: str
+    pr_number: int
+    branch: str
+
+
+@router.post("/remediations/raise-pr")
+def raise_package_fix_pr_endpoint(
+    payload: RaisePackageFixPrRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> RaisePackageFixPrResponse:
+    """(#247 follow-up) Opens one PR bumping `payload.package` to whatever
+    version the target's CURRENT fix plan recommends, covering every open
+    finding that upgrade resolves. DEVELOPER role required, same gate as
+    /{finding_id}/raise-pr, since this writes a branch/PR to the target's
+    real GitHub repo -- checked via enforce_workspace_role directly rather
+    than the require_workspace_role(...) Depends shortcut, since target_id
+    lives inside this route's JSON body, not a path/query param
+    require_workspace_role's name-binding can see (see its own docstring).
+
+    The plan is recomputed here from live DB state rather than trusting a
+    client-echoed one: unlike the AI-patch single-finding flow
+    (RaiseFixPrRequest), a deterministic manifest bump has no regeneration-
+    drift risk, so there is no reason to make the caller round-trip a plan
+    it has no business re-deriving -- and recomputing means a plan that
+    changed between page load and click (a new CVE landed, an old one got
+    triaged away) is what actually gets acted on.
+    """
+    target = session.get(Target, payload.target_id)
+    if not target or target_lifecycle.is_deleted(target):
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="target not found")
+    enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, target_id=payload.target_id)
+
+    plans = group_remediations(session, target.id)
+    plan = next((p for p in plans if p["package"] == payload.package), None)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="package not found in this target's current fix plan")
+
+    try:
+        pr = raise_package_fix_pr(session, target, plan, raised_by=f"user:{user.email}")
+    except AlreadyRaisedError as exc:
+        # Idempotent, not an error: a double-click (or a retry after the
+        # first click's response was lost) returns the SAME PR that's
+        # already open for this package rather than opening a duplicate.
+        pr = {"pr_url": exc.pr_url, "pr_number": exc.pr_number, "branch": exc.branch}
+    except AutofixError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return RaisePackageFixPrResponse(**pr)
+
+
+class RaiseAllFixPrsRequest(BaseModel):
+    target_id: int
+
+
+class RemediationPrBatchItemOut(BaseModel):
+    package: str
+    status: str
+    error: str
+    pr_url: str | None
+    pr_number: int | None
+    completed_at: datetime | None
+
+
+class RemediationPrBatchResponse(BaseModel):
+    batch_id: int
+    target_id: int
+    status: str
+    total: int
+    succeeded: int
+    failed: int
+    started_at: datetime
+    completed_at: datetime | None
+    items: list[RemediationPrBatchItemOut]
+
+
+@router.post("/remediations/raise-all")
+def raise_all_remediation_prs_endpoint(
+    payload: RaiseAllFixPrsRequest,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """(#247 follow-up) Bulk wrapper around raise_package_fix_pr_endpoint:
+    dispatches one Celery batch that opens a PR for every package
+    currently in the target's fix plan, instead of blocking the request
+    thread on N sequential GitHub API call sequences -- same
+    create-row(status="running")-then-.delay()-then-poll shape as
+    POST /api/targets/bulk-pipeline-integrate. Returns 202 with a batch_id
+    to poll via GET .../raise-all-batches/{batch_id}. DEVELOPER role
+    enforced explicitly (see raise_package_fix_pr_endpoint's docstring for
+    why this can't use the require_workspace_role(...) Depends shortcut).
+    """
+    target = session.get(Target, payload.target_id)
+    if not target or target_lifecycle.is_deleted(target):
+        raise HTTPException(status_code=404, detail="target not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="target not found")
+    enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, target_id=payload.target_id)
+
+    plans = group_remediations(session, target.id)
+    if not plans:
+        raise HTTPException(status_code=400, detail="this target's fix plan is empty")
+
+    batch = RemediationPrBatch(
+        target_id=target.id, created_by_user_id=user.id, total=len(plans), status="running",
+    )
+    session.add(batch)
+    session.commit()
+    session.refresh(batch)
+
+    items = [RemediationPrBatchItem(batch_id=batch.id, package=plan["package"], status="pending") for plan in plans]
+    for item in items:
+        session.add(item)
+    session.commit()
+
+    try:
+        run_raise_all_batch.delay(batch_id=batch.id)
+    except Exception as exc:
+        # A broker publish failure (Redis unreachable, etc) means the task
+        # will never run -- left as "running", the batch would only get
+        # marked failed once mark_stale_if_needed's timeout elapses on a
+        # later poll. Fail it immediately and visibly instead: the caller
+        # gets a real 502 right away rather than a spinner that looks
+        # "in progress" for up to the stale-job window.
+        #
+        # The raw exception is logged server-side only, never put in the
+        # response: unlike AutofixError (a deliberately crafted, safe
+        # user-facing message), this is whatever the Celery/Redis client
+        # library raised, which can carry internal connection details a
+        # DEVELOPER-role caller has no business seeing.
+        logger.exception("failed to dispatch raise-all batch %s", batch.id)
+        batch.status = "completed"
+        batch.failed = batch.total
+        batch.completed_at = utcnow()
+        session.add(batch)
+        for item in items:
+            item.status = "failed"
+            item.error = "failed to dispatch: internal error, see server logs"
+            item.completed_at = utcnow()
+            session.add(item)
+        session.commit()
+        raise HTTPException(
+            status_code=502, detail="failed to dispatch raise-all batch; check server logs"
+        ) from exc
+
+    return JSONResponse(
+        status_code=202,
+        content={"batch_id": batch.id, "total": batch.total, "status": batch.status},
+    )
+
+
+@router.get("/remediations/raise-all-batches/{batch_id}")
+def get_raise_all_remediation_prs_batch(
+    batch_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+) -> RemediationPrBatchResponse:
+    """Poll target for the async batch POST .../raise-all dispatched."""
+    batch = session.get(RemediationPrBatch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="batch not found")
+    mark_stale_if_needed(session, batch)
+
+    target = session.get(Target, batch.target_id)
+    ws_ids = accessible_workspace_ids(session, user)
+    if target and ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="batch not found")
+
+    items = session.exec(
+        select(RemediationPrBatchItem).where(RemediationPrBatchItem.batch_id == batch_id)
+    ).all()
+
+    return RemediationPrBatchResponse(
+        batch_id=batch.id,
+        target_id=batch.target_id,
+        status=batch.status,
+        total=batch.total,
+        succeeded=batch.succeeded,
+        failed=batch.failed,
+        started_at=batch.started_at,
+        completed_at=batch.completed_at,
+        items=[
+            RemediationPrBatchItemOut(
+                package=i.package,
+                status=i.status,
+                error=i.error,
+                pr_url=i.pr_url,
+                pr_number=i.pr_number,
+                completed_at=i.completed_at,
+            )
+            for i in items
+        ],
+    )
 
 
 @router.get("/facets/environments")

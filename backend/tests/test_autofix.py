@@ -18,11 +18,13 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import app.api.deps as deps_module
 import app.core.autofix as autofix
+import app.core.remediation_autofix as remediation_autofix
 from app.api.deps import get_session
+from app.core.remediation import group_remediations
 from app.core.security import create_session_token, hash_password
 from app.main import app as fastapi_app
 from app.models.models import (
@@ -30,6 +32,7 @@ from app.models.models import (
     Finding,
     Organization,
     PlatformConfig,
+    RemediationFixPr,
     Severity,
     Target,
     User,
@@ -652,3 +655,259 @@ def test_raise_pr_endpoint_requires_developer_role(client, engine):
         },
     )
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Package-level autofix (app.core.remediation_autofix): one PR per Fix Plan
+# package upgrade, covering every finding it resolves, not the one-finding-
+# at-a-time flow above (#247 follow-up).
+# ---------------------------------------------------------------------------
+
+
+def test_find_package_finding_files_groups_across_two_manifests(engine):
+    """Two CVEs on the same package, findings pointing at two different
+    manifests (e.g. requirements.txt and requirements-dev.txt) -- both have
+    to be discovered, since PackageRemediation.fixes carries no file_path."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f1 = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        f2 = Finding(
+            target_id=target_id, dedup_hash="h2", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements-dev.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f1)
+        session.add(f2)
+        session.commit()
+        session.refresh(f1)
+        session.refresh(f2)
+        f1_id, f2_id = f1.id, f2.id
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+
+    plan = {
+        "package": "starlette",
+        "fixes": [
+            {"finding_id": f1_id, "cve_id": "CVE-2024-1"},
+            {"finding_id": f2_id, "cve_id": "CVE-2024-1"},
+        ],
+    }
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        grouped = remediation_autofix.find_package_finding_files(session, target, plan)
+    assert set(grouped.keys()) == {("main", "requirements.txt"), ("main", "requirements-dev.txt")}
+
+
+def test_build_package_patch_files_skips_unbumpable_succeeds_on_bumpable(engine, monkeypatch):
+    """One of two requirements.txt files actually pins the package; the
+    other doesn't (the bumper finds no match) and is skipped, not failed --
+    only when NONE could be bumped does raise_package_fix_pr refuse."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f1 = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        f2 = Finding(
+            target_id=target_id, dedup_hash="h2", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="backend/requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f1)
+        session.add(f2)
+        session.commit()
+        session.refresh(f1)
+        session.refresh(f2)
+        f1_id, f2_id = f1.id, f2.id
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+
+    def fake_fetch(session, target, ref, path):
+        if path == "requirements.txt":
+            return "starlette==0.39.0\n", "sha1"
+        return "flask==1.0\n", "sha2"  # no starlette pin here -- bumper finds no match
+
+    monkeypatch.setattr(autofix, "_fetch_file", fake_fetch)
+
+    plan = {
+        "package": "starlette",
+        "upgrade_to": "0.40.0",
+        "fixes": [
+            {"finding_id": f1_id, "cve_id": "CVE-2024-1"},
+            {"finding_id": f2_id, "cve_id": "CVE-2024-1"},
+        ],
+    }
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        patches = remediation_autofix.build_package_patch_files(session, target, plan)
+    assert len(patches) == 1
+    _, file_path, new_content = patches[0]
+    assert file_path == "requirements.txt"
+    assert "starlette==0.40.0" in new_content
+
+
+def test_raise_package_fix_pr_uses_package_level_version_not_per_finding_lowest(engine, monkeypatch):
+    """Regression: two CVEs on the same package, each with a different
+    lowest fix (0.38.0 and 0.40.0). The PR must bump to the PACKAGE-level
+    upgrade_to -- the max of the two per-CVE minimums, i.e. the one version
+    that actually clears both -- never to whichever finding
+    autofix._sca_package_version happens to be asked about, which answers a
+    narrower, single-finding question and would under-bump this package."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f1 = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln 1",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        f2 = Finding(
+            target_id=target_id, dedup_hash="h2", tool="trivy", rule_id="CVE-2024-2", title="Vuln 2",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-2",
+        )
+        session.add(f1)
+        session.add(f2)
+        session.commit()
+        session.refresh(f1)
+        session.refresh(f2)
+        f1_id, f2_id = f1.id, f2.id
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.38.0"}])
+    _cve_row(engine, "CVE-2024-2", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.37.0\n", "sha1"))
+
+    captured = {}
+
+    def fake_commit(session, target, ref, branch_name, files, commit_message, pr_title, pr_body):
+        captured["files"] = files
+        captured["pr_title"] = pr_title
+        return {"pr_url": "https://github.com/a/b/pull/9", "pr_number": 9, "branch": branch_name}
+
+    monkeypatch.setattr(autofix, "_commit_files_and_open_pr", fake_commit)
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        # Sanity: the plan itself already recommends the package-level
+        # version, not either single CVE's own fix.
+        assert plan["upgrade_to"] == "0.40.0"
+        result = remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+
+    assert result["pr_number"] == 9
+    assert captured["files"] == [("requirements.txt", "starlette==0.40.0\n")]
+    assert "0.40.0" in captured["pr_title"]
+
+    with Session(engine) as session:
+        row = session.exec(select(RemediationFixPr)).first()
+    assert row.package == "starlette"
+    assert row.upgrade_to == "0.40.0"
+    assert row.raised_by == "user:a@e.com"
+    assert sorted(json.loads(row.finding_ids)) == sorted([f1_id, f2_id])
+
+
+def test_raise_package_fix_pr_is_idempotent_for_an_already_covered_package(engine, monkeypatch):
+    """A second call for a package whose findings are already fully covered
+    by a prior RemediationFixPr row must not open a second PR -- it raises
+    AlreadyRaisedError carrying the FIRST PR's info, checked at
+    raise_package_fix_pr's own boundary so every caller (manual endpoint,
+    bulk batch, sweep) gets this protection for free."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f)
+        session.commit()
+        session.refresh(f)
+        finding_id = f.id
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.39.0\n", "sha1"))
+
+    calls = {"n": 0}
+
+    def fake_commit(session, target, ref, branch_name, files, commit_message, pr_title, pr_body):
+        calls["n"] += 1
+        return {"pr_url": f"https://github.com/a/b/pull/{calls['n']}", "pr_number": calls["n"], "branch": branch_name}
+
+    monkeypatch.setattr(autofix, "_commit_files_and_open_pr", fake_commit)
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        first = remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+        assert first["pr_number"] == 1
+
+        with pytest.raises(remediation_autofix.AlreadyRaisedError) as exc_info:
+            remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+        assert exc_info.value.pr_number == 1
+        assert exc_info.value.pr_url == "https://github.com/a/b/pull/1"
+
+    # Only the first call actually committed anything to GitHub.
+    assert calls["n"] == 1
+    with Session(engine) as session:
+        rows = session.exec(select(RemediationFixPr)).all()
+    assert len(rows) == 1
+
+
+def test_raise_package_fix_pr_raises_again_for_a_genuinely_new_finding_on_the_same_package(engine, monkeypatch):
+    """A second CVE lands on a package that already has a covering PR --
+    the new finding is not a subset of what was covered, so this must
+    raise a real second PR, not AlreadyRaisedError."""
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f1 = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln 1",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f1)
+        session.commit()
+        session.refresh(f1)
+        f1_id = f1.id
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.39.0"}])
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: ("starlette==0.38.0\n", "sha1"))
+    monkeypatch.setattr(
+        autofix, "_commit_files_and_open_pr",
+        lambda *a, **k: {"pr_url": "https://github.com/a/b/pull/1", "pr_number": 1, "branch": "b1"},
+    )
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+
+    with Session(engine) as session:
+        f2 = Finding(
+            target_id=target_id, dedup_hash="h2", tool="trivy", rule_id="CVE-2024-2", title="Vuln 2",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-2",
+        )
+        session.add(f2)
+        session.commit()
+    _cve_row(engine, "CVE-2024-2", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+    monkeypatch.setattr(
+        autofix, "_commit_files_and_open_pr",
+        lambda *a, **k: {"pr_url": "https://github.com/a/b/pull/2", "pr_number": 2, "branch": "b2"},
+    )
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        second = remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")
+    assert second["pr_number"] == 2
+
+
+def test_raise_package_fix_pr_refuses_when_no_manifest_could_be_bumped(engine, monkeypatch):
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        f = Finding(
+            target_id=target_id, dedup_hash="h1", tool="trivy", rule_id="CVE-2024-1", title="Vuln",
+            file_path="requirements.txt", severity=Severity.HIGH, cve_id="CVE-2024-1",
+        )
+        session.add(f)
+        session.commit()
+    _cve_row(engine, "CVE-2024-1", [{"package": "starlette", "ecosystem": "PyPI", "fixed": "0.40.0"}])
+    monkeypatch.setattr(autofix, "_fetch_file", lambda *a, **k: None)  # unreadable file
+
+    with Session(engine) as session:
+        target = session.get(Target, target_id)
+        plan = next(p for p in group_remediations(session, target_id) if p["package"] == "starlette")
+        with pytest.raises(autofix.AutofixError):
+            remediation_autofix.raise_package_fix_pr(session, target, plan, raised_by="user:a@e.com")

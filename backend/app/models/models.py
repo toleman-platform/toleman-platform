@@ -222,6 +222,13 @@ class Target(SQLModel, table=True):
     # will not see it) so it must be switched on deliberately per target
     # rather than silently narrowing what everyone's PR gate checks.
     diff_scoped_pr_scans: bool = False
+    # (#247 follow-up) Let the platform push the Fix Plan's own upgrades as
+    # real PRs unattended, on the periodic sweep (app.core.remediation_autofix.
+    # sweep_auto_raise_prs), instead of requiring someone to click "Raise PR"
+    # per package. Defaults False for the same reason diff_scoped_pr_scans
+    # does: writing commits/PRs to a repo is a consequential trade a target
+    # opts into deliberately, never a side effect of this column existing.
+    auto_raise_fix_prs: bool = False
     # Issue #72 (Active API Scanning): the live base URL of this target's
     # deployed API, e.g. "https://api-staging.example.com". Deliberately a
     # user-set, per-target field rather than anything derived from repo_url
@@ -1248,6 +1255,72 @@ class PipelineIntegrationBatchItem(SQLModel, table=True):
     batch_id: int = Field(foreign_key="pipelineintegrationbatch.id", index=True)
     target_id: int = Field(foreign_key="target.id", index=True)
     status: str = "pending"  # pending, running, succeeded, failed, already_integrated
+    error: str = ""
+    pr_url: Optional[str] = None
+    pr_number: Optional[int] = None
+    completed_at: Optional[datetime] = None
+
+
+class RemediationFixPr(SQLModel, table=True):
+    """A PR app.core.remediation_autofix.raise_package_fix_pr actually opened
+    for one Fix Plan package upgrade (#247 follow-up), whether triggered by
+    the per-row/bulk "Raise PR" action or by the auto-raise sweep.
+
+    This is how both the manual endpoint and the sweep answer "have we
+    already raised this" without polling GitHub: `finding_ids` is the exact
+    set of open findings this PR's manifest bump claimed to resolve at the
+    time it was opened. A later plan for the same `(target_id, package)`
+    whose findings are already covered by this set is treated as already
+    addressed; a plan naming a finding NOT in this set (a new CVE landed on
+    the same package) is genuinely new and gets its own PR. Known gap,
+    accepted for v1: a PR closed without merging still counts as "raised"
+    here, since this is a record of what was opened, not a live poll of
+    GitHub's PR state -- see sweep_auto_raise_prs's docstring.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    package: str = Field(index=True)
+    ecosystem: Optional[str] = None
+    upgrade_to: str
+    # JSON-encoded list[int] of Finding.id, same "JSON as a str column"
+    # convention CveEnrichment.fixed_versions already uses -- this is never
+    # queried by individual finding id, only loaded whole per package.
+    finding_ids: str = "[]"
+    pr_url: str
+    pr_number: int
+    branch: str
+    raised_by: str  # "user:<email>" for a manual raise, "sweep" for the auto-raise sweep
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class RemediationPrBatch(SQLModel, table=True):
+    """Tracks a single async "Raise all" run over a target's Fix Plan (#247
+    follow-up), dispatched via Celery. Same create-row(status="running")-
+    then-.delay()-then-poll pattern as PipelineIntegrationBatch above (see
+    its docstring); the frontend polls
+    GET /api/findings/remediations/raise-all-batches/{batch_id} until status
+    leaves "running"."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_id: int = Field(foreign_key="target.id", index=True)
+    created_by_user_id: int = Field(foreign_key="user.id")
+    status: str = "running"  # running, completed
+    total: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    started_at: datetime = Field(default_factory=utcnow)
+    completed_at: Optional[datetime] = None
+
+
+class RemediationPrBatchItem(SQLModel, table=True):
+    """One package's outcome within a RemediationPrBatch. Each item is a real
+    GitHub API call sequence (branch create + one-or-more file commits + PR
+    open, via app.core.remediation_autofix.raise_package_fix_pr); the Celery
+    task processes items sequentially, same "stay polite to GitHub's rate
+    limits" reasoning as PipelineIntegrationBatchItem."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    batch_id: int = Field(foreign_key="remediationprbatch.id", index=True)
+    package: str
+    status: str = "pending"  # pending, running, succeeded, failed
     error: str = ""
     pr_url: Optional[str] = None
     pr_number: Optional[int] = None

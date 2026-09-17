@@ -1,7 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { PackageRemediation, RemediationCoverage } from "@/types";
 import { RemediationPlanView } from "./remediation-plan";
+
+// ActivityPagination and RemediationBulkRaise (#247 follow-up) read/write
+// the URL and router; only navigation is mocked so the rest of each still
+// renders for real, same as audit-log-list.test.tsx's identical mock.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/targets/7",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 // (#247) These assert the two honesty properties backend/app/core/
 // remediation.py's docstring calls out, plus the failed/empty distinction
@@ -202,6 +211,25 @@ describe("RemediationPlanView", () => {
     expect(screen.getByText("Fix coverage unknown")).not.toBeNull();
     expect(container.textContent).toContain("Advisory coverage for this target is unknown");
     expect(container.textContent).not.toContain("names a fixed version");
+  });
+
+  it("treats an out-of-range page as distinct from a genuinely empty plan", () => {
+    // resolvedTotal (5) > 0, but this specific page has nothing on it --
+    // must not borrow emptyPlanCopy's wording, which is about the whole
+    // target having no fixes, not about which page was requested.
+    const { container } = render(
+      <RemediationPlanView targetId={7} plans={[]} coverage={makeCoverage()} failed={false} total={5} page={3} pageSize={25} />,
+    );
+
+    expect(screen.getByText("No upgrades on this page")).not.toBeNull();
+    expect(container.textContent).toContain("Page 3 is past the end of this target's 5 upgrades");
+    expect(container.textContent).not.toContain("No fixed versions published");
+    expect(container.textContent).not.toContain("Fix coverage unknown");
+    const link = screen.getByRole("link", { name: /Go to page 1/i }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/targets/7?tab=fix-plan");
+    // No pager: ActivityPagination's "Showing X-Y of Z" range math assumes
+    // `page` is in range, which this state is defined by NOT being.
+    expect(screen.queryByText(/Showing/)).toBeNull();
   });
 
   it("states what an upgrade leaves behind, not just what it fixes", () => {

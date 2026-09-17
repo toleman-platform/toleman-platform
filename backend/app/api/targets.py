@@ -126,6 +126,13 @@ class UpdateTargetRequest(BaseModel):
     # without anyone deciding to.
     diff_scoped_pr_scans: bool | None = None
 
+    # (#247 follow-up) Auto-raise PRs for the Fix Plan's own dependency
+    # upgrades, unattended, on the periodic sweep. Same plain per-target
+    # on/off as diff_scoped_pr_scans above, not nullable-to-inherit: this is
+    # a deliberate, per-target opt-in to unattended repo writes, never a
+    # workspace-level default someone could narrow without deciding to.
+    auto_raise_fix_prs: bool | None = None
+
     # (#298) HTTP(S) proxy (e.g. a VPN gateway) git's clone should tunnel
     # through for this target. Not a secret (no encrypt_secret here, unlike
     # client_cert/key below), just a URL; explicit null clears it, same
@@ -140,6 +147,16 @@ class UpdateTargetRequest(BaseModel):
         # 422. Omit the field to leave it alone.
         if v is None:
             raise ValueError("diff_scoped_pr_scans must be true or false; omit the field to leave it unchanged")
+        return v
+
+    @field_validator("auto_raise_fix_prs")
+    @classmethod
+    def _check_auto_raise_fix_prs(cls, v: bool | None) -> bool | None:
+        # Same reasoning as _check_diff_scoped above: the column is NOT
+        # NULL, so an explicit null in the request body would 500 rather
+        # than cleanly 422 -- reject it here instead.
+        if v is None:
+            raise ValueError("auto_raise_fix_prs must be true or false; omit the field to leave it unchanged")
         return v
 
     @field_validator("enforcement_mode")

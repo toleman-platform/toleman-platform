@@ -416,10 +416,16 @@ def _handle_issue_comment(session: Session, payload: dict) -> dict:
             + f" by @{commenter}: {reason}",
         ]
         if skip_reasons:
+            # Deliberately no per-id reason in the PUBLIC reply: "not found"
+            # vs "belongs to a different PR" would let anyone reading this
+            # PR's thread (not just the trusted commenter who ran the
+            # command) distinguish a guessed id that doesn't exist from one
+            # that exists on another PR they may not have access to.
+            # skip_reasons itself is still returned in this handler's own
+            # result (see below) for logging/tests -- only the text actually
+            # posted to GitHub is generic.
             lines.append(
-                "Could not request an ignore for "
-                + ", ".join(f"#{fid} ({why})" for fid, why in skip_reasons.items())
-                + "."
+                "Could not request an ignore for " + ", ".join(f"#{fid}" for fid in skip_reasons) + "."
             )
         lines += ["", "This still needs approval from the security team in Toleman before it takes effect."]
         body = "\n".join(lines)

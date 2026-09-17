@@ -491,6 +491,16 @@ class TestIssueCommentHandler:
             assert session.get(PRGuardrailFinding, other_pr_finding.id).ignore_status == IgnoreStatus.NONE
 
         assert len(replies) == 1
+        # The PUBLIC reply (unlike the handler's own result dict above) must
+        # never distinguish "not found" from "belongs to a different PR" --
+        # that would let anyone reading this PR's thread, not just the
+        # trusted commenter, probe whether a guessed finding id exists
+        # elsewhere.
+        reply_body = replies[0][-1]
+        assert f"#{other_pr_finding.id}" in reply_body
+        assert "#999999" in reply_body
+        assert "finding not found" not in reply_body
+        assert "does not belong to this PR" not in reply_body
 
     def test_bulk_command_where_every_id_is_bad_is_skipped_with_no_reply(self, engine, target_id, monkeypatch):
         replies = []

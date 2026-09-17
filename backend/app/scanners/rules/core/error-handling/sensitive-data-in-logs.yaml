@@ -78,7 +78,7 @@ rules:
       category: security
       cwe: "CWE-532: Insertion of Sensitive Information into Log File"
       validated-against:
-        - "toleman-platform: true negative -- correctly did not re-flag 5 existing nosemgrep-suppressed token-handling log calls, see header"
+        - "toleman-platform: true negative -- correctly did not re-flag the 4 existing token-handling log calls a naive heuristic would, see header"
         - "pygoat: known miss (nonstandard logger variable name), see header"
         - "dvpwa: true negative"
     patterns:

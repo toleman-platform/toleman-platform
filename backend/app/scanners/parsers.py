@@ -25,8 +25,10 @@ def _truncate_title(text: str, limit: int = MAX_TITLE_LENGTH) -> str:
     very long token)."""
     if len(text) <= limit:
         return text
-    cut = text[:limit]
-    trimmed = cut.rsplit(" ", 1)[0].rstrip() or cut.rstrip()
+    if limit <= 1:
+        return "…"[:limit] if limit else ""
+    cut = text[: limit - 1]
+    trimmed = cut.rsplit(None, 1)[0].rstrip() or cut.rstrip()
     return trimmed + "…"
 
 

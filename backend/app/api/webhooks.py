@@ -33,8 +33,11 @@ Four event types handled, each independent of the others:
   - installation_repositories: auto-create/remove Targets when repo access
     changes on an existing installation, instead of only at initial install
     or a manually-clicked "Sync now".
-  - issue_comment: `@toleman ignore finding=<id> <reason>` on a PR, the
-    comment-driven equivalent of the "Request ignore" UI button.
+  - issue_comment: `@toleman ignore finding=<id>[,<id>...] <reason>` on a
+    PR, the comment-driven equivalent of the "Request ignore" UI button.
+    One shared reason across every listed id, since that's the common
+    real case (several findings the same tool flagged for the same
+    reason) and the UI button has no bulk equivalent to match anyway.
 
 Of the three added after pull_request, only push was a plain default_events
 entry (#475). issue_comment also needed a new App permission scope,
@@ -69,15 +72,21 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
 PR_TRIGGERING_ACTIONS = {"opened", "reopened", "synchronize"}
 
-# `@toleman ignore finding=123 reason text...` anywhere in a comment, case-
-# insensitive. Requires an explicit finding id rather than trying to infer
-# "the" finding: PR Guardrail posts one summary comment per PR, not one per
-# finding, so there is no comment thread naturally tied to a single finding
-# the way an inline review comment would be -- a bare "@toleman ignore
-# <reason>" would be ambiguous the moment a PR has more than one net-new
-# finding.
+# `@toleman ignore finding=123 reason text...` (or `finding=123,456,789
+# reason text...`) anywhere in a comment, case-insensitive. Requires
+# explicit finding id(s) rather than trying to infer "the" finding: PR
+# Guardrail posts one summary comment per PR, not one per finding, so
+# there is no comment thread naturally tied to a single finding the way
+# an inline review comment would be -- a bare "@toleman ignore <reason>"
+# would be ambiguous the moment a PR has more than one net-new finding.
+#
+# A comma-separated list rather than requiring N separate comments
+# (#527): a reviewer requesting an ignore for several findings the same
+# tool flagged for the same reason -- the common real case, not several
+# unrelated ones each needing their own justification -- had no way to
+# do that in one command before this.
 IGNORE_COMMAND_RE = re.compile(
-    r"@toleman\s+ignore\s+finding=(?P<finding_id>\d+)\s+(?P<reason>.+)", re.IGNORECASE
+    r"@toleman\s+ignore\s+finding=(?P<finding_ids>\d+(?:\s*,\s*\d+)*)\s+(?P<reason>.+)", re.IGNORECASE
 )
 
 # Only these can create an ignore *request* from a comment (still goes to
@@ -347,33 +356,88 @@ def _handle_issue_comment(session: Session, payload: dict) -> dict:
     if not reason:
         return {"ok": True, "skipped": "empty reason"}
 
-    finding_id = int(match.group("finding_id"))
-    finding = session.get(PRGuardrailFinding, finding_id)
-    if not finding:
-        return {"ok": True, "skipped": "finding not found"}
+    # Dedup while preserving comment order, so "finding=1,1,2" (a typo, or a
+    # copy-paste) doesn't submit the same ignore request twice or double-list
+    # #1 in the reply.
+    finding_ids: list[int] = []
+    seen: set[int] = set()
+    for raw_id in match.group("finding_ids").split(","):
+        fid = int(raw_id.strip())
+        if fid not in seen:
+            seen.add(fid)
+            finding_ids.append(fid)
 
-    # The finding id in a comment is attacker-controlled input from anyone
-    # who can comment on this PR (even a trusted associate could typo or
-    # guess a neighboring id): confirm it actually belongs to a scan of
-    # *this* repo and *this* PR before touching it, not just that some
-    # finding with that id exists somewhere in the whole platform.
-    pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
     repo_clone_url = payload.get("repository", {}).get("clone_url")
     target = _target_for_repo(session, repo_clone_url)
-    if not pr_scan or not target or pr_scan.target_id != target.id or pr_scan.pr_number != issue.get("number"):
-        return {"ok": True, "skipped": "finding does not belong to this PR"}
-
     commenter = (comment.get("user") or {}).get("login") or "unknown"
-    submit_ignore_request(session, finding, requested_by=f"github:{commenter}", reason=reason)
 
-    reply_to_pr(
-        session,
-        target,
-        issue.get("number"),
-        f"Ignore requested for finding #{finding_id} by @{commenter}: {reason}\n\n"
-        "This still needs approval from the security team in Toleman before it takes effect.",
-    )
-    return {"ok": True, "ignore_requested": True, "finding_id": finding_id}
+    requested: list[int] = []
+    skip_reasons: dict[int, str] = {}
+    for finding_id in finding_ids:
+        finding = session.get(PRGuardrailFinding, finding_id)
+        if not finding:
+            skip_reasons[finding_id] = "finding not found"
+            continue
+
+        # The finding id in a comment is attacker-controlled input from
+        # anyone who can comment on this PR (even a trusted associate could
+        # typo or guess a neighboring id): confirm it actually belongs to a
+        # scan of *this* repo and *this* PR before touching it, not just
+        # that some finding with that id exists somewhere in the whole
+        # platform. Checked per id, since one bad id in a list must not
+        # block the others in the same command.
+        pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
+        if not pr_scan or not target or pr_scan.target_id != target.id or pr_scan.pr_number != issue.get("number"):
+            skip_reasons[finding_id] = "finding does not belong to this PR"
+            continue
+
+        submit_ignore_request(session, finding, requested_by=f"github:{commenter}", reason=reason)
+        requested.append(finding_id)
+
+    if not requested:
+        # Nothing to reply about -- no ignore request was actually created,
+        # so there's nothing yet for the security team to review. The
+        # single-id shape (this codebase's original, still the overwhelming
+        # common case) keeps its own exact "skipped" reason at the top level
+        # rather than the multi-id summary shape below.
+        if len(finding_ids) == 1:
+            return {"ok": True, "skipped": skip_reasons[finding_ids[0]]}
+        return {"ok": True, "skipped": "no listed finding id could be ignore-requested", "errors": skip_reasons}
+
+    if len(requested) == 1 and not skip_reasons:
+        body = (
+            f"Ignore requested for finding #{requested[0]} by @{commenter}: {reason}\n\n"
+            "This still needs approval from the security team in Toleman before it takes effect."
+        )
+    else:
+        lines = [
+            f"Ignore requested for {len(requested)} finding(s) "
+            + ", ".join(f"#{fid}" for fid in requested)
+            + f" by @{commenter}: {reason}",
+        ]
+        if skip_reasons:
+            # Deliberately no per-id reason in the PUBLIC reply: "not found"
+            # vs "belongs to a different PR" would let anyone reading this
+            # PR's thread (not just the trusted commenter who ran the
+            # command) distinguish a guessed id that doesn't exist from one
+            # that exists on another PR they may not have access to.
+            # skip_reasons itself is still returned in this handler's own
+            # result (see below) for logging/tests -- only the text actually
+            # posted to GitHub is generic.
+            lines.append(
+                "Could not request an ignore for " + ", ".join(f"#{fid}" for fid in skip_reasons) + "."
+            )
+        lines += ["", "This still needs approval from the security team in Toleman before it takes effect."]
+        body = "\n".join(lines)
+
+    reply_to_pr(session, target, issue.get("number"), body)
+
+    result = {"ok": True, "ignore_requested": True, "finding_ids": requested}
+    if len(requested) == 1:
+        result["finding_id"] = requested[0]
+    if skip_reasons:
+        result["skipped_finding_ids"] = skip_reasons
+    return result
 
 
 EVENT_HANDLERS = {

@@ -10,6 +10,28 @@ from app.core.scan_health import ScanHealth
 from app.models.models import Severity
 
 
+MAX_TITLE_LENGTH = 200
+
+
+def _truncate_title(text: str, limit: int = MAX_TITLE_LENGTH) -> str:
+    """`text` capped at `limit` characters for table/comment rendering, with
+    an ellipsis so a reader can tell it was cut rather than reading as a
+    truncated sentence that looks broken (a real PR Guardrail comment showed
+    a semgrep message trail off mid-word with no indication -- "Make sure
+    that the logge" -- which read as the table itself glitching, not as
+    intentionally shortened text). Backs off to the last whitespace before
+    the cut so the visible text still ends on a word boundary; only falls
+    back to a hard cut when there is no whitespace to back off to (a single
+    very long token)."""
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return "…"[:limit] if limit else ""
+    cut = text[: limit - 1]
+    trimmed = cut.rsplit(None, 1)[0].rstrip() or cut.rstrip()
+    return trimmed + "…"
+
+
 def _map_severity(raw: str) -> Severity:
     raw = (raw or "").strip().lower()
     if raw in ("critical",):
@@ -29,7 +51,7 @@ def parse_semgrep(raw: dict) -> list[dict]:
         extra = r.get("extra", {})
         out.append({
             "rule_id": r.get("check_id", "unknown"),
-            "title": extra.get("message", r.get("check_id", ""))[:200],
+            "title": _truncate_title(extra.get("message", r.get("check_id", ""))),
             "description": extra.get("message", ""),
             "file_path": r.get("path", ""),
             "line_start": r.get("start", {}).get("line"),
@@ -235,7 +257,7 @@ def parse_trivy(raw: dict) -> list[dict]:
         for v in result.get("Vulnerabilities", []) or []:
             out.append({
                 "rule_id": v.get("VulnerabilityID", "unknown"),
-                "title": v.get("Title", v.get("VulnerabilityID", ""))[:200],
+                "title": _truncate_title(v.get("Title", v.get("VulnerabilityID", ""))),
                 "description": v.get("Description", ""),
                 "file_path": target,
                 "line_start": None,
@@ -249,7 +271,7 @@ def parse_trivy(raw: dict) -> list[dict]:
         for m in result.get("Misconfigurations", []) or []:
             out.append({
                 "rule_id": m.get("ID", "unknown"),
-                "title": m.get("Title", "")[:200],
+                "title": _truncate_title(m.get("Title", "")),
                 "description": m.get("Description", ""),
                 "file_path": target,
                 "line_start": (m.get("CauseMetadata") or {}).get("StartLine"),
@@ -276,7 +298,7 @@ def parse_trivy_license(raw: dict) -> list[dict]:
             file_path = lic.get("FilePath") or target
             out.append({
                 "rule_id": f"license:{name}",
-                "title": f"{name} license detected in {pkg_name}"[:200] if pkg_name else f"{name} license detected"[:200],
+                "title": _truncate_title(f"{name} license detected in {pkg_name}" if pkg_name else f"{name} license detected"),
                 "description": f"License {name} detected for package {pkg_name}".strip(),
                 "file_path": file_path,
                 "line_start": None,
@@ -365,7 +387,7 @@ def parse_gosec(raw: dict) -> list[dict]:
     for issue in raw.get("Issues", []):
         out.append({
             "rule_id": issue.get("rule_id", "unknown"),
-            "title": issue.get("details", "")[:200],
+            "title": _truncate_title(issue.get("details", "")),
             "description": issue.get("details", ""),
             "file_path": issue.get("file", ""),
             "line_start": int(issue.get("line", "0").split("-")[0] or 0) or None,
@@ -403,7 +425,7 @@ def parse_nuclei(raw: list[dict]) -> list[dict]:
         snippet = r.get("matcher-name") or (extracted[0] if extracted else "")
         out.append({
             "rule_id": template_id,
-            "title": name[:200],
+            "title": _truncate_title(name),
             "description": info.get("description", "") or name,
             "file_path": matched_at,
             "line_start": None,
@@ -436,7 +458,7 @@ def parse_checkov(raw: dict | list) -> list[dict]:
             file_line_range = check.get("file_line_range") or [None, None]
             out.append({
                 "rule_id": check.get("check_id", "unknown"),
-                "title": (check.get("check_name") or check.get("check_id", ""))[:200],
+                "title": _truncate_title(check.get("check_name") or check.get("check_id", "")),
                 "description": check.get("check_name", ""),
                 "file_path": check.get("file_path", "").lstrip("/"),
                 "line_start": file_line_range[0] if file_line_range else None,
@@ -457,7 +479,7 @@ def parse_tfsec(raw: dict) -> list[dict]:
         location = r.get("location") or {}
         out.append({
             "rule_id": r.get("long_id") or r.get("rule_id", "unknown"),
-            "title": (r.get("description") or r.get("rule_description") or "")[:200],
+            "title": _truncate_title(r.get("description") or r.get("rule_description") or ""),
             "description": r.get("description", ""),
             "file_path": location.get("filename", ""),
             "line_start": location.get("start_line"),
@@ -509,7 +531,7 @@ def parse_modelscan(raw: dict) -> list[dict]:
         description = issue.get("description") or f"Unsafe operator {qualified} in a serialized model file"
         out.append({
             "rule_id": issue.get("scanner") or "modelscan",
-            "title": f"Unsafe operator '{qualified}' in model file"[:200],
+            "title": _truncate_title(f"Unsafe operator '{qualified}' in model file"),
             "description": (
                 f"{description} Loading this file executes the operator: deserializing an untrusted "
                 f"model is arbitrary code execution, not a parsing step."
@@ -546,7 +568,7 @@ def parse_sarif(raw: dict) -> list[dict]:
                 line_end = region.get("endLine", line_start)
             out.append({
                 "rule_id": rule_id,
-                "title": (result.get("message", {}).get("text", rule_id))[:200],
+                "title": _truncate_title(result.get("message", {}).get("text", rule_id)),
                 "description": result.get("message", {}).get("text", ""),
                 "file_path": file_path,
                 "line_start": line_start,

@@ -1,7 +1,7 @@
 """Tests for the three webhook event handlers added alongside pull_request
 (app/api/webhooks.py): push (re-scan a target's default branch), and
-issue_comment (`@toleman ignore finding=<id> <reason>`). Plumbing for
-installation_repositories tested where it dispatches; the actual
+issue_comment (`@toleman ignore finding=<id>[,<id>...] <reason>`). Plumbing
+for installation_repositories tested where it dispatches; the actual
 resync logic itself is app.api.github_app._sync_repos's own coverage.
 
 Also covers _handle_pr_merged: `push` turned out not to reliably deliver in
@@ -430,3 +430,95 @@ class TestIssueCommentHandler:
             payload = self._payload(finding_id=999999)
             result = webhooks._handle_issue_comment(session, payload)
             assert result == {"ok": True, "skipped": "finding not found"}
+
+    def test_comma_separated_finding_ids_all_requested_in_one_command(self, engine, target_id, monkeypatch):
+        replies = []
+        monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: replies.append(a))
+
+        with Session(engine) as session:
+            f1 = self._finding(session, target_id)
+            f2 = self._finding(session, target_id)
+            payload = self._payload(f1.id, body_extra="")
+            payload["comment"]["body"] = f"@toleman ignore finding={f1.id},{f2.id} false positive, see line 12"
+            result = webhooks._handle_issue_comment(session, payload)
+
+            assert result["ignore_requested"] is True
+            assert result["finding_ids"] == [f1.id, f2.id]
+            assert "finding_id" not in result
+
+            for f in (f1, f2):
+                refreshed = session.get(PRGuardrailFinding, f.id)
+                assert refreshed.ignore_status == IgnoreStatus.REQUESTED
+                assert refreshed.ignore_requested_by == "github:alice"
+                assert "false positive" in refreshed.ignore_requested_reason
+
+        # One combined reply, not one per finding.
+        assert len(replies) == 1
+
+    def test_duplicate_ids_in_one_command_are_deduped(self, engine, target_id, monkeypatch):
+        monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: None)
+
+        with Session(engine) as session:
+            finding = self._finding(session, target_id)
+            payload = self._payload(finding.id)
+            payload["comment"]["body"] = f"@toleman ignore finding={finding.id},{finding.id} dup id typo"
+            result = webhooks._handle_issue_comment(session, payload)
+
+            assert result["finding_ids"] == [finding.id]
+            assert result["finding_id"] == finding.id
+
+    def test_bulk_command_with_one_bad_id_still_requests_the_good_ones(self, engine, target_id, monkeypatch):
+        replies = []
+        monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: replies.append(a))
+
+        with Session(engine) as session:
+            f1 = self._finding(session, target_id)
+            other_pr_finding = self._finding(session, target_id, pr_number=999)
+            payload = self._payload(f1.id)
+            payload["comment"]["body"] = (
+                f"@toleman ignore finding={f1.id},{other_pr_finding.id},999999 false positive"
+            )
+            result = webhooks._handle_issue_comment(session, payload)
+
+            assert result["ignore_requested"] is True
+            assert result["finding_ids"] == [f1.id]
+            assert result["skipped_finding_ids"] == {
+                other_pr_finding.id: "finding does not belong to this PR",
+                999999: "finding not found",
+            }
+
+            assert session.get(PRGuardrailFinding, f1.id).ignore_status == IgnoreStatus.REQUESTED
+            assert session.get(PRGuardrailFinding, other_pr_finding.id).ignore_status == IgnoreStatus.NONE
+
+        assert len(replies) == 1
+        # The PUBLIC reply (unlike the handler's own result dict above) must
+        # never distinguish "not found" from "belongs to a different PR" --
+        # that would let anyone reading this PR's thread, not just the
+        # trusted commenter, probe whether a guessed finding id exists
+        # elsewhere.
+        reply_body = replies[0][-1]
+        assert f"#{other_pr_finding.id}" in reply_body
+        assert "#999999" in reply_body
+        assert "finding not found" not in reply_body
+        assert "does not belong to this PR" not in reply_body
+
+    def test_bulk_command_where_every_id_is_bad_is_skipped_with_no_reply(self, engine, target_id, monkeypatch):
+        replies = []
+        monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: replies.append(a))
+
+        with Session(engine) as session:
+            other_pr_finding = self._finding(session, target_id, pr_number=999)
+            payload = self._payload(other_pr_finding.id)
+            payload["comment"]["body"] = f"@toleman ignore finding={other_pr_finding.id},999999 false positive"
+            result = webhooks._handle_issue_comment(session, payload)
+
+            assert result == {
+                "ok": True,
+                "skipped": "no listed finding id could be ignore-requested",
+                "errors": {
+                    other_pr_finding.id: "finding does not belong to this PR",
+                    999999: "finding not found",
+                },
+            }
+
+        assert replies == []

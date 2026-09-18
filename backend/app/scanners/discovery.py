@@ -21,12 +21,28 @@ SKIP_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".venv", "venv", "
 
 def discover_endpoints(repo_path: Path) -> list[dict]:
     results = []
+    repo_root = repo_path.resolve()
     for path in repo_path.rglob("*"):
         if path.is_dir():
             continue
         if any(part in SKIP_DIRS for part in path.parts):
             continue
         if path.suffix not in SOURCE_EXTENSIONS:
+            continue
+        # A cloned repo is attacker-controlled content: git allows committing
+        # a symlink, and rglob() happily follows a file-type one straight to
+        # wherever it points -- read_text() would then return that target's
+        # real content (anywhere on the scanning host, or another tenant's
+        # concurrently-cloned checkout under the same shared scan_workdir)
+        # rather than anything actually in this repo. Skip it outright
+        # rather than trying to resolve+contain it: a legitimate route file
+        # is never a symlink, so there is no real case to preserve here.
+        if path.is_symlink():
+            continue
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(repo_root)
+        except (OSError, ValueError):
             continue
         try:
             text = path.read_text(errors="ignore")

@@ -146,7 +146,33 @@ def _verify_signature(
     return False
 
 
-def _target_for_repo(session: Session, repo_clone_url: str | None) -> Target | None:
+def _installation_workspace_id(session: Session, payload_installation_id: int | None) -> int | None:
+    """The workspace that owns the installation which actually fired this
+    webhook delivery, resolved straight from the payload's `installation.id`
+    -- the one field GitHub attaches to every App webhook delivery that
+    can't be reassigned to a different workspace after the fact the way
+    `repository.clone_url` can (see _target_for_repo). `GitHubInstallation.
+    workspace_id` is non-nullable and is the authoritative tenant binding
+    here; `GitHubAppConfig.workspace_id` is NOT used for this, since it can
+    be None for the shared platform-default App.
+
+    Returns None when the id is missing or doesn't resolve to a known
+    installation -- callers must treat that as "workspace unknown", never
+    as "any workspace", since this is the only thing standing between one
+    tenant's real, validly-signed webhook delivery and it being pointed at
+    another tenant's Target via a forged `repository.clone_url`.
+    """
+    if payload_installation_id is None:
+        return None
+    installation = session.exec(
+        select(GitHubInstallation).where(GitHubInstallation.installation_id == payload_installation_id)
+    ).first()
+    return installation.workspace_id if installation else None
+
+
+def _target_for_repo(
+    session: Session, repo_clone_url: str | None, installation_workspace_id: int | None
+) -> Target | None:
     """Resolve the registered Target for a webhook payload's repository.
 
     (#273) Soft-deleted targets are excluded, which does two things at once.
@@ -157,27 +183,49 @@ def _target_for_repo(session: Session, repo_clone_url: str | None) -> Target | N
     later: the old soft-deleted row still holds that repo_url, and an
     unfiltered lookup would keep matching the dead one forever while the new
     target silently never got a single webhook.
+
+    A verified HMAC signature only proves the raw body was signed with some
+    configured App's real secret -- since Apps are per-workspace (#506), it
+    does NOT prove the firing installation is entitled to act on whichever
+    repo the same (attacker-controlled, once a real secret is known) body
+    happens to name in `repository.clone_url`. A tenant that legitimately
+    owns a real App/webhook secret could otherwise forge a delivery naming
+    a different tenant's repo and have every handler below act on it using
+    that OTHER tenant's own real installation token (resolved from
+    target.workspace_id downstream in pr_guardrail_executor). Cross-checking
+    the resolved target's workspace against the installation that actually
+    fired this delivery closes that: a signature is only trusted to act on
+    Targets belonging to the same workspace as the installation which
+    produced it.
     """
     if not repo_clone_url:
         return None
-    return session.exec(
+    target = session.exec(
         target_lifecycle.live_targets(select(Target)).where(Target.repo_url == repo_clone_url)
     ).first()
+    if target is None:
+        return None
+    if installation_workspace_id is None or target.workspace_id != installation_workspace_id:
+        logger.warning(
+            "webhook: signed delivery named a target outside the firing installation's workspace, ignoring"
+        )
+        return None
+    return target
 
 
-def _handle_pull_request(session: Session, payload: dict) -> dict:
+def _handle_pull_request(session: Session, payload: dict, installation_workspace_id: int | None) -> dict:
     action = payload.get("action")
     pr = payload.get("pull_request") or {}
 
     if action == "closed" and pr.get("merged"):
-        return _handle_pr_merged(session, payload, pr)
+        return _handle_pr_merged(session, payload, pr, installation_workspace_id)
 
     if action not in PR_TRIGGERING_ACTIONS:
         return {"ok": True, "skipped": f"action={action}"}
 
     repo_clone_url = payload.get("repository", {}).get("clone_url")
     pr_number = payload.get("number")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     if not target:
         logger.info("webhook: no target registered for %s, ignoring", repo_clone_url)
         return {"ok": True, "skipped": "no matching target"}
@@ -242,7 +290,7 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
     return {"ok": True, "queued": True, "target_id": target.id, "pr_number": pr_number, "pr_scan_id": pr_scan.id}
 
 
-def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
+def _handle_pr_merged(session: Session, payload: dict, pr: dict, installation_workspace_id: int | None) -> dict:
     """Re-scan a target's default branch so the dashboard reflects a merged
     fix, same goal as `_handle_push` below -- but triggered off
     `pull_request.closed` (merged=true) instead of `push`.
@@ -262,7 +310,7 @@ def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
     *does* arrive reliably -- every other trigger in this file already
     depends on it."""
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     if not target:
         return {"ok": True, "skipped": "no matching target"}
 
@@ -286,7 +334,7 @@ def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
     return {"ok": True, "queued": True, "target_id": target.id, "reason": "pull request merged"}
 
 
-def _handle_push(session: Session, payload: dict) -> dict:
+def _handle_push(session: Session, payload: dict, installation_workspace_id: int | None) -> dict:
     if payload.get("deleted"):
         # A branch delete is also delivered as a `push` with deleted=true
         # and a ref that no longer points anywhere; nothing to scan.
@@ -294,7 +342,7 @@ def _handle_push(session: Session, payload: dict) -> dict:
 
     ref = payload.get("ref", "")
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     if not target:
         return {"ok": True, "skipped": "no matching target"}
 
@@ -332,7 +380,7 @@ def _handle_installation_repositories(payload: dict) -> dict:
     return {"ok": True, "queued": True, "reason": "installation_repositories added"}
 
 
-def _handle_issue_comment(session: Session, payload: dict) -> dict:
+def _handle_issue_comment(session: Session, payload: dict, installation_workspace_id: int | None) -> dict:
     if payload.get("action") != "created":
         return {"ok": True, "skipped": f"issue_comment action={payload.get('action')}"}
 
@@ -368,7 +416,7 @@ def _handle_issue_comment(session: Session, payload: dict) -> dict:
             finding_ids.append(fid)
 
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     commenter = (comment.get("user") or {}).get("login") or "unknown"
 
     requested: list[int] = []
@@ -472,10 +520,13 @@ async def github_webhook(
         if x_github_event == "installation_repositories":
             # No repo-scoped `target` lookup for this one (it's about
             # installation-level access changes, not a single repo), so it
-            # doesn't fit EVENT_HANDLERS' (session, payload) -> dict shape.
+            # doesn't fit EVENT_HANDLERS' (session, payload, ws_id) -> dict
+            # shape, and there is no cross-tenant target-selection risk to
+            # bind against here in the first place.
             return _handle_installation_repositories(payload)
 
         handler = EVENT_HANDLERS.get(x_github_event)
         if handler is None:
             return {"ok": True, "skipped": f"event={x_github_event}"}
-        return handler(session, payload)
+        installation_workspace_id = _installation_workspace_id(session, payload_installation_id)
+        return handler(session, payload, installation_workspace_id)

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_admin
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.crypto import encrypt_secret
@@ -453,7 +453,18 @@ def _sync_repos(session: Session) -> int:
 
 
 @router.post("/sync")
-def sync_now(session: Session = Depends(get_session)):
+def sync_now(session: Session = Depends(get_session), user: User = Depends(require_admin)):
+    """Manually re-run the same installation-repos sync the
+    installation_repositories webhook triggers automatically (#456).
+
+    Admin-only: this had no auth dependency at all before, and _sync_repos
+    iterates every GitHubInstallation platform-wide -- any authenticated
+    user could create Target rows and queue scans across every workspace
+    with an installation, regardless of their own membership anywhere.
+    Matches the platform-default App's existing admin-only bar (see
+    delete_app_config's docstring) since this action is platform-wide, not
+    scoped to one workspace's App.
+    """
     created = _sync_repos(session)
     return {"created": created}
 

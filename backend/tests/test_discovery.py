@@ -53,3 +53,36 @@ def test_records_file_and_line_number(tmp_path: Path):
     entry = next(e for e in out if e["route"] == "/create")
     assert entry["file"] == "main.py"
     assert entry["line"] == 2
+
+
+def test_does_not_follow_a_symlink_to_read_a_file_outside_the_repo(tmp_path: Path):
+    """A cloned repo is attacker-controlled content: git allows committing a
+    symlink, and rglob() would otherwise follow a file-type one straight to
+    wherever it points, reading -- and persisting via the discovered
+    route's `file`/`route` fields -- whatever real content sits at that
+    path on the scanning host (or another tenant's concurrently-cloned
+    checkout), not anything actually contributed to this repo."""
+    secret_dir = tmp_path.parent / "secret-outside-repo"
+    secret_dir.mkdir(exist_ok=True)
+    secret_file = secret_dir / "admin.py"
+    secret_file.write_text('@app.get("/admin/rotate-secret")\ndef rotate():\n    pass\n')
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "leak.py").symlink_to(secret_file)
+
+    out = discover_endpoints(repo)
+    assert out == []
+
+
+def test_does_not_follow_a_relative_symlink_escaping_the_repo(tmp_path: Path):
+    sibling = tmp_path / "other-tenants-checkout"
+    sibling.mkdir()
+    (sibling / "settings.py").write_text('@app.get("/internal/config")\ndef config():\n    pass\n')
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "leak.py").symlink_to(Path("..") / "other-tenants-checkout" / "settings.py")
+
+    out = discover_endpoints(repo)
+    assert out == []

@@ -96,6 +96,16 @@ class Settings(BaseSettings):
     nuclei_rate_limit: int = 10
     nuclei_exclude_tags: str = "dos,fuzz,intrusive"
 
+    # (#247 follow-up) Fix Plan npm/yarn/pnpm autofix: how long a single
+    # package-manager bump (npm install --package-lock-only / pnpm add
+    # --lockfile-only / yarn up|add) may run in app.core.npm_lockfile_autofix
+    # before being killed. Same role as nuclei_timeout_seconds above -- and,
+    # like that one, exists specifically so a hung subprocess (a slow
+    # registry, a stuck classic-yarn resolve) can't occupy a Celery worker
+    # slot indefinitely; see that module's docstring for why none of the
+    # OTHER scanner subprocesses in runner.py have an equivalent yet.
+    npm_install_timeout_seconds: int = 180
+
     # Issue #153: a Scan/DiscoveryRun/SbomRun/PipelineIntegrationBatch row can
     # be left "running" forever if its Celery task never actually reaches a
     # worker (e.g. a worker listening on the wrong queue) or the worker

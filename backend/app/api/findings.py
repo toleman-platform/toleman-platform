@@ -23,6 +23,7 @@ from app.core.notifications import dispatch_notification
 from app.core.sla import compute_sla_status
 from app.core.remediation import group_remediations, remediation_plan, workspace_remediation_plan
 from app.core.remediation_autofix import AlreadyRaisedError, raise_package_fix_pr
+import app.core.npm_lockfile_autofix as npm_lockfile_autofix
 from app.core.staleness import mark_stale_if_needed
 from app.core.grouping import (
     DEFAULT_SORT,
@@ -1533,6 +1534,20 @@ class RaisePackageFixPrResponse(BaseModel):
     branch: str
 
 
+# npm-ecosystem packages route through the SAME async batch machinery
+# raise-all already uses (RemediationPrBatch/Item + run_raise_all_batch),
+# as a one-item batch, instead of returning RaisePackageFixPrResponse
+# directly -- see raise_package_fix_pr_endpoint below. The regenerated
+# lockfile bump (app.core.npm_lockfile_autofix) clones a real repo and runs
+# a real package manager, which can take up to
+# settings.npm_install_timeout_seconds; blocking this request's thread for
+# that long is not an option non-npm packages have ever needed.
+class RaisePackageFixPrAsyncResponse(BaseModel):
+    batch_id: int
+    package: str
+    status: str
+
+
 @router.post("/remediations/raise-pr")
 def raise_package_fix_pr_endpoint(
     payload: RaisePackageFixPrRequest,
@@ -1581,6 +1596,52 @@ def raise_package_fix_pr_endpoint(
     plan = next((p for p in plans if p["package"] == payload.package), None)
     if plan is None:
         raise HTTPException(status_code=404, detail="package not found in this target's current fix plan")
+
+    if plan.get("ecosystem") in npm_lockfile_autofix.NPM_ECOSYSTEMS:
+        # Real npm/yarn/pnpm lockfile regeneration clones the repo and runs
+        # the real package manager (app.core.npm_lockfile_autofix) -- too
+        # slow to do inline on this request thread. Dispatched as a
+        # one-item RemediationPrBatch, the exact same async job the bulk
+        # "Raise all" button already uses; the frontend button polls
+        # GET .../raise-all-batches/{batch_id} the same way the bulk one
+        # does, instead of getting pr_url back directly.
+        batch = RemediationPrBatch(target_id=target.id, created_by_user_id=user.id, total=1, status="running")
+        session.add(batch)
+        session.commit()
+        session.refresh(batch)
+        item = RemediationPrBatchItem(batch_id=batch.id, package=plan["package"], status="pending")
+        session.add(item)
+        session.commit()
+        try:
+            run_raise_all_batch.delay(batch_id=batch.id)
+        except Exception as exc:
+            # Same dispatch-failure handling as raise_all_remediation_prs_endpoint's
+            # identical guard -- a broker publish failure must fail visibly
+            # now rather than leave this batch "running" until
+            # mark_stale_if_needed's timeout elapses on a later poll. The
+            # item must be marked failed here too, not just the batch: a
+            # later poll reads items independently of the batch's own
+            # status, and a "completed" batch whose one item is still
+            # "pending" is a contradiction a caller has no way to resolve.
+            logger.exception("failed to dispatch npm raise-pr batch %s", batch.id)
+            batch.status = "completed"
+            batch.failed = 1
+            batch.completed_at = utcnow()
+            session.add(batch)
+            item.status = "failed"
+            item.error = "failed to dispatch: internal error, see server logs"
+            item.completed_at = utcnow()
+            session.add(item)
+            session.commit()
+            raise HTTPException(
+                status_code=422, detail="failed to dispatch fix; check server logs"
+            ) from exc
+        return JSONResponse(
+            status_code=202,
+            content=RaisePackageFixPrAsyncResponse(
+                batch_id=batch.id, package=plan["package"], status=batch.status
+            ).model_dump(),
+        )
 
     try:
         pr = raise_package_fix_pr(session, target, plan, raised_by=f"user:{user.email}")

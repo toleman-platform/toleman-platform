@@ -360,11 +360,27 @@ export type RemediationPlanResponse = {
  * the PR opened for one package's upgrade, covering every finding it
  * resolves in a single commit-and-open-PR call.
  */
-export type RaisePackageFixPrResult = {
+export type RaisePackageFixPrSyncResult = {
   pr_url: string;
   pr_number: number;
   branch: string;
 };
+
+/**
+ * npm-ecosystem lockfile bump (#247 follow-up): the real package-manager
+ * run this needs (app.core.npm_lockfile_autofix) is too slow to do inline,
+ * so the backend dispatches it as a one-item RemediationPrBatch instead of
+ * returning a PR directly -- same async job the bulk "Raise all" button
+ * already polls. Distinguished from RaisePackageFixPrSyncResult by the
+ * presence of `batch_id`.
+ */
+export type RaisePackageFixPrAsyncResult = {
+  batch_id: number;
+  package: string;
+  status: "running" | "completed";
+};
+
+export type RaisePackageFixPrResult = RaisePackageFixPrSyncResult | RaisePackageFixPrAsyncResult;
 
 /**
  * (#247 follow-up) One package's outcome within a RemediationPrBatch (the

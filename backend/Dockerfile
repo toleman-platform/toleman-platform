@@ -37,6 +37,20 @@ ARG TRIVY_VERSION=0.73.0
 ARG GOSEC_VERSION=2.28.0
 ARG NUCLEI_VERSION=3.11.1
 ARG TFSEC_VERSION=1.28.14
+# (#247 follow-up) Node.js, for real npm/yarn/pnpm lockfile regeneration in
+# app.core.npm_lockfile_autofix -- see that module's docstring for why a
+# regex text edit to package.json/a lockfile is not an option here, unlike
+# every other manifest format app.core.autofix bumps. Current LTS at the
+# time of pinning; bump deliberately, same as every other tool below.
+ARG NODE_VERSION=24.21.0
+# corepack (bundled with this Node build) manages yarn/pnpm from here;
+# their versions are pinned via `corepack prepare ... --activate` below,
+# not via a separate checksum block -- corepack verifies each release's
+# signature against npm's own published keys before activating it, which
+# is a stronger guarantee than us re-checksumming a registry tarball by
+# hand the way the raw-binary tools below are pinned.
+ARG YARN_VERSION=1.22.22
+ARG PNPM_VERSION=12.4.2
 # github.com/semgrep/semgrep-rules has no release tags, so the pin is a
 # commit. Bump it deliberately, the way any other dependency here is
 # bumped: this is the rule set that decides what a scan reports, and a
@@ -67,6 +81,11 @@ ARG NUCLEI_SHA256_ARM64=8044e3d9768ba0a744b2872c1a87e813006f013da97ca9f50f7661a4
 # the other four above.
 ARG TFSEC_SHA256_AMD64=a32d0799bbefababaa4fcd814da9f4d251cd932789590b99d1d5fcb89ace6f68
 ARG TFSEC_SHA256_ARM64=7b872b0e8f398abebc21ab78f6c0535029ff649f0d18f0f3454a01bece3006a2
+# From https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt at the tag
+# pinned above, downloaded and verified against the actual asset before
+# pinning here, same as the other tools' checksums.
+ARG NODE_SHA256_AMD64=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+ARG NODE_SHA256_ARM64=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -77,12 +96,15 @@ WORKDIR /app
 # git: needed at runtime by app/scanners/runner.py (clone_repo shells out to
 # `git clone`). curl/tar/unzip/ca-certificates: needed here at build time to
 # fetch and unpack the scanner binaries below (nuclei ships as a .zip, the
-# other three as .tar.gz, hence both tar and unzip).
+# other three as .tar.gz, hence both tar and unzip). xz-utils: the Node.js
+# release tarball below ships as .tar.xz, and this base image's `tar` has
+# no built-in xz support without it (plain tar.gz needs none).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         curl \
         tar \
         unzip \
+        xz-utils \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -208,6 +230,38 @@ RUN set -eux; \
     echo "${TFSEC_SHA256}  /usr/local/bin/tfsec" | sha256sum -c -; \
     chmod +x /usr/local/bin/tfsec; \
     tfsec --version
+
+# --- Node.js + corepack (real npm/yarn/pnpm lockfile bumps, #247 follow-up)
+# Same image both the API server and the celery-worker run (this file's own
+# header comment), so this is paid for by the API container too even
+# though only the worker ever executes npm/yarn/pnpm -- consistent with
+# every other scanner tool already bundled here on the same "one image, two
+# commands" convention (docker-compose.yml), not a new tradeoff invented
+# for this feature.
+#
+# Extracted straight into /usr/local (already on PATH, already chowned to
+# the runtime user below) via --strip-components=1, since the release
+# tarball's own top-level dir is node-vX.Y.Z-linux-<arch>/{bin,lib,...}.
+#
+# To bump: change NODE_VERSION and take the new sums from
+#   https://nodejs.org/dist/vX.Y.Z/SHASUMS256.txt
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        amd64) NODE_ARCH=x64; NODE_SHA256="${NODE_SHA256_AMD64}" ;; \
+        arm64) NODE_ARCH=arm64; NODE_SHA256="${NODE_SHA256_ARM64}" ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 -o /tmp/node.tar.xz \
+        "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"; \
+    echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c -; \
+    tar xJ -C /usr/local --strip-components=1 -f /tmp/node.tar.xz; \
+    rm -f /tmp/node.tar.xz; \
+    node --version && npm --version
+
+# corepack itself (the yarn/pnpm ARGs are activated further below, as the
+# runtime user -- see that block's comment for why) ships inside the Node
+# build above; nothing to install here.
+RUN corepack enable
 
 # --- Nuclei (active API scanning against live endpoints, #72) -------------
 # Was never bundled here even though app/scanners/runner.py has always
@@ -422,6 +476,21 @@ ENV HOME=/home/toleman \
     XDG_CACHE_HOME=/home/toleman/.cache
 
 USER toleman
+
+# (#247 follow-up) Activate the pinned yarn/pnpm versions -- deliberately
+# AFTER `USER toleman`/`ENV HOME=` above, not right after `corepack enable`
+# with the other Node setup. Same bug class as the nuclei-templates comment
+# just below: `corepack prepare --activate` caches the downloaded release
+# under $HOME/.cache/node/corepack, and running it as root earlier in this
+# file writes that cache into /root, invisible to the app which runs as
+# toleman with HOME=/home/toleman -- verified the hard way, corepack fell
+# back to redownloading yarn/pnpm from the registry on every container
+# start. Running it here, as the runtime user, makes the two paths the
+# same by construction instead of by a variable both sides have to agree
+# on -- exactly nuclei's own fix for the same class of bug.
+RUN corepack prepare "yarn@${YARN_VERSION}" --activate \
+    && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
+    && yarn --version && pnpm --version
 
 # (#229) Install the template set at build time -- deliberately AFTER
 # `USER toleman` and the `ENV HOME=` above, not with the other scanner

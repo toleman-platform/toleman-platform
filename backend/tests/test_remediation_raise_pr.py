@@ -125,7 +125,9 @@ def _dev_client_with_target(client, engine, name="t") -> int:
     return target_id
 
 
-def _finding_with_fix(engine, target_id, cve_id, package, fixed_version, file_path="requirements.txt"):
+def _finding_with_fix(
+    engine, target_id, cve_id, package, fixed_version, file_path="requirements.txt", ecosystem="PyPI"
+):
     with Session(engine) as session:
         session.add(Finding(
             target_id=target_id, tool="trivy", rule_id=cve_id, title=f"{cve_id} in {package}",
@@ -134,7 +136,7 @@ def _finding_with_fix(engine, target_id, cve_id, package, fixed_version, file_pa
         ))
         session.add(CveEnrichment(
             cve_id=cve_id, osv_found=True,
-            fixed_versions=json.dumps([{"package": package, "ecosystem": "PyPI", "fixed": fixed_version}]),
+            fixed_versions=json.dumps([{"package": package, "ecosystem": ecosystem, "fixed": fixed_version}]),
         ))
         session.commit()
 
@@ -166,6 +168,65 @@ def test_raise_pr_404s_for_a_package_not_in_the_current_plan(client, engine):
     target_id = _dev_client_with_target(client, engine)
     res = client.post("/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "nope"})
     assert res.status_code == 404
+
+
+def test_raise_pr_for_npm_package_dispatches_an_async_batch_instead_of_raising_inline(client, engine, monkeypatch):
+    """npm-ecosystem lockfile bumps clone a real repo and run a real
+    package manager (app.core.npm_lockfile_autofix) -- too slow to do on
+    this request thread. The endpoint must route these through the SAME
+    one-item-batch + run_raise_all_batch.delay() path the bulk "Raise all"
+    button already uses, returning batch_id (never pr_url) -- and must
+    NOT call raise_package_fix_pr synchronously the way a pip/go package
+    still does (that call would block on a real clone+npm-install)."""
+    target_id = _dev_client_with_target(client, engine)
+    _finding_with_fix(
+        engine, target_id, "CVE-2024-9", "axios", "1.7.4",
+        file_path="package-lock.json", ecosystem="npm",
+    )
+
+    sync_raise = MagicMock(side_effect=AssertionError("must not call raise_package_fix_pr synchronously for npm"))
+    monkeypatch.setattr(findings_module, "raise_package_fix_pr", sync_raise)
+    mock_delay = MagicMock()
+    monkeypatch.setattr(findings_module.run_raise_all_batch, "delay", mock_delay)
+
+    res = client.post("/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "axios"})
+    assert res.status_code == 202, res.text
+    body = res.json()
+    assert body["package"] == "axios"
+    assert body["status"] == "running"
+    batch_id = body["batch_id"]
+    mock_delay.assert_called_once_with(batch_id=batch_id)
+    sync_raise.assert_not_called()
+
+    with Session(engine) as session:
+        batch = session.get(RemediationPrBatch, batch_id)
+        assert batch is not None and batch.total == 1
+        items = session.exec(
+            select(RemediationPrBatchItem).where(RemediationPrBatchItem.batch_id == batch_id)
+        ).all()
+        assert len(items) == 1
+        assert items[0].package == "axios"
+        assert items[0].status == "pending"
+
+
+def test_raise_pr_for_npm_package_dispatch_failure_fails_the_batch(client, engine, monkeypatch):
+    """Same dispatch-failure handling as the bulk raise-all endpoint's
+    identical guard: a broker publish failure must fail visibly now, not
+    leave the batch "running" until mark_stale_if_needed's timeout."""
+    target_id = _dev_client_with_target(client, engine)
+    _finding_with_fix(
+        engine, target_id, "CVE-2024-9", "axios", "1.7.4",
+        file_path="package-lock.json", ecosystem="npm",
+    )
+
+    def boom(**kwargs):
+        raise ConnectionError("redis://internal-host:6379 refused")
+
+    monkeypatch.setattr(findings_module.run_raise_all_batch, "delay", boom)
+
+    res = client.post("/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "axios"})
+    assert res.status_code == 422
+    assert "redis://internal-host" not in res.text
 
 
 def test_raise_pr_converts_a_group_remediations_failure_to_422_not_an_uncaught_crash(client, engine, monkeypatch):

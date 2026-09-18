@@ -34,6 +34,7 @@ import time
 from sqlmodel import Session, select
 
 import app.core.autofix as autofix
+import app.core.npm_lockfile_autofix as npm_lockfile_autofix
 from app.core import target_lifecycle
 from app.core.crypto import SecretDecryptionError
 from app.core.remediation import group_remediations
@@ -79,9 +80,23 @@ def build_package_patch_files(session: Session, target: Target, plan: dict) -> l
     genuinely can't parse, are both real possibilities on a target with
     several findings on one package. Only when NO file could be bumped does
     `raise_package_fix_pr` below refuse the whole PR.
+
+    npm-ecosystem packages are delegated entirely to
+    app.core.npm_lockfile_autofix instead: their finding `file_path` is a
+    LOCKFILE (trivy's own scan Target, see that module's docstring), which
+    has no regex bumper by design -- a hand-edited lockfile is a corrupt
+    one. That module clones the repo and runs the real package manager
+    instead of touching text with a regex. The `(ref, file_path)` pairs are
+    computed once here either way, so which files reference this package
+    is answered by exactly one call to find_package_finding_files, not two
+    diverging ones.
     """
+    pairs = list(find_package_finding_files(session, target, plan))
+    if plan.get("ecosystem") in npm_lockfile_autofix.NPM_ECOSYSTEMS:
+        return npm_lockfile_autofix.build_npm_patch_files(session, target, plan, pairs)
+
     files_by_ref: dict[str, set[str]] = {}
-    for ref, file_path in find_package_finding_files(session, target, plan):
+    for ref, file_path in pairs:
         files_by_ref.setdefault(ref, set()).add(file_path)
 
     package = plan["package"]

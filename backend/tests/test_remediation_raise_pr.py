@@ -212,7 +212,10 @@ def test_raise_pr_for_npm_package_dispatches_an_async_batch_instead_of_raising_i
 def test_raise_pr_for_npm_package_dispatch_failure_fails_the_batch(client, engine, monkeypatch):
     """Same dispatch-failure handling as the bulk raise-all endpoint's
     identical guard: a broker publish failure must fail visibly now, not
-    leave the batch "running" until mark_stale_if_needed's timeout."""
+    leave the batch "running" until mark_stale_if_needed's timeout. The
+    item, not just the batch, must end up "failed" too -- a "completed"
+    batch whose one item is still "pending" is a contradiction a poller
+    has no way to resolve (CodeRabbit finding on this PR)."""
     target_id = _dev_client_with_target(client, engine)
     _finding_with_fix(
         engine, target_id, "CVE-2024-9", "axios", "1.7.4",
@@ -227,6 +230,13 @@ def test_raise_pr_for_npm_package_dispatch_failure_fails_the_batch(client, engin
     res = client.post("/api/findings/remediations/raise-pr", json={"target_id": target_id, "package": "axios"})
     assert res.status_code == 422
     assert "redis://internal-host" not in res.text
+
+    with Session(engine) as session:
+        items = session.exec(select(RemediationPrBatchItem)).all()
+        assert len(items) == 1
+        assert items[0].status == "failed"
+        assert items[0].error and "redis://internal-host" not in items[0].error
+        assert items[0].completed_at is not None
 
 
 def test_raise_pr_converts_a_group_remediations_failure_to_422_not_an_uncaught_crash(client, engine, monkeypatch):

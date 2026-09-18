@@ -46,6 +46,22 @@ manager that is, by design, about to run untrusted third-party install
 logic. `settings.npm_install_timeout_seconds` bounds every invocation
 below, mirroring `runner.run_nuclei`'s `timeout=` -- the one existing
 subprocess in this codebase with a bound today.
+
+A repository-committed `.npmrc`/`.yarnrc`/`.yarnrc.yml` is more dangerous
+here than an env var alone can neutralize: either file can redirect a
+scoped package's registry to an attacker-controlled endpoint (a scrubbed
+env doesn't stop npm/yarn from reading a project-local config file), and
+yarn's `yarn-path`/`yarnPath` directive can hand execution straight to a
+binary the repository itself committed -- code execution as the Celery
+worker, before any lockfile-only flag even applies. `_strip_untrusted_pm_config`
+deletes these files, at every directory level between the clone root and
+the manifest directory, before ANY package-manager command runs
+(including the yarn-major version probe below) -- simpler and more
+complete than trying to override every individual setting via a flag or
+env var whose coverage differs by tool and version. This deployment's own
+default registry and globally-activated yarn/pnpm run instead, the same
+trust boundary `extra_clone_hosts`'s operator-only config already draws
+for git.
 """
 import logging
 import os
@@ -73,6 +89,10 @@ logger = logging.getLogger(__name__)
 NPM_ECOSYSTEMS = {"npm"}
 
 _LOCKFILE_BASENAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml"}
+
+# See _strip_untrusted_pm_config below for why these are deleted outright
+# rather than merely overridden.
+_UNTRUSTED_PM_CONFIG_FILES = (".npmrc", ".yarnrc", ".yarnrc.yml")
 
 # How long the one quick `yarn --version` probe (deciding classic vs berry)
 # may take -- independent of, and much shorter than, the real bump's own
@@ -110,14 +130,57 @@ def _detect_lockfile(manifest_dir: Path) -> str | None:
 
 def _scrubbed_pm_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     """A minimal env for a package-manager subprocess -- see this module's
-    docstring for why this is deliberately NOT `{**os.environ, ...}`."""
-    env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": os.environ.get("HOME", "/tmp")}
+    docstring for why this is deliberately NOT `{**os.environ, ...}`.
+
+    YARN_IGNORE_PATH=1 is defense-in-depth alongside
+    _strip_untrusted_pm_config, not a substitute for it: it's yarn
+    Modern's own documented override for its `yarnPath` config key, but
+    nothing upstream documents an equivalent override for yarn Classic's
+    `yarn-path` -- deleting the rc file itself is what actually closes
+    that path for both."""
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "YARN_IGNORE_PATH": "1",
+    }
     for key in ("LANG", "LC_ALL"):
         if key in os.environ:
             env[key] = os.environ[key]
     if extra:
         env.update(extra)
     return env
+
+
+def _strip_untrusted_pm_config(clone_dir: Path, manifest_dir: Path) -> None:
+    """Deletes any repository-committed .npmrc/.yarnrc/.yarnrc.yml at every
+    directory level from `clone_dir` down to `manifest_dir` inclusive --
+    see this module's docstring for why (registry redirection, yarn's
+    yarn-path/yarnPath code-execution primitive). Both npm and yarn walk
+    UP from the current directory reading these files, so every level in
+    between has to be cleared, not just `manifest_dir` itself. Must run
+    before ANY package-manager command, including the yarn-major version
+    probe -- that probe is itself a `yarn` invocation."""
+    clone_dir = clone_dir.resolve()
+    manifest_dir = manifest_dir.resolve()
+    directory = clone_dir
+    directories = [directory]
+    for part in manifest_dir.relative_to(clone_dir).parts:
+        directory = directory / part
+        directories.append(directory)
+    for directory in directories:
+        for name in _UNTRUSTED_PM_CONFIG_FILES:
+            candidate = directory / name
+            if candidate.exists():
+                candidate.unlink()
+
+
+def _safe_scan_id_suffix(package: str) -> str:
+    """`package` with anything that isn't filesystem-path-safe replaced --
+    scoped npm packages (`@scope/name`) contain a `/`, and clone_repo
+    inserts scan_id directly into a destination path with no intermediate
+    directory creation, so an unsanitized `/` here would make the clone
+    fail for every scoped package."""
+    return "".join(c if c.isalnum() or c in "._-" else "-" for c in package)
 
 
 def _run_pm_command(cmd: list[str], cwd: Path, timeout: int, env: dict[str, str]) -> str:
@@ -181,9 +244,11 @@ def build_npm_patch_files(
     slug = repo_slug_from_url(target.repo_url)
     token = resolve_github_token(session, target.workspace_id, slug) or ""
 
-    clone_dir = clone_repo(target.repo_url, branch=ref, github_token=token, scan_id=f"npmfix-{target.id}-{plan['package']}")
+    scan_id = f"npmfix-{target.id}-{_safe_scan_id_suffix(plan['package'])}"
+    clone_dir = clone_repo(target.repo_url, branch=ref, github_token=token, scan_id=scan_id)
     try:
         manifest_dir = clone_dir / manifest_dir_rel if manifest_dir_rel else clone_dir
+        _strip_untrusted_pm_config(clone_dir, manifest_dir)
         lockfile_name = _detect_lockfile(manifest_dir)
         if lockfile_name is None:
             raise AutofixError(

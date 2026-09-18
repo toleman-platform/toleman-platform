@@ -21,7 +21,9 @@ from app.core.npm_lockfile_autofix import (
     _detect_lockfile,
     _majority_ref_and_dir,
     _run_pm_command,
+    _safe_scan_id_suffix,
     _scrubbed_pm_env,
+    _strip_untrusted_pm_config,
     _yarn_major,
     build_npm_patch_files,
 )
@@ -89,6 +91,48 @@ def test_scrubbed_pm_env_excludes_ambient_secrets(monkeypatch):
 def test_scrubbed_pm_env_merges_extra_overrides():
     env = _scrubbed_pm_env({"YARN_ENABLE_SCRIPTS": "false"})
     assert env["YARN_ENABLE_SCRIPTS"] == "false"
+
+
+def test_scrubbed_pm_env_disables_yarn_path_by_default():
+    assert _scrubbed_pm_env()["YARN_IGNORE_PATH"] == "1"
+
+
+# ---------------------------------------------------------------------------
+# _safe_scan_id_suffix / _strip_untrusted_pm_config
+# ---------------------------------------------------------------------------
+
+
+def test_safe_scan_id_suffix_encodes_scoped_package_names():
+    """A scoped package like @scope/name contains a "/" -- clone_repo
+    inserts scan_id directly into a destination path with no intermediate
+    directory creation, so an unencoded "/" here would break the clone."""
+    suffix = _safe_scan_id_suffix("@scope/name")
+    assert "/" not in suffix
+    assert suffix == "-scope-name"
+
+
+def test_safe_scan_id_suffix_leaves_plain_names_untouched():
+    assert _safe_scan_id_suffix("axios") == "axios"
+
+
+def test_strip_untrusted_pm_config_removes_files_at_every_level(tmp_path):
+    manifest_dir = tmp_path / "frontend"
+    manifest_dir.mkdir()
+    (tmp_path / ".npmrc").write_text("registry=https://evil.example\n")
+    (manifest_dir / ".yarnrc.yml").write_text("yarnPath: ./evil.js\n")
+    (manifest_dir / ".yarnrc").write_text("yarn-path ./evil\n")
+
+    _strip_untrusted_pm_config(tmp_path, manifest_dir)
+
+    assert not (tmp_path / ".npmrc").exists()
+    assert not (manifest_dir / ".yarnrc.yml").exists()
+    assert not (manifest_dir / ".yarnrc").exists()
+
+
+def test_strip_untrusted_pm_config_leaves_unrelated_files_alone(tmp_path):
+    (tmp_path / "package.json").write_text("{}")
+    _strip_untrusted_pm_config(tmp_path, tmp_path)
+    assert (tmp_path / "package.json").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +219,26 @@ def _stub_clone(monkeypatch, clone_dir, package_json='{"dependencies":{}}', lock
     monkeypatch.setattr(npm_lockfile_autofix, "repo_slug_from_url", lambda *a, **k: "a/t")
 
 
+def test_build_npm_patch_files_encodes_scoped_package_name_in_scan_id(monkeypatch, tmp_path):
+    target = _target()
+    captured = {}
+
+    def fake_clone_repo(repo_url, branch, github_token, scan_id):
+        captured["scan_id"] = scan_id
+        (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "package-lock.json").write_text("{}")
+        return tmp_path
+
+    monkeypatch.setattr(npm_lockfile_autofix, "clone_repo", fake_clone_repo)
+    monkeypatch.setattr(npm_lockfile_autofix, "resolve_github_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(npm_lockfile_autofix, "repo_slug_from_url", lambda *a, **k: "a/t")
+    monkeypatch.setattr(npm_lockfile_autofix, "_run_pm_command", lambda *a, **k: "")
+
+    build_npm_patch_files(None, target, _plan(package="@scope/name"), pairs=[("main", "package-lock.json")])
+
+    assert "/" not in captured["scan_id"]
+
+
 def test_build_npm_patch_files_no_lockfile_pairs_raises(monkeypatch):
     target = _target()
     with pytest.raises(AutofixError, match="could not locate a lockfile"):
@@ -208,6 +272,28 @@ def test_build_npm_patch_files_runs_npm_install_lockfile_only(monkeypatch, tmp_p
         ("main", "package.json", '{"dependencies":{"axios":"^1.7.4"}}'),
         ("main", "package-lock.json", '{"version":"1.7.4"}'),
     ]
+
+
+def test_build_npm_patch_files_strips_untrusted_config_before_any_pm_command(monkeypatch, tmp_path):
+    """A repository-committed .yarnrc.yml can redirect a scoped package's
+    registry or, via yarnPath, hand execution to a repo-committed binary.
+    It must be gone before the FIRST package-manager invocation -- which
+    for yarn is the version probe (_yarn_major), not just the later
+    add/up command -- or the malicious file is still there to be read."""
+    target = _target()
+    _stub_clone(monkeypatch, tmp_path, lockfile_name="yarn.lock", lockfile_content="# yarn lockfile v1")
+    (tmp_path / ".yarnrc.yml").write_text("yarnPath: ./evil.js\n")
+    seen_configs = []
+
+    def fake_run(cmd, cwd, timeout, env):
+        seen_configs.append((cwd / ".yarnrc.yml").exists())
+        return "1.22.22\n" if cmd[:2] == ["yarn", "--version"] else ""
+
+    monkeypatch.setattr(npm_lockfile_autofix, "_run_pm_command", fake_run)
+
+    build_npm_patch_files(None, target, _plan(), pairs=[("main", "yarn.lock")])
+
+    assert seen_configs and not any(seen_configs)
 
 
 def test_build_npm_patch_files_runs_pnpm_lockfile_only(monkeypatch, tmp_path):

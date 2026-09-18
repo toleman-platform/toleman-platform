@@ -1609,7 +1609,8 @@ def raise_package_fix_pr_endpoint(
         session.add(batch)
         session.commit()
         session.refresh(batch)
-        session.add(RemediationPrBatchItem(batch_id=batch.id, package=plan["package"], status="pending"))
+        item = RemediationPrBatchItem(batch_id=batch.id, package=plan["package"], status="pending")
+        session.add(item)
         session.commit()
         try:
             run_raise_all_batch.delay(batch_id=batch.id)
@@ -1617,12 +1618,20 @@ def raise_package_fix_pr_endpoint(
             # Same dispatch-failure handling as raise_all_remediation_prs_endpoint's
             # identical guard -- a broker publish failure must fail visibly
             # now rather than leave this batch "running" until
-            # mark_stale_if_needed's timeout elapses on a later poll.
+            # mark_stale_if_needed's timeout elapses on a later poll. The
+            # item must be marked failed here too, not just the batch: a
+            # later poll reads items independently of the batch's own
+            # status, and a "completed" batch whose one item is still
+            # "pending" is a contradiction a caller has no way to resolve.
             logger.exception("failed to dispatch npm raise-pr batch %s", batch.id)
             batch.status = "completed"
             batch.failed = 1
             batch.completed_at = utcnow()
             session.add(batch)
+            item.status = "failed"
+            item.error = "failed to dispatch: internal error, see server logs"
+            item.completed_at = utcnow()
+            session.add(item)
             session.commit()
             raise HTTPException(
                 status_code=422, detail="failed to dispatch fix; check server logs"

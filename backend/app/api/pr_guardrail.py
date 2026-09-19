@@ -77,6 +77,29 @@ def _get_pr_scan_scoped(pr_scan_id: int, session: Session, user: User) -> PRGuar
     return pr_scan
 
 
+def _get_pr_finding_scoped(finding_id: int, session: Session, user: User) -> tuple[PRGuardrailFinding, Target]:
+    """Load a PRGuardrailFinding plus its target, 404ing if the caller can't
+    see the target's workspace (same 404-not-403 shape as
+    _get_pr_scan_scoped above). Shared by every /findings/{finding_id}/*
+    ignore action below, none of which previously checked workspace
+    membership at all -- a finding_id belonging to any workspace was
+    readable and, for the three security-review actions, writable by any
+    caller holding the *global* security_engineer/admin role, regardless of
+    whether they belonged to the workspace that finding's target lives in.
+    """
+    finding = session.get(PRGuardrailFinding, finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="finding not found")
+    pr_scan = session.get(PRGuardrailScan, finding.pr_scan_id)
+    target = session.get(Target, pr_scan.target_id) if pr_scan else None
+    if not target:
+        raise HTTPException(status_code=404, detail="finding not found")
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="finding not found")
+    return finding, target
+
+
 def _finding_out(f: PRGuardrailFinding) -> dict:
     return {
         "id": f.id,
@@ -313,6 +336,13 @@ def pr_guardrail_log(
     target they're looking at)."""
     if target_id is not None:
         target = _get_target(target_id, session)
+        # _get_target only checks soft-deletion, never workspace membership
+        # (unlike _get_pr_scan_scoped used elsewhere in this file); without
+        # this, target_id=<other workspace> disclosed that tenant's PR
+        # titles, override reasons and per-tool findings counts.
+        ws_ids = accessible_workspace_ids(session, user)
+        if ws_ids is not None and target.workspace_id not in ws_ids:
+            raise HTTPException(status_code=404, detail="target not found")
         scans = session.exec(
             select(PRGuardrailScan)
             .where(PRGuardrailScan.target_id == target_id)
@@ -422,9 +452,7 @@ def request_ignore(
     """A developer requests that a specific PR Guardrail finding be ignored
     (e.g. false positive, accepted risk for this PR) - goes to the security
     team for approval, does NOT suppress it unilaterally."""
-    finding = session.get(PRGuardrailFinding, finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="finding not found")
+    finding, _target = _get_pr_finding_scoped(finding_id, session, user)
     reason = (body or {}).get("reason", "")
     if not reason:
         raise HTTPException(status_code=400, detail="reason is required")
@@ -448,6 +476,20 @@ def list_pending_ignore_requests(
     Guardrail for a while can accumulate well past one screenful of pending
     requests)."""
     base_query = select(PRGuardrailFinding).where(PRGuardrailFinding.ignore_status == IgnoreStatus.REQUESTED)
+    # require_security_reviewer only checks the caller's *global* role, not
+    # per-workspace membership; unscoped, this returned every workspace's
+    # pending ignore requests (finding title/file/severity plus the
+    # requester's identity) to any global security_engineer/admin,
+    # regardless of which workspace(s) they actually belong to. Scoped the
+    # same way list_pr_guardrail_findings/pr_guardrail_log's org-wide mode
+    # already are.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        if not ws_ids:
+            return {"items": [], "total": 0}
+        base_query = base_query.join(
+            PRGuardrailScan, PRGuardrailScan.id == PRGuardrailFinding.pr_scan_id
+        ).join(Target, Target.id == PRGuardrailScan.target_id).where(Target.workspace_id.in_(ws_ids))
     total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
     page = max(page, 1)
     page_size = max(min(page_size, MAX_PAGE_SIZE), 1)
@@ -470,6 +512,15 @@ def list_ignore_request_history(
     base_query = select(PRGuardrailFinding).where(
         PRGuardrailFinding.ignore_status.in_([IgnoreStatus.APPROVED, IgnoreStatus.REJECTED, IgnoreStatus.REVOKED])
     )
+    # See list_pending_ignore_requests above: same missing workspace scope,
+    # same fix.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        if not ws_ids:
+            return {"items": [], "total": 0}
+        base_query = base_query.join(
+            PRGuardrailScan, PRGuardrailScan.id == PRGuardrailFinding.pr_scan_id
+        ).join(Target, Target.id == PRGuardrailScan.target_id).where(Target.workspace_id.in_(ws_ids))
     total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
     page = max(page, 1)
     page_size = max(min(page_size, MAX_PAGE_SIZE), 1)
@@ -555,9 +606,12 @@ def approve_ignore(
     session: Session = Depends(get_session),
     user: User = Depends(require_security_reviewer),
 ):
-    finding = session.get(PRGuardrailFinding, finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="finding not found")
+    # require_security_reviewer only checks the caller's *global*
+    # User.role -- with no per-workspace analogue for security_engineer,
+    # that alone let a security_engineer/admin granted the role for one
+    # workspace approve/reject/revoke an ignore on ANY workspace's finding.
+    # _get_pr_finding_scoped adds the missing membership check.
+    finding, _target = _get_pr_finding_scoped(finding_id, session, user)
     finding.ignore_status = IgnoreStatus.APPROVED
     finding.ignore_reviewed_by = user.email
     finding.ignore_reviewed_at = utcnow()
@@ -600,9 +654,7 @@ def reject_ignore(
     main Findings table -- rejecting an ignore request leaves the
     PRGuardrailFinding (and whatever it's blocking) exactly as it was; the
     developer can still fix it or ask again."""
-    finding = session.get(PRGuardrailFinding, finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="finding not found")
+    finding, _target = _get_pr_finding_scoped(finding_id, session, user)
 
     reason = (body or {}).get("reason", "")
     if not reason:
@@ -638,9 +690,7 @@ def revoke_ignore(
     still real history); ignore_reviewed_by/at are overwritten with the
     revoker's identity and timestamp, same "who made the latest decision"
     meaning approve/reject already give those two fields."""
-    finding = session.get(PRGuardrailFinding, finding_id)
-    if not finding:
-        raise HTTPException(status_code=404, detail="finding not found")
+    finding, _target = _get_pr_finding_scoped(finding_id, session, user)
     if finding.ignore_status != IgnoreStatus.APPROVED:
         raise HTTPException(status_code=400, detail="finding is not currently approved to ignore")
 

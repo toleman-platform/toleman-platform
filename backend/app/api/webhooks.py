@@ -97,23 +97,31 @@ IGNORE_COMMAND_RE = re.compile(
 TRUSTED_COMMENT_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
 
 
-def _candidate_configs(session: Session, payload_installation_id: int | None) -> list[GitHubAppConfig]:
+def _candidate_configs(session: Session, payload_installation_id: int | None) -> tuple[list[GitHubAppConfig], bool]:
     """Which GitHubAppConfig(s) could plausibly have delivered this webhook
-    (#34). Every GitHub App webhook delivery includes the firing
-    installation's id in the payload, resolve straight to that
-    installation's own App config when present (correct even with multiple
-    Apps/installations). Falls back to trying every configured App's secret
-    when the id is missing/unresolvable, so a delivery isn't rejected just
-    because we can't pin down which App it came from up front.
+    (#34), plus whether that resolution was narrowed to one specific
+    installation (True) or fell back to trying every configured App (False).
 
-    (#506) Deliberately not narrowed to a workspace even after per-workspace
-    Apps: this fallback is a verification step, not a data read, and HMAC
-    comparison against each candidate's own secret is the actual security
-    boundary -- a delivery only verifies against the one workspace-scoped
-    (or platform-default) App whose real secret it was signed with,
-    regardless of how many secrets happen to get tried along the way. No
-    narrowing signal exists here to prefer one workspace's App over
-    another's when the installation id itself doesn't resolve."""
+    Every GitHub App webhook delivery includes the firing installation's id
+    in the payload; resolve straight to that installation's own App config
+    when present (correct even with multiple Apps/installations). Falls
+    back to trying every configured App's secret when the id is missing/
+    unresolvable -- or when the installation row exists but its
+    `github_app_config_id` FK doesn't resolve to a config -- so a delivery
+    isn't rejected just because we can't pin down which App it came from up
+    front.
+
+    The `narrowed` flag matters beyond verification itself (#530): when a
+    signature only verified via this all-configs fallback, the config that
+    actually matched is not necessarily the App belonging to whichever
+    installation the payload *claims* (`installation.id` is attacker-
+    controlled data, same as `repository.clone_url`) -- some OTHER
+    workspace's real, valid secret could have matched instead. Callers must
+    not then turn around and trust that claimed installation id to resolve
+    a workspace to act on (see _installation_workspace_id): a real secret
+    proves identity, but only when it was actually the secret tied to the
+    installation being trusted, which is exactly what "narrowed" records.
+    """
     if payload_installation_id is not None:
         installation = session.exec(
             select(GitHubInstallation).where(GitHubInstallation.installation_id == payload_installation_id)
@@ -121,20 +129,29 @@ def _candidate_configs(session: Session, payload_installation_id: int | None) ->
         if installation:
             config = resolve_config_for_installation(session, installation)
             if config:
-                return [config]
-    return session.exec(select(GitHubAppConfig)).all()
+                return [config], True
+    return session.exec(select(GitHubAppConfig)).all(), False
 
 
 def _verify_signature(
     raw_body: bytes, signature_header: str | None, session: Session, payload_installation_id: int | None = None
-) -> bool:
+) -> tuple[bool, bool]:
+    """Returns (verified, narrowed). `narrowed` (see _candidate_configs'
+    docstring) is only meaningful when `verified` is True: True means
+    verification was pinned to the specific installation the payload
+    claims, False means it only succeeded via the try-every-config
+    fallback. Callers must treat a verified-but-not-narrowed delivery as
+    "signed by someone real, but not provably the installation named in
+    this payload" -- never resolve a workspace to act on from that
+    payload's installation id in that case (see _installation_workspace_id).
+    """
     if not signature_header or not signature_header.startswith("sha256="):
-        return False
+        return False, False
 
-    configs = _candidate_configs(session, payload_installation_id)
+    configs, narrowed = _candidate_configs(session, payload_installation_id)
     if not configs:
         logger.warning("webhook: no GitHub App configured, rejecting delivery")
-        return False
+        return False, False
 
     for config in configs:
         if not config.webhook_secret:
@@ -142,11 +159,41 @@ def _verify_signature(
         secret = decrypt_secret(config.webhook_secret)
         expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
         if hmac.compare_digest(expected, signature_header):
-            return True
-    return False
+            return True, narrowed
+    return False, False
 
 
-def _target_for_repo(session: Session, repo_clone_url: str | None) -> Target | None:
+def _installation_workspace_id(session: Session, payload_installation_id: int | None) -> int | None:
+    """The workspace that owns the installation which actually fired this
+    webhook delivery, resolved straight from the payload's `installation.id`
+    -- the one field GitHub attaches to every App webhook delivery that
+    can't be reassigned to a different workspace after the fact the way
+    `repository.clone_url` can (see _target_for_repo). `GitHubInstallation.
+    workspace_id` is non-nullable and is the authoritative tenant binding
+    here; `GitHubAppConfig.workspace_id` is NOT used for this, since it can
+    be None for the shared platform-default App.
+
+    Returns None when the id is missing or doesn't resolve to a known
+    installation -- callers must treat that as "workspace unknown", never
+    as "any workspace", since this is the only thing standing between one
+    tenant's real, validly-signed webhook delivery and it being pointed at
+    another tenant's Target via a forged `repository.clone_url`. Callers
+    must also only call this when _verify_signature's result was narrowed
+    (see there) -- otherwise the installation id being resolved here was
+    never actually tied to the secret that verified, only asserted by the
+    same untrusted payload that names it.
+    """
+    if payload_installation_id is None:
+        return None
+    installation = session.exec(
+        select(GitHubInstallation).where(GitHubInstallation.installation_id == payload_installation_id)
+    ).first()
+    return installation.workspace_id if installation else None
+
+
+def _target_for_repo(
+    session: Session, repo_clone_url: str | None, installation_workspace_id: int | None
+) -> Target | None:
     """Resolve the registered Target for a webhook payload's repository.
 
     (#273) Soft-deleted targets are excluded, which does two things at once.
@@ -157,27 +204,46 @@ def _target_for_repo(session: Session, repo_clone_url: str | None) -> Target | N
     later: the old soft-deleted row still holds that repo_url, and an
     unfiltered lookup would keep matching the dead one forever while the new
     target silently never got a single webhook.
+
+    A verified HMAC signature only proves the raw body was signed with some
+    configured App's real secret -- since Apps are per-workspace (#506), it
+    does NOT prove the firing installation is entitled to act on whichever
+    repo the same (attacker-controlled, once a real secret is known) body
+    happens to name in `repository.clone_url`. A tenant that legitimately
+    owns a real App/webhook secret could otherwise forge a delivery naming
+    a different tenant's repo and have every handler below act on it using
+    that OTHER tenant's own real installation token (resolved from
+    target.workspace_id downstream in pr_guardrail_executor). Filtering the
+    lookup itself to the firing installation's own workspace closes that --
+    and does so without the false-negative an unfiltered `.first()` plus a
+    post-hoc workspace comparison would have: if two workspaces ever
+    register the same repo_url, an unfiltered query could return the OTHER
+    workspace's row first and reject a perfectly legitimate delivery for
+    this one, rather than finding this workspace's own matching Target.
     """
-    if not repo_clone_url:
+    if not repo_clone_url or installation_workspace_id is None:
         return None
     return session.exec(
-        target_lifecycle.live_targets(select(Target)).where(Target.repo_url == repo_clone_url)
+        target_lifecycle.live_targets(select(Target)).where(
+            Target.repo_url == repo_clone_url,
+            Target.workspace_id == installation_workspace_id,
+        )
     ).first()
 
 
-def _handle_pull_request(session: Session, payload: dict) -> dict:
+def _handle_pull_request(session: Session, payload: dict, installation_workspace_id: int | None) -> dict:
     action = payload.get("action")
     pr = payload.get("pull_request") or {}
 
     if action == "closed" and pr.get("merged"):
-        return _handle_pr_merged(session, payload, pr)
+        return _handle_pr_merged(session, payload, pr, installation_workspace_id)
 
     if action not in PR_TRIGGERING_ACTIONS:
         return {"ok": True, "skipped": f"action={action}"}
 
     repo_clone_url = payload.get("repository", {}).get("clone_url")
     pr_number = payload.get("number")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     if not target:
         logger.info("webhook: no target registered for %s, ignoring", repo_clone_url)
         return {"ok": True, "skipped": "no matching target"}
@@ -242,7 +308,7 @@ def _handle_pull_request(session: Session, payload: dict) -> dict:
     return {"ok": True, "queued": True, "target_id": target.id, "pr_number": pr_number, "pr_scan_id": pr_scan.id}
 
 
-def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
+def _handle_pr_merged(session: Session, payload: dict, pr: dict, installation_workspace_id: int | None) -> dict:
     """Re-scan a target's default branch so the dashboard reflects a merged
     fix, same goal as `_handle_push` below -- but triggered off
     `pull_request.closed` (merged=true) instead of `push`.
@@ -262,7 +328,7 @@ def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
     *does* arrive reliably -- every other trigger in this file already
     depends on it."""
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     if not target:
         return {"ok": True, "skipped": "no matching target"}
 
@@ -286,7 +352,7 @@ def _handle_pr_merged(session: Session, payload: dict, pr: dict) -> dict:
     return {"ok": True, "queued": True, "target_id": target.id, "reason": "pull request merged"}
 
 
-def _handle_push(session: Session, payload: dict) -> dict:
+def _handle_push(session: Session, payload: dict, installation_workspace_id: int | None) -> dict:
     if payload.get("deleted"):
         # A branch delete is also delivered as a `push` with deleted=true
         # and a ref that no longer points anywhere; nothing to scan.
@@ -294,7 +360,7 @@ def _handle_push(session: Session, payload: dict) -> dict:
 
     ref = payload.get("ref", "")
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     if not target:
         return {"ok": True, "skipped": "no matching target"}
 
@@ -315,7 +381,7 @@ def _handle_push(session: Session, payload: dict) -> dict:
     return {"ok": True, "queued": True, "target_id": target.id, "reason": "push to default branch"}
 
 
-def _handle_installation_repositories(payload: dict) -> dict:
+def _handle_installation_repositories(payload: dict, narrowed: bool) -> dict:
     action = payload.get("action")
     if action != "added":
         # "removed" is deliberately a no-op: deleting a Target on access
@@ -328,11 +394,25 @@ def _handle_installation_repositories(payload: dict) -> dict:
 
     from app.tasks.github_sync_tasks import sync_repos_task
 
-    sync_repos_task.delay()
+    # Scoped to the firing installation only: a valid signature only proves
+    # the caller knows some configured App's real secret, not that they're
+    # entitled to trigger a resync across every OTHER workspace's
+    # installation too (the same reach POST /api/github-app/sync is
+    # deliberately admin-gated for). `narrowed` (see _verify_signature)
+    # must hold too -- a signature that only verified via the
+    # try-every-config fallback never proved it belongs to the
+    # installation this payload claims, so trusting that claimed id here
+    # would reopen the exact hole this scoping exists to close. Either gap
+    # refuses rather than falling back to sync_repos_task's own unfiltered
+    # default.
+    payload_installation_id = (payload.get("installation") or {}).get("id")
+    if not narrowed or payload_installation_id is None:
+        return {"ok": True, "skipped": "installation_repositories: could not verify a specific installation"}
+    sync_repos_task.delay(installation_id=payload_installation_id)
     return {"ok": True, "queued": True, "reason": "installation_repositories added"}
 
 
-def _handle_issue_comment(session: Session, payload: dict) -> dict:
+def _handle_issue_comment(session: Session, payload: dict, installation_workspace_id: int | None) -> dict:
     if payload.get("action") != "created":
         return {"ok": True, "skipped": f"issue_comment action={payload.get('action')}"}
 
@@ -368,7 +448,7 @@ def _handle_issue_comment(session: Session, payload: dict) -> dict:
             finding_ids.append(fid)
 
     repo_clone_url = payload.get("repository", {}).get("clone_url")
-    target = _target_for_repo(session, repo_clone_url)
+    target = _target_for_repo(session, repo_clone_url, installation_workspace_id)
     commenter = (comment.get("user") or {}).get("login") or "unknown"
 
     requested: list[int] = []
@@ -466,16 +546,27 @@ async def github_webhook(
     payload_installation_id = (payload.get("installation") or {}).get("id")
 
     with Session(engine) as session:
-        if not _verify_signature(raw_body, x_hub_signature_256, session, payload_installation_id):
+        verified, narrowed = _verify_signature(raw_body, x_hub_signature_256, session, payload_installation_id)
+        if not verified:
             raise HTTPException(status_code=401, detail="invalid webhook signature")
 
         if x_github_event == "installation_repositories":
             # No repo-scoped `target` lookup for this one (it's about
             # installation-level access changes, not a single repo), so it
-            # doesn't fit EVENT_HANDLERS' (session, payload) -> dict shape.
-            return _handle_installation_repositories(payload)
+            # doesn't fit EVENT_HANDLERS' (session, payload, ws_id) -> dict
+            # shape. Still needs `narrowed`, though: it dispatches a sync
+            # scoped to payload_installation_id (#530), and that id is only
+            # trustworthy when the signature actually verified against
+            # that specific installation's own config.
+            return _handle_installation_repositories(payload, narrowed)
 
         handler = EVENT_HANDLERS.get(x_github_event)
         if handler is None:
             return {"ok": True, "skipped": f"event={x_github_event}"}
-        return handler(session, payload)
+        # Only resolve a workspace to bind Target lookups to when the
+        # signature was narrowed to this specific installation (#530) --
+        # a fallback match (some other real, valid secret) must not lend
+        # its trust to whatever installation id the same untrusted payload
+        # happens to claim.
+        installation_workspace_id = _installation_workspace_id(session, payload_installation_id) if narrowed else None
+        return handler(session, payload, installation_workspace_id)

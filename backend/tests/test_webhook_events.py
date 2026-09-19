@@ -41,7 +41,7 @@ def engine():
 
 
 @pytest.fixture()
-def target_id(engine):
+def workspace_id(engine):
     with Session(engine) as session:
         org = Organization(name="org")
         session.add(org)
@@ -51,7 +51,15 @@ def target_id(engine):
         session.add(ws)
         session.commit()
         session.refresh(ws)
-        t = Target(workspace_id=ws.id, name="repo", repo_url="https://github.com/acme/repo", default_branch="main")
+        return ws.id
+
+
+@pytest.fixture()
+def target_id(engine, workspace_id):
+    with Session(engine) as session:
+        t = Target(
+            workspace_id=workspace_id, name="repo", repo_url="https://github.com/acme/repo", default_branch="main"
+        )
         session.add(t)
         session.commit()
         session.refresh(t)
@@ -59,7 +67,7 @@ def target_id(engine):
 
 
 class TestPushHandler:
-    def test_push_to_default_branch_queues_a_scan(self, engine, target_id, monkeypatch):
+    def test_push_to_default_branch_queues_a_scan(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import scan_tasks
 
         calls = []
@@ -69,12 +77,13 @@ class TestPushHandler:
             result = webhooks._handle_push(
                 session,
                 {"ref": "refs/heads/main", "repository": {"clone_url": "https://github.com/acme/repo"}},
+            workspace_id,
             )
 
         assert result["queued"] is True
         assert calls == [(target_id,)]
 
-    def test_push_to_a_feature_branch_is_skipped(self, engine, target_id, monkeypatch):
+    def test_push_to_a_feature_branch_is_skipped(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import scan_tasks
 
         calls = []
@@ -84,12 +93,13 @@ class TestPushHandler:
             result = webhooks._handle_push(
                 session,
                 {"ref": "refs/heads/feature-x", "repository": {"clone_url": "https://github.com/acme/repo"}},
+            workspace_id,
             )
 
         assert "skipped" in result
         assert calls == []
 
-    def test_deleted_branch_push_is_skipped(self, engine, target_id, monkeypatch):
+    def test_deleted_branch_push_is_skipped(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import scan_tasks
 
         calls = []
@@ -103,16 +113,18 @@ class TestPushHandler:
                     "deleted": True,
                     "repository": {"clone_url": "https://github.com/acme/repo"},
                 },
+            workspace_id,
             )
 
         assert "skipped" in result
         assert calls == []
 
-    def test_push_with_no_matching_target_is_skipped(self, engine, target_id):
+    def test_push_with_no_matching_target_is_skipped(self, engine, target_id, workspace_id):
         with Session(engine) as session:
             result = webhooks._handle_push(
                 session,
                 {"ref": "refs/heads/main", "repository": {"clone_url": "https://github.com/no-such/repo"}},
+            workspace_id,
             )
         assert result == {"ok": True, "skipped": "no matching target"}
 
@@ -131,14 +143,14 @@ class TestPullRequestHandler:
             "repository": {"clone_url": "https://github.com/acme/repo"},
         }
 
-    def test_opened_creates_a_running_placeholder_before_dispatch(self, engine, target_id, monkeypatch):
+    def test_opened_creates_a_running_placeholder_before_dispatch(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import pr_guardrail_tasks
 
         calls = []
         monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: calls.append(a))
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, self._payload())
+            result = webhooks._handle_pull_request(session, self._payload(), workspace_id)
 
         assert result["queued"] is True
         pr_scan_id = result["pr_scan_id"]
@@ -155,18 +167,18 @@ class TestPullRequestHandler:
             assert pr_scan.pr_title == "Add feature"
             assert pr_scan.branch == "feature-x"
 
-    def test_synchronize_also_creates_a_placeholder(self, engine, target_id, monkeypatch):
+    def test_synchronize_also_creates_a_placeholder(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import pr_guardrail_tasks
 
         monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: None)
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, self._payload(action="synchronize"))
+            result = webhooks._handle_pull_request(session, self._payload(action="synchronize"), workspace_id)
 
         with Session(engine) as session:
             assert session.get(PRGuardrailScan, result["pr_scan_id"]).status == PRGuardrailStatus.RUNNING
 
-    def test_no_matching_target_creates_no_placeholder(self, engine, target_id, monkeypatch):
+    def test_no_matching_target_creates_no_placeholder(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import pr_guardrail_tasks
 
         calls = []
@@ -175,12 +187,12 @@ class TestPullRequestHandler:
         payload["repository"]["clone_url"] = "https://github.com/no-such/repo"
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, payload)
+            result = webhooks._handle_pull_request(session, payload, workspace_id)
             assert result == {"ok": True, "skipped": "no matching target"}
             assert session.exec(select(PRGuardrailScan)).all() == []
         assert calls == []
 
-    def test_closed_without_merging_creates_no_placeholder(self, engine, target_id, monkeypatch):
+    def test_closed_without_merging_creates_no_placeholder(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import pr_guardrail_tasks
 
         calls = []
@@ -189,11 +201,11 @@ class TestPullRequestHandler:
         payload["pull_request"]["merged"] = False
 
         with Session(engine) as session:
-            webhooks._handle_pull_request(session, payload)
+            webhooks._handle_pull_request(session, payload, workspace_id)
             assert session.exec(select(PRGuardrailScan)).all() == []
         assert calls == []
 
-    def test_opened_posts_a_pending_commit_status_immediately(self, engine, target_id, monkeypatch):
+    def test_opened_posts_a_pending_commit_status_immediately(self, engine, target_id, workspace_id, monkeypatch):
         """GitHub's own PR checks list had the identical gap #401 fixed for
         Toleman's dashboard: set_commit_status was only ever called once the
         scan finished, so "toleman/pr-guardrail" never appeared in that list
@@ -207,10 +219,10 @@ class TestPullRequestHandler:
 
         with Session(engine) as session:
             target = session.get(Target, target_id)
-            webhooks._handle_pull_request(session, self._payload(head_sha="cafef00d"))
+            webhooks._handle_pull_request(session, self._payload(head_sha="cafef00d"), workspace_id)
             assert status_calls == [(session, target, "cafef00d", "pending", "Scanning...")]
 
-    def test_disabled_enforcement_mode_skips_placeholder_and_pending_status(self, engine, target_id, monkeypatch):
+    def test_disabled_enforcement_mode_skips_placeholder_and_pending_status(self, engine, target_id, workspace_id, monkeypatch):
         """"disabled" means no clone, no PRGuardrailScan row, no PR comment,
         no commit status at all -- a disabled target must not get a
         placeholder row or a "pending" status that nothing will ever
@@ -229,7 +241,7 @@ class TestPullRequestHandler:
         monkeypatch.setattr(webhooks, "set_commit_status", lambda *a, **k: status_calls.append(a))
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, self._payload())
+            result = webhooks._handle_pull_request(session, self._payload(), workspace_id)
             assert result == {"ok": True, "skipped": "enforcement_mode=disabled"}
             assert session.exec(select(PRGuardrailScan)).all() == []
         assert dispatch_calls == []
@@ -245,19 +257,19 @@ class TestPullRequestMergedHandler:
             "repository": {"clone_url": "https://github.com/acme/repo"},
         }
 
-    def test_merged_pr_into_default_branch_queues_a_full_scan(self, engine, target_id, monkeypatch):
+    def test_merged_pr_into_default_branch_queues_a_full_scan(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import scan_tasks
 
         calls = []
         monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: calls.append(a))
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, self._payload())
+            result = webhooks._handle_pull_request(session, self._payload(), workspace_id)
 
         assert result["queued"] is True
         assert calls == [(target_id,)]
 
-    def test_closed_without_merging_does_not_queue_a_scan(self, engine, target_id, monkeypatch):
+    def test_closed_without_merging_does_not_queue_a_scan(self, engine, target_id, workspace_id, monkeypatch):
         """A closed-but-not-merged PR (abandoned) changed nothing on the
         default branch; nothing to re-scan for."""
         from app.tasks import pr_guardrail_tasks, scan_tasks
@@ -267,24 +279,24 @@ class TestPullRequestMergedHandler:
         monkeypatch.setattr(pr_guardrail_tasks.run_pr_guardrail_scan_task, "delay", lambda *a, **k: calls.append(a))
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, self._payload(merged=False))
+            result = webhooks._handle_pull_request(session, self._payload(merged=False), workspace_id)
 
         assert "skipped" in result
         assert calls == []
 
-    def test_merged_into_non_default_branch_is_skipped(self, engine, target_id, monkeypatch):
+    def test_merged_into_non_default_branch_is_skipped(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import scan_tasks
 
         calls = []
         monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: calls.append(a))
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, self._payload(base_ref="release-branch"))
+            result = webhooks._handle_pull_request(session, self._payload(base_ref="release-branch"), workspace_id)
 
         assert "skipped" in result
         assert calls == []
 
-    def test_merged_pr_with_no_matching_target_is_skipped(self, engine, target_id, monkeypatch):
+    def test_merged_pr_with_no_matching_target_is_skipped(self, engine, target_id, workspace_id, monkeypatch):
         from app.tasks import scan_tasks
 
         calls = []
@@ -294,12 +306,12 @@ class TestPullRequestMergedHandler:
         payload["repository"]["clone_url"] = "https://github.com/no-such/repo"
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, payload)
+            result = webhooks._handle_pull_request(session, payload, workspace_id)
 
         assert result == {"ok": True, "skipped": "no matching target"}
         assert calls == []
 
-    def test_opened_action_still_triggers_the_ordinary_pr_scan_not_a_full_scan(self, engine, target_id, monkeypatch):
+    def test_opened_action_still_triggers_the_ordinary_pr_scan_not_a_full_scan(self, engine, target_id, workspace_id, monkeypatch):
         """A merged-PR full scan and the ordinary PR-diff guardrail scan are
         separate paths; opening a PR must still hit the latter, not get
         mistakenly routed into the former."""
@@ -313,7 +325,7 @@ class TestPullRequestMergedHandler:
         )
 
         with Session(engine) as session:
-            result = webhooks._handle_pull_request(session, self._payload(action="opened", merged=False))
+            result = webhooks._handle_pull_request(session, self._payload(action="opened", merged=False), workspace_id)
 
         assert result["queued"] is True
         assert pr_calls == [(target_id, 7, result["pr_scan_id"])]
@@ -321,24 +333,58 @@ class TestPullRequestMergedHandler:
 
 
 class TestInstallationRepositoriesHandler:
-    def test_added_queues_a_resync(self, monkeypatch):
+    def test_added_queues_a_resync_scoped_to_the_firing_installation(self, monkeypatch):
+        """(#530) Scoped, not a bare platform-wide resync -- a valid
+        signature only proves the caller knows some configured App's real
+        secret, not that they're entitled to resync every OTHER workspace's
+        installation too."""
         from app.tasks import github_sync_tasks
 
         calls = []
-        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
 
-        result = webhooks._handle_installation_repositories({"action": "added"})
+        result = webhooks._handle_installation_repositories(
+            {"action": "added", "installation": {"id": 555}}, narrowed=True
+        )
 
         assert result["queued"] is True
-        assert calls == [()]
+        assert calls == [{"installation_id": 555}]
+
+    def test_added_is_skipped_when_the_signature_was_not_narrowed(self, monkeypatch):
+        """A signature that only verified via the try-every-config fallback
+        never proved it belongs to the installation this payload claims;
+        trusting that claimed id here would reopen the exact cross-tenant
+        resync hole this scoping exists to close (#530)."""
+        from app.tasks import github_sync_tasks
+
+        calls = []
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
+
+        result = webhooks._handle_installation_repositories(
+            {"action": "added", "installation": {"id": 555}}, narrowed=False
+        )
+
+        assert "skipped" in result
+        assert calls == []
+
+    def test_added_is_skipped_when_no_installation_id_in_payload(self, monkeypatch):
+        from app.tasks import github_sync_tasks
+
+        calls = []
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
+
+        result = webhooks._handle_installation_repositories({"action": "added"}, narrowed=True)
+
+        assert "skipped" in result
+        assert calls == []
 
     def test_removed_does_not_delete_anything(self, monkeypatch):
         from app.tasks import github_sync_tasks
 
         calls = []
-        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
 
-        result = webhooks._handle_installation_repositories({"action": "removed"})
+        result = webhooks._handle_installation_repositories({"action": "removed"}, narrowed=True)
 
         assert "skipped" in result
         assert calls == []
@@ -370,13 +416,13 @@ class TestIssueCommentHandler:
             "repository": {"clone_url": "https://github.com/acme/repo"},
         }
 
-    def test_trusted_comment_requests_an_ignore(self, engine, target_id, monkeypatch):
+    def test_trusted_comment_requests_an_ignore(self, engine, target_id, workspace_id, monkeypatch):
         replies = []
         monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: replies.append(a))
 
         with Session(engine) as session:
             finding = self._finding(session, target_id)
-            result = webhooks._handle_issue_comment(session, self._payload(finding.id))
+            result = webhooks._handle_issue_comment(session, self._payload(finding.id), workspace_id)
 
             assert result["ignore_requested"] is True
             refreshed = session.get(PRGuardrailFinding, finding.id)
@@ -386,52 +432,52 @@ class TestIssueCommentHandler:
 
         assert len(replies) == 1
 
-    def test_untrusted_commenter_is_ignored(self, engine, target_id):
+    def test_untrusted_commenter_is_ignored(self, engine, target_id, workspace_id):
         with Session(engine) as session:
             finding = self._finding(session, target_id)
             payload = self._payload(finding.id, association="NONE")
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
 
             assert "skipped" in result
             refreshed = session.get(PRGuardrailFinding, finding.id)
             assert refreshed.ignore_status == IgnoreStatus.NONE
 
-    def test_finding_from_a_different_pr_is_rejected(self, engine, target_id):
+    def test_finding_from_a_different_pr_is_rejected(self, engine, target_id, workspace_id):
         """The finding id in a comment is attacker-controlled: a trusted
         commenter on PR #7 must not be able to touch a finding that actually
         belongs to a different PR."""
         with Session(engine) as session:
             finding = self._finding(session, target_id, pr_number=7)
             payload = self._payload(finding.id, pr_number=999)
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
 
             assert result == {"ok": True, "skipped": "finding does not belong to this PR"}
             refreshed = session.get(PRGuardrailFinding, finding.id)
             assert refreshed.ignore_status == IgnoreStatus.NONE
 
-    def test_comment_on_a_plain_issue_is_ignored(self, engine, target_id):
+    def test_comment_on_a_plain_issue_is_ignored(self, engine, target_id, workspace_id):
         with Session(engine) as session:
             finding = self._finding(session, target_id)
             payload = self._payload(finding.id)
             del payload["issue"]["pull_request"]
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
             assert result == {"ok": True, "skipped": "not a PR comment"}
 
-    def test_comment_without_the_command_is_ignored(self, engine, target_id):
+    def test_comment_without_the_command_is_ignored(self, engine, target_id, workspace_id):
         with Session(engine) as session:
             finding = self._finding(session, target_id)
             payload = self._payload(finding.id)
             payload["comment"]["body"] = "looks good to me!"
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
             assert result == {"ok": True, "skipped": "no ignore command"}
 
-    def test_nonexistent_finding_id_is_ignored(self, engine, target_id):
+    def test_nonexistent_finding_id_is_ignored(self, engine, target_id, workspace_id):
         with Session(engine) as session:
             payload = self._payload(finding_id=999999)
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
             assert result == {"ok": True, "skipped": "finding not found"}
 
-    def test_comma_separated_finding_ids_all_requested_in_one_command(self, engine, target_id, monkeypatch):
+    def test_comma_separated_finding_ids_all_requested_in_one_command(self, engine, target_id, workspace_id, monkeypatch):
         replies = []
         monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: replies.append(a))
 
@@ -440,7 +486,7 @@ class TestIssueCommentHandler:
             f2 = self._finding(session, target_id)
             payload = self._payload(f1.id, body_extra="")
             payload["comment"]["body"] = f"@toleman ignore finding={f1.id},{f2.id} false positive, see line 12"
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
 
             assert result["ignore_requested"] is True
             assert result["finding_ids"] == [f1.id, f2.id]
@@ -455,19 +501,19 @@ class TestIssueCommentHandler:
         # One combined reply, not one per finding.
         assert len(replies) == 1
 
-    def test_duplicate_ids_in_one_command_are_deduped(self, engine, target_id, monkeypatch):
+    def test_duplicate_ids_in_one_command_are_deduped(self, engine, target_id, workspace_id, monkeypatch):
         monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: None)
 
         with Session(engine) as session:
             finding = self._finding(session, target_id)
             payload = self._payload(finding.id)
             payload["comment"]["body"] = f"@toleman ignore finding={finding.id},{finding.id} dup id typo"
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
 
             assert result["finding_ids"] == [finding.id]
             assert result["finding_id"] == finding.id
 
-    def test_bulk_command_with_one_bad_id_still_requests_the_good_ones(self, engine, target_id, monkeypatch):
+    def test_bulk_command_with_one_bad_id_still_requests_the_good_ones(self, engine, target_id, workspace_id, monkeypatch):
         replies = []
         monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: replies.append(a))
 
@@ -478,7 +524,7 @@ class TestIssueCommentHandler:
             payload["comment"]["body"] = (
                 f"@toleman ignore finding={f1.id},{other_pr_finding.id},999999 false positive"
             )
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
 
             assert result["ignore_requested"] is True
             assert result["finding_ids"] == [f1.id]
@@ -502,7 +548,7 @@ class TestIssueCommentHandler:
         assert "finding not found" not in reply_body
         assert "does not belong to this PR" not in reply_body
 
-    def test_bulk_command_where_every_id_is_bad_is_skipped_with_no_reply(self, engine, target_id, monkeypatch):
+    def test_bulk_command_where_every_id_is_bad_is_skipped_with_no_reply(self, engine, target_id, workspace_id, monkeypatch):
         replies = []
         monkeypatch.setattr(webhooks, "reply_to_pr", lambda *a, **k: replies.append(a))
 
@@ -510,7 +556,7 @@ class TestIssueCommentHandler:
             other_pr_finding = self._finding(session, target_id, pr_number=999)
             payload = self._payload(other_pr_finding.id)
             payload["comment"]["body"] = f"@toleman ignore finding={other_pr_finding.id},999999 false positive"
-            result = webhooks._handle_issue_comment(session, payload)
+            result = webhooks._handle_issue_comment(session, payload, workspace_id)
 
             assert result == {
                 "ok": True,

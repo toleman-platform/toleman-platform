@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_admin
 from app.api.deps import get_session
 from app.core.config import settings
 from app.core.crypto import encrypt_secret
@@ -380,13 +380,24 @@ def setup_callback(
     return RedirectResponse(f"{FRONTEND_URL}/targets?connected=1")
 
 
-def _sync_repos(session: Session) -> int:
+def _sync_repos(session: Session, only_installation_id: int | None = None) -> int:
     """Sync repos for EVERY installation of EVERY registered App (#34);
     previously only the first GitHubInstallation row was ever synced, so a
     platform with more than one real installation (app installed on a second
     org/account, or a second App entirely) silently never saw that
-    installation's repos at all."""
+    installation's repos at all.
+
+    `only_installation_id` narrows this to one installation (used by the
+    webhook-triggered path, see sync_repos_task): a valid webhook signature
+    only proves the caller knows *some* configured App's real secret, not
+    that they're entitled to trigger a platform-wide resync that creates
+    Targets and queues scans in every other workspace's installation too.
+    The admin "Sync now" button and the periodic beat catch-up both still
+    call this unfiltered (None), since both are legitimately platform-wide
+    actions gated by their own admin/trusted-scheduler boundary."""
     installations = session.exec(select(GitHubInstallation)).all()
+    if only_installation_id is not None:
+        installations = [i for i in installations if i.installation_id == only_installation_id]
     # (#273) Soft-deleted targets are deliberately NOT part of the
     # already-imported set. The dead row still holds that repo_url, so
     # counting it would mean a repository someone deleted could never be
@@ -453,7 +464,18 @@ def _sync_repos(session: Session) -> int:
 
 
 @router.post("/sync")
-def sync_now(session: Session = Depends(get_session)):
+def sync_now(session: Session = Depends(get_session), user: User = Depends(require_admin)):
+    """Manually re-run the same installation-repos sync the
+    installation_repositories webhook triggers automatically (#456).
+
+    Admin-only: this had no auth dependency at all before, and _sync_repos
+    iterates every GitHubInstallation platform-wide -- any authenticated
+    user could create Target rows and queue scans across every workspace
+    with an installation, regardless of their own membership anywhere.
+    Matches the platform-default App's existing admin-only bar (see
+    delete_app_config's docstring) since this action is platform-wide, not
+    scoped to one workspace's App.
+    """
     created = _sync_repos(session)
     return {"created": created}
 

@@ -544,6 +544,7 @@ class TestDeactivationBlocksScanDispatch:
                     "pull_request": {"title": "t", "head": {"ref": "feat", "sha": "abc"}},
                     "repository": {"clone_url": "https://github.com/acme/repo"},
                 },
+                ws,
             )
             assert result["skipped"] == "target deactivated"
             assert session.exec(select(PRGuardrailScan)).all() == []
@@ -569,6 +570,7 @@ class TestDeactivationBlocksScanDispatch:
                     "ref": "refs/heads/main",
                     "repository": {"clone_url": "https://github.com/acme/repo"},
                 },
+                ws,
             )
         assert result["skipped"] == "target deactivated"
         mock_delay.assert_not_called()
@@ -877,6 +879,7 @@ class TestRemainingDispatchPaths:
                     "pull_request": {"merged": True, "base": {"ref": "main"}, "head": {"ref": "f", "sha": "a"}},
                     "repository": {"clone_url": "https://github.com/acme/repo"},
                 },
+                ws,
             )
         assert result["skipped"] == "target deactivated"
         mock_delay.assert_not_called()
@@ -1074,6 +1077,7 @@ class TestDeletedTargetsDisappear:
             result = webhooks._handle_push(
                 session,
                 {"ref": "refs/heads/main", "repository": {"clone_url": "https://github.com/acme/repo"}},
+                ws,
             )
         assert result["skipped"] == "no matching target"
 

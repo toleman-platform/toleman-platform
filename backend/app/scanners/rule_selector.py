@@ -279,8 +279,11 @@ def detect_technologies(repo_path: str, language: str) -> set[str]:
         dirs[:] = [d for d in dirs if d not in skip_dirs]
         for f in files:
             if f in manifest_names:
+                candidate = Path(root, f)
+                if candidate.is_symlink():
+                    continue
                 try:
-                    manifest_text += Path(root, f).read_text(errors="ignore") + "\n"
+                    manifest_text += candidate.read_text(errors="ignore") + "\n"
                 except OSError:
                     pass
 
@@ -297,8 +300,11 @@ def detect_technologies(repo_path: str, language: str) -> set[str]:
         for f in files:
             if os.path.splitext(f)[1] not in exts:
                 continue
+            candidate = Path(root, f)
+            if candidate.is_symlink():
+                continue
             try:
-                text = Path(root, f).read_text(errors="ignore")
+                text = candidate.read_text(errors="ignore")
             except OSError:
                 continue
             for tech, sig in sigs.items():

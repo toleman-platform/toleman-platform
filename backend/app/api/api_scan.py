@@ -206,6 +206,14 @@ def get_api_scan_credential(
     credential are replace and clear.
     """
     target = _get_target(target_id, session)
+    # Unlike the sibling PUT/DELETE/test endpoints below (all gated on
+    # require_workspace_role) and get_latest_api_scan above (which checks
+    # accessible_workspace_ids), this GET had no workspace check at all --
+    # any authenticated user could learn whether another tenant's target has
+    # an API-scan credential configured and its header name.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
+        raise HTTPException(status_code=404, detail="target not found")
     return {
         "target_id": target.id,
         "configured": bool(target.api_auth_header_name and target.api_auth_header_value_ciphertext),

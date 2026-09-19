@@ -333,24 +333,58 @@ class TestPullRequestMergedHandler:
 
 
 class TestInstallationRepositoriesHandler:
-    def test_added_queues_a_resync(self, monkeypatch):
+    def test_added_queues_a_resync_scoped_to_the_firing_installation(self, monkeypatch):
+        """(#530) Scoped, not a bare platform-wide resync -- a valid
+        signature only proves the caller knows some configured App's real
+        secret, not that they're entitled to resync every OTHER workspace's
+        installation too."""
         from app.tasks import github_sync_tasks
 
         calls = []
-        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
 
-        result = webhooks._handle_installation_repositories({"action": "added"})
+        result = webhooks._handle_installation_repositories(
+            {"action": "added", "installation": {"id": 555}}, narrowed=True
+        )
 
         assert result["queued"] is True
-        assert calls == [()]
+        assert calls == [{"installation_id": 555}]
+
+    def test_added_is_skipped_when_the_signature_was_not_narrowed(self, monkeypatch):
+        """A signature that only verified via the try-every-config fallback
+        never proved it belongs to the installation this payload claims;
+        trusting that claimed id here would reopen the exact cross-tenant
+        resync hole this scoping exists to close (#530)."""
+        from app.tasks import github_sync_tasks
+
+        calls = []
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
+
+        result = webhooks._handle_installation_repositories(
+            {"action": "added", "installation": {"id": 555}}, narrowed=False
+        )
+
+        assert "skipped" in result
+        assert calls == []
+
+    def test_added_is_skipped_when_no_installation_id_in_payload(self, monkeypatch):
+        from app.tasks import github_sync_tasks
+
+        calls = []
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
+
+        result = webhooks._handle_installation_repositories({"action": "added"}, narrowed=True)
+
+        assert "skipped" in result
+        assert calls == []
 
     def test_removed_does_not_delete_anything(self, monkeypatch):
         from app.tasks import github_sync_tasks
 
         calls = []
-        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
 
-        result = webhooks._handle_installation_repositories({"action": "removed"})
+        result = webhooks._handle_installation_repositories({"action": "removed"}, narrowed=True)
 
         assert "skipped" in result
         assert calls == []

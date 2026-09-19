@@ -387,3 +387,160 @@ def test_webhook_from_the_targets_own_installation_is_accepted(client, engine, m
     )
     assert res.status_code == 200
     assert res.json()["queued"] is True
+
+
+def test_webhook_resolves_the_right_workspaces_target_when_repo_url_is_duplicated(client, engine, monkeypatch):
+    """CodeRabbit review on #540: the pre-fix query picked the first Target
+    matching repo_url across ALL workspaces, then compared workspace ids
+    after the fact. If two workspaces ever register the same clone_url, an
+    unscoped `.first()` could return the OTHER workspace's row and reject a
+    perfectly legitimate delivery. Filtering the query itself by
+    installation_workspace_id must resolve to the correct target instead."""
+    import app.api.webhooks as webhooks_module
+    from app.tasks import scan_tasks
+
+    monkeypatch.setattr(webhooks_module, "engine", engine)
+    monkeypatch.setattr(scan_tasks.queue_full_scan_for_target_task, "delay", lambda *a, **k: None)
+
+    shared_url = "https://github.com/shared-name/repo"
+    ws_a = _make_workspace(engine, "p3-dup-ws-a")
+    ws_b = _make_workspace(engine, "p3-dup-ws-b")
+    with Session(engine) as session:
+        from app.models.models import Target as TargetModel
+
+        # Both workspaces happen to have registered a target with the same
+        # clone_url (a plausible real scenario: someone re-registers, or a
+        # fork, under a different tenant). target_a is created first, so an
+        # unscoped `.first()` would return it even for a webhook that
+        # actually belongs to workspace B.
+        target_a = TargetModel(workspace_id=ws_a, name="a", repo_url=shared_url, default_branch="main")
+        session.add(target_a)
+        session.commit()
+        session.refresh(target_a)
+        target_b = TargetModel(workspace_id=ws_b, name="b", repo_url=shared_url, default_branch="main")
+        session.add(target_b)
+        session.commit()
+        session.refresh(target_b)
+        target_b_id = target_b.id
+
+        cfg_b = GitHubAppConfig(
+            app_id="3", slug="app-b", client_id="c", client_secret="s", private_key_pem="pem",
+            webhook_secret=encrypt_secret("secret-b"), html_url="https://github.com/apps/app-b",
+            workspace_id=ws_b,
+        )
+        session.add(cfg_b)
+        session.commit()
+        session.refresh(cfg_b)
+
+        inst_b = GitHubInstallation(
+            installation_id=888, account_login="org-b", account_type="Organization",
+            workspace_id=ws_b, github_app_config_id=cfg_b.id,
+        )
+        session.add(inst_b)
+        session.commit()
+
+    body = (
+        b'{"installation": {"id": 888}, "ref": "refs/heads/main", '
+        b'"repository": {"clone_url": "' + shared_url.encode() + b'"}}'
+    )
+    sig = _sign("secret-b", body)
+
+    res = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "push", "Content-Type": "application/json"},
+    )
+    assert res.status_code == 200
+    body_json = res.json()
+    assert body_json["queued"] is True
+    assert body_json["target_id"] == target_b_id
+
+
+def test_installation_repositories_webhook_syncs_only_the_firing_installation(client, engine, monkeypatch):
+    """CodeRabbit + human review on #540: the installation_repositories
+    handler used to call the no-arg sync_repos_task, resyncing every
+    workspace's installations platform-wide off of any one valid webhook
+    signature -- the exact reach POST /api/github-app/sync is admin-gated
+    for. Must be scoped to the firing installation only."""
+    import app.api.webhooks as webhooks_module
+
+    monkeypatch.setattr(webhooks_module, "engine", engine)
+
+    ws = _make_workspace(engine, "p3-instrepos-ws")
+    with Session(engine) as session:
+        cfg = GitHubAppConfig(
+            app_id="4", slug="app-instrepos", client_id="c", client_secret="s", private_key_pem="pem",
+            webhook_secret=encrypt_secret("instrepos-secret"), html_url="https://github.com/apps/app-instrepos",
+            workspace_id=ws,
+        )
+        session.add(cfg)
+        session.commit()
+        session.refresh(cfg)
+
+        inst = GitHubInstallation(
+            installation_id=999, account_login="org-instrepos", account_type="Organization",
+            workspace_id=ws, github_app_config_id=cfg.id,
+        )
+        session.add(inst)
+        session.commit()
+
+    calls = []
+    from app.tasks import github_sync_tasks
+
+    monkeypatch.setattr(github_sync_tasks.sync_repos_task, "delay", lambda *a, **k: calls.append(k))
+
+    body = b'{"action": "added", "installation": {"id": 999}}'
+    sig = _sign("instrepos-secret", body)
+
+    res = client.post(
+        "/api/webhooks/github",
+        content=body,
+        headers={
+            "X-Hub-Signature-256": sig,
+            "X-GitHub-Event": "installation_repositories",
+            "Content-Type": "application/json",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["queued"] is True
+    assert calls == [{"installation_id": 999}]
+
+
+def test_a_fallback_verified_signature_cannot_bind_to_the_claimed_installations_workspace(engine):
+    """Human review on #540: a signature that only verifies via the
+    try-every-config fallback (_candidate_configs' `narrowed=False` path)
+    proves someone knows *some* real secret, never that they own the
+    installation the payload names. `_verify_signature` must surface that
+    distinction so callers never resolve a workspace from an unnarrowed
+    match's claimed installation id."""
+    import app.api.webhooks as webhooks_module
+
+    ws_a = _make_workspace(engine, "p3-fallback-ws-a")
+    with Session(engine) as session:
+        cfg_a = GitHubAppConfig(
+            app_id="5", slug="app-fallback-a", client_id="c", client_secret="s", private_key_pem="pem",
+            webhook_secret=encrypt_secret("fallback-secret-a"), html_url="https://github.com/apps/app-fallback-a",
+            workspace_id=ws_a,
+        )
+        session.add(cfg_a)
+        session.commit()
+        session.refresh(cfg_a)
+
+        inst_a = GitHubInstallation(
+            installation_id=1010, account_login="org-fallback-a", account_type="Organization",
+            workspace_id=ws_a, github_app_config_id=cfg_a.id,
+        )
+        session.add(inst_a)
+        session.commit()
+
+    body = b'{"action": "opened"}'
+    sig = _sign("fallback-secret-a", body)
+
+    with Session(engine) as session:
+        # payload_installation_id=None (no id claimed at all, or one that
+        # doesn't resolve): _candidate_configs falls back to trying every
+        # configured App's secret, matches cfg_a's, but that is NOT the
+        # same thing as proving ownership of a specific installation.
+        verified, narrowed = webhooks_module._verify_signature(body, sig, session, payload_installation_id=None)
+        assert verified is True
+        assert narrowed is False

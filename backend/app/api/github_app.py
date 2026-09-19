@@ -380,13 +380,24 @@ def setup_callback(
     return RedirectResponse(f"{FRONTEND_URL}/targets?connected=1")
 
 
-def _sync_repos(session: Session) -> int:
+def _sync_repos(session: Session, only_installation_id: int | None = None) -> int:
     """Sync repos for EVERY installation of EVERY registered App (#34);
     previously only the first GitHubInstallation row was ever synced, so a
     platform with more than one real installation (app installed on a second
     org/account, or a second App entirely) silently never saw that
-    installation's repos at all."""
+    installation's repos at all.
+
+    `only_installation_id` narrows this to one installation (used by the
+    webhook-triggered path, see sync_repos_task): a valid webhook signature
+    only proves the caller knows *some* configured App's real secret, not
+    that they're entitled to trigger a platform-wide resync that creates
+    Targets and queues scans in every other workspace's installation too.
+    The admin "Sync now" button and the periodic beat catch-up both still
+    call this unfiltered (None), since both are legitimately platform-wide
+    actions gated by their own admin/trusted-scheduler boundary."""
     installations = session.exec(select(GitHubInstallation)).all()
+    if only_installation_id is not None:
+        installations = [i for i in installations if i.installation_id == only_installation_id]
     # (#273) Soft-deleted targets are deliberately NOT part of the
     # already-imported set. The dead row still holds that repo_url, so
     # counting it would mean a repository someone deleted could never be

@@ -326,8 +326,8 @@ def test_verify_signature_routes_to_correct_app_via_payload_installation_id(engi
         sig_from_app_b = _sign("secretB", body)
         # Delivery claims to be from installation 222 (App B); only App B's
         # secret should verify it, even though App A is also configured.
-        assert _verify_signature(body, sig_from_app_b, session, payload_installation_id=222) is True
-        assert _verify_signature(body, sig_from_app_b, session, payload_installation_id=111) is False
+        assert _verify_signature(body, sig_from_app_b, session, payload_installation_id=222) == (True, True)
+        assert _verify_signature(body, sig_from_app_b, session, payload_installation_id=111) == (False, False)
 
 
 def test_verify_signature_falls_back_to_trying_all_configs_without_installation_id(engine):
@@ -338,7 +338,10 @@ def test_verify_signature_falls_back_to_trying_all_configs_without_installation_
     with Session(engine) as session:
         body = b'{"action": "opened"}'
         sig = _sign("secretB", body)
-        assert _verify_signature(body, sig, session, payload_installation_id=None) is True
+        # Verified, but not narrowed: no installation id to pin the match to
+        # a specific App, so the caller must not trust it to resolve a
+        # workspace (#530).
+        assert _verify_signature(body, sig, session, payload_installation_id=None) == (True, False)
 
 
 def test_verify_signature_rejects_when_no_config_matches(engine):
@@ -348,7 +351,7 @@ def test_verify_signature_rejects_when_no_config_matches(engine):
     with Session(engine) as session:
         body = b'{"action": "opened"}'
         sig = _sign("some-other-secret", body)
-        assert _verify_signature(body, sig, session, payload_installation_id=None) is False
+        assert _verify_signature(body, sig, session, payload_installation_id=None) == (False, False)
 
 
 def test_candidate_configs_narrows_to_the_owning_app(engine):
@@ -359,8 +362,9 @@ def test_candidate_configs_narrows_to_the_owning_app(engine):
         _make_installation(session, ws.id, 111, "org-a", config_id=cfg_a.id)
         _make_installation(session, ws.id, 222, "org-b", config_id=cfg_b.id)
 
-        candidates = _candidate_configs(session, 222)
+        candidates, narrowed = _candidate_configs(session, 222)
         assert [c.id for c in candidates] == [cfg_b.id]
+        assert narrowed is True
 
 
 # --- Issue #506: per-workspace GitHub App -------------------------------

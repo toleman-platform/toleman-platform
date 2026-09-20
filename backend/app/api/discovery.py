@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.api.auth import require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, require_workspace_role
 from app.api.deps import get_session
 from app.core.async_jobs import create_running_row
 from app.core.discovery_ingestion import upsert_endpoints  # noqa: F401, re-exported, see docstring below
@@ -22,11 +22,19 @@ router = APIRouter(prefix="/api/discovery", tags=["discovery"])
 # upsert_endpoints` (used by tests) keeps working unchanged.
 
 
-def _get_target(target_id: int, session: Session) -> Target:
+def _get_target(target_id: int, session: Session, user: User) -> Target:
     target = session.get(Target, target_id)
     # (#273) Soft-deleted targets 404; deactivation is checked at the
     # dispatching route only, so already-discovered endpoints stay readable.
     if not target or target_lifecycle.is_deleted(target):
+        raise HTTPException(status_code=404, detail="target not found")
+    # (#57-shaped gap) The two GET routes below used to call this helper
+    # with no workspace check at all -- any authenticated user could read
+    # another workspace's discovered API surface by target_id. 404, not
+    # 403: a caller outside this target's workspace must not learn the id
+    # is valid.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None and target.workspace_id not in ws_ids:
         raise HTTPException(status_code=404, detail="target not found")
     return target
 
@@ -46,7 +54,7 @@ def run_discovery(
     GET /api/discovery/{target_id}/runs/{run_id} until status leaves
     "running" to get the same endpoints/new_count payload this used to
     return synchronously."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     # (#273) API Discovery clones the repo and greps the checkout, so it is a
     # scan by every definition that matters here (it starts work against a
     # repository the operator switched off, and its output feeds Active API
@@ -68,7 +76,12 @@ def run_discovery(
 
 
 @router.get("/{target_id}/runs/{run_id}")
-def get_discovery_run(target_id: int, run_id: int, session: Session = Depends(get_session)):
+def get_discovery_run(
+    target_id: int,
+    run_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Poll target for an async discovery run dispatched by POST above.
     Once status leaves "running", also returns the same endpoints/new_count
     payload the old synchronous POST used to return directly."""
@@ -77,7 +90,7 @@ def get_discovery_run(target_id: int, run_id: int, session: Session = Depends(ge
         raise HTTPException(status_code=404, detail="discovery run not found")
     mark_stale_if_needed(session, run)
 
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     payload = {
         "run_id": run.id,
         "target_id": run.target_id,
@@ -113,10 +126,14 @@ def get_discovery_run(target_id: int, run_id: int, session: Session = Depends(ge
 
 
 @router.get("/{target_id}")
-def list_discovered_endpoints(target_id: int, session: Session = Depends(get_session)):
+def list_discovered_endpoints(
+    target_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(current_user),
+):
     """Persisted results without re-running a scan; the page should show
     real state on load, not force a re-scan every visit."""
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     endpoints = session.exec(
         select(ApiEndpoint)
         .where(ApiEndpoint.target_id == target_id, ApiEndpoint.branch == target.default_branch)
@@ -172,7 +189,7 @@ def set_endpoint_scope(
     current default branch, for the same reason build_scan_urls checks it:
     an id from another target must never be reachable by guessing.
     """
-    target = _get_target(target_id, session)
+    target = _get_target(target_id, session, user)
     endpoint = session.get(ApiEndpoint, endpoint_id)
     if not endpoint or endpoint.target_id != target_id or endpoint.branch != target.default_branch:
         raise HTTPException(status_code=404, detail="endpoint not found for this target")

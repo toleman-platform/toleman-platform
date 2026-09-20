@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, func, select
 
-from app.api.auth import accessible_workspace_ids, current_user, narrow_workspace_scope
+from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, narrow_workspace_scope
 from app.api.deps import get_session
 from app.core import scan_eta
 from app.core.async_jobs import create_running_row
@@ -10,7 +10,7 @@ from app.core.rate_limit import enforce_rate_limit
 from app.core.scan_health import SUSPECT
 from app.core.staleness import mark_stale_if_needed
 from app.core import target_lifecycle
-from app.models.models import Scan, Target, User
+from app.models.models import Scan, Target, User, WorkspaceRole
 from app.core.tool_usage import tools_for_surface
 from app.scanners import parsers
 from app.tasks.scan_tasks import run_scan
@@ -182,6 +182,20 @@ def run_native_scan(
 
     target = session.get(Target, target_id)
     if not target:
+        return {"error": "target not found"}
+    # Unlike every equivalent dispatch endpoint (api_scan.trigger_api_scan,
+    # discovery.run_discovery, sbom.generate_sbom -- all gated on
+    # require_workspace_role), this route only ever checked `current_user`,
+    # so any authenticated user could dispatch a real clone+scan against
+    # another workspace's target. Checked here rather than via
+    # require_workspace_role so this keeps its existing
+    # 200-with-{"error"} convention (and so enforce_rate_limit above still
+    # runs first, unconditionally, the same as every other refusal below)
+    # instead of a bare 403/404 that would change this endpoint's response
+    # shape for every other client already handling it.
+    try:
+        enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=target.workspace_id)
+    except HTTPException:
         return {"error": "target not found"}
     # (#273) A deactivated target refuses on-demand scans here, at the
     # dispatch point, rather than relying on the Scan buttons not rendering.
@@ -359,6 +373,17 @@ def get_scan(
     scan = session.get(Scan, scan_id)
     if not scan:
         return {"error": "scan not found"}
+    # Unlike scan_history/active_scans/scans_summary in this same file, this
+    # route had no workspace check at all: any authenticated user could poll
+    # a sequential scan_id belonging to another workspace and read its
+    # target_id/tool/branch/status/findings_count. 404, not 403 (matches
+    # this endpoint's own "scan not found" convention just above) -- a
+    # caller outside this scan's workspace must not learn the id is valid.
+    ws_ids = accessible_workspace_ids(session, user)
+    if ws_ids is not None:
+        target = session.get(Target, scan.target_id)
+        if not target or target.workspace_id not in ws_ids:
+            return {"error": "scan not found"}
     # A row swept to "failed" here carries its timeout reason in `error`,
     # which the response already surfaces as error_message; the UI shows
     # that instead of a spinner that would never resolve.

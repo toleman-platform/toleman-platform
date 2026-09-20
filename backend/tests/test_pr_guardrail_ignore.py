@@ -31,6 +31,8 @@ from app.models.models import (
     User,
     UserRole,
     Workspace,
+    WorkspaceMembership,
+    WorkspaceRole,
 )
 
 
@@ -57,13 +59,21 @@ def client(engine):
     deps_module.engine = original_engine
 
 
-def _login(client, engine, role=UserRole.USER, email=None):
+def _login(client, engine, role=UserRole.USER, email=None, workspace_id=None, workspace_role=None):
     email = email or f"{role.value}@example.com"
     with Session(engine) as session:
         user = User(email=email, name="Test", password_hash=hash_password("whatever123"), role=role)
         session.add(user)
         session.commit()
         session.refresh(user)
+        # A global security_engineer/developer role alone no longer suffices
+        # (see app/api/pr_guardrail.py's _get_pr_finding_scoped): the caller
+        # also needs a WorkspaceMembership in the target's own workspace, the
+        # same membership requirement every other workspace-scoped route in
+        # this codebase already has.
+        if workspace_id is not None and workspace_role is not None:
+            session.add(WorkspaceMembership(user_id=user.id, workspace_id=workspace_id, role=workspace_role))
+            session.commit()
         token = create_session_token(user.id, user.token_version)
     client.cookies.set("toleman_session", token)
     return client
@@ -86,6 +96,11 @@ def _make_target(engine) -> int:
         return target.id
 
 
+def _ws_of(engine, target_id: int) -> int:
+    with Session(engine) as session:
+        return session.get(Target, target_id).workspace_id
+
+
 def _make_blocked_scan(engine, target_id: int, severities: list[str]) -> tuple[int, list[int]]:
     with Session(engine) as session:
         scan = PRGuardrailScan(target_id=target_id, pr_number=7, branch="feature", status=PRGuardrailStatus.BLOCKED)
@@ -106,9 +121,17 @@ def _make_blocked_scan(engine, target_id: int, severities: list[str]) -> tuple[i
         return scan.id, finding_ids
 
 
-def _make_pr_scan_and_finding(engine) -> tuple[int, int]:
+def _make_pr_scan_and_finding(engine, target_id: int | None = None) -> tuple[int, int, int]:
+    """Returns (scan_id, finding_id, workspace_id). Used to default to a
+    placeholder, nonexistent target_id=1 -- that only worked because these
+    endpoints had no workspace check to trip over it (see
+    app/api/pr_guardrail.py's _get_pr_finding_scoped). A real Target is
+    created (in its own fresh workspace) when target_id isn't supplied."""
+    if target_id is None:
+        target_id = _make_target(engine)
     with Session(engine) as session:
-        scan = PRGuardrailScan(target_id=1, pr_number=7, branch="feature", status=PRGuardrailStatus.BLOCKED)
+        target = session.get(Target, target_id)
+        scan = PRGuardrailScan(target_id=target_id, pr_number=7, branch="feature", status=PRGuardrailStatus.BLOCKED)
         session.add(scan)
         session.commit()
         session.refresh(scan)
@@ -120,7 +143,7 @@ def _make_pr_scan_and_finding(engine) -> tuple[int, int]:
         session.add(finding)
         session.commit()
         session.refresh(finding)
-        return scan.id, finding.id
+        return scan.id, finding.id, target.workspace_id
 
 
 def test_severity_str_unwraps_enum_value():
@@ -161,8 +184,8 @@ def test_render_comment_includes_new_endpoints_section():
 
 
 def test_developer_can_request_ignore(client, engine):
-    client = _login(client, engine, role=UserRole.DEVELOPER)
-    _, finding_id = _make_pr_scan_and_finding(engine)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    client = _login(client, engine, role=UserRole.DEVELOPER, workspace_id=ws_id, workspace_role=WorkspaceRole.DEVELOPER)
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/request-ignore", json={"reason": "false positive, test fixture"})
     assert res.status_code == 200
@@ -172,8 +195,8 @@ def test_developer_can_request_ignore(client, engine):
 
 
 def test_request_ignore_requires_reason(client, engine):
-    client = _login(client, engine, role=UserRole.DEVELOPER)
-    _, finding_id = _make_pr_scan_and_finding(engine)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    client = _login(client, engine, role=UserRole.DEVELOPER, workspace_id=ws_id, workspace_role=WorkspaceRole.DEVELOPER)
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/request-ignore", json={"reason": ""})
     assert res.status_code == 400
@@ -181,15 +204,17 @@ def test_request_ignore_requires_reason(client, engine):
 
 def test_regular_user_cannot_approve_ignore(client, engine):
     client = _login(client, engine, role=UserRole.USER)
-    _, finding_id = _make_pr_scan_and_finding(engine)
+    _, finding_id, _ws_id = _make_pr_scan_and_finding(engine)
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     assert res.status_code == 403
 
 
 def test_security_engineer_can_approve_ignore(client, engine):
-    _, finding_id = _make_pr_scan_and_finding(engine)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     assert res.status_code == 200
@@ -199,8 +224,10 @@ def test_security_engineer_can_approve_ignore(client, engine):
 
 
 def test_security_engineer_can_reject_ignore(client, engine):
-    _, finding_id = _make_pr_scan_and_finding(engine)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
 
     res = client.post(
         f"/api/pr-guardrail/findings/{finding_id}/reject-ignore", json={"reason": "still a real risk in prod"}
@@ -213,8 +240,10 @@ def test_security_engineer_can_reject_ignore(client, engine):
 
 
 def test_reject_ignore_requires_reason(client, engine):
-    _, finding_id = _make_pr_scan_and_finding(engine)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/reject-ignore", json={"reason": ""})
     assert res.status_code == 400
@@ -225,8 +254,10 @@ def test_reject_ignore_requires_reason_even_with_no_body_at_all(client, engine):
     With `body: dict` FastAPI treats the body as required and answers 422
     before the handler runs, so the stated contract only held for callers who
     happened to send *something*."""
-    _, finding_id = _make_pr_scan_and_finding(engine)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/reject-ignore")
     assert res.status_code == 400
@@ -238,8 +269,10 @@ def test_re_requesting_an_ignore_clears_the_previous_rejection_reason(client, en
     request. Without clearing it, a pending request renders carrying the
     reason someone was previously turned down for, which reads as though the
     reviewer had already ruled on this one."""
-    _, finding_id = _make_pr_scan_and_finding(engine)
-    reviewer = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    reviewer = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
     res = reviewer.post(
         f"/api/pr-guardrail/findings/{finding_id}/reject-ignore",
         json={"reason": "still a real risk in prod"},
@@ -258,7 +291,7 @@ def test_re_requesting_an_ignore_clears_the_previous_rejection_reason(client, en
 
 
 def test_admin_can_also_approve_ignore(client, engine):
-    _, finding_id = _make_pr_scan_and_finding(engine)
+    _, finding_id, _ws_id = _make_pr_scan_and_finding(engine)
     client = _login(client, engine, role=UserRole.ADMIN)
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
@@ -266,11 +299,16 @@ def test_admin_can_also_approve_ignore(client, engine):
 
 
 def test_pending_queue_only_shows_requested(client, engine):
-    _, finding_id = _make_pr_scan_and_finding(engine)
-    dev_client = _login(client, engine, role=UserRole.DEVELOPER)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    dev_client = _login(
+        client, engine, role=UserRole.DEVELOPER, workspace_id=ws_id, workspace_role=WorkspaceRole.DEVELOPER
+    )
     dev_client.post(f"/api/pr-guardrail/findings/{finding_id}/request-ignore", json={"reason": "fp"})
 
-    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER, email="sec2@example.com")
+    sec_client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, email="sec2@example.com",
+        workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     res = sec_client.get("/api/pr-guardrail/ignore-requests/pending")
     assert res.status_code == 200
     body = res.json()
@@ -280,18 +318,27 @@ def test_pending_queue_only_shows_requested(client, engine):
 
 
 def test_history_shows_approved_and_rejected_but_not_pending(client, engine):
-    _, approved_id = _make_pr_scan_and_finding(engine)
-    _, rejected_id = _make_pr_scan_and_finding(engine)
-    _, still_pending_id = _make_pr_scan_and_finding(engine)
+    # All three findings share one target/workspace: the dev and security
+    # reviewer below act on all of them with a single login each, which only
+    # works if that login's WorkspaceMembership covers all three.
+    target_id = _make_target(engine)
+    _, approved_id, ws_id = _make_pr_scan_and_finding(engine, target_id)
+    _, rejected_id, _ = _make_pr_scan_and_finding(engine, target_id)
+    _, still_pending_id, _ = _make_pr_scan_and_finding(engine, target_id)
 
     # _login re-authenticates the same shared TestClient in place, so the
     # dev's request-ignore call must happen before the final sec_client
     # login that the closing GET below relies on (same ordering as
     # test_pending_queue_only_shows_requested above).
-    dev_client = _login(client, engine, role=UserRole.DEVELOPER, email="dev2@example.com")
+    dev_client = _login(
+        client, engine, role=UserRole.DEVELOPER, email="dev2@example.com",
+        workspace_id=ws_id, workspace_role=WorkspaceRole.DEVELOPER,
+    )
     dev_client.post(f"/api/pr-guardrail/findings/{still_pending_id}/request-ignore", json={"reason": "fp"})
 
-    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    sec_client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
     sec_client.post(f"/api/pr-guardrail/findings/{approved_id}/approve-ignore")
     sec_client.post(f"/api/pr-guardrail/findings/{rejected_id}/reject-ignore", json={"reason": "not exploitable here"})
 
@@ -306,9 +353,12 @@ def test_history_shows_approved_and_rejected_but_not_pending(client, engine):
 
 
 def test_history_most_recently_reviewed_first(client, engine):
-    _, first_id = _make_pr_scan_and_finding(engine)
-    _, second_id = _make_pr_scan_and_finding(engine)
-    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    target_id = _make_target(engine)
+    _, first_id, ws_id = _make_pr_scan_and_finding(engine, target_id)
+    _, second_id, _ = _make_pr_scan_and_finding(engine, target_id)
+    sec_client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
     sec_client.post(f"/api/pr-guardrail/findings/{first_id}/approve-ignore")
     sec_client.post(f"/api/pr-guardrail/findings/{second_id}/approve-ignore")
 
@@ -326,11 +376,15 @@ def test_only_security_reviewers_can_read_history(client, engine):
 
 
 def test_history_is_paginated(client, engine):
+    target_id = _make_target(engine)
     ids = []
+    ws_id = None
     for _ in range(3):
-        _, fid = _make_pr_scan_and_finding(engine)
+        _, fid, ws_id = _make_pr_scan_and_finding(engine, target_id)
         ids.append(fid)
-    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    sec_client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
     for fid in ids:
         sec_client.post(f"/api/pr-guardrail/findings/{fid}/approve-ignore")
 
@@ -351,14 +405,22 @@ def test_history_is_paginated(client, engine):
 
 
 def test_pending_queue_is_paginated(client, engine):
+    target_id = _make_target(engine)
+    with Session(engine) as session:
+        ws_id = session.get(Target, target_id).workspace_id
     ids = []
-    dev_client = _login(client, engine, role=UserRole.DEVELOPER)
+    dev_client = _login(
+        client, engine, role=UserRole.DEVELOPER, workspace_id=ws_id, workspace_role=WorkspaceRole.DEVELOPER
+    )
     for _ in range(3):
-        _, fid = _make_pr_scan_and_finding(engine)
+        _, fid, _ = _make_pr_scan_and_finding(engine, target_id)
         dev_client.post(f"/api/pr-guardrail/findings/{fid}/request-ignore", json={"reason": "fp"})
         ids.append(fid)
 
-    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER, email="sec3@example.com")
+    sec_client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, email="sec3@example.com",
+        workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     res = sec_client.get("/api/pr-guardrail/ignore-requests/pending?page=1&page_size=2")
     assert res.status_code == 200
     body = res.json()
@@ -371,7 +433,7 @@ def test_list_findings_for_a_scan(client, engine):
     # None); this test's scan targets target_id=1, which doesn't exist as
     # a real row, so a non-admin caller would 404 on the workspace check.
     client = _login(client, engine, role=UserRole.ADMIN)
-    scan_id, finding_id = _make_pr_scan_and_finding(engine)
+    scan_id, finding_id, _ws_id = _make_pr_scan_and_finding(engine)
 
     res = client.get(f"/api/pr-guardrail/{scan_id}/findings")
     assert res.status_code == 200
@@ -469,7 +531,10 @@ def test_approve_ignore_endpoint_unblocks_pr_end_to_end(client, engine, monkeypa
     _patch_github(monkeypatch)
     target_id = _make_target(engine)
     scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     assert res.status_code == 200
@@ -504,7 +569,10 @@ def test_approving_ignore_immediately_accepts_the_matching_main_finding(client, 
     target_id = _make_target(engine)
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
     main_finding_id = _make_main_finding(engine, target_id)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     assert res.status_code == 200
@@ -535,7 +603,10 @@ def test_approving_ignore_patches_the_pr_comment_immediately(client, engine, mon
     scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
     with Session(engine) as session:
         pr_number = session.get(PRGuardrailScan, scan_id).pr_number
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     assert res.status_code == 200
@@ -547,7 +618,10 @@ def test_approving_ignore_does_not_touch_a_finding_on_a_non_default_branch(clien
     target_id = _make_target(engine)  # default_branch defaults to "main"
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
     other_branch_finding_id = _make_main_finding(engine, target_id, branch="some-other-branch")
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     assert res.status_code == 200
@@ -561,7 +635,10 @@ def test_approving_ignore_does_not_reopen_an_already_resolved_finding(client, en
     target_id = _make_target(engine)
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
     resolved_id = _make_main_finding(engine, target_id, state=FindingState.FALSE_POSITIVE)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     assert res.status_code == 200
@@ -586,7 +663,10 @@ def test_regular_user_cannot_revoke_ignore(client, engine, monkeypatch):
     _patch_github(monkeypatch)
     target_id = _make_target(engine)
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
-    sec_client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    sec_client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     sec_client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
 
     user_client = _login(client, engine, role=UserRole.USER, email="user2@example.com")
@@ -595,8 +675,10 @@ def test_regular_user_cannot_revoke_ignore(client, engine, monkeypatch):
 
 
 def test_revoke_ignore_requires_finding_to_be_currently_approved(client, engine):
-    _, finding_id = _make_pr_scan_and_finding(engine)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    _, finding_id, ws_id = _make_pr_scan_and_finding(engine)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER, workspace_id=ws_id, workspace_role=WorkspaceRole.SECURITY_ENGINEER
+    )
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
     assert res.status_code == 400
@@ -606,7 +688,10 @@ def test_security_engineer_can_revoke_ignore(client, engine, monkeypatch):
     _patch_github(monkeypatch)
     target_id = _make_target(engine)
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
@@ -624,7 +709,10 @@ def test_revoked_ignore_still_appears_in_history(client, engine, monkeypatch):
     _patch_github(monkeypatch)
     target_id = _make_target(engine)
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
     client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
 
@@ -640,7 +728,10 @@ def test_revoking_ignore_reopens_the_matching_main_finding(client, engine, monke
     target_id = _make_target(engine)
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
     main_finding_id = _make_main_finding(engine, target_id)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
 
     with Session(engine) as session:
@@ -670,7 +761,10 @@ def test_revoking_ignore_does_not_touch_a_finding_resolved_some_other_way(client
     target_id = _make_target(engine)
     _, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
     main_finding_id = _make_main_finding(engine, target_id)
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
 
     with Session(engine) as session:
@@ -698,7 +792,10 @@ def test_revoking_ignore_patches_the_pr_comment_when_not_merged(client, engine, 
     scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
     with Session(engine) as session:
         pr_number = session.get(PRGuardrailScan, scan_id).pr_number
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
 
     res = client.post(f"/api/pr-guardrail/findings/{finding_id}/revoke-ignore")
@@ -743,7 +840,10 @@ def test_revoke_ignore_endpoint_reblocks_pr_end_to_end(client, engine, monkeypat
     _patch_github(monkeypatch)
     target_id = _make_target(engine)
     scan_id, (finding_id,) = _make_blocked_scan(engine, target_id, ["Critical"])
-    client = _login(client, engine, role=UserRole.SECURITY_ENGINEER)
+    client = _login(
+        client, engine, role=UserRole.SECURITY_ENGINEER,
+        workspace_id=_ws_of(engine, target_id), workspace_role=WorkspaceRole.SECURITY_ENGINEER,
+    )
     client.post(f"/api/pr-guardrail/findings/{finding_id}/approve-ignore")
 
     with Session(engine) as session:

@@ -221,9 +221,9 @@ def validate_production_secrets(s: Settings = settings) -> None:
         return
 
     unset = []
-    if s.session_secret == DEFAULT_SESSION_SECRET:
+    if not s.session_secret.strip() or s.session_secret == DEFAULT_SESSION_SECRET:
         unset.append("SESSION_SECRET")
-    if s.admin_password == DEFAULT_ADMIN_PASSWORD:
+    if not s.admin_password.strip() or s.admin_password == DEFAULT_ADMIN_PASSWORD:
         unset.append("ADMIN_PASSWORD")
 
     if unset:

@@ -320,7 +320,16 @@ over a VPN or requiring a client certificate:
    per-workspace GitHub token, and never echoed back by any GET/PATCH; the
    API reports only `client_cert_set`/`client_key_set`.
 4. If cloning needs to go through a VPN gateway or other HTTP(S) proxy, set
-   it via `PATCH /api/targets/{id}` with `clone_proxy_url`.
+   it via `PATCH /api/targets/{id}` with `clone_proxy_url`. Changing this
+   proxy, or the active scanner's `api_base_url`, requires a global
+   administrator because both choose destinations reachable from the
+   deployment's network. Workspace developers can run scans against a
+   destination once an administrator has configured it.
+
+Destination URLs must not embed a username or password. Use the encrypted
+API scan credential for API authentication, or configure an authenticated
+proxy in the deployment's environment instead of a target's URL. Existing
+URL userinfo is omitted from API responses.
 
 ### Database migrations (Alembic)
 

@@ -217,7 +217,7 @@ def export_org_sbom(
 def generate_sbom(
     target_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Dispatch an async SBOM generation run (#59) instead of cloning+
     importing the dependency graph synchronously inside the request handler,
@@ -252,7 +252,7 @@ def generate_sbom(
 def malware_check(
     target_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Issue #181: re-check a target's existing SBOM inventory for malicious
     packages (via OSV.dev) without regenerating the SBOM, since OSV adds
@@ -279,7 +279,7 @@ def malware_check(
 def import_github_sbom(
     target_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Issue #227: import the target's dependency inventory from GitHub's
     Dependency Graph (see app.core.github_dependency_graph: the same
@@ -332,7 +332,7 @@ async def upload_sbom(
     target_id: int,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Issue #227: import an uploaded SBOM document (CycloneDX JSON or SPDX
     JSON) into the target's persisted inventory, without a generation run

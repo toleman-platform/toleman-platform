@@ -43,7 +43,7 @@ def _get_target(target_id: int, session: Session, user: User) -> Target:
 def run_discovery(
     target_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Dispatch an async API Discovery run (#59) instead of cloning+grepping
     synchronously inside the request handler, a handful of concurrent
@@ -176,7 +176,7 @@ def set_endpoint_scope(
     endpoint_id: int,
     payload: UpdateEndpointScopeRequest,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Mark a discovered endpoint in or out of scope for active scanning
     (#469).

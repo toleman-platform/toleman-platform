@@ -1,6 +1,9 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
+
+from pydantic import field_serializer
 from sqlalchemy import Column, Index, JSON, UniqueConstraint, text
 from sqlmodel import SQLModel, Field
 
@@ -180,6 +183,22 @@ class WorkspaceMembership(SQLModel, table=True):
 
 class Target(SQLModel, table=True):
     """A repository / cluster being scanned."""
+
+    @field_serializer("api_base_url", "clone_proxy_url")
+    def _serialize_destination(self, value: str | None) -> str | None:
+        """Legacy URLs may contain credentials; never expose their userinfo."""
+        if not value:
+            return value
+        try:
+            parsed = urlsplit(value)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                return ""
+            if parsed.username is None and parsed.password is None:
+                return value
+            return urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[-1]))
+        except ValueError:
+            return ""
+
     id: Optional[int] = Field(default=None, primary_key=True)
     workspace_id: int = Field(foreign_key="workspace.id")
     name: str
@@ -238,9 +257,9 @@ class Target(SQLModel, table=True):
     # means active scanning is not configured for this target yet; the scan
     # trigger endpoint refuses to run rather than guessing a host. This is
     # the ONLY source of a scan target host (never taken from request
-    # input) so a caller can never point an active scan at an arbitrary
-    # third-party URL, only at a host this target's owner explicitly
-    # declared as belonging to it.
+    # input). Changing it requires global administrator access because it
+    # authorizes outbound traffic from the deployment, including its internal
+    # network; ordinary workspace members may only scan the configured host.
     api_base_url: Optional[str] = None
 
     # (#470) Credential the active API scanner presents, so it tests the API
@@ -258,7 +277,7 @@ class Target(SQLModel, table=True):
     # never returned by any route, logged, or included in a scan's stored
     # invocation.
     api_auth_header_name: Optional[str] = None
-    api_auth_header_value_ciphertext: Optional[str] = None
+    api_auth_header_value_ciphertext: Optional[str] = Field(default=None, exclude=True)
 
     # (#330) Outcome of the automatic GitHub Dependency Graph import that
     # runs when a target is created or imported. Persisted per target so
@@ -337,8 +356,8 @@ class Target(SQLModel, table=True):
     # clone_proxy_url is the HTTP(S) proxy (e.g. a VPN gateway) git's clone
     # should tunnel through. All optional/blank: a target on a normal
     # public github.com repo needs none of this.
-    client_cert_ciphertext: str = ""
-    client_key_ciphertext: str = ""
+    client_cert_ciphertext: str = Field(default="", exclude=True)
+    client_key_ciphertext: str = Field(default="", exclude=True)
     clone_proxy_url: str = ""
 
     # (#273) Lifecycle. Until this, a registered target was permanent: a

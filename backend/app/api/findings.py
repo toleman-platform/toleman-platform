@@ -2007,7 +2007,7 @@ def triage_finding(
     reason: str = "",
     actor: str = "user",
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="finding")),
 ):
     finding = session.get(Finding, finding_id)
     if not finding:
@@ -2045,7 +2045,7 @@ def raise_fix_pr_endpoint(
     finding_id: int,
     payload: RaiseFixPrRequest,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="finding")),
 ) -> RaiseFixPrResponse:
     """Opens the fix PR for the exact patch a prior POST /{finding_id}/suggest-fix
     returned (see RaiseFixPrRequest). DEVELOPER role required, same gate as

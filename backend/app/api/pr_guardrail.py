@@ -232,7 +232,7 @@ def run_pr_guardrail_scan(
     target_id: int,
     pr_number: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Diff-only scan, triggered on-demand. Runs synchronously (same pattern
     as POST /api/scans/run) for MVP simplicity."""

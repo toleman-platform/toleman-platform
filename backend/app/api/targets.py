@@ -176,6 +176,17 @@ class UpdateTargetRequest(BaseModel):
             raise ValueError("api_base_url must be a real http(s):// URL with a host")
         return v
 
+    @field_validator("api_base_url", "clone_proxy_url")
+    @classmethod
+    def _reject_destination_credentials(cls, v: str | None) -> str | None:
+        if v:
+            parsed = urlparse(v)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError("destination must be an http(s) URL with a host")
+            if parsed.username is not None or parsed.password is not None:
+                raise ValueError("destination URLs must not contain credentials; use API scan credentials or a deployment-configured proxy")
+        return v
+
 
 def _groups_by_target(session: Session, target_ids: list[int]) -> dict[int, list[dict]]:
     """Batch-load {target_id: [{id, name, color}, ...]} for embedding group
@@ -205,8 +216,8 @@ def _with_groups(target: Target, groups_by_target: dict[int, list[dict]]) -> dic
     # same "token_set, not the token" pattern as GitHubToken/app.api.github_token.
     # client_cert_ciphertext/client_key_ciphertext are internal storage
     # details a caller never needs and must never receive.
-    client_cert_set = bool(out.pop("client_cert_ciphertext", ""))
-    client_key_set = bool(out.pop("client_key_ciphertext", ""))
+    client_cert_set = bool(target.client_cert_ciphertext)
+    client_key_set = bool(target.client_key_ciphertext)
     return {
         **out,
         "groups": groups_by_target.get(target.id, []),
@@ -420,12 +431,17 @@ def update_target(
     target_id: int,
     payload: UpdateTargetRequest,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     target = _live_target(session, target_id)
     if not target:
         raise HTTPException(status_code=404, detail="target not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    # These destinations can reach internal services from the backend/worker.
+    # Only the deployment administrator can authorize that network access.
+    if {"api_base_url", "clone_proxy_url"} & updates.keys() and user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin role required to change outbound network destinations")
+    for field, value in updates.items():
         if field == "clone_proxy_url" and value is None:
             # Not Optional on the model (default ""); null in the request
             # means "clear it", same as every other nullable field here.
@@ -511,7 +527,7 @@ def deactivate_target(
     target_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Stop scanning this target without losing anything.
 
@@ -541,7 +557,7 @@ def reactivate_target(
     target_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Resume scanning. Nothing is replayed: the next scheduled full scan,
     push, or PR picks the target up normally. Scans that would have run
@@ -562,7 +578,7 @@ def delete_target(
     target_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.SECURITY_ENGINEER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.SECURITY_ENGINEER, resource="target")),
 ):
     """Remove a target. Soft delete: every Finding, Scan and PRGuardrailScan
     row survives, and so does the Target row itself -- it simply stops
@@ -611,6 +627,7 @@ def get_workspace_key(target_id: int, session: Session = Depends(get_session), u
     ws_ids = accessible_workspace_ids(session, user)
     if ws_ids is not None and target.workspace_id not in ws_ids:
         raise HTTPException(status_code=404, detail="target not found")
+    enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=target.workspace_id)
     workspace = session.get(Workspace, target.workspace_id)
     return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
 
@@ -619,7 +636,7 @@ def get_workspace_key(target_id: int, session: Session = Depends(get_session), u
 def regenerate_workspace_key(
     target_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Issue #129: the workspace API key (X-API-Key, used for CI push
     ingestion via /api/ingest/{target_id}; see app.api.deps.require_workspace)
@@ -675,7 +692,7 @@ def save_clone_credentials(
     target_id: int,
     payload: SaveCloneCredentialsRequest,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """(#298) Set/clear the mTLS client cert/key used to clone this target's
     repo_url, for a host behind a VPN or requiring client-cert auth (see
@@ -720,7 +737,7 @@ def integrate_pipeline(
     target_id: int,
     force: bool = False,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Issue #66: opens a real PR on the target's GitHub repo (via the
     GitHub App's installation token) adding the generated
@@ -1097,7 +1114,7 @@ def assign_target_group(
     target_id: int,
     group_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     target = _live_target(session, target_id)
     if not target:
@@ -1125,7 +1142,7 @@ def remove_target_group(
     target_id: int,
     group_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     target = _live_target(session, target_id)
     if not target:

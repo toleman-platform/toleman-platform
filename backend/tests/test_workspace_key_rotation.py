@@ -131,9 +131,13 @@ def test_regenerate_requires_developer_role_viewer_forbidden(client, engine):
     res = client.post(f"/api/targets/{target_id}/workspace-key/regenerate")
     assert res.status_code == 403
 
-    # Key unchanged.
+    # A viewer cannot read a CI write credential either. Verify the rejected
+    # rotation left the key unchanged using the database, not a privileged GET.
     get_res = client.get(f"/api/targets/{target_id}/workspace-key")
-    assert get_res.json()["api_key"] == old_key
+    assert get_res.status_code == 403
+    assert "api_key" not in get_res.json()
+    with Session(engine) as session:
+        assert session.get(Workspace, ws_id).api_key == old_key
 
 
 def test_regenerate_forbidden_with_no_workspace_membership(client, engine):

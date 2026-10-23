@@ -1,4 +1,6 @@
 
+from typing import Literal
+
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -390,31 +392,42 @@ def narrow_workspace_scope(
     return [workspace_id]
 
 
-def require_workspace_role(min_role: WorkspaceRole):
-    """Dependency factory for routes that operate on one workspace's
-    resources. FastAPI binds sub-dependency parameters to the request's
-    path/query params by name, so this works unmodified on any route that
-    takes target_id, workspace_id, or finding_id as a plain (non-body)
-    parameter; e.g.:
+def require_workspace_role(
+    min_role: WorkspaceRole, *, resource: Literal["target", "workspace", "finding"]
+):
+    """Bind authorization to one canonical identifier chosen by the route.
 
-        @router.post("/{target_id}")
-        def generate_sbom(target_id: int, user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)), ...):
-
-    Routes where the resolving id is nested in a JSON body instead (e.g.
-    CreateTargetRequest.workspace_id) can't use this form, call
-    enforce_workspace_role directly in the handler body instead.
+    Accepting multiple identifiers lets an unrelated query parameter replace
+    the workspace derived from the resource the handler actually changes.
+    Body-based identifiers must use enforce_workspace_role in the handler.
     """
 
-    def _dependency(
-        target_id: int | None = None,
-        workspace_id: int | None = None,
-        finding_id: int | None = None,
+    def _target_dependency(
+        target_id: int,
         user: User = Depends(current_user),
         session: Session = Depends(get_session),
     ) -> User:
-        enforce_workspace_role(
-            session, user, min_role, workspace_id=workspace_id, target_id=target_id, finding_id=finding_id
-        )
+        enforce_workspace_role(session, user, min_role, target_id=target_id)
         return user
 
-    return _dependency
+    def _workspace_dependency(
+        workspace_id: int,
+        user: User = Depends(current_user),
+        session: Session = Depends(get_session),
+    ) -> User:
+        enforce_workspace_role(session, user, min_role, workspace_id=workspace_id)
+        return user
+
+    def _finding_dependency(
+        finding_id: int,
+        user: User = Depends(current_user),
+        session: Session = Depends(get_session),
+    ) -> User:
+        enforce_workspace_role(session, user, min_role, finding_id=finding_id)
+        return user
+
+    return {
+        "target": _target_dependency,
+        "workspace": _workspace_dependency,
+        "finding": _finding_dependency,
+    }[resource]

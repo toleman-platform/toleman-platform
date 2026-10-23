@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from sqlmodel import Session, select
 
 from app.api.deps import get_session
-from app.api.auth import accessible_workspace_ids, current_user, require_admin, require_workspace_role
+from app.api.auth import accessible_workspace_ids, current_user, enforce_workspace_role, require_admin, require_workspace_role
 from app.core.enforcement import VALID_ENFORCEMENT_MODES
 from app.models.models import Organization, User, Workspace, WorkspaceRole
 
@@ -154,7 +154,7 @@ def update_workspace(
     workspace_id: int,
     payload: UpdateWorkspaceRequest,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="workspace")),
 ):
     """Partial update for workspace-level settings (issue #62's
     enforcement_mode fallback today; follows the same exclude_unset PATCH
@@ -184,6 +184,7 @@ def get_workspace_key(
     workspace = session.get(Workspace, workspace_id)
     if not workspace:
         raise HTTPException(status_code=404, detail="workspace not found")
+    enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=workspace_id)
     return {"workspace_id": workspace.id, "workspace_name": workspace.name, "api_key": workspace.api_key}
 
 
@@ -191,7 +192,7 @@ def get_workspace_key(
 def regenerate_workspace_key_by_id(
     workspace_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="workspace")),
 ):
     """Workspace-id-keyed equivalent of POST
     /api/targets/{id}/workspace-key/regenerate, same DEVELOPER bar, same

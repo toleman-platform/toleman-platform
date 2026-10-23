@@ -44,7 +44,7 @@ def trigger_api_scan(
     target_id: int,
     payload: RunApiScanRequest = RunApiScanRequest(),
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Issue #72: dispatch an active API scan (nuclei) against endpoints
     already discovered for this target (Sprint 1's API Discovery). Async,
@@ -226,7 +226,7 @@ def set_api_scan_credential(
     target_id: int,
     payload: SetApiScanCredentialRequest,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Store the credential the active scanner presents for this target.
 
@@ -245,7 +245,7 @@ def set_api_scan_credential(
 def clear_api_scan_credential(
     target_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Remove the credential. Scans go back to anonymous, which is a
     supported mode, not an error -- so this does not disable scanning."""
@@ -261,7 +261,7 @@ def clear_api_scan_credential(
 def test_api_scan_credential(
     target_id: int,
     session: Session = Depends(get_session),
-    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER)),
+    user: User = Depends(require_workspace_role(WorkspaceRole.DEVELOPER, resource="target")),
 ):
     """Make one request with the stored credential and report whether it
     was accepted.

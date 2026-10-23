@@ -120,7 +120,7 @@ export function TargetCloneCredentials({
           aria-describedby="clone-proxy-help"
         />
         <span id="clone-proxy-help" className="text-[11px] text-muted-foreground">
-          Set as HTTPS_PROXY/HTTP_PROXY for this target&apos;s clone only. Blank to clear.
+          Administrator access required to change the proxy. Blank to clear.
         </span>
       </div>
 

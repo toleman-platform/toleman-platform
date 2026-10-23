@@ -18,14 +18,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
-from app.api.auth import accessible_workspace_ids, current_api_token_user, require_api_token_write_scope
+from app.api.auth import accessible_workspace_ids, current_api_token_user, enforce_workspace_role, require_api_token_write_scope
 from app.api.deps import get_session
 from app.core.async_jobs import create_running_row
 from app.core.autofix import AutofixError, Patch, find_suppression_comment, open_fix_pr, suggest_fix
 from app.core.mcp_audit import log_mcp_action
 from app.core.rate_limit import enforce_rate_limit
 from app.core import target_lifecycle
-from app.models.models import Finding, Scan, SnippetScanRun, Target, User
+from app.models.models import Finding, Scan, SnippetScanRun, Target, User, WorkspaceRole
 from app.scanners import parsers
 from app.core.tool_usage import tools_for_surface
 from app.tasks.scan_tasks import run_scan
@@ -198,6 +198,7 @@ def trigger_scan(
     # same reason the tool-assignment check below is: a public API token must
     # not be a way to route around a decision made in the workspace's own
     # configuration.
+    enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, target_id=target.id)
     refusal = target_lifecycle.scan_refusal_reason(target)
     if refusal:
         raise HTTPException(status_code=409, detail=refusal)
@@ -299,6 +300,7 @@ def raise_fix_pr_endpoint(
     if not finding:
         raise HTTPException(status_code=404, detail="finding not found")
     target = _get_target_scoped(finding.target_id, session, user)
+    enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, target_id=target.id)
     if payload.file_path != finding.file_path:
         raise HTTPException(status_code=400, detail="file_path does not match this finding")
     suppression = find_suppression_comment(payload.new_content, finding)

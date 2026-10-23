@@ -22,9 +22,11 @@ DB tables: this only replaces HOW the two files' new content is produced.
 Three package managers, three different levels of safety:
 
   * npm  (`npm install <pkg>@<version> --package-lock-only`) and
-  * pnpm (`pnpm add <pkg>@<version> --lockfile-only`)
+  * pnpm (`pnpm add <pkg>@<version> --lockfile-only --ignore-pnpmfile`)
     never touch `node_modules` at all -- no dependency is ever extracted,
-    so no lifecycle script can run regardless of `--ignore-scripts`.
+    so no dependency lifecycle script can run. pnpm additionally requires
+    `--ignore-pnpmfile`: repository-owned pnpmfile hooks execute even with
+    `--ignore-scripts` and a lockfile-only install.
   * yarn berry (`yarn up <pkg>@<version> --mode=update-lockfile`) has the
     same lockfile-only property.
   * yarn classic (v1) has no lockfile-only mode upstream. The only way to
@@ -268,7 +270,7 @@ def build_npm_patch_files(
             )
         elif lockfile_name == "pnpm-lock.yaml":
             _run_pm_command(
-                ["pnpm", "add", f"{package}@{version}", "--lockfile-only", "--ignore-scripts"],
+                ["pnpm", "add", f"{package}@{version}", "--lockfile-only", "--ignore-scripts", "--ignore-pnpmfile"],
                 cwd=manifest_dir, timeout=timeout, env=env,
             )
         else:  # yarn.lock

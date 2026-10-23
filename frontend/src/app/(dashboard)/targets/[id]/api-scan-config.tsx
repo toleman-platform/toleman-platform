@@ -6,12 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
-// Issue #72: lets a developer set the live base URL of this target's
-// deployed API. This is the ONLY source of a scan host for Active API
-// Scanning (see Target.api_base_url's docstring in app/models/models.py),
-// deliberately requires an explicit save here rather than being inferred
-// from repo_url, so a caller can never point an active scan at an
-// arbitrary/unowned third-party URL.
+// The deployment administrator chooses the API host; workspace members
+// can then scan its discovered routes without choosing a new destination.
 export function ApiScanConfig({ targetId, initialApiBaseUrl }: { targetId: number; initialApiBaseUrl: string | null }) {
   const [value, setValue] = useState(initialApiBaseUrl ?? "");
   const [saved, setSaved] = useState(initialApiBaseUrl);
@@ -53,8 +49,8 @@ export function ApiScanConfig({ targetId, initialApiBaseUrl }: { targetId: numbe
         </Button>
       </div>
       <p id={`api-base-url-${targetId}-hint`} className="text-xs text-muted-foreground">
-        Required before running an active scan; discovered routes are combined with this host, never an
-        arbitrary URL.
+        An administrator must set this before running an active scan. Discovered routes are combined
+        with this host.
       </p>
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>

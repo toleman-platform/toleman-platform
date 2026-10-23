@@ -312,6 +312,8 @@ def test_build_npm_patch_files_runs_pnpm_lockfile_only(monkeypatch, tmp_path):
     assert captured["cmd"][:2] == ["pnpm", "add"]
     assert "--lockfile-only" in captured["cmd"]
     assert "--ignore-scripts" in captured["cmd"]
+    # pnpmfile hooks run independently of dependency lifecycle scripts.
+    assert "--ignore-pnpmfile" in captured["cmd"]
 
 
 def test_build_npm_patch_files_yarn_berry_uses_update_lockfile_mode(monkeypatch, tmp_path):

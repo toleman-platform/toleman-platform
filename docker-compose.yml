@@ -64,6 +64,7 @@ services:
       # of what's in .env.
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-osp}:${POSTGRES_PASSWORD:-osp}@postgres:5432/${POSTGRES_DB:-osp}
       REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-local}
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}
@@ -138,6 +139,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-osp}:${POSTGRES_PASSWORD:-osp}@postgres:5432/${POSTGRES_DB:-osp}
       REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: ${ENVIRONMENT:-local}
       WORKSPACE_API_KEY: ${WORKSPACE_API_KEY:-dev-local-key}
       SESSION_SECRET: ${SESSION_SECRET:-dev-local-session-secret-change-me}
       COOKIE_SECURE: ${COOKIE_SECURE:-False}

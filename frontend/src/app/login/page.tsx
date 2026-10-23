@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { BrandMark } from "@/components/brand-mark";
 import { api, ApiError, NetworkError } from "@/lib/api";
+import { localRedirectPath } from "@/lib/security/local-redirect";
 
 function LoginForm() {
   const router = useRouter();
@@ -25,7 +26,7 @@ function LoginForm() {
     setLoading(true);
     try {
       await api.login(email, password);
-      router.push(searchParams.get("next") || "/");
+      router.push(localRedirectPath(searchParams.get("next")));
       router.refresh();
     } catch (e) {
       // A wrong password (401) is the only case that should say "Invalid

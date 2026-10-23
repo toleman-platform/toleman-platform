@@ -219,7 +219,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
         href={item.href}
         title={iconRail ? item.label : undefined}
         className={cn(
-          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[0.8125rem] tracking-[-0.003em] transition-[background-color,color,transform] duration-200 ease-[var(--ease-standard)] active:scale-[0.98]",
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[0.8125rem] tracking-[-0.003em] transition-[background-color,color,transform] duration-200 ease-[var(--ease-standard)] active:scale-[0.98] motion-reduce:transition-none motion-reduce:active:scale-100",
           isActive
             ? "bg-primary/12 text-accent-strong font-semibold"
             : "text-sidebar-foreground/90 hover:bg-sidebar-accent/70",
@@ -252,7 +252,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
       {/* Scrim behind the open mobile drawer. */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-overlay backdrop-blur-[2px] md:hidden"
+          className="fixed inset-0 z-40 bg-overlay scrim-blur md:hidden"
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
         />

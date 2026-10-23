@@ -192,7 +192,7 @@ export function Drawer({
       role="dialog"
       aria-modal="true"
       aria-labelledby="drawer-title"
-      className="fixed inset-0 z-50 flex justify-end bg-overlay backdrop-blur-sm transition-opacity animate-in fade-in motion-reduce:animate-none motion-reduce:transition-none"
+      className="fixed inset-0 z-50 flex justify-end bg-overlay scrim-blur transition-opacity animate-in fade-in motion-reduce:animate-none motion-reduce:transition-none"
       onClick={onClose}
     >
       <div

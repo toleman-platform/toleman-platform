@@ -577,7 +577,22 @@
     transition-duration: 90ms;
   }
 
+  /* Blurred scrim behind modal surfaces; flat under transparency/contrast prefs. */
+  .scrim-blur {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .scrim-blur {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
+    body {
+      transition: none;
+    }
     .interactive-surface,
     .pressable {
       transition: none;

@@ -30,7 +30,7 @@ When modifying or creating any Toleman UI:
 
 ## 2. Anti-Patterns
 - Never generate dashboard pages made entirely of floating cards.
-- Never use arbitrary gradients, glowing borders, glassmorphism, or excessive drop shadows.
+- Never use arbitrary gradients, glowing borders, or excessive drop shadows. Blurred translucent surfaces are allowed only through the `.material`, `.material-thin` and `.scrim-blur` utilities, only on floating chrome (dialogs, drawers, palettes), never on content cards or tables.
 - Never transform enterprise data tables into oversized mobile cards.
 - Never import client-value exports into Server Components.
 - Never render confident `0` for unmeasured data.

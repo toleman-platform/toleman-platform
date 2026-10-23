@@ -569,17 +569,9 @@ function trendDirectionOf(c: unknown): TrendDirection | null {
 }
 
 /**
- * The 0-100 value of one component, or `null` when it could not be measured.
- *
- * AGENTS.md 1.4: an unmeasured component must never render as a confident
- * zero -- "Trend 0/100" reads as "your posture is as bad as it gets" when
- * what happened is that there is no prior window to compare against yet.
- * `SecurityScoreComponent.score` is typed as a plain `number`, so the shape
- * cannot currently express "unknown"; this reads the field defensively
- * instead of trusting that type, and treats a null/undefined/non-finite
- * score -- or an explicit `measurable: false` -- as unknown. Both spellings
- * are accepted so that whichever one the score API grows, the widget already
- * renders it correctly.
+ * Return null for unmeasured component scores: missing/non-finite values or
+ * measurable=false. Read defensively even though the declared score type is numeric;
+ * unknown must never render as a confident zero.
  */
 function scoreComponentValue(c: ScoreComponent | undefined): number | null {
   if (!c) return null;
@@ -757,34 +749,10 @@ function ScoreComponentRow({
   );
 }
 
-// Issue #63: composite security health score gauge, with a scope selector
-// (full org / the active workspace / a Group / a caller-chosen set of
-// repos) for drill-down; reuses the same scoping concepts as #61's group
-// filtering. The widget's own batched data (`initialData`, from
-// GET /api/dashboard/widget-data) covers the default view -- the globally
-// active workspace, or the full org when no workspace is active -- and
-// needs no request of its own; switching to any other scope calls
-// GET /api/dashboard/security-score directly client-side, since #69's
-// dashboard has no per-widget-instance config editor yet for a saved scoped
-// layout.
-//
-// (dashboard scope picker follow-up) Groups/repos for the picker are scoped
-// to the global workspace switcher's active workspace, refetched when it
-// changes -- previously these were the caller's *entire* accessible set
-// regardless of which workspace was active, an unsorted cross-workspace
-// list with no way to tell which repo belonged to the workspace actually
-// being looked at. The scope resets to the newly active workspace on every
-// switch, the same "adjust state during render" pattern sbom/page.tsx uses
-// for its own target selection.
-//
-// Layout: a fixed-width headline column (gauge, grade, and the scope control
-// that says what they describe) beside a breakdown column that takes all the
-// width left over. The two used to be loose halves of a `justify-between`
-// row with a max-width cap on the list, which left a band of unclaimed space
-// between them and let the gauge float without any relationship to the rows
-// it summarises. The scope picker moved out of the top of the breakdown
-// column -- where it read as filtering those rows -- and sits under the
-// number it actually rescopes.
+// Security-score scope follows the active workspace. Reuse batched initialData for that
+// default scope; fetch security-score directly for group/repo drill-downs. Refresh
+// picker options and reset scope when the workspace changes. Keep scope controls with
+// the headline they describe, beside the flexible breakdown column.
 function SecurityScoreWidget({ initialData }: { initialData: SecurityScore }) {
   const { activeWorkspaceId, workspaces } = useWorkspaceContext();
   const [scope, setScope] = useState<ScoreScope>(() =>

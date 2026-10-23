@@ -105,47 +105,18 @@ celery_app.conf.task_reject_on_worker_lost = True
 # because each tick is a database round trip that runs forever.
 SCHEDULE_DISPATCH_INTERVAL = timedelta(minutes=5)
 
-# Keeps every target's default-branch baseline fresh so PR Guardrail always
-# has something real to diff against (GH-07) instead of relying on someone
-# having clicked Scan manually, and so posture pages don't quietly go stale
-# between manual runs. Requires `celery -A app.tasks.celery_app beat` (or
-# `worker -B`, see docker-compose.yml's celery-worker command) actually
-# running somewhere; a worker with no beat process never fires entries in
-# this schedule, it just sits registered and unused.
-#
-# (#306) run-scheduled-full-scans used to live here as a second entry, also
-# hardcoded at timedelta(hours=24). It is gone, not disabled: leaving it in
-# alongside the dispatcher would fan a full scan out across every target
-# twice a day from two independent clocks, which is exactly the duplicated
-# bulk dispatch #229 warns about. The task itself
-# (app.tasks.scan_tasks.run_scheduled_full_scans) stays registered and
-# unchanged for anyone invoking it directly; what moved is *who decides when
-# it runs*, from this dict to ScanSchedule rows. The shipped default for a
-# workspace that configures nothing is still "full scan, every 24h, every
-# target" (app.core.scan_schedules.SHIPPED_DEFAULTS), so an install that
-# touches none of this sees no behaviour change.
+# Beat drives schedule dispatch; a worker alone does not fire entries. ScanSchedule rows
+# own full-scan cadence (default: every target, every 24h). A second fixed full-scan
+# beat entry would duplicate dispatch. run_scheduled_full_scans remains callable
+# directly.
 celery_app.conf.beat_schedule = {
     "dispatch-due-scan-schedules": {
         "task": "app.tasks.schedule_tasks.dispatch_due_scan_schedules_task",
         "schedule": SCHEDULE_DISPATCH_INTERVAL,
     },
-    # (#385's webhook UX work, revised) The installation_repositories webhook
-    # event was meant to be the only trigger for this -- a repo added to an
-    # already-installed App, via GitHub's own "Configure" screen, getting a
-    # Target the moment access changes. In practice that event turned out to
-    # be unreliable to actually get delivered: it did not appear as a
-    # selectable option on this App's own "Permissions & events" settings
-    # page even after granting every permission GitHub's docs say it
-    # requires (Issues, for issue_comment, was confirmed fixable the same
-    # way; installation_repositories was not), and GitHub's own community
-    # forum has open reports of this exact event misbehaving. Rather than
-    # leave repo-sync depending on a webhook subscription this deployment
-    # cannot reliably configure, this periodic poll is the guarantee: every
-    # newly-granted repo gets a Target within 24h regardless of whether the
-    # webhook event ever fires. The webhook handler (app/api/webhooks.py)
-    # stays in place too -- if it does fire somewhere, that installation
-    # gets the near-real-time behavior for free; this schedule is the floor
-    # every installation gets either way.
+    # Poll installations as fallback for unreliable installation_repositories delivery.
+    # Newly granted repos get Targets within 24h; the webhook still provides immediate
+    # sync when delivered.
     "sync-github-repos": {
         "task": "app.tasks.github_sync_tasks.sync_repos_task",
         "schedule": timedelta(hours=24),

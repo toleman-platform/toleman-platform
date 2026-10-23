@@ -40,29 +40,10 @@ export function TargetOverview({
    * no information about whether this target has ever been scanned. */
   scanSummaryFailed?: boolean;
 }) {
-  /*
-   * The counts and the scan history are two independent fetches, and the
-   * honesty of this page turns on never letting one stand in for the other.
-   *
-   * Before this, `unknown` was driven entirely by `lastScan`. So when the scan
-   * summary loaded and the target summary did not, the page took the
-   * never-scanned escape hatch off the table, read `summaryEntry?.open ?? 0`
-   * as a measured zero, and rendered it green, hinted "scanned, nothing open",
-   * and captioned "No open findings on the default branch." Four separate
-   * assertions of a clean repository, all of them produced by a failed fetch,
-   * on the one page a repo owner opens to ask "is my repo OK?".
-   *
-   * Three states have to stay distinct here (AGENTS.md §1.4, DESIGN_SYSTEM.md
-   * §18):
-   *   - the fetch failed                       -> unknown
-   *   - the map loaded but has no row for this
-   *     target, i.e. it was never counted      -> unknown
-   *   - the map loaded and says open === 0     -> a real, measured zero
-   *
-   * The middle case is grouped with unknown deliberately, matching the
-   * existing judgement in targets-list.tsx's FindingsColumn: the summary
-   * endpoint has no row for a target it has never counted, and "nobody
-   * counted" is not "counted zero".
+  /**
+   * Counts and scan history are independent reads. A failed summary fetch or missing
+   * target entry means unknown, even when history loaded. Only a successfully measured
+   * open=0 may render as clean.
    */
   const countsUnknown = summaryFailed || summaryEntry === undefined;
   const openCount = summaryEntry?.open ?? 0;

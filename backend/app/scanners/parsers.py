@@ -63,20 +63,10 @@ def parse_semgrep(raw: dict) -> list[dict]:
     return out
 
 
-# Character classes a detected secret can fall into, most specific first.
-# The point of naming these is triage: "128 hex characters" is what `rails
-# secret` or `openssl rand -hex` produces and is almost certainly a real
-# generated key, while "11 characters, letters and digits" is the shape of a
-# placeholder. A reviewer can reach that judgement from the class and the
-# length without opening the file.
-# Order matters, and the reason is easy to get wrong: these alphabets nest.
-# Digits are a subset of hex, hex of alphanumeric, and alphanumeric of both
-# base64 alphabets -- so the narrowest class has to be tested first, or
-# every digit string reports as base64. The two base64 entries additionally
-# require at least one character that is NOT alphanumeric ("+/" or "-_", or
-# the "=" padding), because without one there is nothing to distinguish
-# them from a plain alphanumeric string and claiming base64 would be a
-# guess dressed up as a fact.
+# Classify secret alphabets most-specific first: digits nest inside hex, alphanumeric,
+# and base64. Base64 additionally requires a non-alphanumeric marker (+/, -_, or =);
+# otherwise claiming base64 would be ambiguous. Class and length support triage without
+# exposing the secret.
 _SECRET_CHARSETS = (
     ("digits", re.compile(r"\A[0-9]+\Z")),
     ("hex", re.compile(r"\A[0-9a-fA-F]+\Z")),

@@ -3,22 +3,9 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 
-// (#298) Clone credentials for a target on a host behind a VPN or requiring
-// a client certificate (an internal GitHub Enterprise Server/GitLab/Gitea
-// added to EXTRA_CLONE_HOSTS by the operator).
-//
-// The cert and key are write-only, deliberately, and this component is built
-// around that rather than around it: the API returns `client_cert_set`/
-// `client_key_set` booleans and never the PEM itself, the same
-// "token_set, not the token" shape Admin > Global Integrations uses for the
-// GitHub token. So there is no "current value" to prefill, editing means
-// replacing, and the only honest thing to render for an already-stored
-// credential is that it exists.
-//
-// The proxy URL is a plain setting, not a secret: it rides on the normal
-// PATCH /api/targets/{id} path with the rest of the target's config, while
-// the PEMs go to the dedicated clone-credentials endpoint that encrypts
-// them at rest.
+// Clone cert/key fields are write-only: show configured booleans, never prefill stored
+// PEMs. Replacing credentials uses the encrypted clone-credentials endpoint; the plain
+// proxy setting uses normal target PATCH. Hosts must be operator-allowlisted.
 export function TargetCloneCredentials({
   targetId,
   initialCertSet,

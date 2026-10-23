@@ -123,29 +123,10 @@ def run_sbom_generation(self, target_id: int, run_id: int):
         try:
             new_components: list = []
 
-            # (#227, raised by @r0075h3ll) GitHub's Dependency Graph is the
-            # dependency inventory source. It reports what each manifest
-            # actually resolves to, including transitive dependencies that
-            # appear in no manifest at all; resolution GitHub has already
-            # done server-side, so this needs no checkout and executes
-            # nothing. On this repo's own backend that was 22 direct pins
-            # versus ~98 installed packages, the gap #239 found from the
-            # other direction.
-            #
-            # This is the right mechanism for *target* repos specifically.
-            # #239 closed the same gap for our own CI by resolving
-            # requirements.txt into a venv, which deliberately does not
-            # generalise: resolving a customer's manifest means running
-            # `pip install` on untrusted input.
-            #
-            # Required, not best-effort, and explicitly recorded either way.
-            # A repo whose graph is disabled (the default for private repos)
-            # is not a repo with no dependencies, so the failure is written to
-            # sources_failed rather than swallowed; see
-            # DependencyGraphUnavailable. This runs before the clone because
-            # it needs no checkout; a failure here decides the run's final
-            # status (see the status branch at the end) but does not skip the
-            # AIBOM and malware passes, which do not depend on it.
+            # Use GitHub Dependency Graph for direct/transitive inventory without
+            # executing untrusted manifests. Run before cloning and record unavailable
+            # graphs in sources_failed, never as empty. Failure affects final status but
+            # must not prevent independent AIBOM and malware passes.
             sources_run: list[str] = []
             sources_failed: list[str] = []
             try:
@@ -293,7 +274,7 @@ def queue_dependency_graph_sync(session: Session, target: Target) -> bool:
     session.commit()
     try:
         sync_dependency_graph.delay(target.id)
-    except Exception as exc:
+    except Exception:
         # A broker that is down must not fail target creation itself; the
         # target is a real, usable row whether or not its inventory was
         # imported. It also must not be left claiming "pending" forever,
@@ -347,19 +328,9 @@ def sync_dependency_graph(target_id: int):
         if not target:
             return {"error": "target not found"}
 
-        # (#273) The last inventory write that was not behind a lifecycle
-        # gate. Genuinely hard to reach -- no clone, no findings, and only
-        # dispatched at target creation or GitHub App import, so it fires
-        # for a deactivated target only if the deactivation lands inside
-        # that window -- but "hard to reach" is not a reason for one write
-        # path to disagree with the other eleven.
-        #
-        # Recorded as its own "skipped" status rather than "failed": nothing
-        # failed, and a red badge on the Dependencies tab would send someone
-        # hunting for a GitHub problem that does not exist. Returning
-        # silently is not an option either -- queue_dependency_graph_sync
-        # has already written "pending", and leaving it there is a spinner
-        # that never resolves, which this codebase treats as its own bug.
+        # Recheck lifecycle before inventory writes. Record a refusal as skipped, not
+        # failed, and replace the pending status so a deactivated target cannot retain
+        # an indefinite spinner.
         refusal = target_lifecycle.scan_refusal_reason(target)
         if refusal:
             target.dependency_sync_status = "skipped"
@@ -379,7 +350,7 @@ def sync_dependency_graph(target_id: int):
             count = len(components)
         except DependencyGraphUnavailable as exc:
             status, error = "unavailable", str(exc)
-        except Exception as exc:
+        except Exception:
             logger.exception("Dependency graph sync failed for target %s", target_id)
             # Not str(exc): rendered verbatim to any workspace user on the
             # Dependencies tab, and an unexpected exception here (DB, network,

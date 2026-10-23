@@ -236,26 +236,10 @@ TOOL_REGISTRY = [
         "docs_url": "https://docs.kics.io/latest/getting-started/",
         "version_cmd": ["kics", "version"],
     },
-    # (#232) The mirror image of kics above: nuclei genuinely executes;
-    # Active API Scanning (#72) has run it unconditionally since it shipped,
-    # but through app.scanners.runner.run_nuclei() and
-    # app.scanners.parsers.parse_nuclei(), a dedicated path outside
-    # TOOL_COMMANDS/PARSER_MAP, because its invocation takes a list of live
-    # discovered URLs rather than a repo-path checkout like every other
-    # entry here. That means it can never appear in runnable_tools() or a
-    # tools_for_surface() result no matter what; see
-    # app.core.tool_usage.is_nuclei_enabled_for_api_scan, the dedicated
-    # single-tool check api_scan.py actually calls, and
-    # default_usage_for's docstring for why api_scan defaults True here
-    # specifically (preserving existing behavior) while every other surface
-    # correctly defaults False (nuclei cannot run in any of them).
-    #
-    # Registered mainly so this workspace-level toggle has a real row to
-    # live on in Tool Marketplace, not to gain an install button: nuclei is
-    # a Go binary, not pip-installable, so no `pip_package` is set and the
-    # copyable command stays the only install path (matching the "a button
-    # that cannot work is worse than no button" rule already documented on
-    # the marketplace page for every other non-pip tool).
+    # Nuclei scans live URLs through run_nuclei/parse_nuclei, outside repo-based
+    # TOOL_COMMANDS/PARSER_MAP. Its api_scan toggle defaults on to preserve behavior;
+    # other surfaces cannot run it. Register it for the workspace toggle with a binary
+    # install command, not a pip install button.
     {
         "tool": "nuclei",
         "display_name": "Nuclei",
@@ -278,63 +262,22 @@ TOOL_REGISTRY = [
 USAGE_SURFACES = ("on_demand_scan", "ci_pipeline", "api_scan", "pr_guardrail")
 
 
-# Tools the shipped backend image installs, so a fresh `docker compose up`
-# can scan without an operator installing anything (#75, #186).
-#
-# This is a contract, not documentation: `backend/scripts/verify_tools.py`
-# runs each of these tools' `version_cmd` *inside the built image* in CI and
-# fails if one is missing. Without that, a Dockerfile edit or a dependency
-# resolving differently can quietly ship an image whose scanner is gone;
-# which is not a loud failure at build time, it is a scan that returns zero
-# findings at runtime and reads exactly like a clean repo.
-#
-# Everything else in the registry is genuinely optional and installed on
-# demand (see install.py); absent is its honest state, not a defect.
+# Tools installed by the shipped backend image. backend/scripts/verify_tools.py checks
+# their version_cmd inside the image in CI. Other registry tools are optional and
+# installed on demand.
 BUNDLED_TOOLS = frozenset(
     {"semgrep", "semgrep-llm", "semgrep-core", "semgrep-registry", "gitleaks", "trivy", "trivy-license", "gosec", "modelscan"}
 )
 
 
-# Tools that are real TOOL_COMMANDS entries, so Toleman can execute them, but
-# that must not be *assigned* to a workspace's scan surfaces unless an
-# operator turns them on deliberately.
-#
-# noseyparker (#255) is here for two independent reasons, either of which
-# would be enough on its own:
-#
-#   * Its own registry entry above says it: "The cost is real and is why this
-#     is opt-in rather than default" -- on a clean checkout of this repo it
-#     reports 26 findings to gitleaks' 0, almost all test fixtures and
-#     migration passwords. `integrated` never encoded that, so the stated
-#     intent and the actual default disagreed from the day it was added.
-#   * backend/Dockerfile deliberately does not bundle the binary (#385:
-#     upstream publishes no checksums file, and this project will not pin a
-#     hash it computed itself from a single download). So on the image this
-#     project actually ships, defaulting it on assigns a tool that cannot
-#     run, and every PR Guardrail comment carries a permanent
-#     "noseyparker failed to run; this PR was not fully scanned" -- an
-#     unactionable warning on every pull request, which is how a real
-#     tools_failed warning stops being read.
-#
-# Enabling it stays one checkbox away in Tool Marketplace, for an operator
-# who has installed it and wants the extra recall.
+# Runnable tools requiring explicit workspace opt-in. Noseyparker produces noisy fixture
+# findings and is not bundled because upstream lacks release checksums. Operators can
+# install and enable it in Tool Marketplace.
 OPT_IN_TOOLS = frozenset({"noseyparker"})
 
 
-# Tools that belong on the scans nobody is waiting for, and not on the two
-# surfaces where latency gates a developer.
-#
-# The two surfaces have genuinely different budgets: a CI or PR Guardrail
-# scan blocks a merge, so wall-clock is the constraint, while an on-demand
-# or scheduled scan can take as long as it needs and should go as deep as
-# it can. semgrep-registry is the tool where that distinction bites -- it
-# roughly triples the applicable rule set and carries several times the
-# taint-mode rules, which is worth minutes on a nightly run and is not
-# worth it on a pull request.
-#
-# This is a *default*, not a prohibition: an operator who wants the registry
-# layer on their pull requests can switch it on per workspace, the same way
-# any other surface assignment is changed.
+# Default expensive registry rules to background/on-demand scans to keep CI and PR
+# latency low. Operators can explicitly enable them on supported workspace surfaces.
 DEEP_SCAN_ONLY_TOOLS = frozenset({"semgrep-registry"})
 
 

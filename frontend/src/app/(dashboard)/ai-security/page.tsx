@@ -27,21 +27,9 @@ import { PartialFailureBanner } from "@/components/ui/partial-failure-banner";
 import { TargetPicker } from "@/components/features/targets";
 import { AiBomPanel } from "@/components/features/intelligence";
 
-// Issue #224: AI/ML repo detection (#185), ModelScan (#186) and the LLM
-// SAST ruleset (#189) shipped with zero dedicated frontend surface; the
-// only way to see any of it was to already know to look at a target's
-// Vulnerabilities tab and filter by tool by hand. This page is the entry
-// point: which repos got flagged, what those two AI-specific scanners
-// found in them, and a way to pull the AI Bill of Materials without a
-// detour through the SBOM page.
-//
-// A later pass (this one) removed the "not yet available" placeholder that
-// used to sit under this: a visible dead section is a confidence problem on
-// a page whose whole job is establishing AI/ML posture, and every other
-// element here now actually goes somewhere. garak (#191) still has no
-// TOOL_COMMANDS entry -- it needs a live model endpoint to probe, not a repo
-// checkout -- so LLM red-teaming stays absent from this page rather than
-// asserted and then apologized for.
+// AI/ML posture entry point for repo detection, ModelScan, LLM SAST, and AIBOM export.
+// Omit garak red-teaming because it needs a live model endpoint and has no repo-scan
+// TOOL_COMMANDS entry.
 type AiTool = "modelscan" | "semgrep-llm";
 
 const TOOL_LABEL: Record<AiTool, string> = {
@@ -469,18 +457,9 @@ function AiBomGeneratePanel({ target }: { target: Target }) {
 }
 
 /**
- * Running the two AI-specific scanners against one repo, from the list.
- *
- * The same call path the target page's scan buttons already use --
- * `api.runScan` dispatches, `useScanRun` follows the run from queued to
- * settled -- rather than a second route to POST /api/scans/run that would
- * word the same states differently. A scan started here is the same scan,
- * and shows up on the target page's own progress line via the shared
- * active-scan poll.
- *
- * Nothing here reports success the run has not earned: a dispatch the
- * server refused, and a dispatch whose outcome is still unknown, each
- * render as themselves rather than as a finished scan (AGENTS.md 1.4).
+ * Run AI-specific scanners through api.runScan/useScanRun so dispatch, queued/running
+ * progress, and settlement match other scan surfaces. Refused or unknown outcomes must
+ * not render as success.
  */
 function RepoScanActions({
   target,

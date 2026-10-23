@@ -5,31 +5,10 @@ import { Shield, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-// (#235, UI-03) Next's own fallback for an uncaught error during a Server
-// Component render was the entire complaint: "This page couldn't load, A
-// server error occurred", digest only, no nav, no explanation, and no way
-// back short of a manual reload. A routine backend restart (a few seconds
-// of connection-refused while a redeployed container comes back up) used
-// to land here and blank the app for anyone whose render happened to land
-// in that window.
-//
-// What this can and cannot say, and why the copy below is deliberately
-// non-committal about cause: Next.js strips the real Error's message/name
-// before it reaches a Client Component error boundary in a production
-// build (only `digest` survives, for correlating with server logs); a
-// documented security measure so a thrown error can't leak server-side
-// detail to the browser. That means this boundary structurally cannot say
-// "this was specifically the backend being briefly unavailable" the way a
-// client-side catch of NetworkError (see lib/api.ts) can. What it can do:
-// retry automatically once, since the one failure mode this is actually
-// aimed at (a brief restart) is very likely to have resolved a couple
-// of seconds later; and offer a manual retry that doesn't ask for a full
-// page reload.
-//
-// The real fix for the common case is upstream of this file entirely:
-// fetchWithConnectionRetry (lib/api.ts) now retries a connection-level
-// failure before it ever throws, so most transient restarts never reach
-// this boundary at all. This is the backstop for what that doesn't catch.
+// Production Server Component errors expose only a digest to this client boundary, so
+// do not infer a specific cause. Retry once automatically and offer manual retry
+// without full reload. Connection-level retries upstream handle most transient backend
+// restarts; this boundary is the fallback.
 export default function DashboardError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   const [autoRetried, setAutoRetried] = useState(false);
 

@@ -1,17 +1,9 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Toleman wordmark/branding lockup (#116), a hex-aperture mark ("an eye on
- * terrain") replacing the generic Lucide shield-in-tile icon previously used
- * on both the sidebar and login screen. Exported as a real reusable
- * component (not inline SVG copy-pasted per screen) specifically so future
- * Login (#124) and Onboarding (#131) work can import it directly rather than
- * re-deriving the mark.
- *
- * Colors are intentionally NOT hardcoded hex, the gradient stops and inner
- * dot resolve to the theme's `--primary`/`--sidebar` custom properties (see
- * globals.css, #115) via `currentColor`/CSS var references, so the mark
- * stays correct in both light and dark without a second copy.
+ * Reusable Toleman wordmark for sidebar/login and other branding surfaces. Resolve
+ * colors through currentColor and theme variables so one SVG supports light and dark
+ * themes.
  */
 export function BrandMark({
   size = 34,

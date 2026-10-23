@@ -35,21 +35,9 @@ const EVENT_TYPES: AuthEventType[] = [
 const SELECT_CLASS =
   "h-8 rounded-md border border-input bg-secondary px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
-// Admin-only: who logged in/out (and from where), who changed their
-// password, and who changed whose permissions -- app.models.models.
-// AuthAuditLog via GET /api/audit/security-log, distinct from the
-// findings-triage Audit Log page (visible to any authenticated user).
-// URL-backed filters/pagination (?event_type=&email=&page=&page_size=),
-// same convention as the rest of this codebase's paginated lists, nested
-// under the Admin page's own ?tab= param without conflicting with it.
-//
-// Deliberately a separate trail rather than folded into the Audit Log, not
-// an oversight: that page is login_required (any authenticated user), this
-// one is admin_required, because it exposes every user's login activity and
-// permission history, not just their own. Kept apart for that reason, but
-// linked both ways -- see the Audit Log's own AlertBanner and the link back
-// to it below -- so the split reads as a deliberate scope boundary instead
-// of two unrelated pages an auditor has to discover independently.
+// Admin-only authentication/permission audit trail, distinct from the findings-triage
+// log available to authenticated users. Keep both trails linked while preserving their
+// access boundaries. Filters/pagination live in URL params alongside the parent tab.
 export function SecurityLog() {
   const router = useRouter();
   const pathname = usePathname();

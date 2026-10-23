@@ -217,74 +217,12 @@ def build_manifest(app_url: str, backend_url: str, name_suffix: str, setup_token
             "metadata": "read",
             "issues": "read",
         },
-        # (GH-03) Subscribe to pull_request so blocking mode is actually
-        # automatic. This was `[]` with no hook_attributes, so the App
-        # subscribed to nothing: a human had to open PR History and press
-        # "Scan This PR" for anything to happen. An external review put it
-        # exactly right; "blocking mode" that depends on someone
-        # remembering to press a button is advisory in practice, and a
-        # required check nobody triggers blocks every PR forever.
-        #
-        # Nothing else had to be built for this. app/api/webhooks.py already
-        # verifies the HMAC signature, filters to pull_request, resolves the
-        # target and dispatches the Celery scan; and the manifest-conversion
-        # handler already persists the webhook secret GitHub generates for a
-        # manifest that declares hook_attributes. The only missing piece was
-        # the subscription itself.
-        #
-        # push/installation_repositories/issue_comment added later, closing
-        # three real gaps found while explaining this App's behavior in a
-        # support session. Only push turned out to be a plain default_events
-        # entry (#475): issue_comment also needs "issues": "read" above, and
-        # installation_repositories is not declared here at all. A manifest only
-        # shapes Apps created from here on, so no existing installation's
-        # owner is prompted to re-approve anything either way -- but by the
-        # same token an App created before "issues": "read" was in this
-        # manifest cannot subscribe to issue_comment until its owner grants
-        # Issues read access on the App's own settings page (there is no API
-        # for it; see app_management_url below):
-        #   - push: without it, nothing tells Toleman a PR merged. A
-        #     target's own generated toleman-scan.yml (if TOLEMAN_API_URL/
-        #     TOLEMAN_API_KEY are configured on it) already re-scans on push
-        #     and posts back via /api/ingest, but that path is entirely
-        #     opt-in per target repo; this makes "the dashboard reflects a
-        #     merged fix" not depend on a target repo's own secrets being
-        #     set up. See the push branch in app/api/webhooks.py.
-        #   - installation_repositories: without it, adding a repo to an
-        #     existing installation (via GitHub's own "Configure" screen,
-        #     not through Toleman) creates no Target until someone remembers
-        #     the manual "Sync now" button (POST /api/github-app/sync). Not
-        #     listed in default_events below: GitHub sends it to every App
-        #     automatically and rejects a manifest that tries to subscribe
-        #     to it explicitly ("you cannot manually subscribe to this
-        #     event").
-        #   - issue_comment: lets `@toleman ignore finding=<id> <reason>` on
-        #     a PR create the same IgnoreStatus.REQUESTED row the "Request
-        #     ignore" UI button does (app/api/pr_guardrail.py's
-        #     request_ignore, refactored so both share
-        #     pr_guardrail_executor.submit_ignore_request) -- still goes to
-        #     the security team for approval either way, never
-        #     auto-approved from a comment. Requires "issues": "read" above;
-        #     GitHub rejects the event without it since issue_comment is an
-        #     Issues-API webhook even when it fires on a PR thread.
-        #
-        # backend_url must be reachable *from GitHub*; see
-        # settings.public_api_url. GitHub validates this URL when the
-        # manifest is submitted and refuses any host it cannot reach over
-        # the public internet -- a loopback address, and equally a LAN one
-        # -- so such a value does not produce a degraded App, it produces
-        # no App at all:
-        # the flow dies on github.com with "Hook url is not supported
-        # because it isn't reachable over the public Internet (localhost)".
-        # webhook_reachable() is what the api/UI layer uses to stop that
-        # attempt before it leaves the browser (#355); this comment used to
-        # claim the opposite, which is why the old behaviour read as
-        # deliberate.
-        #
-        # Permanent for the life of the App, too: there is no API to change
-        # a GitHub App's hook URL after creation, only its settings page by
-        # hand (the same limitation update_webhook_secret in
-        # app/api/github_app.py already documents for the webhook secret).
+        # Subscribe to PR scans, push refreshes, and ignore requests. issue_comment
+        # requires Issues read permission, including for PR threads; existing Apps need
+        # it granted manually. installation_repositories is automatic and must not be
+        # explicitly subscribed. Ignore comments request security-team approval.
+        # backend_url must be publicly reachable from GitHub; changing an existing hook
+        # URL requires the App settings page.
         "default_events": ["pull_request", "push", "issue_comment"],
         "hook_attributes": {
             "url": f"{backend_url}/api/webhooks/github",
@@ -381,20 +319,9 @@ def get_installation_account(config: GitHubAppConfig, installation_id: int) -> d
     return res.json()
 
 
-# --- Multi-App / multi-install resolution (#34) ----------------------------
-#
-# Before #34 every call site assumed exactly one GitHubAppConfig row and one
-# GitHubInstallation row (`select(...).first()`), which broke in two ways:
-#   (a) there was no way to select *which* App to use once more than one
-#       existed (dev App vs prod App, or different Apps per install target);
-#   (b) even installations of a *single* App were broken beyond the first
-#       one, repo sync and PR Guardrail token minting always used
-#       whichever installation happened to be row #1, silently ignoring
-#       every other real installation.
-# The helpers below replace every such lookup with a real resolution: an
-# installation always knows which App minted it (github_app_config_id), and
-# the right installation for a given repo is chosen by matching the repo's
-# GitHub owner/org against the candidate installations' account_login.
+# Resolve installations through their originating GitHubAppConfig, matching repo
+# owner/org to account_login. Never select the first App or installation when resolving
+# credentials for a particular repo.
 
 
 def resolve_config_for_installation(session: Session, installation: GitHubInstallation) -> GitHubAppConfig | None:

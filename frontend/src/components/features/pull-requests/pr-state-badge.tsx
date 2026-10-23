@@ -47,19 +47,8 @@ const UNRECOGNIZED_PR_STATE: PrStateConfig = {
 };
 
 /**
- * A pull request's own lifecycle state: open, merged, closed.
- *
- * Deliberately its own small vocabulary rather than a reuse of the async-task
- * one (`StatusBadge`'s queued/running/completed/failed, and
- * `ScanStatusBadge`'s `ScanPhase`). Those describe work in flight; a pull
- * request's state does not. PR History used to route "open" through that
- * vocabulary as "running", whose rendering is a spinning loader, so every
- * open PR animated forever -- open is a steady state, and an animation that
- * never resolves also reads as a hung page.
- *
- * Nothing here animates, for that reason. A scan running *on* a PR is a
- * genuine phase and still renders through the scan status badge; only the
- * pull request's own state is rendered here.
+ * Static PR lifecycle badge for open/merged/closed, separate from async scan phases. An
+ * open PR is not a running job and must not display an endless spinner.
  */
 export function PrStateBadge({
   state,

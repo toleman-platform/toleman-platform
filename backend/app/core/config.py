@@ -9,18 +9,9 @@ DEFAULT_ADMIN_PASSWORD = "changeme123"
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://toleman:toleman@localhost:5432/toleman"
-    # Pool knobs, tuned for a managed DB (RDS/Cloud SQL/etc.), not just the
-    # bundled docker-compose postgres. Managed proxies (RDS Proxy, Cloud SQL
-    # Auth Proxy, pgbouncer) and the DB itself both silently drop idle
-    # connections after their own timeout, which the bundled postgres
-    # container never does; pool_pre_ping (always on, not configurable, the
-    # cost is one cheap round-trip only on a pooled-out connection) is what
-    # turns that into a transparent reconnect instead of the first request
-    # after a quiet period failing with an OperationalError. Defaults are
-    # deliberately small: they must fit under whatever max_connections the
-    # target DB enforces, which a managed instance often caps lower than a
-    # self-hosted one, times however many backend + celery-worker replicas
-    # are running.
+    # Keep per-process pools small enough for all backend/worker replicas to fit
+    # managed-DB connection limits. Always-on pool_pre_ping handles idle connections
+    # silently dropped by databases or proxies.
     db_pool_size: int = 5
     db_max_overflow: int = 10
     # Recycle before most managed DBs' own idle/connection-lifetime cutoff
@@ -31,24 +22,10 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     workspace_api_key: str = "dev-local-key"
     scan_workdir: str = "/tmp/toleman-scans"
-    # (#229) Where Toleman keeps the scanner data it manages itself: today
-    # a warmed copy of trivy's vulnerability DB, plus the per-run private
-    # caches hardlinked from it.
-    #
-    # Deliberately NOT the tools' own per-user cache ($HOME/.cache/trivy).
-    # That directory is written by any trivy process on the box, including
-    # the six concurrent scans that produced #229's false all-clear, so it
-    # cannot be treated as stable while a scan reads it. This one is only
-    # ever written by ensure_warm_trivy_db, under a lock, by replacing a
-    # whole directory at once -- which is what makes a hardlink from it a
-    # real snapshot rather than a shared inode.
-    #
-    # Sibling of scan_workdir's default on purpose: hardlinking only works
-    # within one filesystem, and keeping the warm copy and the per-run
-    # copies under one root means that holds by construction rather than by
-    # luck. An operator pointing scan_workdir at a real volume should point
-    # this at the same one; a trivy DB is hundreds of megabytes and tmpfs is
-    # the wrong place for it.
+    # Managed Trivy DB generations and per-run hardlinked caches. Publish whole
+    # generations under a lock; never seed from mutable per-user caches. Keep this and
+    # scan_workdir on the same filesystem for hardlinks, on a real volume rather than
+    # tmpfs for the large DB.
     tool_cache_dir: str = "/tmp/toleman-tool-cache"
     session_secret: str = DEFAULT_SESSION_SECRET
     # Set True in any production/HTTPS deployment so the session cookie is
@@ -116,23 +93,9 @@ class Settings(BaseSettings):
     # not ones that are just slow.
     stale_job_timeout_seconds: int = 900
 
-    # Where *other people and other machines* reach this deployment.
-    #
-    # Finding GH-02: these were five hardcoded "http://localhost:3000" /
-    # ":8000" literals spread across main.py, api/github_app.py and
-    # core/pr_guardrail_executor.py. Every link Toleman posted to GitHub (
-    # the PR comment's "review in Toleman", the commit status target_url,
-    # the "request ignore" link) pointed at the developer's own laptop, so
-    # no teammate on a shared repository could follow any of them. The same
-    # constant pinned CORS to a single origin, which made running on any
-    # other port surface as "Invalid email or password" at the login form.
-    #
-    # public_base_url  -> the frontend, as a browser reaches it.
-    # public_api_url   -> this backend, as GitHub's servers reach it
-    #                     (the GitHub App manifest's callback/webhook host).
-    #
-    # Defaults preserve the existing localhost dev experience exactly, so
-    # nothing has to be configured to keep working locally.
+    # Public deployment URLs: public_base_url is the browser-facing frontend;
+    # public_api_url is the backend reachable by GitHub for callbacks/webhooks.
+    # Localhost defaults support development; shared deployments must configure both.
     public_base_url: str = "http://localhost:3000"
     public_api_url: str = "http://localhost:8000"
     # Extra browser origins allowed to call this API, comma-separated.
@@ -141,34 +104,14 @@ class Settings(BaseSettings):
     # second port). See cors_allow_origins below.
     extra_cors_origins: str = ""
 
-    # (#298) Extra git-clone hosts, comma-separated, beyond github.com.
-    # app/scanners/runner.py's ALLOWED_CLONE_HOSTS exists specifically to
-    # stop a Target.repo_url (any authenticated user who can create a
-    # Target controls this value) from pointing `git clone` at an
-    # arbitrary host, an SSRF vector, e.g. a cloud metadata endpoint or an
-    # internal admin panel. That defense only works as long as the
-    # allowlist is something an end user can never influence: this setting
-    # extends it, but it's an operator-set env var (deployment-time), not
-    # anything reachable from the API. A workspace that needs to scan an
-    # internal GitHub Enterprise Server, GitLab, or Gitea instance -
-    # exactly the case a VPN-gated or client-cert-protected host implies -
-    # gets there by the operator deliberately adding that host here, the
-    # same trust boundary EXTRA_CORS_ORIGINS already uses.
+    # Operator-only, comma-separated additions to the git-clone host allowlist. Keep
+    # this deployment configuration outside user-controlled API inputs: allowing
+    # arbitrary hosts would permit SSRF. Use for internal GitHub Enterprise/GitLab/Gitea
+    # hosts.
     extra_clone_hosts: str = ""
 
-    # (BLD-01) Build identity, surfaced by GET /health and in the sidebar.
-    #
-    # An external evaluator built a fresh stack while a previously-running
-    # host-native instance still held :3000/:8000. The browser resolved
-    # localhost to the old process, so the "fresh" install showed 1,434
-    # findings and 35 targets while the new container database held zero.
-    # Nothing in the product flagged the mismatch; it was only caught by
-    # querying Postgres directly. An hour of review can go into an instance
-    # that is not the one being reviewed.
-    #
-    # Set at image build time (see backend/Dockerfile's ARG/ENV pair, fed by
-    # CI from the real commit). "dev" is the honest answer for a working tree
-    # rather than a fabricated version number.
+    # Build identity appears in /health and the sidebar to identify the serving
+    # instance. CI sets it at image-build time; local working trees use dev.
     build_version: str = "dev"
     build_commit: str = ""
 

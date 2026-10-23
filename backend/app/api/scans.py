@@ -82,28 +82,10 @@ def scans_summary(
         scoped(select(Scan.target_id, func.max(last_scan_column)).group_by(Scan.target_id))
     ).all()
 
-    # (#229) Which tools' *most recent* run against each target was not
-    # treated as authoritative. Without this the Scans page shows "last scan
-    # 4m ago · trivy" for a run that read a half-written vulnerability DB,
-    # found nothing, and was refused permission to mitigate -- a row that
-    # reads as reassuring when it is the opposite.
-    #
-    # Two queries, both one row per (target, tool) pair: the id of the latest
-    # scan for each pair, then which of those ids are suspect. Scan.id is
-    # used as the recency key rather than started_at because it is monotonic
-    # per insert and needs no correlated subquery to resolve back to a row.
-    # Restricted to completed scans. func.max(Scan.id) otherwise picks a
-    # rescan that is still running, whose health has not been decided yet --
-    # so kicking off a re-run would make the previous run's suspect verdict
-    # disappear from the page for as long as the new one takes. The badge
-    # exists to say "nothing was mitigated, re-run this", and it must not
-    # vanish at the moment someone acts on it.
-    #
-    # The id list this materialises is bounded by (targets x tools), one row
-    # per group -- not by scan history, which is the growth this endpoint was
-    # rewritten to avoid. Worth folding into a subquery if target counts ever
-    # reach the thousands; at that point the IN list, not the scan volume,
-    # becomes the limit.
+    # Find suspect health on the latest completed scan per (target, tool), using
+    # monotonic Scan.id. Exclude running scans so a rescan cannot hide the previous
+    # suspect verdict. Materialized IDs scale with targets x tools, not scan history;
+    # consider a subquery if that list grows too large.
     latest_scan_ids = [
         row[2]
         for row in session.exec(

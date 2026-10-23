@@ -5,21 +5,9 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  // core lows: `transition-all` was animating every animatable property on
-  // this element, not just the ones any variant below actually changes
-  // (background-color, border-color, color, box-shadow via the
-  // focus-visible ring). That's needless paint work on every hover/focus of
-  // the most-instantiated element in the app, and it silently picks up
-  // `outline-color`/anything a future variant adds -- naming the properties
-  // is what makes the transition's scope an intentional decision instead of
-  // an accident. `motion-reduce:transition-none` disables it outright under
-  // prefers-reduced-motion, same guard drawer.tsx already uses for its
-  // slide/fade.
-  // `dark:` utilities removed here (was `dark:aria-invalid:ring-destructive/40`
-  // below, `dark:focus-visible:ring-destructive/40 dark:bg-destructive/80` on
-  // the destructive variant): dead code, matching a `.dark` class this app
-  // never sets, and since removed along with the variant declaration itself;
-  // globals.css carries that history and the order the two had to happen in.
+  // Transition only properties used by button variants, including focus-ring
+  // box-shadow. Honor reduced motion. Theme colors come from tokens rather than a .dark
+  // class the app never sets.
   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full text-sm font-medium tracking-[-0.006em] transition-[color,background-color,border-color,box-shadow,transform] duration-200 ease-[var(--ease-spring)] active:scale-[0.97] active:duration-75 motion-reduce:transition-none motion-reduce:active:scale-100 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 shrink-0 [&_svg]:shrink-0 outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] aria-invalid:ring-destructive/20 aria-invalid:border-destructive",
   {
     variants: {
@@ -27,26 +15,10 @@ const buttonVariants = cva(
         default: 'bg-primary text-primary-foreground hover:bg-primary/90',
         destructive:
           'bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20',
-        // `bg-background` was the defect, not the `dark:` utilities that used
-        // to sit beside it. The page background IS the surface a card is
-        // drawn on top of, so an outline button inside a Card -- which is
-        // where nearly all of them are -- was painted darker than its own
-        // ground (0.0090 vs --card's 0.0142 in dark; the same inversion the
-        // other way round in light, 0.9284 under #ffffff) and read as a hole
-        // punched in the card rather than a control resting on it. `bg-control`
-        // is the ground of a control, valued per theme so it is never darker
-        // than any surface it can sit on; `bg-control-hover` is picked per
-        // theme too, so a hovered button never sinks below the page around it
-        // -- the old `hover:bg-accent` (0.0191 in dark) dropped it back under
-        // its own resting ground. `text-foreground` stops an outline button
-        // inheriting a muted colour from whatever block it is nested in, now
-        // that it has a ground of its own. Numbers in globals.css.
-        //
-        // `border-input` colours the edge with the control-boundary token
-        // rather than the surface hairline, so the button's outline clears
-        // the 3:1 that a control's boundary needs; in light, where a white
-        // control cannot be lifted above a white card at all, that edge is
-        // what carries the separation.
+        // Use control-ground/hover tokens and explicit foreground so outline buttons
+        // remain distinct on page/card surfaces in both themes. border-input provides
+        // the control boundary, especially where white cards and controls cannot
+        // separate by fill alone.
         outline:
           'border border-input bg-control text-foreground shadow-xs hover:bg-control-hover',
         secondary:

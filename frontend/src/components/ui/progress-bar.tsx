@@ -11,22 +11,9 @@ export interface ProgressBarProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 /**
- * Reusable progress indicator and metric meter.
- *
- * Automatically applies semantic coloring based on standard health thresholds:
- * - >= 80%: Positive (Green / chart-5)
- * - >= 50%: Attention (Amber / chart-3)
- * - < 50%: Critical (Red / destructive)
- *
- * Supports explicit tone overrides and tabular numeric readouts.
- *
- * core lows: this used to be pure paint -- a coloured div whose width
- * happened to track a number -- with no `role="progressbar"` or
- * `aria-valuenow` anywhere, so every caller across the app (dashboard
- * widgets, design-system) rendered a meter a screen reader could not see at
- * all. Both are set here from the same `value`/`max` the visible bar and
- * `showValue` text already use, so there is exactly one source of truth for
- * what this meter reports, not a second copy callers can forget to pass.
+ * Accessible progress/metric meter with shared value/max for visual width and ARIA.
+ * Auto tones: positive at >=80%, attention at >=50%, critical below; explicit tone
+ * overrides and tabular numeric readouts are supported.
  */
 export function ProgressBar({
   value,

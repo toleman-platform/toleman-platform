@@ -10,30 +10,10 @@ import { SkeletonList } from "@/components/ui/skeleton";
 import type { UseAsyncDataResult } from "@/hooks/use-async-data";
 
 /**
- * Renders the four states of an async request, once, correctly (issue #210).
- *
- * Four files hand-rolled the same ladder, `if (loading) ... if (error) ...
- * if (!data) ... if (empty) ...`, and each got a slightly different subset
- * right. Concentrating it here means the accessibility work is done once
- * rather than four times badly.
- *
- * What this contributes beyond saving keystrokes:
- *
- * **Status is announced, not just repainted.** Swapping a skeleton for a list
- * is invisible to a screen reader: nothing is focused, nothing is announced,
- * and the user is left wondering whether their click did anything. A polite
- * live region reports "Loading", "Loaded 25 items", "Failed to load". Polite
- * rather than assertive because loading a list should not interrupt whatever
- * the user is currently reading.
- *
- * **`aria-busy` during refresh.** A background refetch keeps the old rows on
- * screen, so nothing visually indicates staleness; `aria-busy` says so
- * without a spinner that would make a quiet refresh feel like a page load.
- *
- * **Filtered-empty and never-had-data are different states.** "No findings
- * match these filters" wants a *clear filters* action; "no findings yet"
- * wants *run a scan*. Collapsing the two produces the classic dead end where
- * a new user is told to clear filters they never set.
+ * Shared async-request rendering with polite live status, aria-busy during background
+ * refresh, and distinct filtered-empty versus no-data states. Keep previous rows during
+ * refresh; offer clear-filters or initial-action guidance appropriate to the empty
+ * state.
  */
 export type AsyncContentProps<T> = {
   /** The result of `useAsyncData`. Passed whole rather than as loose props so

@@ -41,21 +41,9 @@ export function ConfirmDialog({
   const containerRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  // admin L8: this used to autofocus Confirm. These dialogs exist
-  // specifically to gate destructive/consequential actions -- delete an SLA
-  // rule, revoke a key, downgrade enforcement -- so a keyboard user who
-  // opens one and reflexively hits Enter must land on Cancel, not on the
-  // action the dialog exists to double-check. `initialFocusRef` below is
-  // what makes that Cancel instead of the container's first focusable child
-  // (which would have been Cancel anyway here, but only by DOM-order
-  // accident; naming it is the actual fix).
-  //
-  // core M3 / admin L7: focus trap + centralized Escape, shared with Drawer
-  // and FindingDetailDialog -- see useFocusTrap in drawer.tsx for why
-  // Escape is handled there instead of the `document` listener this file
-  // used to own by itself (it was also dismissing whatever else was
-  // listening for Escape behind this dialog, e.g. BulkActionBar's
-  // selection-clear shortcut).
+  // Focus Cancel explicitly for consequential actions so an immediate Enter cannot
+  // confirm. Share the modal focus/Escape stack with drawers and detail dialogs to
+  // prevent background listeners from firing.
   useFocusTrap({
     active: open,
     onEscape: onCancel,

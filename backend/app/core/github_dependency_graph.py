@@ -141,18 +141,9 @@ def parse_spdx_packages(payload: dict) -> list[dict]:
                 purl = ref.get("referenceLocator") or ""
                 break
 
-        # Ecosystem comes from the purl, not the name. Verified against a
-        # real payload (pallets/flask, 121 packages): GitHub emits bare
-        # names ("uvicorn", "certifi") and puts the ecosystem only in
-        # the purl ("pkg:pypi/uvicorn@0.52.0"). An earlier version of this
-        # split an assumed "pypi:uvicorn" prefix off the name and silently
-        # produced an empty package_type for every component.
-        #
-        # Some names DO arrive qualified for ecosystems GitHub reports
-        # differently (Maven's "group:artifact"), which is exactly why this
-        # reads the purl rather than guessing from the name's punctuation;
-        # splitting on ":" would mangle a Maven coordinate into a wrong
-        # package name.
+        # Derive ecosystem from purl, not package-name punctuation. GitHub can emit bare
+        # names or qualified Maven coordinates; splitting names on a presumed ecosystem
+        # prefix corrupts both cases.
         package_type = ""
         if purl.startswith("pkg:"):
             package_type = purl[len("pkg:"):].split("/", 1)[0]

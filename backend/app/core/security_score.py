@@ -90,56 +90,15 @@ from app.models.models import (
 # Tunable constants, documented here, not buried in the formula.
 # ---------------------------------------------------------------------------
 
-# How many "average weighted-severity points per in-scope target" it takes
-# to walk the findings component all the way down to 0. E.g. an average of
-# Half-life of the findings score, in weighted severity points per unit of
-# target criticality. At this much average weighted severity the component
-# scores 50; at twice it, 33; at four times, 20. It never reaches 0.
-#
-# This replaced a linear ramp (`100 - avg/20 * 100`) that hit zero at an
-# average of 20 points. That looked reasonable and behaved badly: on a single
-# Prod repo one Medium cost ~15 points of this component and about 5 of the
-# composite, and FOUR Criticals took it to exactly 0 -- after which a repo with
-# four critical findings and a repo with four hundred scored identically. All
-# the resolution was spent between 0 and 10 findings and there was none left
-# for the range where an estate actually lives.
-#
-# A saturating curve keeps discriminating everywhere. `100 * k / (avg + k)` is
-# steep where it should be (the first few findings move the number a lot) and
-# still separates 50 findings from 500, which is the comparison a security team
-# makes when deciding where to spend a quarter. It also cannot bottom out, so
-# the score never stops responding to work done -- a team fixing findings on a
-# zeroed repo previously saw no movement at all until they were most of the way
-# through, which is the opposite of what a posture score is for.
-#
-# Tuning: 10.0 puts a single Critical on a single Prod repo (5 weight x 5
-# criticality / 5 criticality = 5 points) at ~67, one Medium at ~77, and ten
-# Criticals at ~17. Raising it makes the score more forgiving, lowering it more
-# punitive; nothing else in the module depends on the constant's value.
+# Findings-score half-life in weighted severity points per unit of criticality. The
+# curve 100 * k / (avg + k) remains responsive at high finding counts: avg=k scores 50,
+# avg=2k scores 33, and it never reaches zero. Larger k makes scoring more forgiving.
 FINDINGS_SCORE_HALF_LIFE = 10.0
 
-# Per-category multiplier on a finding's contribution to findings_score/
-# trend_score: severity already says how bad a finding is *within* its
-# category, this says how much a category's worst case should move a
-# security *posture* score at all. Deliberately narrow -- only the
-# compliance/legal categories are called out, at zero weight, because a
-# scanner can grade a copyleft license "Critical" for licensing reasons
-# that have nothing to do with exploitability, which is not a security risk
-# in the same sense as an exploitable code vuln, a leaked secret, or a
-# vulnerable dependency -- it should never move this score, not just move
-# it less. Every other category (including ones added to the registry
-# later) defaults to DEFAULT_CATEGORY_RISK_WEIGHT via `.get`, so severity
-# alone keeps doing the differentiating work there, unchanged from before
-# this multiplier existed.
-#
-# Derived from tool_registry.NON_VULNERABILITY_CATEGORIES rather than
-# restating "License" a second time: that frozenset is what every other
-# "open vulnerability" surface filters on (dashboard stats/posture/summary,
-# targets summary, SLA compliance, the Findings page's Needs-action queue),
-# and two hand-maintained copies of the same list are how the score comes
-# to disagree with the counts printed beside it. A category needing a
-# partial rather than zero weight can still be added to this dict
-# explicitly.
+# Category multipliers for findings/trend scores. Non-vulnerability categories
+# contribute zero: licensing severity is not exploitability. Derive exclusions from
+# NON_VULNERABILITY_CATEGORIES to match other surfaces. Unlisted categories use
+# DEFAULT_CATEGORY_RISK_WEIGHT; partial weights may be added explicitly.
 CATEGORY_RISK_WEIGHT: dict[str, float] = {category: 0.0 for category in NON_VULNERABILITY_CATEGORIES}
 DEFAULT_CATEGORY_RISK_WEIGHT = 1.0
 
@@ -578,22 +537,8 @@ def compute_security_score(session: Session, target_ids: list[int]) -> dict:
     else:
         composite = sum(c["score"] * c["weight"] for c in measured) / measured_weight
 
-    # A penalty has to name something that is actually costing score. An
-    # unconditional min() always returns a component, so an instance where
-    # every component scores 100 still reported a "weakest" one -- and the
-    # dashboard rendered a red "Score penalty: Open findings score" callout,
-    # with that row highlighted destructive, on a perfect Grade A posture.
-    # Naming a 100/100 component as the thing dragging the score down is the
-    # same class of untruth as rendering a failed fetch as a zero: the number
-    # is right and the claim attached to it is not.
-    #
-    # Ties are left to dict order deliberately. When several components share
-    # the lowest score they are equally responsible, and picking a different
-    # one per request would make the callout flicker between them on reload.
-    #
-    # Unmeasured components are not candidates: they are not costing score
-    # (they were renormalized out), and naming one would send a reader off to
-    # fix a number this platform never produced.
+    # Only measured components below 100 can be penalties. Keep dict-order tie-breaking
+    # stable so equal scores do not change the callout across reloads.
     weakest = None
     if target_ids:
         measured_items = [(key, detail) for key, detail in components.items() if detail["measurable"]]

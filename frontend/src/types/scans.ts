@@ -204,28 +204,10 @@ export type PrGuardrailFinding = {
   // including rows rejected before this field existed (never an empty
   // string standing in for "no reason was given").
   reject_reason: Nullable<string>;
-  // (#383) Which same-location group this finding belongs to, decided
-  // server-side (see _grouped_findings_out) so the grouping rule lives in one
-  // place rather than being reimplemented here and drifting from what the PR
-  // comment renders for the same scan. Rows sharing a group_key are one line
-  // flagged by two or more tools -- one problem, one fix -- and collapse into
-  // a single expandable row.
-  //
-  // group_key is unique per group, NOT per location: the backend keeps some
-  // same-location findings deliberately apart (one tool's own two rules on a
-  // line; file-level findings with no line number), and those each get their
-  // own key. group_size is how many members that group has, and is a ceiling
-  // -- never merge more rows than it says.
-  //
-  // The group's tool list and severity are deliberately absent: they are pure
-  // functions of the members and are derived at render time (groupFindings in
-  // components/features/scans/pr-guardrail-log.tsx), so no row can be
-  // labelled with another group's tools or badged at a severity none of its
-  // members has.
-  //
-  // Optional because only GET /{pr_scan_id}/findings carries them: the
-  // Approval Queue's pending/history endpoints list findings across scans,
-  // where same-location grouping would be meaningless.
+  // Server-assigned group_key identifies a group, not merely a location: same-location
+  // detections may deliberately stay separate. group_size is a hard membership ceiling.
+  // Derive tools/severity from actual members. Fields are optional because cross-scan
+  // approval endpoints do not supply grouping.
   group_key?: string;
   group_size?: number;
 };

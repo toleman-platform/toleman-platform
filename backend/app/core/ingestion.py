@@ -6,7 +6,7 @@ from app.core.dedup import compute_dedup_hash
 from app.core.cve_enrichment import warm_cve_enrichment
 from app.core.scoring import compute_priority_score
 from app.core.scoring_config import cvss_for_enrichment, enrichment_map, workspace_scoring_weights
-from app.core.fixability import UNKNOWN, fixability_for_enrichment
+from app.core.fixability import UNKNOWN as UNKNOWN_FIXABILITY, fixability_for_enrichment
 from app.core.epss import fetch_epss_scores
 from app.core.kev import fetch_kev_cve_set
 from app.core.crypto import decrypt_secret
@@ -200,35 +200,15 @@ def ingest_findings(
     # shipped baseline, which scores identically to before #201 existed.
     weights = workspace_scoring_weights(session, target.workspace_id)
 
-    # The CVSS-exploitability and fixability signals, and the Fix Plan tab,
-    # all read the CveEnrichment cache. Its only other writer is a human
-    # opening a finding's detail view, which means a target nobody has
-    # clicked through -- exactly the case Fix Plan exists for -- would never
-    # get a plan on its own. So every scan warms the cache for the CVEs in
-    # its own batch, regardless of scoring config; the per-run cap below is
-    # what keeps this bounded rather than a weight gate.
-    #
-    # Deliberately before the loop: get_cve_enrichment commits its own row,
-    # and running that partway through would commit half-built Finding rows
-    # with it. Nothing of this run's is in the session yet at this point.
+    # Warm CVE enrichment for every scan batch regardless of scoring weights, with a
+    # per-run cap. Do this before creating findings because enrichment commits its own
+    # rows and must not commit partially built findings.
     if cve_ids:
         warm_cve_enrichment(session, cve_ids)
 
-    # Read after the warm-up so this run's findings are scored against what
-    # it just fetched. Still only a cache read: a CVE the warm-up did not
-    # resolve leaves both signals unestablished, which contributes nothing
-    # rather than subtracting anything -- the failsafe direction.
-    #
-    # Whether a later scan picks it up depends on *why* it was unresolved,
-    # and the two cases differ:
-    #   - beyond this run's lookup budget: never attempted, so the next scan
-    #     tries it and the score rises once the data lands.
-    #   - the upstream fetch failed: get_cve_enrichment caches a
-    #     both-not-found row and never re-fetches (#71's forever-cache), so
-    #     the signal stays unestablished for that CVE until something
-    #     invalidates the row. An outage during a scan therefore leaves a
-    #     durable hole rather than a retried one. Acknowledged, tracked
-    #     separately; it never lowers a score, only withholds an uplift.
+    # Read enrichment after warm-up. Missing signals add no uplift and never lower
+    # scores. Budget-excluded CVEs may resolve next run; failed lookups remain cached as
+    # not-found until invalidation (#71), so outages can leave durable gaps.
     enrichments = enrichment_map(session, cve_ids)
 
     def score_for(severity, finding_cve_id, epss_score, kev_listed, dependency_scope="unknown") -> int:
@@ -249,7 +229,7 @@ def ingest_findings(
             target_label=target.label,
             target_environment=target.environment,
             target_owner=target.owner,
-            fixability=fixability_for_enrichment(enrichment) if finding_cve_id else UNKNOWN,
+            fixability=fixability_for_enrichment(enrichment) if finding_cve_id else UNKNOWN_FIXABILITY,
             dependency_scope=dependency_scope,
             weights=weights,
         )
@@ -279,21 +259,9 @@ def ingest_findings(
             # change; a stable dependency's package name does not change between
             # scans, so this is a no-op write once set.
             existing.package_name = item.get("package_name")
-            # (#201) Re-score every time a scan observes the finding again.
-            #
-            # priority_score used to be write-once at creation, which was
-            # survivable while the formula was three hardcoded constants and
-            # actively broken once it became configurable: after a weight
-            # change the backlog would hold two scoring regimes at once,
-            # `ORDER BY priority_score` would be comparing numbers computed
-            # under different rules, and the detail view's `stale` flag
-            # would never clear. Worse than the upgrade-time re-rank this
-            # issue works hardest to avoid, because it never converges.
-            #
-            # Cheap: the weights, the target metadata and the enrichment
-            # rows are all already in hand, and the stored epss/kev are
-            # reused rather than re-fetched, so this adds no queries and no
-            # network calls to the rescan path.
+            # Re-score each observation with current weights and already-loaded
+            # metadata/enrichment so the backlog converges after weight changes. No
+            # additional queries or network fetches are needed.
             existing.priority_score = score_for(
                 existing.severity, existing.cve_id, existing.epss_score, existing.kev_listed
             )

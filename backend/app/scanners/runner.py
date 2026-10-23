@@ -114,17 +114,9 @@ def registry_configs_for(repo_path: str) -> list[str]:
 
 
 TOOL_COMMANDS = {
-    # --disable-nosem: semgrep respects a `# nosemgrep` (or `# nosem`) trailing
-    # comment by default, silently dropping that finding before it's even
-    # written to stdout -- exactly the kind of source-level suppression a
-    # security *scanner* can't allow, since it lets whoever can edit a file
-    # (a careless commit, a compromised dependency, an overly-helpful
-    # coding agent papering over a real finding instead of fixing it) blind
-    # this tool to their own vulnerable line. This flag makes semgrep report
-    # regardless of the comment; nothing downstream (this scanner, PR
-    # Guardrail, the MCP server's check_code_for_vulnerabilities, which all
-    # share this same TOOL_COMMANDS entry via run_tool) ever sees a
-    # nosemgrep-suppressed line as anything but a real, reported finding.
+    # --disable-nosem prevents source-level nosemgrep/nosem comments from hiding
+    # findings. All callers sharing TOOL_COMMANDS must report those detections for
+    # review.
     "semgrep": lambda path: ["semgrep", "scan", "--config=auto", "--disable-nosem", "--json", "--quiet", path],
     # Issue #189: the LLM ruleset runs as its own tool rather than as an extra
     # --config on the semgrep entry above. Findings then carry tool
@@ -166,36 +158,10 @@ TOOL_COMMANDS = {
     # placeholder, same pattern as modelscan's report file.
     "noseyparker": lambda path: ["noseyparker", "scan", "--datastore", NOSEYPARKER_DATASTORE_PLACEHOLDER, path],
     "gitleaks": lambda path: ["gitleaks", "detect", "--source", path, "--report-format", "json", "--report-path", GITLEAKS_REPORT_PLACEHOLDER, "--no-git", "--exit-code", "0"],
-    # `--scanners vuln` (issue #244 benchmarking, 2026-08-22): trivy's default
-    # scanner set is [vuln, secret], not [vuln, misconfig] -- misconfig has
-    # never actually run here, since enabling it needs an explicit
-    # `--scanners misconfig`/`misconfig,vuln` this entry never passed.
-    # parsers.parse_trivy reads Vulnerabilities and Misconfigurations from the
-    # JSON, never Secrets -- so the secret scanner has been walking every file
-    # on every invocation and its result was discarded unused (gitleaks
-    # already covers secrets in this pipeline). Measured: 32.9s -> 1.5s on a
-    # venv-inclusive checkout, 13.3s -> 3.8s on a real multi-ecosystem repo
-    # (getsentry/sentry), identical Vulnerabilities output both times --
-    # Misconfigurations was empty before and stays empty after, since that
-    # scanner still isn't enabled. Zero behavior change to parsed findings.
-    # --include-dev-deps: trivy skips npm devDependencies by default, and
-    # that default hid every npm CVE this repo had. Measured against its own
-    # frontend/package-lock.json: 0 findings without the flag, 8 with it (1
-    # critical, 2 high, 5 medium), matching GitHub Dependabot's open alerts
-    # for the same lockfile exactly.
-    #
-    # Dev dependencies do not ship to production, which is the argument for
-    # the default. It is the wrong default for a security product: build-time
-    # tooling is precisely what supply-chain attacks target, a malicious or
-    # compromised test runner executes with the credentials of CI, and
-    # "nobody looked" is not the same answer as "nothing there". Reporting
-    # them and letting an operator judge scope beats silently dropping them.
-    # --list-all-pkgs (#500): trivy reports the dev/runtime flag on Package
-    # entries and not on Vulnerability entries, so a finding's scope can
-    # only be resolved by correlating its PkgID against the package list --
-    # and that list is omitted unless this flag is passed. Without it every
-    # dependency finding is scope "unknown", which is honest but useless
-    # for ranking a test-runner CVE against a shipped-library one.
+    # Scan vulnerabilities only: parsed output ignores Trivy secrets, already covered by
+    # Gitleaks. Misconfiguration scanning is not enabled here. Include dev dependencies
+    # for build-time supply-chain risk. --list-all-pkgs exposes Package metadata needed
+    # to correlate PkgID and classify dev/runtime vulnerability scope.
     "trivy": lambda path: [
         "trivy", "fs", "--scanners", "vuln", "--include-dev-deps", "--list-all-pkgs",
         "--format", "json", "--quiet", path,
@@ -444,17 +410,9 @@ def clone_repo(
             shutil.rmtree(cert_dir, ignore_errors=True)
 
 
-# Substrings git prints for causes that are permanent (retrying cannot fix
-# them) paired with the message an operator can actually act on.
-#
-# Why this exists: clone_error_message used to reduce every failure to
-# "git clone failed (exit code 128)". That was safe (it never echoes argv or
-# a token) but it threw away the diagnosis along with the danger. A real
-# deployment sat in a retry loop against two private repos with no
-# credentials configured, and the only clue in the logs was the exit code;
-# identical to what a deleted repo or a typo'd branch produces. Matching on
-# git's own wording restores the "what do I do about it" without ever
-# echoing the raw stderr, argv or paths back to a caller.
+# Map permanent git failure substrings to actionable messages so retry policy can
+# distinguish credentials, missing repos, and bad branches from transient failures.
+# Never expose raw stderr, argv, or paths to callers.
 _PERMANENT_CLONE_FAILURES: tuple[tuple[tuple[str, ...], str], ...] = (
     (
         ("could not read username", "authentication failed", "terminal prompts disabled"),
@@ -743,20 +701,9 @@ def parse_nuclei_jsonl(text: str | bytes | None) -> list[dict]:
     return results
 
 
-# Where nuclei keeps the templates it scans with: the defaults nuclei itself
-# has used across v2 and v3, resolved from $HOME.
-#
-# Deliberately NOT configurable by an environment variable. An earlier
-# version honoured a NUCLEI_TEMPLATES_DIR override, which was unsafe in one
-# direction: run_nuclei passes nuclei no template-directory flag, so nuclei
-# reads from $HOME regardless of what that variable said. Pointing it at a
-# store nuclei does not use would make nuclei_templates_present() answer
-# "definitely yes" for a directory nuclei never opens, `-duc` would be
-# passed, and the scan would run with an empty template set -- exit 0, zero
-# findings, reported as a clean API. That is precisely the false positive
-# the docstring below says this function must never produce, so the knob is
-# gone rather than documented. If a template store ever does need to move,
-# it has to move for nuclei too (a flag in run_nuclei), not just for us.
+# Check the HOME-based template store Nuclei actually uses. A directory override must
+# also be passed to Nuclei: mismatched presence checks can enable -duc with no templates
+# and falsely report clean.
 def _nuclei_template_dirs() -> list[Path]:
     home = Path.home()
     return [
@@ -905,22 +852,9 @@ def _run_modelscan(
             raise ToolExecutionError(f"modelscan produced unreadable JSON: {exc}") from exc
 
 
-# --- Diff-scoped scanning (#243) -------------------------------------------
-# Scanning only a PR's changed files needs per-tool knowledge, because the
-# CLIs genuinely disagree about what "scan these files" means. Keeping that
-# knowledge here, next to TOOL_COMMANDS, stops it leaking into the PR
-# guardrail executor as a pile of `if tool == ...`.
-#
-#   MULTI_PATH   the command takes N paths; append them all
-#   PER_FILE     the command takes exactly one path; invoke once per file and
-#                merge the reports
-#   MANIFEST     not file-oriented at all. Trivy resolves dependency
-#                manifests, so "only these files changed" is meaningless to
-#                it; the honest scoping question is *whether a manifest
-#                changed*, answered by manifest_changed() below, not by
-#                handing it a file list.
-#   PACKAGE      gosec walks Go packages from cwd, so changed .go files map
-#                to their containing package directories.
+# Diff-scoped invocation: MULTI_PATH appends paths; PER_FILE invokes and merges per
+# file; MANIFEST checks manifest changes instead of accepting file paths; PACKAGE maps
+# changed Go files to package directories.
 MULTI_PATH = "multi_path"
 PER_FILE = "per_file"
 MANIFEST = "manifest"
@@ -1027,54 +961,12 @@ def _merge_reports(reports: list[dict | list]) -> dict | list:
     return merged_dict
 
 
-# --- Concurrent-run isolation and scan health (#229) -----------------------
-#
-# Two defects, one issue. Both are about a scan that did not really run
-# looking exactly like a scan that passed.
-#
-# 1. Shared mutable tool state. trivy keeps its vulnerability DB in one
-#    per-user cache directory ($TRIVY_CACHE_DIR, default $HOME/.cache/trivy)
-#    and replaces it in place when it decides an update is due. A second
-#    trivy reading it mid-replacement finishes happily: exit 0, valid JSON,
-#    and either an empty Results list or Results whose Vulnerabilities
-#    arrays are empty. That is what #229 reproduced -- six concurrent scans,
-#    one of which reported a repo with five live CVEs as clean, while the
-#    same command run alone four minutes later found all five.
-#
-#    The fix is NOT to hardlink out of that shared directory. A hardlink
-#    shares an inode, so an in-place writer -- which is precisely what the
-#    issue's own diagnosis says trivy is -- reaches straight through it.
-#    Instead Toleman keeps its *own* warm copy under settings.tool_cache_dir
-#    that nothing writes except ensure_warm_trivy_db, which downloads into a
-#    staging directory and publishes it by replacing the warm directory
-#    whole, under an exclusive lock, while seeders hold a shared one. A
-#    published generation is therefore never written again, which is what
-#    makes hardlinking from it an actual snapshot. Each run hardlinks into
-#    its own TRIVY_CACHE_DIR and passes --skip-db-update, so no scan process
-#    can be the thing rewriting a DB another scan is reading.
-#
-#    semgrep is treated more narrowly on purpose: the file it genuinely
-#    rewrites on every run is its settings file, and that gets isolated. Its
-#    registry rule cache is left shared, because giving every run a private
-#    empty one would re-download the whole ruleset per scan -- trading a
-#    race for a guaranteed cost, which is the trap the warm copy above
-#    exists to avoid. nuclei is handled in run_nuclei (see `-duc` there).
-#
-# 2. A zero-finding result being trusted unconditionally. Isolation makes
-#    the race very unlikely; it does not make an empty result *provable*,
-#    and it does nothing for a DB that is simply broken or months stale. So
-#    each run also collects evidence about itself into a ScanHealth --
-#    whether the database behind it was actually usable (a real file of a
-#    plausible size, with metadata that parses and is not long past its own
-#    refresh deadline), whether that database changed underneath the running
-#    scan, warnings the tool wrote to stderr, and whether it produced a
-#    report at all -- and app.core.ingestion refuses to mitigate existing
-#    findings off a run that is not positively healthy. Zero vulnerabilities
-#    is accepted as a clean result only when the database behind it has been
-#    verified; that is the requirement #229's reproduction failed, whether
-#    it surfaced as an empty Results list or as Results with empty
-#    Vulnerabilities. Same rule osv_malware.py already applies with its
-#    None-vs-{} return; see app/core/scan_health.py.
+# Concurrent-run isolation and scan health. Publish immutable Trivy DB generations under
+# tool_cache_dir with an exclusive lock; seed private run caches under a shared lock and
+# pass --skip-db-update. Never hardlink from the mutable per-user cache: in-place writes
+# affect links. Isolate Semgrep settings while sharing its registry cache; see
+# run_nuclei for Nuclei. Empty results require positive ScanHealth evidence before
+# ingestion may mitigate existing findings.
 
 
 @dataclass
@@ -1489,20 +1381,9 @@ def _warm_trivy_db_unguarded(timeout_seconds: float) -> tuple[bool, str]:
                 return False, f"trivy exited {proc.returncode}: {(detail[-1] if detail else 'no stderr')[:200]}"
             ok, reason = trivy_db_state(staging)
             if not ok:
-                # A download that "succeeded" into an unusable cache must
-                # not be published; publishing it would hand every
-                # subsequent scan a verified-looking database that is not
-                # one.
-                #
-                # Note what this check is and is not. The real completeness
-                # evidence is the exit code above: `--download-db-only`
-                # verifies the OCI layer it pulled. trivy_db_state is a
-                # structural sanity check, and it is deliberately the same
-                # predicate every scan applies at read time -- which is
-                # exactly why it must not be the only gate. One bad
-                # publication that satisfies it would look verified to every
-                # subsequent scan for as long as the DB stays inside its
-                # freshness window.
+                # Publish only after --download-db-only succeeds and trivy_db_state
+                # passes. Exit status verifies OCI download completeness; structural
+                # sanity checks alone cannot establish a valid DB generation.
                 return False, f"downloaded database is not usable: {reason}"
 
             # Rotate-then-publish, with a rollback. The window between these
@@ -1813,26 +1694,9 @@ def _run_tool_inner(
     if tool == "gosec" and next(repo_path.rglob("*.go"), None) is None:
         raise ToolNotApplicable("no Go files in this repository")
 
-    # (#229) Same guard, driven off the extension map the diff-scoped path
-    # already uses, for the IaC and model scanners.
-    #
-    # Without it these reach _execute on a repo with nothing of their file
-    # type, exit 0, and write no report -- which the empty-stdout branch
-    # now (correctly) degrades the run's health for. That would make an
-    # ordinary repo with no Terraform permanently suspect, and a suspect
-    # run never mitigates, so its findings could never be cleared. The same
-    # trap as trusting an empty result, sprung from the opposite side: a
-    # health signal so eager that nothing can ever be marked fixed is not
-    # safer than one that is too quiet, just differently wrong.
-    #
-    # "Not applicable" is the honest answer here and the codebase already
-    # has a word for it.
-    # (#469-adjacent, registry layer) The pruned registry configs are built
-    # from the vendored semgrep-rules clone. With no clone provisioned there
-    # is nothing to pass --config, and semgrep with no config scans nothing
-    # and exits 0 -- which ingests as a clean sweep and mitigates every open
-    # finding this tool previously reported. "Not applicable" is the honest
-    # answer, and it keeps the run's health intact.
+    # Skip scanners with no applicable files rather than marking empty output suspect.
+    # Missing vendored Semgrep registry configs are also inapplicable: running without a
+    # config can falsely report clean and mitigate findings.
     if tool == "semgrep-registry" and not registry_configs_for(str(repo_path)):
         raise ToolNotApplicable(
             "no pruned registry rules for this repository's languages "
@@ -1966,21 +1830,9 @@ def _execute(tool: str, cmd: list[str], repo_path: Path, run: ScanRunContext) ->
         # builders above), no shell.
         proc = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, env=env)  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
     except FileNotFoundError as exc:
-        # The binary is not on PATH. Distinct from every other failure in
-        # this module: nothing crashed, nothing was misconfigured in the
-        # scan itself, the tool simply is not installed on this deployment
-        # (noseyparker, for one, is deliberately not bundled in
-        # backend/Dockerfile -- see #385). Raised as a ToolExecutionError so
-        # it still routes to tools_failed and still renders as "not fully
-        # scanned"; a missing scanner is a real coverage gap and must never
-        # be quietly folded into a clean pass. The message is what changes:
-        # an operator reading "is not installed on this deployment" knows
-        # what to do, where "exited 127" or a raw FileNotFoundError told them
-        # their scanner was broken.
-        #
-        # Not a health.degrade: this run produced no report at all, so there
-        # is no result to qualify. Degrading is for a tool that came back
-        # with something that cannot be fully trusted.
+        # Missing binaries are ToolExecutionError/tools_failed coverage gaps with
+        # actionable install messages. Do not degrade health: no report exists to
+        # qualify, and absence must never count as clean.
         raise ToolExecutionError(
             f"{tool} is not installed on this deployment; install it "
             f"(see Tool Marketplace for the install command) or turn it off "

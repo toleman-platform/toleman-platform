@@ -32,26 +32,10 @@ type GithubAppStatus = {
 };
 
 /**
- * The host out of PUBLIC_API_URL, or "" when the value has none.
- *
- * Mirrors the backend's `_webhook_hostname`, and the mirroring is the whole
- * point: the two parsers disagreeing is how the UI ends up making confident
- * statements about a configuration the backend judged differently. Three
- * places they drift, all normalised here:
- *
- *   - `new URL().hostname` brackets an IPv6 literal (`"[::1]"`) where
- *     Python's `urlparse().hostname` does not.
- *   - it keeps the trailing dot of an FQDN (`backend.`) that
- *     `_webhook_hostname` strips.
- *   - a base URL would let a schemeless value containing a mid-string `//`
- *     ("foo//bar") resolve as a *path* against that base, handing back the
- *     base's own hostname as if it were the operator's. So: no base, and
- *     the three shapes are separated explicitly instead. A protocol-relative
- *     value ("//localhost:8000") wears its host openly and only needs a
- *     scheme; one with no `//` at all gets the same scheme-prepending
- *     allowance the backend makes; anything else is parsed as written.
- *
- * Never throws; an unparseable value is "".
+ * Mirror backend _webhook_hostname: remove IPv6 brackets and trailing FQDN dots. Parse
+ * protocol-relative, schemeless, and already-schemed URLs separately; a base URL would
+ * misread foo//bar as a path on the base host. Return an empty string for unparseable
+ * input.
  */
 function hostOf(publicApiUrl: string): string {
   const candidate = publicApiUrl.trim();
@@ -80,24 +64,9 @@ function hasNoUsableHost(publicApiUrl: string): boolean {
 }
 
 /**
- * The advisory tier under `webhook_reachable` (#355 review).
- *
- * The backend says False only for what is certain -- a host that is not
- * globally routable, or no host at all -- because False disables the
- * Connect button and there is no override. A single-label host with no dot
- * in it (`backend`, a Compose service name) is *almost* certainly
- * unreachable from GitHub too, and "almost" is the line: this warns and
- * lets the operator click anyway, which is the override the backend
- * predicate cannot offer.
- *
- * Note this is about a dotless *name*. IP literals are excluded entirely,
- * in both directions: a LAN address (`192.168.1.50`) has dots and would
- * slip past a dot test anyway, and an IPv6 literal (`2606:4700::1111`) has
- * none and would wrongly trip it. The backend has already had the final
- * word on every IP literal -- it blocks the ones that are not globally
- * routable and allows the rest -- so telling an operator that a public v6
- * address "resolves only inside your own network" would be a confidently
- * false statement about a valid configuration.
+ * Warn on dotless hostnames without disabling Connect: reachability is uncertain.
+ * Exclude IP literals because the backend already decides whether they are globally
+ * routable; IPv6 addresses must not be mistaken for local single-label names.
  */
 function hostIsDotless(publicApiUrl: string): boolean {
   const hostname = hostOf(publicApiUrl);
@@ -109,27 +78,9 @@ function hostIsDotless(publicApiUrl: string): boolean {
 }
 
 /**
- * The webhook secret field for one GitHub App.
- *
- * A component per App rather than one `Record<number, string>` on the card,
- * because the failure has to be attributable: a single shared error slot
- * would report App A's rejected save under App B's input, and this card
- * routinely renders several Apps.
- *
- * The save itself was `try`/`finally` with no `catch`. A rejected PUT
- * re-enabled the button and said nothing, leaving the rejection to escape as
- * an unhandled promise rejection; the typed secret did survive, since the
- * clear sat after the await. Silence is the whole defect here, and this is
- * the worst place on the card for it: the secret
- * is what every webhook delivery is verified against, so the operator walked
- * away believing real-time PR scanning was set up while GitHub's deliveries
- * would go on being rejected, and the only visible consequence is PRs that
- * quietly never get scanned.
- *
- * Success is confirmed by the status line above this field flipping to
- * "Webhook secret set", re-read from the server rather than asserted here --
- * the claim is about what the backend stored, so the backend is what gets to
- * make it.
+ * Keep webhook-secret save/error state per App. Preserve typed input on failure and
+ * show the error beside that App. Confirm success from re-fetched backend status rather
+ * than assuming persistence.
  */
 function WebhookSecretForm({ app, onSaved }: { app: GitHubAppInstallation; onSaved: () => void }) {
   const [secret, setSecret] = useState("");

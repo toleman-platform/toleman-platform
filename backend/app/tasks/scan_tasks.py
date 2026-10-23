@@ -33,24 +33,10 @@ DB_BACKED_TOOLS = ("trivy", "trivy-license")
 
 logger = logging.getLogger(__name__)
 
-# Only subprocess.CalledProcessError is auto-retried: today it can only come from
-# runner.clone_repo()'s `git clone` (the only subprocess call in this path that uses
-# check=True), which fails on transient network/remote issues (DNS blip, timeout,
-# remote 5xx); retrying with backoff is exactly the self-healing we want there.
-# Other failure classes are NOT retried because a retry can't fix them:
-#   - FileNotFoundError (git/semgrep/gitleaks/trivy/gosec binary missing), an
-#     installation problem, will fail identically every time.
-#   - ValueError (unsupported tool) / KeyError (bad PARSER_MAP entry), programmer
-#     error / bad input, deterministic.
-#   - runner.RepoCloneError, deterministic bad input, same as the
-#     ValueError/KeyError cases above. Two sources: clone_repo's own
-#     validation (invalid repo_url/branch, rejected before subprocess runs),
-#     and a git failure whose stderr names a permanent cause; missing
-#     credentials, deleted repo, nonexistent branch, access denied. That
-#     second source is why _classify_clone_stderr exists: those all exit 128
-#     like a network blip does, and retrying them four times with backoff
-#     bought nothing but fifty identical tracebacks.
-#   - json parsing issues are already swallowed inside runner.run_tool.
+# Auto-retry CalledProcessError from transient git-clone failures only. Missing
+# binaries, unsupported tools, parser-map errors, and RepoCloneError (permanent
+# URL/branch/credential/access failures) cannot recover through retry. JSON parsing
+# errors are handled inside runner.run_tool.
 RETRYABLE_EXCEPTIONS = (subprocess.CalledProcessError,)
 
 

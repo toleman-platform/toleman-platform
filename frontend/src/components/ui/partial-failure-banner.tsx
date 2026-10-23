@@ -21,24 +21,9 @@ export type PartialFailureSource = {
 };
 
 /**
- * The shared "some of this page loaded, some did not" banner.
- *
- * `DESIGN_SYSTEM.md` §20 specifies a partial-failure state — *"3 of 4 scanner
- * sources loaded. Snyk data is temporarily unavailable."*, and explicitly
- * *"Do NOT discard successfully loaded information because one secondary
- * request failed"* — but until now it had no implementation anywhere in the
- * operator surfaces. What the surfaces did instead was catch the failure,
- * substitute an empty collection, and render the result as fact: a failed
- * `/api/scans/summary` painted all 33 targets "never scanned", a failed
- * `/api/targets/summary` produced a green `0` under the words "scanned,
- * nothing open".
- *
- * This component is the other half of `settledOr` (`std-lib/async.ts`): that
- * one keeps the failure bit alive past the call site, this one puts it on the
- * screen. Pair them, and the honest path stays the short path.
- *
- * Renders nothing when every source loaded, so a caller can mount it
- * unconditionally and not fork its JSX on the happy path.
+ * Show partial request failures while preserving successfully loaded content. Pair with
+ * settledOr to retain and display failure flags; empty fallbacks must not masquerade as
+ * measured results. Renders nothing when all sources load.
  */
 export function PartialFailureBanner({
   sources,

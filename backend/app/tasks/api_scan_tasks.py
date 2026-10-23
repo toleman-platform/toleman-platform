@@ -27,18 +27,9 @@ logger = logging.getLogger(__name__)
 # change on retry, same rationale as scan_tasks.RETRYABLE_EXCEPTIONS.
 RETRYABLE_EXCEPTIONS = (subprocess.TimeoutExpired,)
 
-# Seconds of nuclei budget per discovered endpoint, and the bounds that
-# budget is clamped into.
-#
-# A flat 300s gave a target with 5 endpoints and a target with 500 the same
-# allowance, so the large one could never finish and failed identically on
-# every retry. settings.nuclei_rate_limit caps outbound requests per second,
-# so wall-clock scales with the endpoint count by construction and a fixed
-# budget is the wrong shape.
-#
-# The ceiling exists because this runs on a Celery worker: an unbounded
-# budget turns one unreachable target into a worker blocked for as long as
-# it takes, and stale_job_timeout_seconds would reap the job anyway.
+# Scale the Nuclei time budget with endpoint count because outbound rate limits make
+# runtime grow with targets. Clamp the budget so an unreachable target cannot occupy a
+# Celery worker indefinitely or exceed stale-job limits.
 NUCLEI_SECONDS_PER_ENDPOINT = 6
 NUCLEI_TIMEOUT_CEILING_SECONDS = 1800
 
@@ -231,18 +222,10 @@ def run_api_scan(self, target_id: int, scan_id: int, endpoint_ids: list[int] | N
                 timeout_seconds=nuclei_timeout_for(len(urls)),
             )
             parsed = parsers.parse_nuclei(raw_results)
-            # (#229) What makes this assertion earned rather than assumed:
-            # runner.run_nuclei now checks nuclei's exit code and raises
-            # ToolExecutionError on anything nonzero, so a broken nuclei run
-            # reaches the generic handler below and marks the Scan failed
-            # instead of returning [] and being ingested as a clean sweep
-            # that mitigates every open api-scan finding. Together with the
-            # config/binary/timeout handlers, reaching this line means
-            # nuclei ran to completion against a real endpoint list.
-            #
-            # Asserted rather than left as None because None means "no
-            # evidence", which would stop a legitimately clean DAST run from
-            # ever clearing a finding that really was fixed.
+            # Reaching here means Nuclei completed against real endpoints: binary,
+            # config, timeout, and nonzero-exit failures are handled separately. Assert
+            # healthy so a genuinely clean DAST run can clear fixed findings; None would
+            # mean no evidence.
             count = ingest_findings(
                 session, target, scan,
                 tool="api-scan", branch=target.default_branch, parsed=parsed,

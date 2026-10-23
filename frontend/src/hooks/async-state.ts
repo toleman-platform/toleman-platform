@@ -1,25 +1,8 @@
 /**
- * The async-request state machine, as a pure reducer (issue #210).
- *
- * Deliberately separated from the React hook in use-async-data.ts. Sixteen
- * files in this codebase hand-rolled `loading`/`error`/`data` triples, and the
- * bugs were always in the *transitions*, a stale response overwriting a
- * newer one, `loading` left true after an error, a refetch blanking the
- * screen instead of showing the previous data. Those are reducer bugs, and a
- * reducer can be tested exhaustively in Node without a DOM.
- *
- * Two decisions worth stating, because they are what make refetch feel right:
- *
- *   1. `data` is retained across a refetch. A list that blanks to a skeleton
- *      every time it revalidates reads as broken. Callers distinguish the
- *      first load (`status === "loading"`, no data yet) from a background
- *      refresh (`isRefreshing`, data still present).
- *   2. A rejected request never clears previously good data. Showing stale
- *      rows next to an error banner is more useful than showing nothing, and
- *      the caller can still tell the difference.
-/** Discrete lifecycle state. `idle` exists so a request can be deferred
- * (e.g. waiting on a workspace selection) without faking a loading spinner
- * for something that was never requested. */
+ * Pure async-request reducer, separate from the React hook for transition testing.
+ * Retain prior data during refresh and rejection. idle permits deferred requests
+ * without a false loading state.
+ */
 export type AsyncStatus = "idle" | "loading" | "success" | "error";
 
 export type AsyncState<T> = {

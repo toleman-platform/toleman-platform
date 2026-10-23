@@ -7,25 +7,10 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
-// (#273) Deactivate / reactivate / delete for one target.
-//
-// Worded as a choice between two different things rather than two buttons
-// that both sound like "get rid of this". The distinction is the whole
-// feature, and the copy is where a reader actually learns it:
-//
-//   Deactivate  scanning stops everywhere (on-demand, CI push, PR
-//               Guardrail, active API scanning, the nightly refresh). The
-//               target, its findings and its history stay. Reversible.
-//   Delete      the target disappears from every list, dashboard and
-//               report. Its findings and scan history are retained and
-//               remain answerable through the audit log -- this is a
-//               security tool, and "someone deleted the record of a
-//               finding" is a question that has to keep having an answer.
-//
-// Delete routes through #118's shared ConfirmDialog, like every other
-// destructive action in Admin; deactivate deliberately does not, because it
-// is reversible in one click and a confirmation on a reversible toggle
-// trains people to dismiss confirmations.
+// Deactivation stops scans but retains visible targets, findings, and history; it is
+// reversible. Deletion hides the target from lists/dashboards/reports while retaining
+// records for audit. Confirm deletion through ConfirmDialog; deactivation is a
+// reversible toggle.
 export function TargetLifecycle({
   targetId,
   targetName,

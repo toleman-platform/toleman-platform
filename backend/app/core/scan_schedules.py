@@ -56,23 +56,9 @@ class ShippedDefault:
     interval_hours: int
 
 
-# The floor every install gets with nothing configured. Changing these
-# changes behaviour for every unconfigured workspace on the next deploy, so
-# they are stated once, here, rather than being spread across the dispatcher
-# and the API.
-#
-# FULL_SCAN reproduces exactly what the old hardcoded beat entry did: on,
-# every 24 hours, every target. An install that configures nothing sees no
-# change from this issue.
-#
-# API_SCAN ships OFF, which is likewise no change: active API scanning has
-# never been scheduled, only triggered by hand. Defaulting it on would start
-# firing nuclei at live hosts on the first worker restart after an upgrade,
-# for every target that happens to have an api_base_url set; that is a
-# network-visible side effect on somebody else's staging environment and it
-# has to be a decision, not an upgrade artefact. (The per-target safety
-# boundary in app.core.api_scan_targets still applies on top of this; this
-# default is about not surprising anyone, not about trust.)
+# Defaults apply to every unconfigured workspace. Full scans run every 24h; active API
+# scans default off so upgrades cannot silently probe live hosts. Per-target safety
+# checks still apply when enabled.
 SHIPPED_DEFAULTS: dict[ScanScheduleType, ShippedDefault] = {
     ScanScheduleType.FULL_SCAN: ShippedDefault(enabled=True, interval_hours=24),
     ScanScheduleType.API_SCAN: ShippedDefault(enabled=False, interval_hours=24),
@@ -340,30 +326,10 @@ def effective_for_row(session: Session, row: ScanSchedule) -> tuple[bool, int]:
     return enabled, interval
 
 
-# Spread applied when a schedule's clock is first set, as a fraction of its
-# own interval and capped in absolute terms. Without it every workspace
-# seeded by the same dispatcher tick shares one `now`, so all of them come
-# due in the same tick forever after -- the entire platform's scheduled
-# scans arriving as one burst every 24 hours. That is not a volume change,
-# but it is the worst possible arrival pattern for the queue contention
-# #229 is about, and it would be locked in on the first tick after deploy.
-#
-# Applied when the clock is set rather than on every advance, so the offset
-# a workspace gets is stable instead of being re-rolled (and re-clustered)
-# every cycle.
-#
-# Forward-only is NOT just a scheduling preference ("never fire earlier than
-# the configured interval"), and this is the comment someone will read before
-# changing it. It is what makes compute_next_run_at's strictly-after-`now`
-# invariant -- the thing claim_due_schedule's lock depends on -- structural
-# rather than contingent. Centre the spread instead (+/-5% rather than +10%,
-# which reads like a tidier distribution) and the guarantee silently becomes
-# "holds as long as the spread stays smaller than the interval", a second
-# assumption nothing states or checks, and one that a lower
-# MIN_INTERVAL_HOURS or a larger MAX_JITTER would quietly retire. A due time
-# not after `now` leaves the claimed row still matching `next_run_at <= now`,
-# so the next pass re-claims it and the fan-out doubles, with nothing
-# failing anywhere. See compute_next_run_at's docstring.
+# Apply capped, interval-relative jitter when first setting the clock to spread
+# workspace dispatch; keep the offset stable across cycles. Jitter must be forward-only:
+# next_run_at must stay strictly after now, or subsequent dispatcher passes can reclaim
+# the row and duplicate work.
 JITTER_FRACTION = 0.1
 MAX_JITTER = timedelta(minutes=30)
 

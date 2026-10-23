@@ -20,18 +20,9 @@ from app.core.crypto import SecretDecryptionError, decrypt_secret
 from app.models.models import ApiEndpoint, Target
 
 
-# Methods whose whole purpose is to destroy something. An endpoint
-# discovered under one of these is not scanned by default, because a
-# scanner reaching it is indistinguishable from an attacker reaching it
-# and the damage is not undoable.
-#
-# Only DELETE is here, deliberately. PUT and PATCH modify rather than
-# destroy, and POST is how most APIs express reads-with-a-body, logins and
-# searches, so defaulting those off would turn active scanning off for
-# most real targets while teaching operators that the setting is noise.
-# For anything in those verbs that IS destructive, the answer is the
-# per-endpoint exclusion below -- a decision a human made about a specific
-# route, which is worth more than a guess made from its verb.
+# Exclude DELETE endpoints by default because probing can destroy data. Keep
+# POST/PUT/PATCH eligible for normal API coverage; use explicit per-endpoint exclusions
+# for destructive routes using other verbs.
 DESTRUCTIVE_METHODS = frozenset({"DELETE"})
 
 

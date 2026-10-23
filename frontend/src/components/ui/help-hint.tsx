@@ -16,30 +16,9 @@ export interface HelpHintProps {
 }
 
 /**
- * A small affordance next to a heading that says, in plain language, what the
- * feature does and who it is for, plus a link to the documentation page when
- * one is published.
- *
- * Deliberately a click-triggered disclosure rather than a tooltip, for three
- * reasons that a tooltip cannot be talked out of:
- *
- *   1. Radix's TooltipTrigger returns early from its pointer handler when
- *      `pointerType === "touch"`, and separately suppresses the focus path
- *      while a pointer is down. On a phone or tablet the net effect is that
- *      tapping the trigger does nothing at all -- a visible, labelled button
- *      that is inert for every touch user.
- *   2. A tooltip closes on blur, so a "Learn more" link inside one can never
- *      be reached by keyboard: the panel is gone before focus lands on it.
- *      `role="tooltip"` also must not contain interactive elements, and Radix
- *      renders its content a second time inside a visually hidden node, which
- *      would put a duplicate link in the accessibility tree.
- *   3. Clicking a tooltip trigger closes it, and it will not reopen until the
- *      pointer leaves and returns -- so the obvious interaction with a button
- *      destroys the thing the button is for.
- *
- * A disclosure has none of those problems: it opens on click and on Enter or
- * Space, it stays open while focus moves through it, and interactive content
- * inside it is ordinary.
+ * Use a click/keyboard disclosure for contextual help and documentation links. Tooltips
+ * cannot reliably serve touch users or contain keyboard-reachable interactive links.
+ * Keep the panel open while focus moves through its content.
  */
 export function HelpHint({ topic, side = "bottom", className }: HelpHintProps) {
   const { title, body, docsUrl } = topic;

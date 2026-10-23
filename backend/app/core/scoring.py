@@ -462,18 +462,9 @@ def compute_score_breakdown(
     w = resolve_weights(weights)
     contributions: list[SignalContribution] = []
 
-    # --- base: severity x criticality ---
-    #
-    # Today's formula is a product, not a sum, and it has to stay one for
-    # the baseline to reproduce exactly. A weight therefore scales each
-    # factor's *excess over 1*:
-    #
-    #     effective = 1 + (raw - 1) * weight
-    #
-    # At weight 1.0 that is the raw factor untouched, so the product is
-    # 40 x severity x criticality exactly as before. At weight 0.0 the
-    # factor collapses to 1 and stops influencing the score at all, which
-    # is what "switch this signal off" should mean for a multiplier.
+    # Base score is 40 x severity x criticality. Scale each factor as 1 + (raw - 1) *
+    # weight: weight=1 preserves the baseline product; weight=0 makes that factor
+    # neutral.
     severity_weight = SEVERITY_WEIGHT[severity]
     criticality = max(1, min(5, target_criticality_weight))
     effective_severity = 1 + (severity_weight - 1) * w[ScoringSignal.SEVERITY]
@@ -659,18 +650,9 @@ def compute_score_breakdown(
         )
     )
 
-    # (#500) An uplift for a package that positively ships, not a penalty
-    # for one that does not. Three states, and the third is the point:
-    # "unknown" covers every finding that predates the column, every tool
-    # other than trivy, and every ecosystem whose manifest cannot express
-    # the distinction. Treating those as runtime would re-rank the whole
-    # backlog on data nobody collected; treating them as development would
-    # bury real runtime risk. They get nothing, either way.
-    #
-    # Compared against string literals rather than importing the parser's
-    # constants, matching how fixability is handled just below: this module
-    # is deliberately pure -- no session, no I/O -- and the values are
-    # already part of the API contract the findings list filters on.
+    # Uplift confirmed runtime dependencies only. Unknown metadata must neither promote
+    # legacy findings nor bury runtime risk as development-only. Use API-contract
+    # strings to keep scoring independent of parser/I/O modules.
     scope_points = 0
     scope_established = False
     scope_detail = "no dependency scope recorded for this finding"

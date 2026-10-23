@@ -369,26 +369,9 @@ def create_target(
     # so require_workspace_role's name-binding trick can't see it; check
     # explicitly instead (see enforce_workspace_role's docstring).
     enforce_workspace_role(session, user, WorkspaceRole.DEVELOPER, workspace_id=payload.workspace_id)
-    # (#356) Target.workspace_id is a real FK, and nothing above proves the
-    # row exists: enforce_workspace_role returns immediately for a global
-    # admin, and for everyone else it only asks whether a WorkspaceMembership
-    # exists (which, for a nonexistent workspace, simply doesn't, so that
-    # path 403s before ever reaching here). An admin POSTing a workspace_id
-    # with no matching row therefore fell straight through to commit(), where
-    # Postgres raised ForeignKeyViolation -> an unhandled IntegrityError.
-    # That escapes past CORSMiddleware before it has built a response, so
-    # Starlette's outer ServerErrorMiddleware emits the bare 500 itself and
-    # the CORS headers are never attached; the browser then reports a
-    # "No 'Access-Control-Allow-Origin' header" failure and the frontend's
-    # error banner points the operator at CORS config, which is not the
-    # problem. On a fresh deployment with zero workspaces this was the
-    # *default* outcome of the add-a-repo form, which used to default
-    # workspace_id to a hardcoded 1. Check first and 404 cleanly.
-    #
-    # Deliberately after the role check, not before: for a non-member the
-    # role check already 403s regardless of whether the id exists, so
-    # ordering it first keeps this route from becoming a way to probe which
-    # workspace ids are real from outside the workspace.
+    # Role checks do not establish workspace existence for global admins. Validate
+    # before commit to return a clean 404 instead of an FK failure. Check after
+    # authorization so non-members cannot probe workspace IDs.
     if not session.get(Workspace, payload.workspace_id):
         raise HTTPException(status_code=404, detail="workspace not found")
     target = Target(**payload.model_dump())
@@ -453,38 +436,11 @@ def update_target(
     return _with_groups(target, {})
 
 
-# ---------------------------------------------------------------------------
-# Lifecycle (#273): deactivate / reactivate / delete.
-#
-# Before this, a registered target was permanent. There was no DELETE for a
-# target at all -- only DELETE /{target_id}/groups/{group_id}, which un-tags
-# one -- and no flag to stop scanning short of removing it, which wasn't
-# possible either. A decommissioned repo, a typo'd registration and a test
-# target created while exploring the product all accumulated forever.
-#
-# The two verbs are deliberately different products, not one with a
-# parameter:
-#
-#   Deactivate  stop starting work against this repo. Findings, scans and
-#               PR history are retained and keep counting toward dashboards
-#               and scores; the target stays visible and filterable, badged
-#               as deactivated. Reversible, gated at DEVELOPER (the same bar
-#               as PATCH, which can already set enforcement_mode="disabled"
-#               and switch off the PR gate).
-#
-#   Delete      the target is gone from every list, aggregate and dispatch
-#               path. Implemented as a soft delete: not one row is
-#               destroyed. See app/core/target_lifecycle's module docstring
-#               for the cascade reasoning. Gated at SECURITY_ENGINEER, the
-#               bar this codebase already uses for writes that change what
-#               the platform records or enforces (sla_rules, fp_rules, tool
-#               assignments) rather than DEVELOPER's day-to-day config bar.
-#
-# Both write an AuthAuditLog row via log_auth_event, the same path every
-# other destructive platform action here uses (admin user delete, role
-# change, workspace-role removal). "Who switched scanning off for this repo,
-# and when" has to be answerable for the same reason the scan results do.
-# ---------------------------------------------------------------------------
+# Target lifecycle: deactivation stops scanning but retains visible history and posture
+# counts; it is reversible and requires DEVELOPER. Soft deletion excludes targets from
+# lists, aggregates, and dispatch without destroying rows, and requires
+# SECURITY_ENGINEER. Both write audit events. Use app.core.target_lifecycle for shared
+# predicates.
 
 
 def _audit_target_event(

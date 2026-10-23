@@ -169,17 +169,9 @@ def raise_package_fix_pr(session: Session, target: Target, plan: dict, raised_by
     except autofix.AutofixError:
         raise
     except SecretDecryptionError as exc:
-        # Same PLATFORM_ENCRYPTION_KEY-mismatch failure mode
-        # app.tasks.pipeline_tasks guards against explicitly: reading a
-        # manifest file can resolve a stored GitHub token
-        # (app.core.github_token.resolve_github_token), and a bare
-        # ValueError subclass escaping this far would reach the API layer
-        # uncaught -- past CORSMiddleware, past every AutofixError handler
-        # every caller here relies on -- and surface to a browser as a
-        # plain network failure with no CORS headers at all (see
-        # app.api.targets.create_target's own comment on this exact class
-        # of bug). Converted to AutofixError so it's always handled the
-        # normal way instead.
+        # Convert stored-token decryption failures to AutofixError so normal API error
+        # handlers return a user-visible response rather than an uncaught error without
+        # CORS headers.
         logger.exception(
             "raise_package_fix_pr: PLATFORM_ENCRYPTION_KEY mismatch reading %s's manifest on target %s",
             plan["package"], target.id,

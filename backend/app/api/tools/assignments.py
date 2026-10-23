@@ -93,18 +93,9 @@ def upsert_assignment(
     # sla_rules.create_sla_rule checks explicitly instead of a
     # Depends-based require_workspace_role.
     enforce_workspace_role(session, user, WorkspaceRole.SECURITY_ENGINEER, workspace_id=payload.workspace_id)
-    # (#356) WorkspaceToolConfig.workspace_id is a real FK, and the role
-    # check above doesn't prove the row exists: it returns immediately for a
-    # global admin, and a non-admin is rejected for a missing membership
-    # rather than a missing workspace. On the insert branch below (no saved
-    # config for this workspace/tool yet) that reached commit() and raised
-    # ForeignKeyViolation, an unhandled IntegrityError that escapes
-    # CORSMiddleware and surfaces in the browser as a CORS error rather than
-    # a 4xx. See create_target in app/api/targets.py for the full path.
-    # GET /assignments above already 404s a workspace the caller can't see;
-    # this gives the write path the same answer for one that isn't there at
-    # all. After the role check, so the 404 can't be used to probe which
-    # workspace ids are real.
+    # Check workspace existence after authorization and before commit. Global-admin role
+    # checks bypass membership validation, so otherwise an invalid ID becomes an FK/500
+    # error; ordering also prevents existence probing.
     if not session.get(Workspace, payload.workspace_id):
         raise HTTPException(status_code=404, detail="workspace not found")
 

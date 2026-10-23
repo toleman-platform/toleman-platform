@@ -71,43 +71,11 @@ DEFAULT_REGISTRY_ROOT = os.environ.get("SEMGREP_RULES_REGISTRY_ROOT", "/opt/semg
 # a constant and not just a comment.
 REGISTRY_CONFIG_SCHEMA_VERSION = 3
 
-# Registry rule ids to drop from the pruned config, by exact id.
-#
-# The only lever available for the public registry's rules: we do not own
-# them and cannot fix their precision, so excluding one is the sole way to
-# act on a rule that does not earn its keep.
-#
-# Deliberately EMPTY. The measurement that prompted building it did not
-# justify using it. Scored against OWASP BenchmarkJava's 2740 labelled
-# cases, per-rule precision for every registry rule with 20 or more
-# attributed findings:
-#
-#   weak-random                        218 TP    0 FP   1.000
-#   use-of-sha1                         85 TP    0 FP   1.000
-#   cookie-missing-secure-flag          36 TP    0 FP   1.000
-#   use-of-md5                          28 TP    0 FP   1.000
-#   tainted-session-from-http-request   43 TP   18 FP   0.705
-#   no-direct-response-writer          202 TP  108 FP   0.652
-#   tainted-sql-from-http-request      238 TP  150 FP   0.613
-#   tainted-cmd-from-http-request      121 TP  100 FP   0.548
-#   jdbc-sqli                           97 TP   81 FP   0.545
-#   httpservlet-path-traversal         152 TP  136 FP   0.528
-#   command-injection-process-builder   33 TP   30 FP   0.524
-#   tainted-xpath-from-http-request     14 TP   13 FP   0.519
-#   tainted-ldapi-from-http-request     26 TP   28 FP   0.481
-#
-# Exactly one rule sits below 0.5, and removing it is a wash: dropping
-# tainted-ldapi-from-http-request loses 26 true findings to remove 28 false
-# ones, moving the aggregate Youden score from 0.374 to 0.376 while costing
-# 0.018 recall. Twenty-six real LDAP injections are not worth trading for
-# twenty-eight false ones, so it stays.
-#
-# The table is here rather than in a commit message because of the mistake
-# it is meant to prevent. The rules with the largest raw FP counts --
-# tainted-sql-from-http-request at 150, httpservlet-path-traversal at 136 --
-# are also among the highest earners, at 238 and 152 true findings. Ranking
-# by FP count and deleting the top of the list would strip out most of the
-# pack's actual recall. Judge a candidate on precision, and re-measure.
+# Exact registry rule IDs excluded from pruned configs. Intentionally empty:
+# BenchmarkJava measurements did not justify sacrificing recall. Removing
+# tainted-ldapi-from-http-request loses 26 true findings to remove 28 false ones.
+# Evaluate precision and recall together, then re-measure; raw false-positive counts
+# alone do not justify exclusion.
 REGISTRY_RULE_DENYLIST: frozenset[str] = frozenset()
 
 # A detected language does not always map to exactly one registry folder.
@@ -197,18 +165,10 @@ TECHNOLOGY_SIGNATURES["python"] = {
     "pymongo": _sig("pymongo", ("requirements.txt", "pyproject.toml", "Pipfile"), ("pymongo",), ("pymongo",)),
 }
 
-# JavaScript/TypeScript. Covers the registry folders that (a) hold three
-# or more security rules and (b) correspond to a real npm package, so a
-# package.json/import check can actually decide them. Rule counts below
-# are from a 2026-09-14 semgrep-rules clone, security-category only, and
-# are what justifies each entry's inclusion -- re-measure rather than
-# guess when adding to this table.
-#
-# Deliberately NOT here: javascript/browser (10 rules). It is not a
-# package, so there is no dependency or import to key on, and the
-# alternative -- always-on for every JS/TS repo -- would push DOM rules
-# at pure Node services without anyone having measured the false-positive
-# cost. Decide it with a fixture, not by defaulting it in.
+# JS/TS registry folders must contain at least three security rules and map to an npm
+# package detectable through manifests/imports. Re-measure counts when extending this
+# table. Browser-wide rules require fixtures rather than unconditional inclusion in Node
+# repos.
 _JS_SIGNATURES = {
     "express": _js_sig("express", ("express",)),                    # 51 rules
     "angular": _js_sig("angular", ("@angular/core", "@angular/common")),  # 12
@@ -665,18 +625,9 @@ def run_layered_scan(
     )
     results = _json.loads(proc.stdout or "{}").get("results", [])
 
-    # Attribution by rule id, not by anything in the check_id prefix.
-    #
-    # Semgrep derives a finding's check_id from the path of the config it
-    # loaded the rule from, dotted -- so a rule out of
-    # /tmp/cache/python-registry-pruned.yaml surfaces as
-    # `tmp.cache.<rule-id>`, keyed on the *directory*, with the filename
-    # nowhere in it. An earlier version of this matched the pruned files'
-    # basenames against check_id and therefore matched nothing: every
-    # finding fell through to the custom bucket, and the layers were
-    # silently merged. The rule ids are the one thing that survives
-    # consolidation unchanged, and this module wrote those files, so it
-    # knows them exactly.
+    # Attribute findings by exact rule ID. Semgrep check_id prefixes come from config
+    # directory paths, not pruned config basenames; rule IDs survive consolidation and
+    # distinguish registry/custom layers.
     registry_rule_ids = set()
     for config in registry_configs:
         try:

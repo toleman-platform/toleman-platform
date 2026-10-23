@@ -314,19 +314,9 @@ def generate_workflow_yaml(session: Session, target: Target, steps: list[str] | 
                 seen.add(tool)
         includes_gosec = "gosec" in tools
     else:
-        # (#232) Was a hardcoded ["semgrep", "gitleaks", "trivy"] regardless
-        # of the workspace's ci_pipeline assignment; a ticked/unticked box
-        # on the Tool Marketplace card had no effect on what a *newly
-        # generated* workflow actually contained. Only tools with a real job
-        # template (_JOB_BLOCKS) can appear here regardless of assignment;
-        # within that set, the assignment now decides which are offered.
-        #
-        # This is a generation-time default, not a live control: it decides
-        # what goes into a workflow file the moment it is written, and has
-        # no effect on a workflow already committed to a target's repo (see
-        # generate_workflow_yaml's docstring and the pipeline-integration UI
-        # note; a durable file on disk in someone else's repo cannot be
-        # retroactively rewritten by a later assignment change).
+        # Workspace ci_pipeline assignments choose only tools with _JOB_BLOCKS
+        # templates. This is a generation-time default; changing assignments does not
+        # rewrite workflows already committed to target repos.
         enabled = set(tools_for_surface(session, target.workspace_id, "ci_pipeline")) & set(_JOB_BLOCKS)
         tools = [t for t in ("semgrep", "gitleaks", "trivy") if t in enabled]
         if detection["include_gosec"] and "gosec" in enabled:

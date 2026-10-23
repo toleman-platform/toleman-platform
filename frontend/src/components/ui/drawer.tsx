@@ -24,26 +24,9 @@ const SIZE_MAP = {
   full: "max-w-4xl",
 };
 
-// --- Shared modal-layer focus management ------------------------------------
-//
-// Drawer, ConfirmDialog and FindingDetailDialog are all the same kind of
-// surface -- content stacked in front of the page that steals the keyboard
-// until it's dismissed -- and until now each rolled its own (or, for this
-// component, documented one it never actually built: `drawerRef` existed
-// with nothing wired to it). Consolidated into one hook here rather than
-// fixed three times because the interesting part isn't per-component: it's
-// what happens when two of these are open at once.
-//
-// `layerStack` is that part. Every mounted trap pushes a token in open order
-// and only the last (topmost) token's handler is allowed to act on a key
-// press. Without this, opening a ConfirmDialog over the findings list (e.g.
-// "delete these 12 findings?") left BOTH the dialog's own Escape listener
-// and BulkActionBar's `window` Escape shortcut live at once -- one Escape
-// press cancelled the dialog *and* silently cleared the selection it was
-// asking about. Native keydown events bubble element -> document -> window,
-// every trap here listens on `document`, and the topmost one calls
-// `stopPropagation()` -- so a lower trap layer (if any) and any unrelated
-// `window` listener behind the stack never see the key at all.
+// Shared modal focus stack for drawers and dialogs. Only the topmost token handles
+// keyboard events; its document handler stops propagation so Escape cannot also dismiss
+// lower layers or clear a background bulk selection.
 const layerStack: symbol[] = [];
 
 // No offsetParent/visibility filtering here on purpose: jsdom (this repo's
@@ -60,18 +43,10 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
 }
 
 /**
- * Traps Tab/Shift+Tab inside `containerRef` and owns Escape for whichever
- * layer is topmost, for as long as `active` is true. On activation, focuses
- * `initialFocusRef` if given (ConfirmDialog passes its Cancel button here --
- * see confirm-dialog.tsx) or the container's first focusable element
- * otherwise; on deactivation, restores focus to whatever had it before.
- *
- * `onEscape` is read through a ref rather than placed in the effect's
- * dependency array: every call site here passes a fresh inline closure on
- * every render (`() => setOpen(false)` and similar), and re-running the
- * activation effect on every unrelated re-render would re-focus the initial
- * element and yank focus out from under, e.g., someone typing in a field
- * elsewhere in the same open dialog.
+ * Trap Tab/Shift+Tab and own Escape only on the topmost active layer. Focus
+ * initialFocusRef or the first focusable child, then restore previous focus on
+ * deactivation. Read onEscape through a ref so fresh inline callbacks cannot reactivate
+ * the trap and steal focus mid-edit.
  */
 export function useFocusTrap({
   active,

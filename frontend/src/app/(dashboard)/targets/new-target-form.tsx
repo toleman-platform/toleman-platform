@@ -25,21 +25,10 @@ export function NewTargetForm({
   isAdmin: boolean | null;
 }) {
   const router = useRouter();
-  // Issue #356: this used to be a bare number input defaulting to a
-  // hardcoded `1`, and the only place to look that number up was the
-  // Workspaces page, which rendered workspaces as "Workspace #7". Worse,
-  // the default was a lie on any fresh deployment: with no workspace rows
-  // at all, submitting sent workspace_id=1 into a real FK column and the
-  // resulting backend 500 reached the browser as a CORS error (see
-  // create_target in backend/app/api/targets.py). The workspace list comes
-  // from the same WorkspaceContext every page reads (#506), so the id is
-  // chosen, never typed, and every other state of that list is handled below
-  // by AsyncContent rather than hand-rolled here.
-  //
-  // Which workspace a *new target* belongs to is this form's own decision,
-  // not the global active workspace: it starts there as a sensible default
-  // (seeded once below) but picking a different one here must not silently
-  // switch what every other page on screen is showing.
+  // Choose target workspace IDs from WorkspaceContext; never type or assume an ID.
+  // AsyncContent handles list states. Seed once from the active workspace, but keep
+  // this form selection independent so choosing a destination does not switch the whole
+  // app.
   const { activeWorkspaceId, state } = useWorkspaceContext();
   const [workspaceId, setWorkspaceId] = useState<number | null>(null);
   // Seed once, the moment the workspace list first loads -- React's

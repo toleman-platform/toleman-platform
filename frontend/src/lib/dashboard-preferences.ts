@@ -1,29 +1,9 @@
 /**
- * Per-user dashboard widget visibility: which of the widgets in a user's
- * saved layout are actually drawn for them.
- *
- * Two layers, in precedence order:
- *
- *  1. The user's own show/hide choices, stored per user id in this browser.
- *  2. A default derived from the user's platform role, used only while (1)
- *     does not exist.
- *
- * Why this is separate from the saved layout (`GET/PUT /api/dashboard/layout`,
- * issue #69): that endpoint owns layout *composition* -- which widget
- * instances exist and in what order -- and its PUT replaces the whole row.
- * Writing a visibility flip through it would mean a full-layout write on
- * every checkbox click from view mode, on a surface whose known failure mode
- * (see the `layoutFailed` comment in dashboard-board.tsx) is silently
- * overwriting a layout the page never successfully read. Visibility is a
- * view preference with no server-side consumer, so it is kept out of that
- * write path entirely; nothing here can damage server state. The trade-off
- * is that a user's show/hide choices do not follow them to another browser,
- * which is why every read below has to treat "nothing stored" as normal
- * rather than exceptional.
- *
- * Deliberately React-free so it stays importable from anywhere and unit
- * testable without a DOM; the `useSyncExternalStore` wrapper that turns it
- * into a hook lives in components/dashboard/use-widget-visibility.ts.
+ * Per-user, per-browser widget visibility overrides role defaults. Keep it separate
+ * from server layout composition: toggling visibility must not PUT/overwrite the saved
+ * layout. Missing storage is normal and choices do not follow users between browsers.
+ * Keep this module React-free; the useSyncExternalStore adapter lives in
+ * use-widget-visibility.ts.
  */
 
 import type { WidgetId } from "@/types";
@@ -63,32 +43,10 @@ export function isWidgetId(value: unknown): value is WidgetId {
 export type WidgetDefaultProfile = "leadership" | "engineer" | "overview";
 
 /**
- * Which widgets each profile starts with.
- *
- * These are emphases, not filters. The backend's default layout
- * (app.core.widgets.DEFAULT_WIDGET_ORDER) is seven widgets, and a profile
- * that named only two or three of them would leave a first-time user staring
- * at a nearly empty dashboard -- which is the complaint this feature exists
- * to answer, not a fix for it. So each profile keeps most of the board and
- * drops only what is genuinely not that reader's job.
- *
- * `leadership` keeps posture, trend and concentration of risk, and drops the
- * per-finding triage queue: a reader at this level acts on the aggregate, not
- * on individual findings.
- *
- * `engineer` keeps the work surfaces -- the queue, what is blocking pull
- * requests, what is scanning, where the risk concentrates -- and drops SLA
- * compliance, which is a reporting view. `guardrail_activity` and
- * `live_scan_activity` are not in the backend's default layout, so listing
- * them here only means they are already on for an engineer the moment they
- * are added.
- *
- * `overview` keeps everything in the default layout. Someone without a
- * triage or reporting job has no widget that is clearly not for them, and
- * guessing wrong costs them the information.
- *
- * Ordering within the arrays carries no meaning; widgets are drawn in the
- * saved layout's order, which the user controls through Edit Dashboard.
+ * Profile defaults emphasize relevant widgets rather than replacing the board with a
+ * few tiles. Leadership omits per-finding triage; engineer omits SLA reporting and
+ * includes activity widgets when present; overview keeps all default widgets. Arrays
+ * select visibility only; saved layout determines order.
  */
 export const PROFILE_WIDGETS: Readonly<Record<WidgetDefaultProfile, readonly WidgetId[]>> = {
   leadership: [

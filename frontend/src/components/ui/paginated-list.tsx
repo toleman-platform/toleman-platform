@@ -6,32 +6,11 @@ import { ListRows } from "@/components/ui/list-row";
 import { ActivityPagination } from "@/components/ui/activity-pagination";
 
 /**
- * The shell every scannable list in this app rebuilds around `ListRow`.
- *
- * `ListRow` solved one row. The layer above it -- count line, page-size
- * control, top pager, density-aware stack, empty state, foot pager -- was
- * still copied per surface, and the copies had drifted:
- *
- *   - findings-list.tsx gates its top pager on `total > pageSize`. At
- *     `?page_size=100` on a 40-row result that is false, so the pager (and
- *     with it the only control that gets you back to 25 rows) disappears --
- *     the exact trap ActivityPagination documents and guards against
- *     internally. Gating here is therefore left to ActivityPagination alone.
- *   - the SBOM components list rendered the top pager and no foot pager, so
- *     paging a 717-component inventory meant scrolling back up every time.
- *   - it also stacked rows with a fixed `gap-2` rather than
- *     `--density-list-gap`, so Compact did nothing to the space between rows.
- *
- * What this component deliberately does NOT own: the row itself
- * (`renderItem`), selection, bulk actions and filter bars (`toolbar`), and
- * anything that has to survive an empty selection -- `BulkActionBar` returns
- * null at `count === 0`, so a control that must stay reachable with nothing
- * selected cannot be nested inside it.
- *
- * Honesty rule (AGENTS.md 1.4): `total` is a measurement. Render this
- * component only once the result set has actually been read back. A failed or
- * not-yet-run request passed through as `total={0}` renders a confident
- * "0 components", which is a different claim from "we have not looked".
+ * Shared list shell: count, page size, top/bottom pagination, density spacing, and
+ * empty state. Let ActivityPagination decide visibility so page-size controls remain
+ * reachable. Callers own rows, selection, bulk actions, and toolbars; controls needed
+ * with zero selection must stay outside BulkActionBar. Render only after a successful
+ * read: total=0 must be a measured result.
  */
 export type PaginatedListProps<T> = {
   /** The rows on the page currently displayed, not the whole result set. */

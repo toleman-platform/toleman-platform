@@ -362,21 +362,10 @@ export default function ApiDiscoveryPage() {
     setApiScanError(null);
     apiScan.reset();
     try {
-      // POST /api/api-scan/{target_id} dispatches a Celery task (nuclei
-      // against already-discovered endpoints) and returns immediately
-      // (#72, same async pattern as runScan/runDiscovery). Issue #212: the
-      // poll, the elapsed counter and the ETA now come from useScanRun, so
-      // a DAST run (which is typically the longest-running scan here)
-      // reports progress the same way a SAST run does instead of showing a
-      // bare "Scanning...".
-      //
-      // `undefined` asks the server to resolve every in-scope endpoint for
-      // the target itself, its own source of truth rather than a client
-      // snapshot -- correct only when nothing here is hidden. Once a
-      // framework facet narrows what's on screen, "scan all" has to mean
-      // all of what the facet is showing (`endpointIds`), or a click meant
-      // to scan the visible FastAPI routes would reach past them into every
-      // Express route the facet just hid.
+      // Dispatch active scans asynchronously and follow progress through useScanRun.
+      // undefined lets the server select all in-scope endpoints only when no facet
+      // hides rows. With a framework facet, pass visible endpointIds so scan-all cannot
+      // probe hidden routes.
       const dispatch = await api.runApiScan(
         scanTargetId,
         selection.count > 0 ? selection.selectedIds : (scanAllCount !== null ? endpointIds : undefined),

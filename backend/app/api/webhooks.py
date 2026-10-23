@@ -72,19 +72,9 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
 PR_TRIGGERING_ACTIONS = {"opened", "reopened", "synchronize"}
 
-# `@toleman ignore finding=123 reason text...` (or `finding=123,456,789
-# reason text...`) anywhere in a comment, case-insensitive. Requires
-# explicit finding id(s) rather than trying to infer "the" finding: PR
-# Guardrail posts one summary comment per PR, not one per finding, so
-# there is no comment thread naturally tied to a single finding the way
-# an inline review comment would be -- a bare "@toleman ignore <reason>"
-# would be ambiguous the moment a PR has more than one net-new finding.
-#
-# A comma-separated list rather than requiring N separate comments
-# (#527): a reviewer requesting an ignore for several findings the same
-# tool flagged for the same reason -- the common real case, not several
-# unrelated ones each needing their own justification -- had no way to
-# do that in one command before this.
+# Case-insensitive ignore command: @toleman ignore finding=123 reason, or
+# finding=123,456,789 for a shared reason. Require explicit IDs because the PR summary
+# thread is not tied to one finding.
 IGNORE_COMMAND_RE = re.compile(
     r"@toleman\s+ignore\s+finding=(?P<finding_ids>\d+(?:\s*,\s*\d+)*)\s+(?P<reason>.+)", re.IGNORECASE
 )
@@ -265,18 +255,9 @@ def _handle_pull_request(session: Session, payload: dict, installation_workspace
     if resolve_enforcement_mode(session, target) == "disabled":
         return {"ok": True, "skipped": "enforcement_mode=disabled"}
 
-    # A placeholder row, created synchronously right here rather than only
-    # once the dispatched task gets around to its own GitHub-API PR fetch
-    # inside execute_pr_guardrail_scan: that fetch, plus however long the
-    # task sits queued before a worker picks it up, is otherwise a window
-    # with no PRGuardrailScan row at all for the dashboard to show as
-    # "running" -- exactly the "no status until it's already done" gap
-    # reported live. The payload already carries everything needed (title,
-    # head branch), so this costs no extra API call and the webhook
-    # response stays fast. Same create-row(status="running")-then-dispatch
-    # pattern already used for every other async job in this codebase (see
-    # app/core/staleness.py); PR Guardrail's webhook path was the one
-    # outlier that didn't follow it.
+    # Create the running PR scan row synchronously from the webhook payload so queued
+    # work is visible before the worker fetches GitHub details. This needs no extra API
+    # call and keeps the webhook response fast.
     pr_scan = PRGuardrailScan(
         target_id=target.id,
         pr_number=pr_number,

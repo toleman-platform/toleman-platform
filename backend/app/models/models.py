@@ -248,34 +248,15 @@ class Target(SQLModel, table=True):
     # does: writing commits/PRs to a repo is a consequential trade a target
     # opts into deliberately, never a side effect of this column existing.
     auto_raise_fix_prs: bool = False
-    # Issue #72 (Active API Scanning): the live base URL of this target's
-    # deployed API, e.g. "https://api-staging.example.com". Deliberately a
-    # user-set, per-target field rather than anything derived from repo_url
-    # (a git clone URL, not a runtime host); active scanning combines this
-    # with routes already persisted in ApiEndpoint (Sprint 1's static
-    # discovery) to build the exact URL list nuclei is invoked against. None
-    # means active scanning is not configured for this target yet; the scan
-    # trigger endpoint refuses to run rather than guessing a host. This is
-    # the ONLY source of a scan target host (never taken from request
-    # input). Changing it requires global administrator access because it
-    # authorizes outbound traffic from the deployment, including its internal
-    # network; ordinary workspace members may only scan the configured host.
+    # Configured deployed API base URL, combined with persisted ApiEndpoint routes.
+    # Only global admins may change it: it authorizes outbound deployment traffic,
+    # including internal networks. Scan requests use this host, never a caller-supplied
+    # URL or repo_url; None means unconfigured and scanning must refuse.
     api_base_url: Optional[str] = None
 
-    # (#470) Credential the active API scanner presents, so it tests the API
-    # rather than the login wall. Without it every probe is anonymous, every
-    # authenticated route answers 401, and the scan still reports success --
-    # an all-clear that is evidence of nothing.
-    #
-    # Modelled as one arbitrary header rather than a typed "auth method"
-    # because that single shape already covers bearer tokens, API keys and
-    # most service-to-service auth, and a wrong guess at an enum of methods
-    # is harder to undo than adding a second field later. The NAME is not
-    # secret and is stored in the clear so the UI can show what is
-    # configured; the VALUE is encrypted at rest with the same
-    # core.crypto.encrypt_secret used for the GitHub App private key, and is
-    # never returned by any route, logged, or included in a scan's stored
-    # invocation.
+    # Active API scanner credentials use an arbitrary header for bearer/API-key auth.
+    # Store the name openly and encrypt the value. Never return, log, or store the value
+    # in scan invocations.
     api_auth_header_name: Optional[str] = None
     api_auth_header_value_ciphertext: Optional[str] = Field(default=None, exclude=True)
 
@@ -298,31 +279,10 @@ class Target(SQLModel, table=True):
     dependency_sync_at: Optional[datetime] = None
     dependency_component_count: Optional[int] = None
 
-    # OSV malicious-package check status: a clean result used to render as
-    # a bare 0, indistinguishable from a target nobody had ever checked.
-    # These three make a clean result a claim with evidence behind it.
-    # Separate from dependency_sync_* above because they track a different
-    # thing: dependency_sync_* records the GitHub Dependency Graph import;
-    # this records the OSV check itself, which runs from three places that
-    # don't touch dependency_sync_* at all: a plain re-check over whatever's
-    # already persisted (POST .../malware-check), an uploaded external SBOM
-    # (POST .../upload), and the best-effort pass inside automatic SBOM
-    # generation (app.tasks.sbom_tasks) -- only .../github-sync happens to
-    # also touch dependency_sync_*, because it imports *and* checks in one
-    # request.
-    #
-    # All three are written together, and only by a check that actually
-    # completed (app.core.osv_malware_ingestion.check_and_ingest_malware).
-    # A failed attempt (OSV unreachable) deliberately leaves them untouched
-    # rather than stamping "failed" over a real prior result: the honest
-    # signal for "we have not managed to verify this recently" is that the
-    # timestamp stops advancing, not a fourth status value that would pair
-    # a fresh "attempted just now" clock against a stale package count and
-    # invite reading the two together as one coherent, current answer.
-    #
-    # None on all three means "never completed a check" -- every target
-    # that predates this, or whose SBOM inventory has always been empty --
-    # and must render as an unmeasured unknown, never as a clean 0.
+    # Evidence from the last completed OSV check, separate from Dependency Graph import
+    # status. Write all three fields together on success; failed attempts retain prior
+    # results and timestamps. All-None means never checked and must render as unknown,
+    # never clean zero.
     malware_last_checked_at: Optional[datetime] = None
     malware_last_check_status: Optional[str] = None  # clean / found
     malware_packages_checked: Optional[int] = None
@@ -345,41 +305,17 @@ class Target(SQLModel, table=True):
     # forced this on" stay distinguishable in the UI.
     is_ai_repo_override: Optional[bool] = None
 
-    # (#298) VPN/client-cert-gated clone hosts. repo_url can point at any
-    # host an operator has added to EXTRA_CLONE_HOSTS (app/core/config.py),
-    # e.g. an internal GitHub Enterprise Server or GitLab instance reachable
-    # only over a VPN or requiring mTLS. These three make that reachable:
-    # client_cert/key are the mTLS client certificate git presents (mirrors
-    # GitHubToken.token_ciphertext - encrypted at rest via
-    # app.core.crypto.encrypt_secret/decrypt_secret since they're
-    # replayable credentials, never hashed, never echoed back by the API),
-    # clone_proxy_url is the HTTP(S) proxy (e.g. a VPN gateway) git's clone
-    # should tunnel through. All optional/blank: a target on a normal
-    # public github.com repo needs none of this.
+    # Optional clone credentials for operator-allowlisted VPN/mTLS hosts: encrypt
+    # replayable client cert/key material at rest and exclude it from API output.
+    # clone_proxy_url selects the HTTP(S) tunnel; public repos need neither.
     client_cert_ciphertext: str = Field(default="", exclude=True)
     client_key_ciphertext: str = Field(default="", exclude=True)
     clone_proxy_url: str = ""
 
-    # (#273) Lifecycle. Until this, a registered target was permanent: a
-    # decommissioned repo, a typo'd registration and a test target created
-    # while exploring the product all accumulated forever, and there was no
-    # delete endpoint at all (only DELETE /{id}/groups/{group_id}, which
-    # un-tags a target rather than removing it).
-    #
-    # Two *timestamps* rather than an is_active/is_deleted boolean pair
-    # beside them: a boolean plus a "when" column is two fields encoding one
-    # fact, and they drift the first time one write path forgets the other.
-    # NULL means "not in that state", and the column simultaneously answers
-    # when it entered it, which is what the audit trail actually needs.
-    # Callers should read these through app.core.target_lifecycle rather
-    # than testing the columns ad hoc -- there are a dozen scan-dispatch
-    # paths and roughly as many list/aggregate queries that have to agree
-    # on the same two predicates.
-    #
-    # deactivated_at: scanning stops (on-demand, CI push, PR guardrail,
-    # active API scan, scheduled baseline refresh, pipeline rollout), but
-    # the target stays visible, filterable and fully readable, and its
-    # findings keep counting. Reversible.
+    # Lifecycle timestamps encode state and transition time; NULL means absent. Use
+    # app.core.target_lifecycle predicates across dispatch and reads. Deactivation stops
+    # scan/rollout dispatch but retains visible history and posture counts, and is
+    # reversible.
     deactivated_at: Optional[datetime] = None
     # deleted_at: soft delete. The target disappears from every list, every
     # dashboard/score/report aggregate and every scan dispatch path, but no
@@ -455,19 +391,9 @@ class Scan(SQLModel, table=True):
     # can surface *why* a scan failed instead of leaving the frontend with
     # only a bare "failed" status.
     error: str = ""
-    # (#229) Whether this run could be trusted to have checked what it
-    # claims: "healthy", "suspect", or "unknown". Orthogonal to `status`,
-    # which only says whether the run finished -- a scan can complete, exit
-    # 0 and emit valid JSON while having read a half-written vulnerability
-    # database, which is exactly how a repo with five live CVEs came back
-    # clean and had all five auto-mitigated.
-    #
-    # "unknown" is the default because it is the truth for every row written
-    # before this existed and for every ingestion path that offers no
-    # evidence (the CI/CD push endpoint). It is deliberately not folded into
-    # either of the others: "healthy" would assert a check nobody made, and
-    # "suspect" would put a warning on a year of legitimate history until
-    # users stopped reading warnings.
+    # Scan health (healthy/suspect/unknown) is separate from completion status: exit
+    # zero and valid JSON do not prove trustworthy results. Default to unknown for
+    # legacy rows and ingestion paths without health evidence.
     health: str = "unknown"
     # Why, in a sentence a user can act on, when health is not "healthy" --
     # including what was done about it (existing findings left open rather
@@ -599,20 +525,9 @@ class Finding(SQLModel, table=True):
     severity: Severity
     priority_score: int = Field(default=0, index=True)
 
-    # (#500) Whether the vulnerable dependency ships to production or only
-    # builds it. "unknown" rather than None-means-runtime: every row that
-    # predates this genuinely has no answer, and so does every ecosystem
-    # whose manifest cannot express the distinction, so calling those
-    # runtime would misrank the whole existing backlog in the opposite
-    # direction from the bug this exists to fix.
-    #
-    # A critical CVE in a test runner is reachable by someone who can
-    # already run the build; the same CVE in a shipped library is reachable
-    # by anyone who can reach the deployed service. Both are worth
-    # reporting -- #488 exists because the dev half was being dropped
-    # silently -- but ranking them identically makes the queue stop being a
-    # ranking. Indexed because filtering triage to runtime-only is the
-    # point.
+    # Dependency scope separates shipped runtime from build tooling. Unknown stays
+    # explicit for legacy rows and unsupported ecosystems; never infer runtime from
+    # missing metadata. Index for runtime-only triage.
     dependency_scope: str = Field(default="unknown", index=True)
 
     # (#521) The dependency this finding is about, e.g. "loader-utils" --
@@ -964,22 +879,9 @@ class SbomComponent(SQLModel, table=True):
     version: str
     package_type: str
     purl: str
-    # (#227, raised by @r0075h3ll) Which source reported this component:
-    # "github", "upload", or "github,upload" when both did.
-    #
-    # Recorded rather than discarded because the two sources genuinely see
-    # different things; GitHub's Dependency Graph reports what a manifest
-    # resolves to (including transitives that appear in no manifest at all),
-    # an uploaded SBOM reports whatever the uploader's tooling found. "Only
-    # upload found this" is a real provenance signal worth keeping.
-    #
-    # The model-level default is "github", the only source that now writes
-    # rows automatically; there is no DB-level default and no migration, and
-    # every upsert_components caller passes source= explicitly, so it is a
-    # statement of intent rather than a value rows actually take. Rows
-    # written before #328 removed trivy SBOM generation keep the "trivy" the
-    # #227 migration backfilled; they are not relabelled as confirmed by a
-    # source that never saw them.
+    # Inventory provenance: github, upload, or github,upload. Sources can report
+    # different components. Upserts pass source explicitly; the model default is github,
+    # with no DB default. Preserve legacy trivy provenance on old rows.
     source: str = "github"
     first_seen: datetime = Field(default_factory=utcnow)
     last_seen: datetime = Field(default_factory=utcnow)
@@ -1001,20 +903,9 @@ class AiBomComponent(SQLModel, table=True):
     checkout (app/tasks/sbom_tasks.py), so no extra clone.
     """
 
-    # This index is the upsert key app.core.aibom.upsert_aibom_components keys
-    # on: a model is identified by target + branch + name + type. Version is
-    # deliberately NOT part of it -- an unpinned reference that later gains a
-    # revision is the same dependency, now pinned, not a new one.
-    #
-    # It is declared here, and not only in the migration that created it
-    # (alembic/versions/3d006423f58b_add_aibom_components_190.py), because a
-    # unique index that exists in the database but not in the model metadata
-    # is invisible to Alembic's comparison: `--autogenerate` sees an index in
-    # the database that nothing in metadata accounts for and emits
-    # `op.drop_index('ix_aibomcomponent_upsert_key')`. That was one of the
-    # unrelated operations #217 found sitting in generated migrations. Keep
-    # this declaration in step with the migration; the guard for it is
-    # tests/test_schema_drift.py.
+    # AIBOM upsert identity is target + branch + name + type, excluding version so
+    # pinning updates the same dependency. Align this index with its migration: absent
+    # metadata makes Alembic autogenerate drop it. See tests/test_schema_drift.py.
     __table_args__ = (
         Index(
             "ix_aibomcomponent_upsert_key",
@@ -1059,17 +950,9 @@ class SbomRun(SQLModel, table=True):
     # Comma-separated SbomComponent ids that were net-new on this run,
     # same rationale as DiscoveryRun.new_ids above.
     new_ids: str = ""
-    # (#227) Which SBOM sources actually contributed to this run, and which
-    # were attempted but could not answer. Same three-state discipline as
-    # PRGuardrailScan.tools_run/tools_failed (#243, #253): GitHub's
-    # Dependency Graph returning nothing because it is disabled for a
-    # private repo is NOT the same fact as a repo genuinely having no
-    # dependencies, and an inventory that cannot tell those apart is the
-    # false-all-clear shape this codebase keeps refusing.
-    #
-    # Empty until a source actually answers: a row is created with
-    # status="running" before the task starts, and a run that fails before
-    # any source contributes must not read as one where GitHub did.
+    # Record sources that actually contributed and sources that failed separately. An
+    # unavailable graph is not an empty inventory. Start with no sources while running;
+    # never claim contribution before a source answers.
     sources_run: str = ""
     sources_failed: str = ""
     started_at: datetime = Field(default_factory=utcnow)
@@ -1498,26 +1381,10 @@ class ScanSchedule(SQLModel, table=True):
         UniqueConstraint(
             "workspace_id", "target_id", "scan_type", name="uq_scan_schedule_workspace_target_type"
         ),
-        # The constraint above cannot police the workspace-default rows,
-        # because Postgres treats NULL as distinct for uniqueness: two rows
-        # with target_id NULL, the same workspace and the same scan_type do
-        # not collide under it. That is not a cosmetic gap here. Both rows
-        # would pass due_schedules, both would cover every target in the
-        # workspace, and every target would be scanned twice per cycle
-        # forever -- while every read path (which takes .first()) kept
-        # showing exactly one healthy schedule, so nothing would ever
-        # surface it.
-        #
-        # SlaRule documents the same NULL gap and answers it with a
-        # lookup-then-write API guard. That is not enough for this table:
-        # the row that matters is created by ensure_workspace_default_rows
-        # running unattended every few minutes on every worker, where a
-        # lookup-then-insert is a real check-then-act race rather than a
-        # theoretical one. So it is enforced in the schema instead, as a
-        # partial unique index. Both dialects are spelled out because tests
-        # build this table from the model metadata on SQLite while
-        # deployments get it from the Alembic migration on Postgres, and an
-        # invariant that only exists in production is one nothing catches.
+        # Postgres treats NULL target IDs as distinct for uniqueness. A partial unique
+        # index prevents duplicate workspace defaults and concurrent duplicate dispatch.
+        # Declare both SQLite and Postgres predicates so metadata tests enforce the same
+        # invariant as production migrations.
         Index(
             "uq_scan_schedule_workspace_default",
             "workspace_id",

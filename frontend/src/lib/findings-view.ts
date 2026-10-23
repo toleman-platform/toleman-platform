@@ -1,18 +1,5 @@
-/**
- * Shared parsing for every surface that renders a findings list.
- *
- * Two pages show findings: /findings, and a target's Vulnerabilities tab. The
- * tab shipped as a bare paginated list with no filters, no grouping and no
- * sort, so a target with 1,137 findings was a 46-page scroll — the same thing
- * that made /findings unusable before it was grouped.
- *
- * Rather than copy that page's queue, sort and filter parsing into the tab,
- * both read it from here. Duplicating it is how "Needs action" ends up meaning
- * one thing on one page and something slightly different on the other.
- *
- * A plain module, deliberately not a "use client" component: both callers are
- * Server Components, and a Server Component cannot import a value from a
- * client module (see eslint-rules/no-client-value-import-in-server).
+/** Shared findings URL parsing for the Findings page and target Vulnerabilities tab.
+ * Keep this module server-compatible: both callers are Server Components.
  */
 import type { FindingGroupSort } from "@/types";
 import { pageSizeFromParams } from "@/lib/pagination";
@@ -23,23 +10,13 @@ export function firstValue(v: string | string[] | undefined): string | undefined
   return Array.isArray(v) ? v[0] : v;
 }
 
-/**
- * Next.js hands back a string[] for a repeated query key and a bare string for
- * exactly one. Every multi-select filter normalises to an array so callers
- * never have to care which they got.
- */
+/** Normalize single and repeated query values for multi-select filters. */
 export function toArray(v: string | string[] | undefined): string[] {
   if (v === undefined) return [];
   return Array.isArray(v) ? v : [v];
 }
 
-/**
- * Categories that are a policy question rather than an incident.
- *
- * A copyleft licence on a transitive build binary is a quarterly call for one
- * person; a leaked credential is an incident. Letting the former set the page
- * count is what buried the latter on page six.
- */
+// Keep policy review separate from the incident triage queue.
 export const POLICY_CATEGORIES = ["License"];
 
 export type QueueId = "action" | "license" | "resolved" | "all";
@@ -83,23 +60,14 @@ export function parseSort(raw: string | undefined): FindingGroupSort {
 
 export type FindingsView = ReturnType<typeof parseFindingsView>;
 
-/**
- * Everything both findings surfaces read off the URL.
- *
- * `*Raw` fields are kept alongside the parsed ones because link building has
- * to round-trip exactly what was in the URL: writing back a normalised value
- * would rewrite the reader's address bar on every navigation.
- */
+/** Preserve raw URL values alongside parsed filters for lossless link building. */
 export function parseFindingsView(sp: SearchParamRecord) {
   const severity = toArray(sp.severity);
   const tool = toArray(sp.tool);
   const fixability = toArray(sp.fixability);
   const state = toArray(sp.state);
   const search = firstValue(sp.search);
-  // Exact group identity, distinct from `search`: the API's search matches
-  // title, file path, rule id, CVE and target name, so linking to one
-  // specific decision with it can drag in anything whose title happens to
-  // mention the rule. The dashboard's needs-action queue links here.
+  // Match exact rules; free-text search can include unrelated findings.
   const rule_id = toArray(sp.rule_id);
   // Target metadata filters (#459): filter findings by the owning target's
   // environment or owner. Multi-select, same as severity and tool.
@@ -118,9 +86,7 @@ export function parseFindingsView(sp: SearchParamRecord) {
   const queue = parseQueue(firstValue(sp.queue));
   const queued = queueFilters(queue);
 
-  // Grouped is the default: one row per decision. `?view=flat` is the old
-  // one-row-per-detection list, kept because "show me every occurrence" is a
-  // real question, just not the one a triage queue opens on.
+  // Default to one row per decision; flat view shows every detection.
   const grouped = firstValue(sp.view) !== "flat";
 
   const sortRaw = firstValue(sp.sort);

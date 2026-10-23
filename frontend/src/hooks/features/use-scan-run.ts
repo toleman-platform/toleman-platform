@@ -6,29 +6,10 @@ import { pollUntilSettled } from "@/lib/poll";
 import type { ScanPhase } from "@/components/features/scans/scan-status";
 
 /**
- * L3 Domain Hook: Follows one dispatched scan from queued to settled (issue #212).
- *
- * Deliberately not built on useAsyncData. That hook models a single request
- * with a definite end; this models a job whose state is only discoverable by
- * asking repeatedly until it stops changing. Bolting a poll loop onto a
- * one-shot fetch hook would have meant a second, subtly different set of
- * cancellation rules inside it.
- *
- * Three details that make the countdown behave:
- *
- *  1. Elapsed time ticks locally between polls, anchored to the server's
- *     number rather than to the client's clock. Deriving it from
- *     `started_at` against `Date.now()` would fold any client/server clock
- *     skew straight into the display; a laptop a minute fast would show a
- *     scan as having run for a minute before it was dispatched.
- *  2. The scan starts in `queued`, not `running`. The gap between the API
- *     accepting the dispatch and a worker picking it up is real, and calling
- *     it "running" claims work has begun that may not have.
- *  3. Settling is reported through callbacks fired from the poll, not by
- *     leaving the caller to watch `phase` in an effect. A caller reacting to
- *     a phase change in an effect would fire again on every re-render that
- *     preserved that phase, so it would need its own guard; and the moment
- *     a scan finishes is a genuine event, not a piece of derived state.
+ * Poll one dispatched scan from queued to settled. Anchor elapsed time to the server
+ * value and tick locally to avoid client clock skew. Preserve queued until a worker
+ * starts. Fire settlement callbacks from the poll event, with cancellation rules
+ * separate from one-shot useAsyncData requests.
  */
 export type UseScanRunOptions = {
   onCompleted?: (findingsCount: number) => void;

@@ -5,23 +5,9 @@ import { Icon as IconWrapper } from "@/components/ui/icon";
 import Link from "next/link";
 
 /**
- * A single headline number with its label (issue #210).
- *
- * Promoted out of the target Overview, where the same shape already existed
- * in three places (dashboard KPI cards, SBOM counts, target posture) with
- * three different paddings and two different label sizes.
- *
- * The `value` is typed `React.ReactNode` rather than `string` on purpose: a
- * count with a severity breakdown beside it ("1137" + "3H") is a legitimate
- * value, and forcing callers to stringify it pushed them back to hand-rolling
- * the card.
- *
- * `unknown` is a first-class variant, not an afterthought. Across this
- * codebase the distinction between "we measured zero" and "we have not
- * measured" keeps mattering; an unscanned repository is not a clean one
- * (#174), an ungenerated AIBOM is not an absence of models (#190). A stat
- * card that renders a confident `0` for missing data actively misinforms, so
- * the unknown case is built in and styled differently.
+ * Shared headline metric card. Accept ReactNode for values with breakdowns. Use the
+ * explicit unknown variant for unmeasured data; zero must reflect a successful
+ * measurement.
  */
 
 export type StatCardProps = {

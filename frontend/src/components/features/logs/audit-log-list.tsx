@@ -81,20 +81,9 @@ export function AuditLogList({
   page: number;
   pageSize: number;
   /**
-   * True when the request that produced `events` failed (audit-log/page.tsx
-   * passes `auditResult === null` from its `settleOrNull(api.auditLog(...))`).
-   *
-   * This used to be a decision the *page* made on its own: call this
-   * component only on success, render an `ErrorState` itself otherwise. That
-   * puts the empty-vs-failed distinction one `if` away from evaporating --
-   * on a compliance surface, a caller that forgets the branch (or a future
-   * surface that reuses this list without copying it) renders "No audit
-   * events found" for a request that never actually answered, which is
-   * exactly the false all-clear #77/#465's honesty pass exists to prevent
-   * everywhere else. Taking `failed` as a prop instead means the guarantee
-   * lives once, in the component every caller already has to use, rather
-   * than in every call site's discipline. Defaults to `false` so existing
-   * callers that don't pass it keep today's behavior.
+   * True when the events request failed. Let the shared list distinguish failure from a
+   * successful empty response so callers cannot accidentally show a false empty audit
+   * trail. Defaults false for existing callers.
    */
   failed?: boolean;
 }) {

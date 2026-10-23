@@ -83,18 +83,8 @@ function RiskScore({ score }: { score: number }) {
 }
 
 /**
- * How long this finding has been open, shown where the risk score sits when
- * the score has no variance to report.
- *
- * The clock is read once at mount rather than during render, for the same
- * reason SlaBadge does it below: age is day-granular, so re-reading it changes
- * nothing a reader can see, and a render that depends on the current time is
- * impure -- two renders of the same finding could disagree.
- *
- * NaN-guarded the same way its sibling `daysSince` (finding-group-row.tsx)
- * guards the identical computation: an unparseable `first_seen` must read as
- * unknown-age (0d) rather than let NaN propagate through Math.max/Math.floor
- * into a rendered "NaNd".
+ * Read the age clock once at mount because display is day-granular. Guard invalid
+ * first_seen values to prevent NaNd; match the sibling daysSince fallback.
  */
 function FirstSeenAge({ finding }: { finding: Finding }) {
   const [now] = useState(() => Date.now());

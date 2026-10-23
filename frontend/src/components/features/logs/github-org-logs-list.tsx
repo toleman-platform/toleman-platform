@@ -21,17 +21,9 @@ export function GithubOrgLogsList({
   page: number;
   pageSize: number;
   /**
-   * True when the request behind `events` failed rather than genuinely
-   * returning nothing -- same shape as AuditLogList's `failed` (see that
-   * file for why this lives on the list rather than only in the page's own
-   * ternary). github-org-logs/page.tsx doesn't pass this yet; it still
-   * pre-branches to its own `<ErrorState>` instead of rendering this list at
-   * all on failure, so today's behavior for that page is unchanged. This is
-   * the other log surface #465's honesty pass covers by moving the
-   * capability into the shared component, so any caller -- that one
-   * included, once updated -- gets it without re-deriving it. Defaults to
-   * `false` so the untouched call site keeps compiling and behaving exactly
-   * as it does today.
+   * True when the events request failed, allowing the shared list to distinguish
+   * failure from a successful empty response. Defaults false for compatibility with
+   * callers that branch to ErrorState themselves.
    */
   failed?: boolean;
 }) {

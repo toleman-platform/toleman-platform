@@ -3,24 +3,8 @@ import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 
 /**
- * A density-aware row in a scannable list (issue #210).
- *
- * Four files repeated the same two lines:
- *
- *     <Card className="... py-0">
- *       <CardContent style={{ paddingTop: "var(--density-row-py)",
- *                             paddingBottom: "var(--density-row-py)" }}>
- *
- * The `py-0` is not cosmetic. The base Card carries `py-6`, 48px that no
- * density token can reach, so a row without it ignores the density setting
- * almost entirely. That was the actual cause of "Compact only saves 7%" in
- * #172, and the fix had to be applied file by file. Putting it here means the
- * next list gets it for free instead of reintroducing the bug.
- *
- * `selectable` renders the checkbox rather than leaving each list to place
- * its own, because the accessible name is the part everyone forgets: a column
- * of unlabelled checkboxes is announced as "checkbox, checkbox, checkbox"
- * with no indication of what is being selected.
+ * Density-aware Card row. py-0 removes fixed Card padding so density tokens control
+ * spacing. Selectable rows render their own accessibly named checkbox.
  */
 export type ListRowProps = {
   children: React.ReactNode;

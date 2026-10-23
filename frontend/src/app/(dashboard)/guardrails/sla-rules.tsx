@@ -28,24 +28,9 @@ function isValidDays(raw: string): boolean {
   return Number.isInteger(n) && n >= 1;
 }
 
-// M16: this used to be a bare `<Input defaultValue={r.days_to_fix} onBlur={...}>`
-// that committed to the server the instant the field lost focus -- clicking
-// anywhere else on the page (or tabbing to the delete button) saved whatever
-// was in the box, half-typed or not, with no confirmation and no way back.
-// A day count silently changes every open finding's SLA deadline for this
-// severity/group, so "I was still typing" is not a safe thing for a blur
-// event to interpret as "save this".
-//
-// Fixed the same way every other mutation on this page already is: nothing
-// reaches the server until an explicit action. Enter or the checkmark
-// commits; Escape or the X discards the draft and restores what is actually
-// configured. The Save/Discard pair only appears once the draft differs from
-// the committed value, so an untouched row stays exactly as quiet as before.
-//
-// `key`-remounted from the parent (`${rule.id}-${rule.days_to_fix}`, same
-// trick as risk-scoring.tsx's SignalRow) rather than synced with an effect:
-// a successful save changes `rule.days_to_fix`, which is a fresh committed
-// value this component should adopt outright, not diff against.
+// Commit SLA edits only on Enter/checkmark; Escape/X restores configured values. Show
+// actions only for changed drafts. Remount on rule ID/days changes so successful saves
+// adopt the new committed value without an effect.
 function SlaDaysEditor({
   rule,
   label,

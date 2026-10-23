@@ -222,34 +222,9 @@ function RequestIgnoreAction({
   );
 }
 
-// Presentation note: this deliberately does not render through
-// features/findings' FindingRow/FindingDetailDrawer, even though both are
-// exactly the "shared finding presentation" this file should be matching.
-// Tried first, ruled out for a reason worth recording rather than silently
-// diverging again: PRGuardrailFinding (backend/app/models/models.py) is not a
-// Finding with fields missing, it is a smaller, separate table -- the model's
-// own comment on `severity` says why ("stored as str, not Severity, since
-// these aren't platform Findings"). It carries no priority_score, sla_days,
-// kev_listed, epss_score, state, target_id, branch, category or fixability,
-// because a PR-time diff finding has no triage lifecycle, no SLA clock and no
-// KEV/EPSS enrichment yet -- it may never become a persisted Finding at all
-// if the PR closes unmerged. FindingRow and FindingDetailDrawer both require
-// a real Finding for exactly those fields (RiskScore, SlaBadge,
-// FindingEnrichmentPanel, ScoreBreakdownPanel all read them directly); the
-// only way to hand them a PRGuardrailFinding would be inventing placeholder
-// values for data that was never measured, which is the one thing AGENTS.md
-// §1.4 rules out ("a failed or unmeasured check must NEVER render as a
-// confident zero, an empty state, or a success").
-//
-// So the boundary is adapted instead of papered over: this consumes the same
-// severity tokens FindingRow/FindingGroupRow consume --
-// SEVERITY_COLOR/SEVERITY_BORDER_COLOR from lib/severity.ts, the same
-// left-border-accent severity-first hierarchy pattern -- so a change to what
-// "Critical" looks like lands here automatically instead of this file
-// re-deriving its own palette and drifting the way the KEV/EPSS badges once
-// did between the grouped and flat finding rows. Everything rendered below is
-// a real PRGuardrailFinding field; nothing here is a stand-in for data this
-// object does not have.
+// PRGuardrailFinding lacks the enrichment, priority, SLA, and triage data required by
+// FindingRow. Render its real fields using shared severity tokens; never fabricate
+// placeholder measurements to force it into the richer row.
 function PrGuardrailFindingRow({
   finding,
   onChanged,
@@ -349,27 +324,9 @@ function PrGuardrailFindingRow({
   );
 }
 
-// (#383) One line flagged by two tools is one problem with one fix, and used
-// to render as two full rows -- the exact "two separate issues" misreading
-// this grouping exists to stop.
-//
-// The division of labour with the backend is deliberate, and is the whole
-// reason this function is as suspicious as it is:
-//
-// * **Membership is the backend's decision.** group_findings_by_location
-//   deliberately keeps some same-location findings apart (one tool's own two
-//   rules on a line; file-level findings with no line number), so this must
-//   never re-derive who belongs with whom from the rows' own file/line. It
-//   reads only what the API sends -- group_key, which is unique per group,
-//   and group_size, which says how many members that group has -- and treats
-//   both as a hard ceiling. Getting this wrong renders a *different*
-//   grouping than the PR comment for the same scan, with fewer rows.
-// * **Labels are derived from the members.** Tool list, severity and the
-//   headline finding come from the rows actually in the bucket, so a row can
-//   never be labelled with another group's tools or badged at a severity
-//   none of its members has. Mirrors LocationGroup.severity/.tools in
-//   app/core/pr_guardrail_executor.py: highest severity wins, distinct tools
-//   in arrival order.
+// Trust backend group_key/group_size membership; never regroup by file/line or exceed
+// the declared size. Derive labels from actual members: highest severity and distinct
+// tools in arrival order, matching LocationGroup.
 export type FindingGroup = {
   key: string;
   findings: PrGuardrailFinding[];

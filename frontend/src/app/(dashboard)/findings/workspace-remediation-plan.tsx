@@ -11,22 +11,9 @@ import { ReloadButton } from "@/components/reload-button";
 import { ActivityPagination } from "@/components/ui/activity-pagination";
 import { PackageRow } from "../targets/[id]/remediation-plan";
 
-// (#247 follow-up) The Fix Plan tab exists per-target, but a security
-// engineer owns a whole estate, not one repo at a time -- "what closes the
-// most open findings for the least work" is exactly as useful asked across
-// every target as it is asked about one. This is that same question,
-// answered by GET /api/findings/remediations/workspace
-// (backend/app/core/remediation.py's workspace_remediation_plan), which
-// fans the identical per-target grouping out across targets rather than
-// merging packages across them: "starlette" needing an upgrade on two
-// different repos is two rows here, each tagged with which target it's
-// for -- a fix is only ever actionable against one specific repo.
-//
-// Deliberately NOT exposing "Raise all" or the auto-raise toggle here:
-// those are per-target actions (the per-target tab keeps them), and a
-// button that raises PRs across every repository in the workspace at once
-// is a much bigger, riskier action than this view's job of triage and
-// visibility.
+// Workspace fix plans reuse per-target grouping: the same package in two repos stays
+// two actionable rows. Keep Raise all and auto-raise controls on the target view; this
+// cross-repo view is for triage and visibility.
 
 function findingsWord(count: number): string {
   return count === 1 ? "finding" : "findings";

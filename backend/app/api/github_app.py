@@ -209,21 +209,9 @@ def status(session: Session = Depends(get_session), user: User = Depends(current
         "installed": bool(installations),
         "account_login": installations[0].account_login if installations else None,
         "webhook_secret_set": bool(configs and configs[0].webhook_secret),
-        # (#355) Everything the Integrations card needs to decide, before
-        # any App exists, whether "Connect GitHub" can succeed at all: a
-        # localhost PUBLIC_API_URL means GitHub rejects the manifest and
-        # creates nothing (see webhook_reachable's docstring). This has to
-        # ride on /status rather than /manifest-data, which is where the
-        # frontend read it before, for two reasons: /status is what the
-        # card loads on mount whether or not any App exists (the old
-        # warning rendered only next to already-created Apps, so a fresh
-        # install -- the only install that hits this -- never saw it), and
-        # /manifest-data mints a CSRF state token into _pending_states on
-        # every call, which is not something a page load should do just to
-        # render a warning.
-        #
-        # public_api_url is echoed so the warning can name the offending
-        # value instead of telling the operator to go and find it.
+        # Expose webhook reachability on /status so fresh installs can warn. Avoid
+        # /manifest-data for this read because it mints CSRF state. Include
+        # public_api_url to identify the configured value.
         "webhook_reachable": webhook_reachable(BACKEND_URL),
         "public_api_url": BACKEND_URL,
     }
@@ -435,24 +423,10 @@ def _sync_repos(session: Session, only_installation_id: int | None = None) -> in
             existing_urls.add(clone_url)
             created += 1
     session.commit()
-    # (#330) Queue the Dependency Graph import for each newly imported repo,
-    # after the commit that gives the rows their ids. Async on purpose: an
-    # org with hundreds of repos would otherwise hold the App install
-    # callback open for hundreds of sequential GitHub calls.
-    #
-    # queue_dependency_graph_sync commits once per target; expire_on_commit
-    # (on by default) would otherwise expire every other Target still
-    # waiting in new_targets after each of those commits, turning a large
-    # import into a SELECT per remaining target just to re-read attributes
-    # this loop already has in memory.
-    #
-    # GH-07: also queue a full scan of the default branch here, same reason
-    # and same async-dispatch shape. Without this, a freshly-synced repo sat
-    # with no completed Scan at all until someone happened to click Scan on
-    # it -- "no baseline yet" was correct but permanent, and every PR against
-    # it kept getting PR Guardrail's honest-but-useless non-answer instead of
-    # a real diff. queue_full_scan also commits per target/tool; same
-    # expire_on_commit guard applies.
+    # Queue dependency imports and baseline full scans after targets get IDs. Dispatch
+    # asynchronously so large installations do not block callbacks. Both helpers commit
+    # per target; disable expire_on_commit here to avoid reloading remaining Target
+    # objects after every commit.
     session.expire_on_commit = False
     try:
         for target in new_targets:

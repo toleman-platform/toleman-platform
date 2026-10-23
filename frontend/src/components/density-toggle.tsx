@@ -25,17 +25,9 @@ function readStoredDensity(): Density {
 }
 
 /**
- * Applies the persisted density to `<html data-density>` as early as
- * possible on mount, rendered once near the top of the body in the root
- * layout. Uses `useLayoutEffect` (fires synchronously before the browser
- * paints) rather than a raw `<script dangerouslySetInnerHTML>`/next/script
- * `beforeInteractive` injection: both of those produced a real
- * hydration-mismatch / "Invalid or unexpected token" error in this app's
- * Turbopack dev setup, and mutating a DOM attribute outside React's own
- * state (no setState call here) is exactly what `useLayoutEffect` is for.
- * There's a theoretical one-frame flash on first paint for compact-density
- * users vs. a blocking inline script, which is an acceptable trade-off for
- * a progressive-enhancement density mode.
+ * Apply persisted density to html during useLayoutEffect. Avoid script injection that
+ * conflicted with hydration; accept a possible first-paint frame before this
+ * progressive enhancement.
  */
 export function DensityInit() {
   useLayoutEffect(() => {

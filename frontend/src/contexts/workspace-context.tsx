@@ -1,53 +1,12 @@
 "use client";
 
 /**
- * Issue #506: the one place the platform's active workspace lives.
- *
- * Before this, thirteen pages each ran their own `useWorkspacePicker`
- * (frontend/src/hooks/features/use-workspace-picker.ts) with independent,
- * in-memory-only state, and everything else (Dashboard, Findings, Targets,
- * Scans, ...) had no workspace control at all -- there was no single answer
- * to "which workspace am I looking at". This context is that answer: one
- * fetch of the workspace list, one persisted selection, one value every page
- * reads instead of holding its own.
- *
- * `activeWorkspaceId === null` means "All workspaces" (every workspace the
- * caller can see -- the admin route's existing no-filter behavior, and a
- * non-admin's full accessible-workspace set); a specific id narrows to just
- * that one. The initial value, absent a stored choice, is the caller's first
- * workspace rather than "All" -- several existing pages (Guardrails,
- * Scan Schedules, Tool Marketplace, ...) require a real workspace_id to
- * fetch anything at all, and defaulting to "All" would land a first-time
- * visitor on an empty/disabled view of those pages instead of the working
- * single-workspace view `useWorkspacePicker` always gave them. "All" is
- * always one click away in the switcher for pages that support it.
- *
- * This is the first React Context in the app (no precedent to follow for
- * global client state -- AuthUser itself is fetched per-page, not shared).
- *
- * Persistence follows the same per-user, try/catch-guarded localStorage
- * convention as lib/dashboard-preferences.ts (a shared workstation is normal
- * here; one operator's active workspace must not become the next operator's
- * default). A stored id that no longer appears in the fetched workspace list
- * (deleted workspace, or a different user's leftover choice on a shared
- * machine) is treated the same as "nothing stored" rather than surfaced as
- * an error.
- *
- * Also mirrored into a `toleman-active-workspace` cookie -- same
- * client-and-server-agree reasoning as ThemeToggle's `toleman-theme` cookie
- * (src/components/theme-toggle.tsx): Dashboard/Findings/Targets/Scans fetch
- * their data server-side in a Server Component, which has no access to
- * localStorage, so the cookie is what lets those pages' initial render
- * already reflect the active workspace instead of a client-side refetch
- * flashing in a second, narrower result right after hydration. Unlike the
- * localStorage key, the cookie is NOT per-user (a plain cookie has no cheap
- * place to put a user id the server hasn't validated yet) -- so it is
- * re-synced to this browser's actual resolved `activeWorkspaceId` on every
- * change, including the per-user resolution on mount/login-switch, not only
- * on an explicit pick. A shared machine's cookie can therefore be one
- * render stale immediately after a different user logs in, self-correcting
- * on that same first client render; the same trade-off ThemeInit documents
- * for the theme cookie.
+ * Shared active-workspace state: one workspace fetch and selection for all consumers.
+ * Null means all accessible workspaces; absent/invalid saved choices default to the
+ * first workspace. Persist per-user selection with guarded localStorage. Mirror the
+ * resolved choice to a cookie for Server Components on mount and every change; the
+ * non-user-scoped cookie can be one render stale after an account switch and then
+ * self-corrects.
  */
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";

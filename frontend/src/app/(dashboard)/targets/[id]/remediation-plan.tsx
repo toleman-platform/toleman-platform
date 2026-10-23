@@ -19,43 +19,11 @@ import { RemediationRaisePrButton } from "./remediation-raise-pr-button";
 import { RemediationBulkRaise } from "./remediation-bulk-raise";
 import { TargetAutoRaiseFixPrs } from "./target-auto-raise-fix-prs";
 
-// (#247) "Fix plan" tab: what closes the most open findings for the least
-// work, which a findings list -- flat OR grouped -- cannot answer. Grouping
-// collapses duplicate detections of the SAME rule; it says nothing about
-// five different CVEs on `requests` all going away with one version bump.
-// GET /api/findings/remediations (backend/app/core/remediation.py) already
-// does that grouping, fully tested, and shipped with no frontend caller at
-// all -- confirmed by grepping the whole frontend for "remediat" before
-// writing a line here.
-//
-// Two properties from that module's docstring this file must not get wrong,
-// both about overstating what an upgrade does (see PackageRemediation in
-// types/findings.ts for the fuller version):
-//
-//   1. `upgrade_to` is the LOWEST version that clears every grouped CVE, so
-//      it is rendered as a plain "upgrade to X", never as "latest" or
-//      "recommended" -- either word implies a jump this data does not
-//      support.
-//   2. `unresolved` -- CVEs on the SAME package this upgrade does NOT close
-//      -- is rendered on every row that has any, unconditionally. This is
-//      the one honesty guarantee the whole tab exists to preserve: a
-//      package with 2 of 5 CVEs fixed must never read as "fixed".
-//
-// The same rule applies to the answer with no rows in it at all, which is
-// what `emptyPlanCopy` below is for: "no upgrade resolves these" is a claim
-// about advisories that were actually read, and the backend now ships the
-// coverage (RemediationCoverage) that says whether any were.
-
-/**
- * `/targets/{id}?tab=vulnerabilities`, scoped to one CVE via the same
- * `search` param AI Analysis' typeahead already reuses (search matches
- * title/file_path/rule_id/cve_id/target name -- see
- * backend/app/api/findings.py's `_filtered_findings_query`). `queue=all`
- * bypasses the default "Needs action" queue's category exclusions: every
- * finding this tab is about is open and CVE-bearing, so nothing about it
- * should be filtered away by a queue built for triage policy, not for
- * "find me this one thing".
- */
+// Fix plans group CVEs by package upgrade. Render upgrade_to as the lowest version
+// clearing the grouped CVEs, never latest/recommended. Always show unresolved CVEs on
+// the same package; partial fixes must not read as fully fixed. Empty-plan claims
+// require enrichment coverage. CVE links use the shared search parameter and queue=all
+// so triage category exclusions cannot hide the findings.
 function vulnerabilityLink(targetId: number, cveId: string): string {
   const params = new URLSearchParams({ tab: "vulnerabilities", queue: "all", search: cveId });
   return `/targets/${targetId}?${params.toString()}`;
@@ -197,28 +165,9 @@ function findingsWord(count: number): string {
 }
 
 /**
- * The empty fix plan, which is not one state but four.
- *
- * `plans.length === 0` is the same value whether nobody has looked a single
- * one of this target's CVEs up, or every advisory was read and none offers a
- * fixed version. Only the second says anything about fixes. This tab used to
- * render that second sentence for both, which on a target with 188 open
- * findings and no enrichment is a confident negative over a measurement that
- * never ran -- AGENTS.md §1.4, in the feature whose entire purpose is being
- * honest about partial fixes.
- *
- * So the branch is on `coverage` (backend/app/core/remediation.py's
- * enrichment_coverage), narrowest claim first:
- *
- *   - nothing to plan against: no open finding here carries a CVE;
- *   - unmeasured: CVEs are open and none has been looked up;
- *   - looked up, nothing came back: rows exist but no advisory record does,
- *     so "no fix" is still not established;
- *   - measured: advisories exist and none names a fixed version.
- *
- * Only the last is allowed to say there is no fix. Partial coverage is
- * stated as a count in every branch that has one, never rounded to either
- * end.
+ * Choose empty-plan copy using enrichment coverage: no CVE-bearing findings; CVEs never
+ * looked up; lookups without advisory records; or measured advisories with no fixed
+ * version. Only the last establishes no known fix. State partial coverage explicitly.
  */
 function emptyPlanCopy(coverage: RemediationCoverage | null): { title: string; description: string } {
   if (coverage === null) {

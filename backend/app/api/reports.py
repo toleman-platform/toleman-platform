@@ -615,33 +615,10 @@ def build_posture_report(
                 )
 
         if want_scans:
-            # Latest scan per tool for this target; "coverage" is which
-            # (target, tool) pairs have ever been scanned and when they last
-            # ran, not a full run-by-run history. Deliberately NOT narrowed
-            # by the finding-level filters: "this repo was last scanned by
-            # Trivy on the 3rd" is a fact about the repository, and it does
-            # not become less true because the reader asked to see only
-            # critical findings. FILTER_SCOPE_NOTE says so on the document.
-            #
-            # It IS bounded by the window's end, and only at that end. The
-            # reason this section can be bounded at all, when triage state
-            # and SBOM composition cannot, is reconstructability: Scan rows
-            # are immutable history, so "the latest run per tool on or
-            # before `as_of`" is exactly recoverable rather than inferred.
-            #
-            # Why only the upper bound, judged by the same test as every
-            # other filter here -- does the alternative print something
-            # false? Dropping scans after `as_of` deletes statements that
-            # were false at `as_of` (that September run had not happened in
-            # Q1). Dropping scans before the window would delete statements
-            # that were *true* at `as_of`: a repo last scanned 2025-12-15
-            # genuinely had that as its latest scan on 2026-03-31, and
-            # removing the row would substitute a fabricated "not scanned"
-            # and destroy the staleness signal, which is the most useful
-            # thing a coverage table carries. The failure directions are
-            # asymmetric, so the bounds are too.
-            #
-            # With no window, `as_of` is now and this is a no-op.
+            # Coverage uses the latest scan per tool, independently of finding filters.
+            # Bound by as_of only: earlier runs remain the true latest scan even outside
+            # the report window. A lower bound would falsely label stale repos as never
+            # scanned. Without a window, as_of is now.
             scan_query = select(Scan).where(Scan.target_id == target.id)
             if filters.window_to is not None:
                 scan_query = scan_query.where(Scan.started_at <= as_of)

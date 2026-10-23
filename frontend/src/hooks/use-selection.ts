@@ -3,20 +3,8 @@
 import { useCallback, useMemo, useState } from "react";
 
 /**
- * Multi-select state for a paginated list (issue #210).
- *
- * Three lists (findings, targets, scans) each hand-rolled the same four
- * primitives: a `Set`, `toggleOne`, `toggleAll` and `allSelected`. They drifted,
- * and the drift caused a real bug: `allSelected` and "select all" were computed
- * against the *filtered* list while the page rendered only a slice of it, so
- * the header checkbox claimed everything was selected when one page was, and
- * "select all" silently selected rows the user could not see. That was fixed
- * per-file in #204; this makes it structural.
- *
- * The rule the API enforces: **`visibleIds` is the page, and select-all acts
- * on the page.** A control the user can see must only ever act on rows the
- * user can see. Bulk-acting on an unseen 1,300 rows because a checkbox was
- * ticked is the kind of thing that ruins someone's afternoon.
+ * Page-scoped multi-selection. visibleIds must contain only rendered page rows;
+ * select-all and allSelected operate on that page, never on hidden filtered results.
  */
 export type UseSelectionResult = {
   selected: ReadonlySet<number>;

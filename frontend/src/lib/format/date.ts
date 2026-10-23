@@ -38,21 +38,9 @@ export function timeAgo(isoTimestamp: string): string {
 }
 
 /**
- * Parse a timestamp the API produced.
- *
- * Every datetime column in this schema is naive UTC (see
- * app/core/time.py's `utcnow`), so FastAPI serialises them with no timezone
- * designator: "2026-09-13T10:00:00". `new Date()` reads a bare string like
- * that as **local** time, which silently shifts it by the reader's offset.
- * Appending the Z the value already meant is the fix.
- *
- * Used by `timeUntil` below, where the shift is unmissable: a countdown
- * rendered from a mis-parsed timestamp can read "in 19 hours" for something
- * due in 24, or go negative and claim a future run already happened.
- * `timeAgo` above now parses through this too (#443). It was deliberately
- * left alone when this helper was introduced, because correcting it moves
- * every historical timestamp in the app at once and deserved its own change
- * rather than arriving as a side effect of adding scheduling.
+ * Parse API timestamps as UTC: naive datetime strings need Z because JavaScript
+ * otherwise interprets them as local time. Use this for relative timestamps and
+ * countdowns so client timezone offsets cannot shift the represented instant.
  */
 export function parseServerTimestamp(isoTimestamp: string): number {
   const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(isoTimestamp);
@@ -125,24 +113,9 @@ export function timeUntil(isoTimestamp: string): string {
 }
 
 /**
- * Absolute renderings that depend on nothing about the machine doing the
- * rendering: "2026-09-13 10:00:00 UTC", "2026-09-13 UTC", "10:00:00 UTC".
- *
- * `toLocaleString()` and its siblings read the host's locale *and* timezone,
- * and in an app that server-renders those differ between the Node process
- * that produces the HTML and the browser that hydrates it. A server in UTC
- * emitting "13/09/2026, 10:00:00" against a browser in Asia/Kolkata
- * producing "9/13/2026, 3:30:00 PM" is a real hydration mismatch, and for a
- * moment the reader sees a time that is not the time they end up with. On a
- * security product the moment next to an audit event is evidence, so the fix
- * is a value both sides agree on rather than a suppressed warning.
- *
- * `<Timestamp>` (components/ui/timestamp.tsx) renders these until the
- * viewer's own clock and locale are the ones being read, then upgrades.
- *
- * An unparseable input is echoed back unchanged -- the contract `timeAgo`
- * and `formatSince` already follow -- so a bad value reads as the bad value
- * rather than as "Invalid Date" or as the epoch.
+ * Deterministic UTC date/time strings keep SSR and hydration independent of host
+ * locale/timezone. Timestamp upgrades them to viewer-local formatting after mount. Echo
+ * unparseable input unchanged rather than displaying Invalid Date or epoch.
  */
 export function formatUtcDateTime(isoTimestamp: string): string {
   const d = utcDateOrNull(isoTimestamp);

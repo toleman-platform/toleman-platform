@@ -33,24 +33,9 @@ export function SecurityScoreGauge({ score, grade }: { score: number; grade: str
   const targetScore = Math.round(normalizedScore);
   const color = grade ? GRADE_COLOR[grade] ?? "var(--color-chart-1)" : "var(--color-muted-foreground)";
 
-  // Geometry. The svg is 240x125 with a 1:1 viewBox, so every number below is
-  // both an svg user unit and a CSS pixel inside the positioned wrapper, and
-  // the two coordinate systems cannot drift apart.
-  //
-  // Arc: centre (120, 80), r = 70, stroke 10, a 230 degree sweep rotated 155
-  // degrees so the gap sits symmetrically at the bottom. That puts the
-  // painted ring between y = 5 (top of the stroke) and y = 114.6 (outer edge
-  // of the two lower endpoints).
-  //
-  // Optical centring of the numeral: the ring's own bounding box is centred
-  // at y = 59.8, the circle at y = 80. A shape that is open at the bottom
-  // reads as if its middle were above the true circle centre, but not as far
-  // up as the bounding box suggests, so the numeral's ink is centred between
-  // the two, at y = 70. With `leading-none` a digit's ink centre sits
-  // essentially at its own line box centre, so a 42px line box starting at
-  // y = 49 lands the ink where it is wanted. The "out of 100" caption then
-  // hangs below it, which balances the numeral + caption pair back onto the
-  // circle centre without moving the numeral itself off the optical one.
+  // SVG and wrapper share 240x125 coordinates. Arc center (120,80), radius 70, stroke
+  // 10, sweep 230 degrees, rotation 155 degrees. Center numeral ink optically at y=70
+  // between the ring bounds and circle center; the caption balances the pair below.
   const radius = 70;
   const strokeWidth = 10;
   const circumference = 2 * Math.PI * radius; // ~439.82

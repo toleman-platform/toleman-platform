@@ -6,19 +6,9 @@ import type { ScanHealth } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /**
- * How a scan's state reads, in one place (issue #212).
- *
- * Before this, triggering a scan produced a button that said "Scanning..."
- * for a moment and then nothing. The scan itself was invisible: no status on
- * the target row, none on the target detail page, and nothing at all for
- * API/DAST runs, whose longer durations made the silence worse. Every
- * surface that can show a scan now shares this component, so "running" looks
- * and reads the same everywhere.
- *
- * The states are deliberately four, not three. `queued` is the window
- * between dispatching the Celery task and the worker picking it up, and
- * collapsing it into `running` would claim work had started that may not
- * have, the same class of overclaim as showing an ungrounded ETA.
+ * Shared scan-state presentation. Keep queued distinct from running: API acceptance
+ * does not establish that a worker has started. All scan surfaces use the same labels
+ * and progress treatment.
  */
 export type ScanPhase = "queued" | "running" | "completed" | "failed";
 
@@ -104,18 +94,8 @@ export function ScanStatusBadge({
 }
 
 /**
- * The "we did not trust this run" marker (issue #229).
- *
- * A scan can complete, exit cleanly and report zero findings while having
- * read a half-written vulnerability database. `Completed · 0 findings` is
- * then the most misleading thing the UI can say: it reads as a clean repo
- * for a repo with live CVEs. This badge is what stops it reading that way.
- *
- * Renders nothing for "healthy" and nothing for "unknown". Unknown is every
- * scan recorded before this existed plus every push-ingested run with no
- * evidence either way; badging those would put a warning on a year of
- * legitimate history, and a warning on everything is a warning on nothing.
- * The UI simply makes no claim there, which is the honest position.
+ * Mark completed scans whose results were not trusted. Render no badge for healthy or
+ * unknown; legacy/push-ingested runs without evidence must not be mislabeled suspect.
  */
 export function ScanHealthBadge({ health, className }: { health: ScanHealth; className?: string }) {
   if (health !== "suspect") return null;

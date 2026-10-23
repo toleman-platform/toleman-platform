@@ -53,20 +53,9 @@ const ALL_TOOLS_VALUE = "";
 // claimed the scan was finished while the worker had not yet started it.
 type DispatchState = "idle" | "dispatching" | "dispatched" | "error";
 
-// (core H5) The summary line for a bulk dispatch used to be one string
-// rendered as plain muted text -- indistinguishable, visually and to
-// assistive tech, from "3 targets included" a few lines above it. A run
-// where half the batch 429'd needs to look and sound different from one
-// where all of it worked, the same distinction `AlertBanner` already makes
-// for every other write action in this codebase (see
-// finding-detail-drawer.tsx's State Updated / Triage Failed pair). Three
-// tones, not two: a batch that failed outright reads as a hard stop
-// (`critical`), one that partially failed still delivered real work and
-// needs the reader to go check which targets did not (`warning`, matching
-// PartialFailureBanner's own choice of tone for "some of this did not load"),
-// and "nothing to do, every target was deactivated" is neither -- it is the
-// dispatch working exactly as designed against a selection with nothing
-// scannable in it (`info`).
+// Bulk dispatch outcomes need distinct live feedback: complete failure is critical,
+// partial failure is warning, and no work because all targets are deactivated is
+// informational. Do not render these as an undifferentiated summary count.
 type DispatchTone = "info" | "warning" | "critical" | "positive";
 type DispatchOutcome = { tone: DispatchTone; title: string; message: string };
 

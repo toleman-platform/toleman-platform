@@ -22,20 +22,9 @@ const USAGE_SURFACES = [
 
 const CATEGORY_ORDER = ["SAST", "SCA", "Secrets", "Container", "IaC", "License", "API/DAST", "AI/ML"];
 
-// Issue #75: tool marketplace / health page. Extends the original Sprint 1
-// Tools Health tab (still available separately at the "tools" admin tab,
-// backed by /api/tools/health, which now probes every registry tool too)
-// with the full registry across every supported category (including the
-// new IaC tools; Checkov, tfsec, KICS), a real live health check per tool,
-// and a per-workspace usage assignment matrix (on-demand scan / CI
-// pipeline / API scan / PR guardrail).
-//
-// Issue #216 added one-click install. The button appears only for tools the
-// backend can actually install into itself (`installable`, derived from a
-// pip package in the registry); everything needing brew/go/docker keeps the
-// copyable command, because a button that cannot work is worse than no
-// button. The endpoint takes a registry key rather than a package name;
-// see app.core.tool_install for why that is what makes this safe.
+// Tool registry with health and per-workspace scan-surface assignments. One-click
+// install is available only for backend-installable registry keys; other tools expose
+// copyable commands rather than nonfunctional buttons.
 export function ToolMarketplace() {
   // (#506) Follows the global workspace switcher; the tool registry itself
   // is org-wide, only the per-tool usage-assignment matrix is per-workspace
@@ -67,23 +56,10 @@ export function ToolMarketplace() {
     { enabled: workspaceId != null, deps: [workspaceId] },
   );
 
-  // An unticked checkbox is a statement: "this scanner runs on nothing in this
-  // workspace". Until the assignment map has actually been read that is not a
-  // statement anyone can make, and an admin who reads it as one re-ticks
-  // surfaces that were already enabled. So there are three answers here, not
-  // two (AGENTS.md 1.4):
-  //
-  //   known   - render the boxes.
-  //   pending - a request is in flight; render the wait, with nothing in it
-  //             that can be read as a setting.
-  //   unknown - nothing will answer this until something else changes (the
-  //             read failed, or there is no workspace to ask about). A
-  //             skeleton here would pulse forever promising an answer.
-  //
-  // `useAsyncData` retains the last good map across a refetch, so `assignments
-  // !== null` is exactly "read successfully at least once", which keeps the
-  // boxes on screen during a background refresh instead of flicking back to
-  // skeletons after every toggle.
+  // Assignment states are known, pending, or unknown. Render checkboxes only after a
+  // successful read; false must not stand in for unread data. useAsyncData retains the
+  // last good map during refresh. Failed/no-workspace reads need an unknown state, not
+  // a permanent loading skeleton.
   const assignmentState: "known" | "pending" | "unknown" =
     assignments !== null
       ? "known"
@@ -185,28 +161,12 @@ export function ToolMarketplace() {
                           // ever applies to a negative "installed".
                           <StatusBadge status="failed" label="error" />
                         ) : t.bundled ? (
-                          // (admin M1/M2 -- the same root cause as the
-                          // identical two-state badge on the Tools Health
-                          // tab.) A bundled tool ships in the same image
-                          // the worker uses (BUNDLED_TOOLS, enforced by
-                          // scripts/verify_tools.py in CI), so a negative
-                          // reading here is inherently surprising, not the
-                          // routine "go install this" case the red badge
-                          // implies for everything else. Worker-side
-                          // confirmation (tool_health_cache.get_worker_
-                          // health) is written only by a *completed
-                          // one-click install*, and most bundled tools
-                          // (gitleaks, trivy, gosec, ...) never go through
-                          // one at all -- no button, nothing to confirm
-                          // with -- so this process's own probe is the
-                          // only signal that will ever exist for them.
-                          // Even the few that are also pip-installable
-                          // (semgrep, modelscan) would normally have shown
-                          // "installed: true" from day one; an install
-                          // button appearing for one of those is a repair
-                          // path, not routine setup. Either way, a
-                          // confident red "not installed" claims more than
-                          // this check can back up.
+                          // Bundled tools should exist in the worker image. Worker
+                          // confirmation is written only after one-click installs, so
+                          // its absence is normal for binary tools without install
+                          // buttons. A negative local probe cannot confidently
+                          // establish worker absence; pip install buttons for bundled
+                          // tools are repair paths.
                           <StatusBadge status="unknown" label="unverified" />
                         ) : (
                           <StatusBadge status="failed" label="not installed" />

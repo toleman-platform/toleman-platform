@@ -27,25 +27,9 @@ import { SeverityChip } from "@/components/ui/severity-chip";
 import { TargetPicker } from "@/components/features/targets";
 import { timeAgo } from "@/lib/format/date";
 
-// Issue #177/#181: malicious dependencies detected via OSV.dev. Hits are
-// persisted as ordinary Critical `Finding` rows (tool="osv-malware"), so this
-// page is a focused view over the findings the SBOM-generation pipeline
-// already produces; the same rows the Findings list shows, just filtered
-// and re-assertable without regenerating an SBOM.
-//
-// A target with nothing flagged used to render as three zeros and a
-// sentence -- indistinguishable from a target nobody had ever checked. The
-// per-repository list below (backed by Target.malware_last_checked_at /
-// _last_check_status / _packages_checked, stamped by
-// app.core.osv_malware_ingestion.check_and_ingest_malware on every
-// completed check) is what turns "clean" into a claim with evidence behind
-// it: how many packages, compared when, and a link to the exact inventory
-// that was compared.
-
-// OSV serves the malicious-packages dataset live from /v1/querybatch; there
-// is no dataset export or version number to cite, so the honest "source"
-// statement is what was queried and how current the answer is, not a
-// pinned version this page cannot actually name.
+// OSV malware hits are Critical Finding rows with tool=osv-malware. Distinguish never
+// checked from clean using each target's last completed check, package count, and
+// inventory link. OSV querybatch is a live source with no dataset version to cite.
 const OSV_SOURCE_NOTE =
   "Source: OSV.dev's OpenSSF malicious-packages advisories, queried live against each target's SBOM inventory on every check. OSV does not publish a dataset version to pin to -- how recently a repo was checked is the freshness signal.";
 
@@ -135,22 +119,10 @@ export default function MaliciousPackagesPage() {
     setCheckState((c) => ({ ...c, [targetId]: "checking" }));
     setImportWarning((w) => ({ ...w, [targetId]: "" }));
     try {
-      // Pull the latest GitHub dependency-graph inventory first (issue #226
-      // follow-up); a manual scan that only re-checked whatever was
-      // already persisted could still miss a package OSV just flagged if
-      // that package was never in the last SBOM generation's Trivy scan to
-      // begin with. import_github_sbom's own /github-sync endpoint already
-      // runs the OSV malware check itself over the freshly-merged inventory
-      // (best-effort), so one call covers both "import" and "check".
-      //
-      // Falls back to a plain re-check over whatever's already persisted
-      // when the import can't run at all (no GitHub App/token configured
-      // for this workspace, or the dependency graph is disabled/unavailable;
-      // a 502); the repo may still have a Trivy-sourced SBOM worth
-      // re-checking even without GitHub access. The fallback is silent for
-      // any *other* import failure (network blip, unexpected GitHub
-      // response); only "the graph isn't enabled for this repo" is
-      // specific and actionable enough to call out on its own.
+      // Import the latest GitHub inventory before checking malware; github-sync also
+      // checks the merged inventory. Fall back to checking persisted components when
+      // import fails. Show the graph-unavailable explanation only for the specific
+      // actionable 502 case.
       let status: "clean" | "found" | "failed";
       let count: number;
       try {

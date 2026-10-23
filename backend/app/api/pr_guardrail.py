@@ -410,30 +410,12 @@ def list_pr_guardrail_findings(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    """Persisted net-new findings for one PR scan, with ignore-request state.
+    """Return net-new findings with ignore-request state and location groups.
 
-    (#383) Each row also carries its same-location grouping (`group_key` and
-    `group_size`) so the UI can collapse "one line, flagged by semgrep and
-    gitleaks" into one expandable row the way the PR comment does, without
-    re-deriving the grouping rule client-side. Still one row per finding:
-    nothing is merged away, and each remains independently ignorable.
-
-    Ordered by id, and that is load-bearing rather than tidiness. `group_key`
-    used to be a pure function of a finding's location and so came out the
-    same whatever order rows arrived in; it is now a function of *position*
-    (it carries the group's first member's id to stay unique per group). An
-    unordered SELECT has no stability guarantee -- Postgres relocates a row
-    on UPDATE, and the ignore workflow updates exactly these rows -- so the
-    same scan could come back with the group keyed off a different member
-    between two fetches. The partition stays correct either way, but the
-    React key changes, which remounts the group and collapses it under a
-    user who has just expanded it and requested an ignore (that request
-    triggers the refetch). It also pins two things that are otherwise only
-    incidentally true: a severity tie picking the same headline finding here
-    as in the PR comment, and LocationGroup.tools' "the order they were
-    scanned" being the insertion order it claims to be.
+    Order by id to keep group keys, tied-severity headlines, and tool order
+    stable across refetches after an ignore request.
     """
-    pr_scan = _get_pr_scan_scoped(pr_scan_id, session, user)
+    _get_pr_scan_scoped(pr_scan_id, session, user)
     findings = session.exec(
         select(PRGuardrailFinding)
         .where(PRGuardrailFinding.pr_scan_id == pr_scan_id)

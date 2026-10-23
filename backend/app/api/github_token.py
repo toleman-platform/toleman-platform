@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from app.api.auth import current_user, require_admin
+from app.api.auth import require_admin
 from app.api.deps import get_session
 from app.core.time import utcnow
 from app.core.github_token import (

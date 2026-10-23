@@ -41,17 +41,9 @@ from app.core.config import settings
 TTL_SECONDS = 30
 _KEY_PREFIX = "toolhealth:"
 
-# Worker-reported health is a separate keyspace with a much longer life
-# (CTX-03). It answers a different question from the short-TTL cache above:
-# not "what did the web process see just now" but "what did the process that
-# actually runs scans see when it last installed this tool".
-#
-# The web process cannot re-derive this (that is the entire bug) so it
-# must not expire on the 30s probe cadence, or a successfully installed tool
-# would flip back to "not installed" half a minute later. It is refreshed on
-# every install and, being Redis-backed, is lost on a Redis restart, which is
-# the correct failure direction: the claim degrades to absent rather than to
-# a stale "installed" for a tool a redeploy has since removed.
+# Worker health uses separate, longer-lived keys because backend probes cannot observe
+# worker installs. Refresh on installs rather than expiring at the short probe cadence.
+# Redis restart removes this evidence, safely reverting to unconfirmed.
 _WORKER_KEY_PREFIX = "toolhealth:worker:"
 WORKER_TTL_SECONDS = 24 * 60 * 60
 

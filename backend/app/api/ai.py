@@ -1,9 +1,5 @@
-
-# httpx stays imported here (even though the calls themselves now live in
-# app.core.ai_provider) because tests monkeypatch "app.api.ai.httpx.post";
-# httpx is a single shared module object, so patching .post via this
-# attribute path still affects ai_provider's own httpx.post call too.
-import httpx
+# Re-exported for existing app.api.ai.httpx.post monkeypatches.
+import httpx as httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
@@ -17,15 +13,13 @@ from app.core.ai_provider import (
     resolve_anthropic_key,
     resolve_provider,
 )
-from app.core.config import settings
+from app.core.config import settings as settings  # Existing app.api.ai.settings monkeypatch target.
 from app.core.time import utcnow
 from app.models.models import AiAnalysisRun, Finding, PlatformConfig, Target, User
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
-# Kept as thin aliases (rather than deleting) since existing tests reference
-# these names on this module; the real logic now lives in app.core.ai_provider
-# so app.core.autofix can share it without importing an api module.
+# Preserve the API module aliases used by existing tests.
 _resolve_anthropic_key = resolve_anthropic_key
 _resolve_provider = resolve_provider
 _openai_compatible_configured = openai_compatible_configured

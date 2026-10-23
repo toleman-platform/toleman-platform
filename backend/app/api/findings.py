@@ -27,7 +27,6 @@ import app.core.npm_lockfile_autofix as npm_lockfile_autofix
 from app.core.staleness import mark_stale_if_needed
 from app.core.grouping import (
     DEFAULT_SORT,
-    SORT_KEYS,
     UNGROUPED_CATEGORIES,
     group_aggregate_columns,
     representative_finding,
@@ -43,7 +42,6 @@ from app.core.fixability import (
     FIXABLE,
     NO_KNOWN_FIX,
     UNKNOWN,
-    VALID_FIXABILITY,
     fixability_for_enrichment,
     fixability_for_finding,
 )
@@ -1139,27 +1137,10 @@ def _facet_list(values: list[str], counts: dict[str, int]) -> list[FacetCount]:
     return [FacetCount(value=value, count=counts.get(value, 0)) for value in values]
 
 
-# Which filter params a dimension must drop when counting itself (rule 1
-# below). Nearly always just its own, with two that are not:
-#
-#   state    also drops `resolved`. `resolved` is the same dimension wearing
-#            a different name -- it narrows to OPEN_FINDING_STATES or
-#            RESOLVED_FINDING_STATES -- and in the list `state` *wins* over
-#            it (see _filtered_findings_query). Counting states with
-#            `resolved` still applied, while the list ignores it, is exactly
-#            how `?state=Open&resolved=false` came to report "Mitigated: 0"
-#            beside a `?state=Mitigated&resolved=false` query that returns
-#            rows. A count answers "what would I get if I picked this
-#            state", and the answer the list gives ignores `resolved`.
-#   category is not a _filtered_findings_query param at all; it is applied
-#            on top via _apply_category, along with `exclude_category` --
-#            the queue tabs' "every category but these" (#456), which is the
-#            same dimension stated as a complement. Both are skipped for the
-#            category dimension itself, inside scoped_query rather than here.
-#
-# Doubles as the allow-list of dimension names: a typo'd dimension would
-# otherwise drop nothing and quietly return counts filtered by themselves,
-# which still look like plausible numbers.
+# Facet counts drop their own dimension. State also drops resolved because explicit
+# state overrides it in the list query. Category and exclude_category are applied
+# separately and both skipped by scoped_query for category counts. These keys also
+# validate dimension names.
 _FACET_SELF_EXCLUSIONS: dict[str, tuple[str, ...]] = {
     "severity": ("severity",),
     "state": ("state", "resolved"),
@@ -1651,18 +1632,9 @@ def raise_package_fix_pr_endpoint(
         # already open for this package rather than opening a duplicate.
         pr = {"pr_url": exc.pr_url, "pr_number": exc.pr_number, "branch": exc.branch}
     except AutofixError as exc:
-        # 422, never 502/504: this is an application-level "couldn't
-        # complete the GitHub-side write" condition (no App installed,
-        # couldn't decrypt a stored credential, no manifest could be
-        # bumped), not an actual gateway/upstream failure -- and
-        # Cloudflare's edge intercepts 502/504 responses and replaces them
-        # with its own generic error page, stripping the body AND every
-        # header including CORS. That's indistinguishable from the API
-        # being unreachable to a browser's fetch(), which is exactly what
-        # this status code was doing before it was reproduced live: a
-        # clean, intentional 502 whose body/headers the browser never
-        # actually got to see, indistinguishable from the backend being
-        # down.
+        # Return 422 for application-level GitHub write failures. Cloudflare replaces
+        # 502/504 responses with generic pages and strips CORS/body details, making
+        # actionable API errors look like network outages.
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return RaisePackageFixPrResponse(**pr)
 
@@ -1743,22 +1715,9 @@ def raise_all_remediation_prs_endpoint(
     try:
         run_raise_all_batch.delay(batch_id=batch.id)
     except Exception as exc:
-        # A broker publish failure (Redis unreachable, etc) means the task
-        # will never run -- left as "running", the batch would only get
-        # marked failed once mark_stale_if_needed's timeout elapses on a
-        # later poll. Fail it immediately and visibly instead: the caller
-        # gets a real error right away rather than a spinner that looks
-        # "in progress" for up to the stale-job window. 422, not 502/504:
-        # same Cloudflare-edge-interception reasoning as every other
-        # AutofixError response in this file -- those status codes get
-        # replaced with a generic edge error page before the browser ever
-        # sees the body, indistinguishable from the API being unreachable.
-        #
-        # The raw exception is logged server-side only, never put in the
-        # response: unlike AutofixError (a deliberately crafted, safe
-        # user-facing message), this is whatever the Celery/Redis client
-        # library raised, which can carry internal connection details a
-        # DEVELOPER-role caller has no business seeing.
+        # Fail broker dispatch immediately instead of waiting for stale-job timeout.
+        # Return 422 so Cloudflare does not replace 502/504 bodies. Log raw exceptions
+        # server-side only; connection details are not user-safe.
         logger.exception("failed to dispatch raise-all batch %s", batch.id)
         batch.status = "completed"
         batch.failed = batch.total

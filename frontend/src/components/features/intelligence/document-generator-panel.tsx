@@ -7,21 +7,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * Shared "pick a target, generate/scope a thing" panel (issue #121).
- * Previously SBOM, API Discovery and PR History each hand-rolled their own
- * selector markup at three different widths/styles. This is the single
- * implementation all four pages (SBOM, API Discovery, PR History, Reports)
- * now build on, matching the design board's `doc-gen` panel:
- *
- *  - "stacked" layout: numbered vertical steps (SBOM, API Discovery,
- *    PR History's repo/scope picker), `DocGenStep` for each field.
- *  - "inline" layout: a single horizontal row (Reports' own pre-existing
- *    best-in-app shape, kept close to as-is per the design board) --
- *    `DocGenField` for each field.
- *
- * `WhatsIncludedCard` is exported separately (not just used internally) so
- * Reports, whose content card renders outside the selector card, can share
- * the exact same markup instead of a near-duplicate.
+ * Shared target/scope generation panel: stacked layouts use numbered DocGenStep fields;
+ * inline layouts use DocGenField. Export WhatsIncludedCard separately for pages whose
+ * output summary sits outside the selector.
  */
 
 export function DocGenStep({
@@ -139,21 +127,9 @@ export function DocGenSelect({
 }
 
 /**
- * What the reader will get if they press Generate, as a disclosure that is
- * closed until asked for.
- *
- * A disclosure rather than folding this into the page heading's `HelpHint`,
- * for two reasons. The Reports call site's list is not fixed copy -- it is
- * the sections the operator has actually ticked, plus a footnote naming the
- * ones they excluded -- and `HelpHint` takes a static `HelpTopic` from the
- * shared help registry, so that content has nowhere to live there. And the
- * two answer different questions: the help hint says what this page is for,
- * while this says what the button next to it will produce, which is why it
- * belongs beside the button.
- *
- * Closed by default because the answer stops being news after the first
- * generation, and an always-open list of three or four bullets was taking a
- * large share of the viewport on every subsequent visit, forever.
+ * Closed-by-default disclosure describing what Generate will produce. Keep beside the
+ * action: selected report sections are dynamic and cannot live in HelpHint's static
+ * topic registry.
  */
 export function WhatsIncludedCard({
   items,

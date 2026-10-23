@@ -31,40 +31,13 @@ const GITHUB_TTL_OPTIONS: { value: string; label: string }[] = [
   { value: "8760", label: "1 year" },
 ];
 
-// M20: the default used to be "" (Never), with no comment saying why -- an
-// external review flagged it as an arbitrary pick rather than a considered
-// one. "Never" is a defensible *option* (some workspaces genuinely want a
-// static token and accept the tradeoff), but it is a bad *default* for a
-// platform whose own guardrails would flag a non-expiring credential
-// elsewhere: this PAT authenticates git clones and API calls against every
-// repo in the workspace, and a default of "no expiry" means an admin who
-// clicks through without picking a TTL -- the common case -- gets the
-// longest-lived, worst-to-rotate version of this credential without ever
-// deciding to.
-//
-// 90 days is the middle preset in GITHUB_TTL_OPTIONS above: long enough that
-// routine scanning is never interrupted by a surprise mid-quarter expiry
-// (the auto-purge/expiry copy right below the header already tells the
-// admin when it will lapse), short enough to actually bound how long a
-// leaked or forgotten token stays valid instead of that risk running
-// indefinitely. "Never" stays one click away for whoever explicitly wants
-// it -- this only changes what happens when nobody picks.
+// Default workspace GitHub PAT expiry to 90 days to bound leaked/forgotten credentials.
+// Never remains an explicit option for operators who accept that tradeoff.
 const DEFAULT_GITHUB_TTL_HOURS = "2160";
 
-// admin M13: every secret on this page was `type="password"` with no way
-// back to plain text. That correctly stops a shoulder-surfer or a screen
-// share from reading the value, but it also stops the admin who just pasted
-// it from checking what they actually typed before hitting Save -- the only
-// way to verify a masked paste was to already trust it, which is no
-// verification at all. Defaulting to masked and putting the toggle under the
-// admin's own explicit click (same shape as the sign-in field in
-// app/login/page.tsx, and the workspace API-key card) keeps the credential
-// off-screen by default while still letting them confirm it once, on
-// purpose, immediately before it leaves the browser. autoComplete stays a
-// hardcoded "off": every field this renders is a service secret, never the
-// admin's own login, so a password manager must never offer to remember it
-// as one (see settings/page.tsx's ProfileSection for the one place that
-// distinction runs the other way).
+// Mask service secrets by default and reveal only on explicit user action for pre-save
+// verification. Keep autoComplete off: these are integration credentials, not the
+// operator's login.
 function SecretInput({
   id,
   ariaLabel,

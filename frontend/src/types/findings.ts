@@ -271,23 +271,10 @@ export type RemediationUnresolved = {
 };
 
 /**
- * (#247) One package upgrade recommendation from
- * GET /api/findings/remediations (backend/app/core/remediation.py's
- * group_remediations) -- the smallest set of version bumps that would close
- * the most open, CVE-bearing findings on a target, most findings-closed
- * first.
- *
- * Two properties that module's docstring calls out, both about overstating,
- * and both the reason this type exists rather than reusing a looser shape:
- *
- * - `upgrade_to` is the LOWEST version that clears every CVE in `fixes`,
- *   never the newest release. Never label it "latest" or "recommended" in
- *   the UI -- it is specifically the smallest jump the evidence supports,
- *   and a bigger one reads as a recommendation nobody asked for.
- * - `unresolved` is what this SAME upgrade leaves behind. Never hide it,
- *   never fold its length into `fixes_count`, and never render a summary
- *   like "upgrading fixes this package" when `unresolved` is non-empty --
- *   "fixes N of M findings" is the only claim the data supports.
+ * Package-upgrade plans from /api/findings/remediations, ordered by findings closed.
+ * upgrade_to is the lowest version clearing fixes, never latest/recommended. Always
+ * show unresolved CVEs left by that same upgrade; never count them as fixed or claim
+ * the package is fully fixed.
  */
 export type PackageRemediation = {
   package: string;

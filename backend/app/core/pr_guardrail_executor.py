@@ -141,26 +141,9 @@ def _run_guardrail_tools(
     if any(tool in ("trivy", "trivy-license") for tool in tools) and (
         paths is None or runner.manifest_changed(paths)
     ):
-        # (#229) Guardrail scans hardlink from the same warm vulnerability
-        # DB the scheduled scans use. Warming here too means a PR check on a
-        # deployment whose beat has not run yet pays the download once,
-        # under the shared lock, instead of once per concurrent PR.
-        #
-        # The gate mirrors run_tool's own scoping decision exactly, so we
-        # only pay for the download when trivy is actually going to run:
-        #
-        #   paths is None      unscoped scan; _run_tool_inner runs trivy
-        #                      over the whole checkout, so warm it. (Passing
-        #                      None to manifest_changed, which iterates its
-        #                      argument, raised TypeError and aborted the
-        #                      whole guardrail scan before any tool ran.)
-        #   paths given        diff-scoped; _run_tool_scoped raises
-        #                      ToolNotApplicable for a MANIFEST tool when no
-        #                      manifest changed. Warming on assignment alone
-        #                      would make the typical PR -- one that changes
-        #                      application code only -- wait on a
-        #                      multi-hundred-megabyte download for a scanner
-        #                      that is then skipped.
+        # Warm the shared Trivy DB only when Trivy will run: paths=None means unscoped;
+        # scoped scans require a changed manifest. Avoid downloading the DB for
+        # code-only PRs whose dependency scan will be skipped.
         runner.ensure_warm_trivy_db()
     for tool in tools:
         started = time.perf_counter()
@@ -491,19 +474,8 @@ def _diff_new_endpoints(session: Session, target: Target, repo_path) -> list[dic
     }
 
     if not existing:
-        # (GH-06) No baseline has ever been discovered for the default
-        # branch, so there is nothing to diff against; and diffing against
-        # an empty set makes the *entire repository* look new.
-        #
-        # An external evaluation hit exactly this: a PR touching one file got
-        # a comment announcing four new endpoints across bad/vulpy.py,
-        # good/vulpy.py and their SSL variants. First-run noise, in the most
-        # visible artefact this tool produces, at the moment a team is
-        # deciding whether to trust it.
-        #
-        # "No baseline" is not "everything is new", same distinction this
-        # codebase draws between a check that found nothing and a check that
-        # never ran. Report nothing rather than something false.
+        # No default-branch baseline means no comparison, not that the entire repo is
+        # new. Report no endpoint diff until a baseline exists.
         logger.info(
             "PR guardrail: no persisted endpoint baseline for target %s branch %s, "
             "skipping the new-endpoint diff for this scan rather than reporting the "
@@ -560,31 +532,10 @@ LEGACY_COMMENT_MARKERS = ("<!-- rikugan-pr-guardrail -->",)
 OPEN_BY_DEFAULT_SEVERITIES = {"Critical", "High"}
 
 
-# --- Same-location grouping (#383) -------------------------------------------
-#
-# One hardcoded test secret on one line is routinely flagged by two tools at
-# once -- semgrep's generic.secrets.security.detected-aws-access-key-id-value
-# and gitleaks' aws-access-token both fire on the same AWS key. Both
-# detections are correct and both are persisted (see below), but rendering
-# them as two top-level rows and counting them as two net-new findings tells
-# a reviewer there are two problems to fix when there is one line and one fix.
-#
-# This is a *presentation* layer only, and deliberately so:
-#
-# * `compute_dedup_hash` still includes each finding's own `tool`, and must
-#   keep doing so (tests/test_pr_guardrail_multi_tool.py::
-#   test_same_rule_from_two_tools_is_not_deduped_away). Collapsing across
-#   tools by content alone would let an unrelated semgrep hit "match" a real
-#   gitleaks hit on the same file/line and silently vanish as not-net-new.
-#   Nothing here changes what is scanned, hashed, diffed or persisted.
-# * Every member of a group keeps its own PRGuardrailFinding row, its own
-#   rule/title, its own deep link and its own ignore-request lifecycle. A
-#   group is a row, never an entity: there is nothing to approve, ignore or
-#   deep-link at group level, which is why LocationGroup has no id.
-#
-# Grouping is therefore safe in a way cross-tool dedup is not: nothing is
-# dropped, so a group that turns out to hold two genuinely different problems
-# on one line still shows both, one click away.
+# Same-location grouping affects presentation only. Dedup hashes must retain tool
+# identity so unrelated cross-tool detections cannot disappear. Each member keeps its
+# row, rule, deep link, and ignore-request lifecycle; groups have no persistent identity
+# or group-level ignore action.
 
 
 def _severity_rank(severity: str) -> int:
@@ -921,18 +872,9 @@ def _findings_table(
                 f"{_action_cell(f, target_id, pr_scan_id)} |"
             )
             continue
-        # The Rule cell carries the tool list rather than a rule id: the
-        # whole point of the row is that there is no single rule here, and
-        # "found by: semgrep, gitleaks" is the fact that turns two scary
-        # rows into one line to go and look at. Per-tool rule ids are one
-        # click away, below.
-        #
-        # The Links cell deliberately offers only "view" -- no group-level
-        # "request ignore". Ignores are per-finding (there is no group row
-        # in the database to approve), and a group-level ignore link would
-        # also collide with the exact-substring patching
-        # update_finding_status_in_pr_comment/revoke_finding_status_in_pr_comment
-        # do on an individual row's cell.
+        # Grouped rows show contributing tools; individual rule IDs appear below. Offer
+        # only view at group level: ignores belong to findings, and group ignore links
+        # would collide with per-finding status-cell patching.
         lines.append(
             f"| {g.severity} | found by: {', '.join(g.tools)} | {g.primary.title} | {loc} | "
             f"{_group_action_cell(g, target_id, pr_scan_id)} |"
@@ -1094,23 +1036,8 @@ def _group_detail_blocks(groups: list[LocationGroup], target_id: int, pr_scan_id
     return lines
 
 
-# (#271) A PR comment is a snapshot that gets read days later. Every severity
-# here is derived from priority_score (app/core/scoring.py), which folds in
-# EPSS and CISA KEV; both of which move. A finding rendered Medium when the
-# comment was posted can genuinely be Critical by the time someone reviews
-# it, because CISA added its CVE to KEV in between.
-#
-# Snyk's own fix PRs carry this line, and it was the one thing the
-# competitive teardown said to steal outright:
-#
-#   "Max score is 1000. Note that the real score may have changed since the
-#    PR was raised."
-#
-# It is the same instinct as tools_failed/tools_skipped (#243, #253) (a
-# result is only true as of when it ran) applied to score freshness rather
-# than scan completeness. Deliberately rendered on every comment, not only
-# when something scored high: a reader cannot know whether a score moved
-# without being told the number has an as-of date at all.
+# PR comments are snapshots: EPSS/KEV changes can alter scores after posting. Always
+# show score freshness, regardless of current severity.
 def _staleness_footer(scanned_at: datetime | None) -> str | None:
     if scanned_at is None:
         return None
@@ -1871,21 +1798,9 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
     being created; None (the on-demand route's case, which already runs
     synchronously on the request thread with no such gap to close) keeps
     the original create-fresh behavior."""
-    # (#273) Target lifecycle is checked before enforcement mode, and before
-    # anything else: a deactivated or soft-deleted target gets no clone, no
-    # PRGuardrailScan row, no PR comment and no commit status, exactly like
-    # enforcement_mode="disabled" below. Checked here in the shared executor
-    # rather than only in the two entry points (the webhook handler and the
-    # on-demand route) so neither can be reached by a path that skipped it --
-    # the Celery task in particular re-loads the target by id, minutes after
-    # the webhook decided it was fine.
-    #
-    # Note the deliberate asymmetry with enforcement_mode="disabled": that
-    # one is a *policy* decision about PR gating, so it is reported as a
-    # distinct "disabled" status. This is the repo being switched off
-    # wholesale, and is reported as "skipped" with the reason, so a reader
-    # of the returned payload can tell "we chose not to gate PRs here" from
-    # "this repo is not being scanned at all".
+    # Check lifecycle in the shared executor before any clone, scan row, comment, or
+    # commit status, including delayed Celery dispatch. Lifecycle refusal is skipped;
+    # enforcement_mode="disabled" remains a distinct policy outcome.
     lifecycle_refusal = target_lifecycle.scan_refusal_reason(target)
     if lifecycle_refusal:
         logger.info(
@@ -2010,17 +1925,9 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
                 else:
                     scan_paths = expanded
 
-        # (#244 meets the diff-attribution filter below) A blast-radius file
-        # is in this scan precisely because the PR's change can reach it:
-        # the expansion exists to catch "editing A.py made existing code in
-        # B.py vulnerable", and B.py is by definition not in the diff.
-        # Attributing by changed lines alone would therefore discard exactly
-        # the findings the expansion was added to surface. Every expanded
-        # path is attributed as WHOLE_FILE instead -- the same
-        # "we could not narrow it, so do not suppress" value
-        # _changed_line_map already uses for a file GitHub sends no patch
-        # for. setdefault, so a literally-changed file keeps its real line
-        # set and stays filtered to the lines the author wrote.
+        # Blast-radius files are attributed as WHOLE_FILE because affected existing code
+        # may be outside changed lines. Use setdefault so literally changed files retain
+        # their actual line filters.
         if scan_paths is not None and changed_lines is not None:
             for path in scan_paths:
                 changed_lines.setdefault(path, WHOLE_FILE)
@@ -2230,18 +2137,9 @@ def execute_pr_guardrail_scan(target: Target, pr_number: int, session: Session, 
             else:
                 commit_state, commit_desc = "failure", summary_desc
         elif failed_tools:
-            # PASSED among the tools that ran, but not every assigned tool
-            # did. Coverage was incomplete -- said plainly here and in the
-            # PR comment (still rendered as "not an all-clear", never a
-            # plain checkmark) -- but incomplete coverage with zero findings
-            # in what *did* run is not itself grounds to block merge.
-            # Without this, a workspace whose pr_guardrail assignment
-            # includes a single tool this deployment can never run (not
-            # installed, e.g. a GitHub-release-only binary) would fail
-            # every PR forever regardless of content, which defeats using
-            # this as a required check at all. This never masks a real
-            # finding: that path is handled by the BLOCKED branch above,
-            # which always wins over this one.
+            # A scan with no blocking findings may pass despite incomplete coverage, but
+            # the PR comment must state it is not an all-clear. BLOCKED always takes
+            # precedence so this cannot mask real findings.
             commit_state = "success"
             commit_desc = f"{summary_desc} ({', '.join(failed_tools)} failed to run)"
         else:

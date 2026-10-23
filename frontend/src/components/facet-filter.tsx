@@ -22,26 +22,9 @@ export type FacetOption = { value: string; label: string; count: number | null }
 // already on each one.
 const DEFAULT_VISIBLE = 6;
 
-// (#270) One filter dimension, rendered as a row of toggle pills with the
-// count on each one.
-//
-// This replaces MultiSelectFilter for the dimensions the backend can count
-// (severity/state/tool/fixability/environment/owner). The difference is the
-// whole point of the issue: a dropdown hides its options until you open it,
-// so the only way to learn there are 12 Criticals was to filter to Critical
-// and read the result count. Pills put the shape of the backlog on the page
-// -- you read it instead of operating it.
-//
-// Deliberately uniform styling across every dimension rather than severity
-// colours here: six dimensions of coloured pills would drown the numbers,
-// and the numbers are the reason this component exists. Severity keeps its
-// semantic colour where it identifies a *finding* (finding rows, badges),
-// not where it labels a control.
-//
-// Same "URL is the source of truth" convention as every other filter on
-// this page (multi-select-filter.tsx, group-filter.tsx): each toggle pushes
-// a repeated query param, so a filtered view survives reload, back/forward
-// and being pasted to a colleague.
+// Counted toggle pills expose filter options and backlog size without opening
+// dropdowns. Use uniform control styling; severity colors identify findings. Repeated
+// URL params preserve filters through reload, history, and shared links.
 export function FacetFilter({
   label,
   paramKey,

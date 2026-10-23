@@ -36,20 +36,9 @@ function makeInstanceId() {
     : `w-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-// Issue #69: the "Edit Dashboard" mode. Widget composition lives entirely
-// client-side until Save; PUT /api/dashboard/layout persists the whole
-// ordered list at once (add/remove/reorder all collapse to "save this
-// list"), then a fresh GET /api/dashboard/widget-data pulls real data for
-// whatever's now in the layout.
-//
-// Layered on top of that: which of those widgets a given person actually
-// sees. Composition is one question ("what does my dashboard contain") and
-// visibility is another ("what do I want in front of me today"), and they
-// have different persistence and different blast radius -- see
-// lib/dashboard-preferences.ts for why visibility deliberately stays out of
-// the layout PUT. Until now every role got the same fixed board: the same
-// posture cards for someone reporting on posture and for someone who only
-// wants the queue of work assigned to them.
+// Dashboard composition is edited locally until Save PUTs the full ordered layout, then
+// refreshes widget data. Visibility is a separate per-user browser preference and must
+// not write through the composition endpoint.
 export function DashboardBoard({
   initialWidgets,
   catalog,

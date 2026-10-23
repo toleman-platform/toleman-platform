@@ -219,17 +219,17 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
         href={item.href}
         title={iconRail ? item.label : undefined}
         className={cn(
-          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+          "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-[0.8125rem] tracking-[-0.003em] transition-[background-color,color,transform] duration-200 ease-[var(--ease-standard)] active:scale-[0.98]",
           isActive
-            ? "bg-sidebar-accent text-accent-strong font-medium"
-            : "text-sidebar-foreground hover:bg-sidebar-accent/50",
+            ? "bg-primary/12 text-accent-strong font-semibold"
+            : "text-sidebar-foreground/90 hover:bg-sidebar-accent/70",
           iconRail && "justify-center px-2"
         )}
       >
         <item.icon className={cn("h-4 w-4 shrink-0", isActive && "text-accent-strong")} />
         {!iconRail && <span className="flex-1">{item.label}</span>}
         {!iconRail && item.adminOnly && (
-          <span className="rounded border border-warning/30 bg-warning/10 px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wider text-warning">
+          <span className="rounded-full bg-warning/12 px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wider text-warning">
             ADMIN
           </span>
         )}
@@ -244,7 +244,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
       <button
         onClick={() => setMobileOpen(true)}
         aria-label="Open navigation menu"
-        className="fixed left-3 top-3 z-30 flex h-9 w-9 items-center justify-center rounded-md border border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm md:hidden"
+        className="material-thin fixed left-3 top-3 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-sidebar-border/60 text-sidebar-foreground md:hidden"
       >
         <Menu className="h-5 w-5" />
       </button>
@@ -252,7 +252,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
       {/* Scrim behind the open mobile drawer. */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-overlay md:hidden"
+          className="fixed inset-0 z-40 bg-overlay backdrop-blur-[2px] md:hidden"
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
         />
@@ -260,12 +260,12 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex h-screen w-60 flex-col border-r border-sidebar-border bg-sidebar transition-transform duration-200 md:static md:z-auto md:translate-x-0 md:transition-[width]",
+          "fixed inset-y-0 left-0 z-50 flex h-screen w-60 flex-col border-r border-sidebar-border/70 bg-sidebar transition-transform duration-300 ease-[var(--ease-standard)] md:static md:z-auto md:translate-x-0 md:transition-[width]",
           mobileOpen ? "translate-x-0" : "-translate-x-full",
           collapsed ? "md:w-16" : "md:w-60"
         )}
       >
-        <div className={cn("flex h-14 items-center gap-3 border-b border-sidebar-border px-4", iconRail && "justify-center px-2")}>
+        <div className={cn("flex h-14 items-center gap-3 px-4", iconRail && "justify-center px-2")}>
           {!iconRail ? (
             <div className="flex flex-1 items-center justify-between">
               <BrandLockup markSize={30} />
@@ -282,7 +282,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
           )}
         </div>
 
-        <div className={cn("flex flex-col gap-2 border-b border-sidebar-border p-2", iconRail && "items-center")}>
+        <div className={cn("flex flex-col gap-2 p-2", iconRail && "items-center")}>
           <GlobalSearch collapsed={iconRail} />
           <WorkspaceSwitcher collapsed={iconRail} />
         </div>
@@ -302,7 +302,7 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
             if (items.length === 0) return null;
             return (
               <div key={group.label} className="flex flex-col gap-1">
-                <div className={cn("mb-1 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground", iconRail && "sr-only")}>
+                <div className={cn("mb-0.5 px-3 pt-2 pb-1 text-[11px] font-semibold tracking-[0.01em] text-muted-foreground", iconRail && "sr-only")}>
                   {group.label}
                 </div>
                 {items.map((item) => (
@@ -320,8 +320,8 @@ export function Sidebar({ user, initialTheme }: { user: AuthUser | null; initial
           )}
         </div>
 
-        <div className="flex flex-col gap-1 border-t border-sidebar-border p-2">
-          <div className={cn("mt-1 flex items-center gap-3 rounded-md border border-sidebar-border bg-sidebar-accent/30 px-3 py-2", iconRail && "justify-center px-2")}>
+        <div className="flex flex-col gap-1 border-t border-sidebar-border/70 p-2">
+          <div className={cn("mt-1 flex items-center gap-3 rounded-xl bg-sidebar-accent/50 px-3 py-2", iconRail && "justify-center px-2")}>
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-accent-strong">
               {initials}
             </div>

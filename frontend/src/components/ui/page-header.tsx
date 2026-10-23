@@ -23,7 +23,7 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        "flex flex-col gap-4 pb-4 sm:flex-row sm:items-center sm:justify-between",
+        "flex flex-col gap-4 pb-6 sm:flex-row sm:items-end sm:justify-between",
         className
       )}
       {...props}
@@ -36,7 +36,7 @@ export function PageHeader({
           {badge}
         </div>
         {description && (
-          <p className="text-body-sm text-muted-foreground">{description}</p>
+          <p className="text-body text-muted-foreground">{description}</p>
         )}
       </div>
       {actions && (

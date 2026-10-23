@@ -1,4 +1,4 @@
-import { Plus_Jakarta_Sans, Geist_Mono } from "next/font/google";
+import { Inter, Geist_Mono } from "next/font/google";
 import { pixelToRem } from "@/lib/utils";
 
 /**
@@ -12,10 +12,10 @@ import { pixelToRem } from "@/lib/utils";
  */
 
 /** Primary Sans-Serif Font (Display, Titles, Headings, Body Copy) */
-export const sansFont = Plus_Jakarta_Sans({
+export const sansFont = Inter({
   variable: "--font-sans-loaded",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
+  axes: ["opsz"],
   display: "swap",
 });
 
@@ -39,8 +39,8 @@ export const TYPE_SCALE = {
     size: "32px–40px",
     px: 36,
     rem: `clamp(${pixelToRem(32)}, 1.75rem + 1vw, ${pixelToRem(40)})`,
-    weight: 800,
-    tracking: "-0.025em",
+    weight: 700,
+    tracking: "-0.03em",
     leading: "1.15",
     description: "Hero metrics and high-impact page statistics",
   },
@@ -49,8 +49,8 @@ export const TYPE_SCALE = {
     size: "22px–28px",
     px: 24,
     rem: `clamp(${pixelToRem(22)}, 1.25rem + 0.5vw, ${pixelToRem(28)})`,
-    weight: 700,
-    tracking: "-0.02em",
+    weight: 600,
+    tracking: "-0.025em",
     leading: "1.25",
     description: "Main page titles and top-level entity headers",
   },

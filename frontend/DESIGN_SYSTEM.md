@@ -485,7 +485,7 @@ When asked to create or modify a Toleman UI:
 
 **Never generate:**
 - Dashboard pages made entirely from floating cards.
-- Arbitrary gradients, glowing neon borders, or glassmorphism.
+- Arbitrary gradients or glowing neon borders. Translucent blur is limited to the `.material`, `.material-thin` and `.scrim-blur` utilities on floating chrome (dialogs, drawers, palettes); they fall back to solid under reduced-transparency and increased-contrast.
 - Excessive drop shadows or oversized marketing hero text.
 - Massive whitespace in operational workflows.
 - Rainbow status colors across routine table badges.

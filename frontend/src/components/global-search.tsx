@@ -324,11 +324,11 @@ export function GlobalSearch({ collapsed }: { collapsed?: boolean }) {
         <div
           role="dialog"
           aria-modal="true"
-          className="fixed inset-0 z-50 flex items-start justify-center bg-background/80 backdrop-blur-xs pt-[12vh] px-4 animate-in fade-in"
+          className="fixed inset-0 z-50 flex items-start justify-center bg-overlay scrim-blur pt-[12vh] px-4 animate-in fade-in"
           onClick={() => setOpen(false)}
         >
           <Card
-            className="w-full max-w-2xl border-border bg-card py-0 shadow-2xl overflow-hidden rounded-xl animate-in zoom-in-95 duration-150"
+            className="w-full max-w-2xl material border-border/60 py-0 overflow-hidden rounded-2xl animate-in zoom-in-95 duration-200 motion-reduce:animate-none"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Input Header */}

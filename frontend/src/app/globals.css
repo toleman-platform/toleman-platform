@@ -71,26 +71,26 @@
      in the room. Light mode is unchanged; its surfaces were already
      near-white/near-black rather than visibly slate-tinted, and the user's
      complaint was specifically about dark mode. */
-  --background: #16181b;
-  --foreground: #e9eaec;
-  --card: #1d2023;
-  --card-foreground: #e9eaec;
-  --popover: #1d2023;
-  --popover-foreground: #e9eaec;
+  --background: #000000;
+  --foreground: #f5f5f7;
+  --card: #1c1c1e;
+  --card-foreground: #f5f5f7;
+  --popover: #1c1c1e;
+  --popover-foreground: #f5f5f7;
   /* --primary is the button-fill brand color. It intentionally does NOT
      change in light mode: it's always paired with --primary-foreground
      (fixed dark text) on its own filled surface, so the surface itself
      changing hue doesn't create a contrast problem the way primary used as
      bare text/icon color on the page background would. See --accent-strong
      below for the token that DOES need to deepen for that case. */
-  --primary: #22c1d9;
-  --primary-foreground: #0d1b1e;
-  --secondary: #24272b;
-  --secondary-foreground: #e9eaec;
-  --muted: #24272b;
-  --muted-foreground: #9aa0a8;
-  --accent: #23262a;
-  --accent-foreground: #e9eaec;
+  --primary: #0071e3;
+  --primary-foreground: #ffffff;
+  --secondary: #2c2c2e;
+  --secondary-foreground: #f5f5f7;
+  --muted: #2c2c2e;
+  --muted-foreground: #aeaeb2;
+  --accent: #2c2c2e;
+  --accent-foreground: #f5f5f7;
   /* --control is the ground of a thing that sits ON a surface instead of
      being one -- the outline Button. It is deliberately not --background.
      The outline variant was `bg-background`, and outline buttons are
@@ -112,8 +112,8 @@
      The variant's old `hover:bg-accent` (0.0191) would have pushed a hovered
      button back BELOW its own resting ground, re-creating the recess on
      every pointer-over. */
-  --control: #2b2e33;
-  --control-hover: #32353b;
+  --control: #2c2c2e;
+  --control-hover: #3a3a3c;
   /* --accent-strong: brand cyan used as bare text/icon color directly on a
      canvas/card/sidebar background (links, active nav state, icon tiles);
      as opposed to --primary, which is only ever a button/badge *fill*.
@@ -121,7 +121,7 @@
      background, so it's identical to --primary here; light mode gets its
      own deepened value below since that same bright cyan is unreadable as
      text on white (see globals-level comment). */
-  --accent-strong: #22c1d9;
+  --accent-strong: #409cff;
   /* Lightened from #f0555c. That value cleared AA on the plain canvas (5.2:1)
      and on --card (4.8:1), but `text-destructive` is almost never used on a
      bare surface: lib/severity.ts, status-badge.tsx and the KEV badge all
@@ -132,9 +132,9 @@
      #fa7f86 takes those to 5.66:1, 4.69:1, 6.06:1 and 6.19:1. It is also
      still a fill (destructive Button); --destructive-foreground on it is
      7.1:1, up from 6.5:1. */
-  --destructive: #fa7f86;
-  --destructive-foreground: #0d1b1e;
-  --border: #2b2e33;
+  --destructive: #ff6b62;
+  --destructive-foreground: #1a0605;
+  --border: #38383a;
   /* --input is a CONTROL's boundary -- the border on every native
      <select>/<input> in the app and on the outline Button -- as opposed to
      --border, which is the hairline between two surfaces. The two carried
@@ -150,7 +150,7 @@
      3.93:1 on --accent, 3.53:1 on --control and 3.18:1 on --control-hover.
      --border is left where it was, on purpose -- lifting the hairline to 3:1
      would draw a hard box around every card and divider in the product. */
-  --input: #7d828b;
+  --input: #8e8e93;
   /* Scrim behind a modal or drawer. A dialog's own surface is --card, so the
      scrim's job is to push the page behind it far enough down that the
      dialog reads as being in front. The alpha is chosen per ground rather
@@ -158,7 +158,7 @@
      relative luminance (0.0090 -> 0.0027), while that same 0.62 on the
      near-white canvas crushes it to mid-grey and hides more context than it
      needs to. See the light value for its own number. */
-  --overlay: rgb(0 0 0 / 0.62);
+  --overlay: rgb(0 0 0 / 0.5);
   /* Edge of a dialog or drawer surface, which is NOT the same job as
      --border's hairline. On this charcoal ground a black scrim cannot
      separate the dialog from the page at all: --card against the dimmed
@@ -167,22 +167,22 @@
      #646a74 is 3.66:1 against the dimmed page and 3.00:1 against --card,
      clearing the 3:1 bar for a non-text boundary that carries meaning on
      both sides. */
-  --dialog-edge: #646a74;
+  --dialog-edge: #636366;
   /* --ring is tied to --primary/button semantics (focus outline around
      interactive controls), not to bare-text contrast, so it stays fixed
      alongside --primary for the same reason. */
-  --ring: #22c1d9;
-  --chart-1: #22c1d9;
-  --chart-2: #4fc3d9;
-  --chart-3: #f2924a;
-  --chart-4: #fa7f86; /* kept mirrored to --destructive; see its note above */
-  --chart-5: #34b774;
-  --radius: 0.75rem;
+  --ring: #0a84ff;
+  --chart-1: #409cff;
+  --chart-2: #64d2ff;
+  --chart-3: #ff9f0a;
+  --chart-4: #ff6b62; /* kept mirrored to --destructive; see its note above */
+  --chart-5: #30d158;
+  --radius: 0.875rem;
   --radius-xs: 0.25rem;
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
   --radius-full: 9999px;
 
   /* Spatial Grid Scale (4px/8px Base) */
@@ -195,35 +195,48 @@
   --space-xl: 1.5rem;    /* 24px */
   --space-2xl: 2rem;     /* 32px */
   --space-3xl: 3rem;     /* 48px */
-  --sidebar: #18191c;
-  --sidebar-foreground: #e9eaec;
-  --sidebar-primary: #22c1d9;
-  --sidebar-primary-foreground: #0d1b1e;
-  --sidebar-accent: #23262a;
-  --sidebar-accent-foreground: #e9eaec;
-  --sidebar-border: #2b2e33;
-  --sidebar-ring: #22c1d9;
-  --warning: #f2924a;
+  --sidebar: #111113;
+  --sidebar-foreground: #f5f5f7;
+  --sidebar-primary: #0a84ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #2c2c2e;
+  --sidebar-accent-foreground: #f5f5f7;
+  --sidebar-border: #2c2c2e;
+  --sidebar-ring: #0a84ff;
+  --warning: #ff9f0a;
   --warning-foreground: #1f1200;
-  --success: #34b774;
+  --success: #30d158;
   --success-foreground: #04190f;
+
+  /* Motion (Apple fluid-interface): a critically damped, decelerating curve for
+     everything a user did not throw, and a lightly under-damped spring (via
+     linear()) for things that carry momentum or confirm a press. */
+  --ease-standard: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: linear(0, 0.009, 0.035 2.1%, 0.141 4.4%, 0.723 12.9%, 0.938 16.7%, 1.017 19.4%, 1.077 22.5%, 1.121 26%, 1.149 30.2%, 1.145 34.9%, 1.025 56%, 0.996 65%, 1);
+  --dur-fast: 120ms;
+  --dur-base: 240ms;
+  --dur-slow: 420ms;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.06), 0 4px 16px rgb(0 0 0 / 0.04);
+  --shadow-raised: 0 2px 4px rgb(0 0 0 / 0.08), 0 12px 32px rgb(0 0 0 / 0.12);
+  --shadow-float: 0 8px 24px rgb(0 0 0 / 0.16), 0 24px 64px rgb(0 0 0 / 0.2);
+  --material-blur: 24px;
 
   /* Centralized Typography Scale Tokens (Single Source of Truth) */
   --text-display: clamp(2rem, 1.75rem + 1vw, 2.5rem);
   --text-display-leading: 1.15;
-  --text-display-tracking: -0.025em;
+  --text-display-tracking: -0.03em;
 
   --text-title: clamp(1.375rem, 1.25rem + 0.5vw, 1.75rem);
   --text-title-leading: 1.25;
-  --text-title-tracking: -0.02em;
+  --text-title-tracking: -0.025em;
 
   --text-heading: 1.25rem;
   --text-heading-leading: 1.35;
-  --text-heading-tracking: -0.015em;
+  --text-heading-tracking: -0.02em;
 
   --text-subheading: 1.0625rem;
   --text-subheading-leading: 1.4;
-  --text-subheading-tracking: -0.01em;
+  --text-subheading-tracking: -0.014em;
 
   --text-body: 0.9375rem;
   --text-body-leading: 1.55;
@@ -269,18 +282,18 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --background: #f5f7fa; /* canvas */
-  --foreground: #161c2b; /* text-primary */
+  --background: #f5f5f7; /* canvas */
+  --foreground: #1d1d1f; /* text-primary */
   --card: #ffffff; /* surface */
-  --card-foreground: #161c2b;
+  --card-foreground: #1d1d1f;
   --popover: #ffffff;
-  --popover-foreground: #161c2b;
-  --secondary: #eef1f6;
-  --secondary-foreground: #161c2b;
-  --muted: #eef1f6;
-  --muted-foreground: #5b6472; /* dark's #94a3b8 is too light to read on white */
-  --accent: #e6f6f9; /* soft cyan hover wash, replaces dark's saturated teal fill */
-  --accent-foreground: #161c2b;
+  --popover-foreground: #1d1d1f;
+  --secondary: #f0f0f5;
+  --secondary-foreground: #1d1d1f;
+  --muted: #f0f0f5;
+  --muted-foreground: #636366; /* dark's #94a3b8 is too light to read on white */
+  --accent: #e8f1fc; /* soft cyan hover wash, replaces dark's saturated teal fill */
+  --accent-foreground: #1d1d1f;
   /* Same relationship as dark's --control, inverted and then capped. Light
      had the identical defect -- the outline Button's `bg-background`
      (#f5f7fa, 0.9284) sat on a #ffffff card (1.0000), 1.07:1 the wrong way,
@@ -296,47 +309,47 @@
      hovered button never sinks below the page around it. The 1.06:1 step is
      mostly carried by the cyan tint rather than by luminance. */
   --control: #ffffff;
-  --control-hover: #f0fafc;
-  --accent-strong: #0a7490; /* deepened from dark's #06b6d4 for contrast on white */
+  --control-hover: #f5f9ff;
+  --accent-strong: #0066cc; /* deepened from dark's #06b6d4 for contrast on white */
   /* Deepened a step from #c0193f, for the same reason the dark value moved:
      the KEV badge renders text-destructive on a `bg-destructive/20` wash of
      itself, which measured 4.32:1 on white — just under the body-text bar.
      #b01639 takes that pair to 4.88:1 and leaves every lighter ground
      comfortably clear (the /10 wash 5.85:1, plain --card 6.95:1). */
-  --destructive: #b01639; /* deepened critical/error red */
+  --destructive: #c70012; /* deepened critical/error red */
   --destructive-foreground: #fff5f5;
-  --border: #dde2ea; /* hairline */
+  --border: #d2d2d7; /* hairline */
   /* The dark --input note applies here unchanged; these are its numbers on
      the light grounds. #dde2ea drew a control boundary at 1.15:1 on
      --secondary and 1.30:1 on --card. #7f8795 is 3.20:1 on
      --secondary/--muted, 3.62:1 on --card/--control, 3.37:1 on --background,
      3.26:1 on --accent and 3.41:1 on --control-hover. --border keeps the
      pale hairline for surface edges. */
-  --input: #7f8795;
+  --input: #86868b;
   /* Black at the dark theme's 0.62 would take this canvas to mid-grey; 0.45
      gives a comparable 3.8x luminance drop (0.939 -> 0.245) and keeps the
      white dialog surface at 3.6:1 against the dimmed page, above the 3:1 bar
      for a boundary that carries meaning. */
-  --overlay: rgb(0 0 0 / 0.45);
+  --overlay: rgb(0 0 0 / 0.35);
   /* Here the surface carries the boundary on its own -- white --card against
      the dimmed canvas is 3.55:1 -- so the edge only has to stay visible
      against the surface it outlines: #8b93a1 is 3.09:1 on white. */
-  --dialog-edge: #8b93a1;
+  --dialog-edge: #8e8e93;
   --ring: var(--accent-strong);
   --chart-1: var(--accent-strong); /* "Medium" severity reuses the brand accent */
-  --chart-2: #0e6ba8; /* deepened info blue (was unused in dark; now backs "already integrated") */
-  --chart-3: #8a6200; /* deepened amber/warning; bright yellow is unreadable on white */
-  --chart-4: #b01639; /* deepened red, mirrors --destructive */
-  --chart-5: #047857; /* deepened success green */
-  --sidebar: #ffffff;
-  --sidebar-foreground: #161c2b;
-  --sidebar-accent: #e6f6f9;
+  --chart-2: #0a6fc2; /* deepened info blue (was unused in dark; now backs "already integrated") */
+  --chart-3: #9a5b00; /* deepened amber/warning; bright yellow is unreadable on white */
+  --chart-4: #c70012; /* deepened red, mirrors --destructive */
+  --chart-5: #1a7f37; /* deepened success green */
+  --sidebar: #f2f2f5;
+  --sidebar-foreground: #1d1d1f;
+  --sidebar-accent: #e0e0e8;
   --sidebar-accent-foreground: #161c2b;
-  --sidebar-border: #dde2ea;
+  --sidebar-border: #d8d8de;
   --sidebar-ring: var(--accent-strong);
-  --warning: #8a6200;
+  --warning: #9a5b00;
   --warning-foreground: #fffbe6;
-  --success: #047857;
+  --success: #1a7f37;
   --success-foreground: #f0fdf4;
 }
 
@@ -386,7 +399,7 @@
 }
 
 @theme inline {
-  --font-sans: var(--font-sans-loaded), "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", var(--font-sans-loaded), system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: var(--font-mono-loaded), "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -433,11 +446,11 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
-  --radius-xs: 0.25rem;
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  --radius-xs: 0.375rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
@@ -452,11 +465,20 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
   body {
     @apply bg-background text-foreground;
+    font-optical-sizing: auto;
+    font-feature-settings: "kern", "liga", "calt";
+    -webkit-font-smoothing: antialiased;
+    transition: background-color var(--dur-base) ease, color var(--dur-base) ease;
   }
   h1, h2, h3, h4 {
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
   }
   ::selection {
     background-color: color-mix(in oklab, var(--primary) 20%, transparent);
@@ -492,16 +514,101 @@
      nav items, table rows); subtle lift + border glow, not a bouncy
      animation. Respects reduced-motion. */
   .interactive-surface {
-    transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+    transition: border-color var(--dur-base) var(--ease-standard), box-shadow var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-standard);
   }
   .interactive-surface:hover {
-    border-color: color-mix(in oklab, var(--primary) 40%, var(--border));
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--primary) 12%, transparent);
+    border-color: color-mix(in oklab, var(--primary) 28%, var(--border));
+    box-shadow: var(--shadow-raised);
+    transform: translateY(-1px);
   }
+  .interactive-surface:active {
+    transform: scale(0.992);
+    transition-duration: var(--dur-fast);
+  }
+
+  /* Translucent materials (Apple "materials"): a blurred, semi-opaque layer for
+     floating chrome (drawers, palettes, popovers, the mobile bar). The scrim
+     dims-to-focus for modal work; these never stack on another light surface. */
+  .material {
+    background-color: color-mix(in oklab, var(--popover) 78%, transparent);
+    -webkit-backdrop-filter: blur(var(--material-blur)) saturate(180%);
+    backdrop-filter: blur(var(--material-blur)) saturate(180%);
+    box-shadow: var(--shadow-float);
+  }
+  .material-thin {
+    background-color: color-mix(in oklab, var(--background) 72%, transparent);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    backdrop-filter: blur(16px) saturate(180%);
+  }
+  @media (prefers-reduced-transparency: reduce) {
+    .material,
+    .material-thin {
+      background-color: var(--popover);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+  @media (prefers-contrast: more) {
+    .material,
+    .material-thin {
+      background-color: var(--popover);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      border: 1px solid var(--dialog-edge);
+    }
+  }
+
+  /* Route change: content eases in from slightly below (the direction it
+     will be read), never blocks input and finishes in well under a blink. */
+  @keyframes page-enter {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+  .page-enter {
+    animation: page-enter var(--dur-slow) var(--ease-standard) both;
+  }
+
+  /* Pressable: instant feedback on pointer-down, spring back on release. */
+  .pressable {
+    transition: transform var(--dur-base) var(--ease-spring);
+  }
+  .pressable:active {
+    transform: scale(0.97);
+    transition-duration: 90ms;
+  }
+
+  /* Blurred scrim behind modal surfaces; flat under transparency/contrast prefs. */
+  .scrim-blur {
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .scrim-blur {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .interactive-surface {
+    body {
       transition: none;
     }
+    .interactive-surface,
+    .pressable {
+      transition: none;
+    }
+    .interactive-surface:hover,
+    .interactive-surface:active,
+    .pressable:active {
+      transform: none;
+    }
+    .page-enter {
+      animation: page-fade 160ms ease both;
+    }
+  }
+  @keyframes page-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
   }
 
   /* Typography & Scalable Type Scale System */
@@ -515,13 +622,13 @@
     font-size: var(--text-display);
     line-height: var(--text-display-leading);
     letter-spacing: var(--text-display-tracking);
-    font-weight: 800;
+    font-weight: 700;
   }
   .text-title {
     font-size: var(--text-title);
     line-height: var(--text-title-leading);
     letter-spacing: var(--text-title-tracking);
-    font-weight: 700;
+    font-weight: 600;
   }
   .text-heading {
     font-size: var(--text-heading);

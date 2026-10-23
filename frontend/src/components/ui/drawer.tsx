@@ -192,14 +192,14 @@ export function Drawer({
       role="dialog"
       aria-modal="true"
       aria-labelledby="drawer-title"
-      className="fixed inset-0 z-50 flex justify-end bg-background/80 backdrop-blur-xs transition-opacity animate-in fade-in motion-reduce:animate-none motion-reduce:transition-none"
+      className="fixed inset-0 z-50 flex justify-end bg-overlay scrim-blur transition-opacity animate-in fade-in motion-reduce:animate-none motion-reduce:transition-none"
       onClick={onClose}
     >
       <div
         ref={drawerRef}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          "relative flex h-full w-full flex-col border-l border-dialog-edge bg-card text-card-foreground shadow-2xl transition-transform duration-200 ease-out animate-in slide-in-from-right motion-reduce:animate-none motion-reduce:transition-none",
+          "relative flex h-full w-full flex-col border-l border-dialog-edge/60 bg-card text-card-foreground shadow-[var(--shadow-float)] transition-transform duration-300 ease-[var(--ease-standard)] animate-in slide-in-from-right motion-reduce:animate-none motion-reduce:transition-none",
           SIZE_MAP[size],
           className
         )}

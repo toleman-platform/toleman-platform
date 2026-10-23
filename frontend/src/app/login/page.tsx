@@ -51,17 +51,13 @@ function LoginForm() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background p-4">
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-1/4 left-1/4 h-96 w-96 rounded-full bg-primary/5 blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 h-96 w-96 rounded-full bg-chart-5/5 blur-3xl" />
-      </div>
-      <Card className="relative z-10 w-full max-w-md border-border bg-card">
+      <Card className="page-enter relative z-10 w-full max-w-[26rem] gap-4 border-border/60 bg-card py-8 shadow-[var(--shadow-raised)]">
         <CardHeader className="items-center gap-4 pb-2">
-          <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-accent">
+          <div className="flex h-16 w-16 items-center justify-center justify-self-center rounded-[1.1rem] bg-accent">
             <BrandMark size={30} />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">Toleman</h1>
+            <h1 className="text-3xl font-semibold tracking-[-0.03em] text-foreground">Toleman</h1>
             <p className="text-sm text-muted-foreground">DevSecOps Vulnerability Management</p>
           </div>
         </CardHeader>
@@ -76,7 +72,7 @@ function LoginForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="bg-secondary border-border text-foreground placeholder:text-muted-foreground"
+                className="bg-secondary text-foreground placeholder:text-muted-foreground"
               />
             </div>
             <div className="flex flex-col gap-2">
@@ -89,7 +85,7 @@ function LoginForm() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="bg-secondary border-border pr-10 text-foreground placeholder:text-muted-foreground"
+                  className="bg-secondary pr-10 text-foreground placeholder:text-muted-foreground"
                 />
                 <button
                   type="button"
@@ -101,7 +97,7 @@ function LoginForm() {
               </div>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" disabled={loading} className="w-full">
+            <Button type="submit" size="lg" disabled={loading} className="w-full">
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Sign In
             </Button>

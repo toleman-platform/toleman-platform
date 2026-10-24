@@ -23,6 +23,7 @@ from app.core import target_lifecycle
 from app.core.pipeline_pr import PipelinePrError, open_pipeline_pr
 from app.core.pipeline_workflow import generate_workflow_yaml
 from app.core.ai_repo_status import effective_is_ai_repo
+from app.core.ssrf_guard import UnsafeScanHostError, assert_safe_scan_host
 from app.api.github_app import BACKEND_URL
 from app.core.github_app import target_has_pr_guardrail_coverage
 from app.core.security_score import OPEN_STATES
@@ -174,6 +175,15 @@ class UpdateTargetRequest(BaseModel):
         parsed = urlparse(v)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ValueError("api_base_url must be a real http(s):// URL with a host")
+        # The admin-only gate on this field (update_target, above) authorizes
+        # reaching an on-prem/internal API; it was never meant to authorize
+        # reaching the scan worker's own cloud-metadata endpoint. See
+        # app/core/ssrf_guard.py for why that line is drawn at
+        # loopback/link-local rather than every private range.
+        try:
+            assert_safe_scan_host(v)
+        except UnsafeScanHostError as exc:
+            raise ValueError(str(exc)) from exc
         return v
 
     @field_validator("api_base_url", "clone_proxy_url")

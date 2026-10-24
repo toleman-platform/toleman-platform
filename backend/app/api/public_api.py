@@ -431,7 +431,9 @@ def create_snippet_scan(
         raise HTTPException(
             status_code=400, detail=f"content too large (max {MAX_SNIPPET_CONTENT_BYTES} bytes)"
         )
-    tools = payload.tools or DEFAULT_SNIPPET_TOOLS
+    # A request is rate-limited once, not once per scanner invocation.
+    # Bound its work to the tool catalog even when names are repeated.
+    tools = list(dict.fromkeys(payload.tools or DEFAULT_SNIPPET_TOOLS))
     unknown = sorted(set(tools) - ALLOWED_SNIPPET_TOOLS)
     if unknown:
         raise HTTPException(status_code=400, detail=f"unsupported tool(s) for snippet scanning: {unknown}")

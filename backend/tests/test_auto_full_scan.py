@@ -17,21 +17,12 @@ treat a fresh interval schedule's first tick as due.
 """
 from unittest.mock import MagicMock
 
-import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
 from app.core.crypto import encrypt_secret
 from app.models.models import GitHubAppConfig, GitHubInstallation, Organization, Scan, Target, Workspace
 from app.tasks import scan_tasks
 from app.tasks.celery_app import celery_app
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 def _make_workspace(session) -> Workspace:

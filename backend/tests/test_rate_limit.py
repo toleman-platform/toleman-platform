@@ -11,8 +11,7 @@ whatever else might be poking the same Redis instance.
 """
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
@@ -20,17 +19,6 @@ from app.core import rate_limit
 from app.core.security import create_session_token, hash_password
 from app.main import app
 from app.models.models import Organization, Target, User, Workspace
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()

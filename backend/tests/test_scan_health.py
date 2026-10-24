@@ -38,8 +38,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
 from app.core.dedup import compute_dedup_hash
 from app.core.ingestion import ingest_findings
@@ -901,13 +900,6 @@ class TestNuclei:
 # ---------------------------------------------------------------------------
 # Ingestion gating (defect 2, the one that actually cleared the findings)
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 def _target(engine) -> int:

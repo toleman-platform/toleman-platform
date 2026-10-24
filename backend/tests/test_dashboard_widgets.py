@@ -8,13 +8,8 @@ pattern used across tests/test_sla_rules.py and tests/test_workspace_roles.py.
 """
 from datetime import timedelta
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
-import app.api.deps as deps_module
-from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
 from app.core.time import utcnow
 from app.core.widgets import (
@@ -31,7 +26,6 @@ from app.core.widgets import (
     resolve_sla_compliance,
     resolve_top_risky_repos,
 )
-from app.main import app
 from app.models.models import (
     DashboardLayout,
     Finding,
@@ -51,29 +45,6 @@ from app.models.models import (
     UserRole,
     Workspace,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
-
-
-@pytest.fixture()
-def client(engine):
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    original_engine = deps_module.engine
-    deps_module.engine = engine
-
-    c = TestClient(app)
-    yield c
-    app.dependency_overrides.clear()
-    deps_module.engine = original_engine
 
 
 def _login(client, engine, role=UserRole.ADMIN, email=None):

@@ -206,8 +206,7 @@ def test_the_breakdown_explains_each_state():
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
-from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
+from sqlmodel import Session  # noqa: E402
 
 import app.api.deps as deps_module  # noqa: E402
 from app.api.deps import get_session  # noqa: E402
@@ -221,13 +220,6 @@ from app.models.models import (  # noqa: E402
     UserRole,
     Workspace,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()

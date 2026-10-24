@@ -17,16 +17,11 @@ two things about it that are easy to get quietly wrong:
 import os
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
-import app.api.deps as deps_module
-from app.api.deps import get_session
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_headers
 from app.core.crypto import encrypt_secret
 from app.core.security import create_session_token, hash_password
-from app.main import app
 from app.models.models import (
     Organization,
     Target,
@@ -37,28 +32,6 @@ from app.models.models import (
     WorkspaceRole,
 )
 from app.scanners import runner
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
-
-
-@pytest.fixture()
-def client(engine):
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    original_engine = deps_module.engine
-    deps_module.engine = engine
-    c = TestClient(app)
-    yield c
-    app.dependency_overrides.clear()
-    deps_module.engine = original_engine
 
 
 def _make_target(engine, api_base_url="https://api.example.com"):

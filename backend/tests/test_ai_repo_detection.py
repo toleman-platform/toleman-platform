@@ -6,9 +6,7 @@ and the persistence/override layer (app.core.ai_repo_status).
 """
 import itertools
 
-import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 from app.core.ai_repo_detection import (
     detect_ai_packages,
@@ -19,13 +17,6 @@ from app.core.ai_repo_status import effective_is_ai_repo, refresh_ai_repo_status
 from app.models.models import Organization, SbomComponent, Target, Workspace
 
 _names = itertools.count()
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 def _make_target(engine, default_branch="main") -> int:

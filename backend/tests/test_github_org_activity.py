@@ -3,40 +3,11 @@ pagination on GitHub Org Logs). The GitHub API boundary is mocked the same
 way tests/test_enforcement_mode.py mocks it, monkeypatch the github_get
 symbol imported into app.api.github, no real network calls.
 """
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
-import app.api.deps as deps_module
 import app.api.github as github_module
-from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
-from app.main import app
 from app.models.models import Organization, Target, User, Workspace
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
-
-
-@pytest.fixture()
-def client(engine):
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    original_engine = deps_module.engine
-    deps_module.engine = engine
-
-    c = TestClient(app)
-    yield c
-    app.dependency_overrides.clear()
-    deps_module.engine = original_engine
 
 
 def _login(client, engine, email="user@example.com", password="whatever123"):

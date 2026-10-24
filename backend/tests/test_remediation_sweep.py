@@ -11,11 +11,9 @@ down the rest.
 """
 import json
 
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 import app.core.remediation_autofix as remediation_autofix
-import pytest
 from app.core.autofix import AutofixError
 from app.models.models import (
     CveEnrichment,
@@ -27,13 +25,6 @@ from app.models.models import (
     Target,
     Workspace,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 def _target(engine, auto_raise=True, deactivated_at=None, deleted_at=None, name="t") -> int:

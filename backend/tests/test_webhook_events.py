@@ -18,8 +18,7 @@ dispatching the scan task, so the dashboard has something to show as
 gets around to its own GitHub-API PR fetch.
 """
 import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
 from app.api import webhooks
 from app.models.models import (
@@ -31,13 +30,6 @@ from app.models.models import (
     Target,
     Workspace,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()

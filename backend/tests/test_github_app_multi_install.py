@@ -11,19 +11,13 @@ import hashlib
 import hmac
 from unittest.mock import MagicMock
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
-import app.api.deps as deps_module
 import app.api.github_app as github_app_api
-from app.api.deps import get_session
 from app.api.webhooks import _candidate_configs, _verify_signature
 from app.core.crypto import encrypt_secret
 from app.core.github_app import resolve_config_for_installation, resolve_installation_for_repo
 from app.core.security import create_session_token, hash_password
-from app.main import app
 from app.models.models import (
     GitHubAppConfig,
     GitHubInstallation,
@@ -34,29 +28,6 @@ from app.models.models import (
     WorkspaceMembership,
     WorkspaceRole,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
-
-
-@pytest.fixture()
-def client(engine):
-    def override_get_session():
-        with Session(engine) as session:
-            yield session
-
-    app.dependency_overrides[get_session] = override_get_session
-    original_engine = deps_module.engine
-    deps_module.engine = engine
-
-    c = TestClient(app)
-    yield c
-    app.dependency_overrides.clear()
-    deps_module.engine = original_engine
 
 
 def _login(client, engine):

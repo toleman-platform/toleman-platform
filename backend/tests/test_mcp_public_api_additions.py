@@ -375,6 +375,40 @@ def test_scan_snippet_accepts_a_custom_tool_list(client, engine, monkeypatch):
     assert captured["tools"] == ["checkov", "tfsec"]
 
 
+def test_scan_snippet_deduplicates_tools_before_dispatch(client, engine, monkeypatch):
+    _, uid = _login(client, engine)
+    token = _make_token_for_user(engine, uid)
+    captured = {}
+    monkeypatch.setattr("app.api.public_api.run_snippet_scan.delay", lambda **kwargs: captured.update(kwargs))
+    response = client.post(
+        "/api/public/v1/scan-snippet", headers={"Authorization": f"Bearer {token}"},
+        json={"filename": "app.py", "content": "x = 1", "tools": ["gitleaks", "semgrep"] * 1000},
+    )
+    assert response.status_code == 200
+    assert captured["tools"] == ["gitleaks", "semgrep"]
+
+
+def test_scan_snippet_worker_deduplicates_already_queued_tools(engine, monkeypatch):
+    import app.tasks.snippet_scan_tasks as tasks
+
+    monkeypatch.setattr(tasks, "engine", engine)
+    calls = []
+    monkeypatch.setattr(runner, "run_tool", lambda tool, path: calls.append(tool) or [])
+    with Session(engine) as session:
+        user = User(email="queued@example.com", name="Queued", password_hash="unused")
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        run = SnippetScanRun(user_id=user.id, filename="app.py", status="running")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        run_id = run.id
+    result = tasks.run_snippet_scan(run_id=run_id, filename="app.py", content="x = 1", tools=["gitleaks"] * 1000)
+    assert result["status"] == "completed"
+    assert calls == ["gitleaks"]
+
+
 def test_scan_snippet_rejects_unknown_tool(client, engine):
     client, uid = _login(client, engine)
     token = _make_token_for_user(engine, uid)

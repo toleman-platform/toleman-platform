@@ -52,6 +52,7 @@ class UserOut(BaseModel):
 
 
 def current_user(
+    request: Request,
     session: Session = Depends(get_session),
     toleman_session: str | None = Cookie(default=None),
 ) -> User:
@@ -65,6 +66,19 @@ def current_user(
         raise HTTPException(status_code=401, detail="user not found")
     if payload.get("tv") != user.token_version:
         raise HTTPException(status_code=401, detail="session revoked")
+    # SameSite=Lax still sends cookies from sibling subdomains. CORS only
+    # prevents reading a simple form POST's response; it does not stop the
+    # mutation. Require an exact trusted origin on browser session writes.
+    # Non-browser clients without Origin keep their existing behavior.
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        origin = request.headers.get("origin")
+        trusted_origins = {
+            *settings.cors_allow_origins,
+            settings.public_api_url.rstrip("/"),
+            f"{request.url.scheme}://{request.url.netloc}",
+        }
+        if origin is not None and origin not in trusted_origins:
+            raise HTTPException(status_code=403, detail="untrusted request origin")
     return user
 
 

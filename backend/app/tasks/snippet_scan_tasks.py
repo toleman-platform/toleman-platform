@@ -52,7 +52,8 @@ def run_snippet_scan(run_id: int, filename: str, content: str, tools: list[str])
             target_path.write_text(content)
 
             findings = []
-            for tool in tools:
+            # Also cover jobs queued before API-side deduplication.
+            for tool in dict.fromkeys(tools):
                 try:
                     raw = runner.run_tool(tool, tmp_dir)
                 except runner.ToolNotApplicable:

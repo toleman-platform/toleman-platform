@@ -914,16 +914,15 @@ def get_bulk_pipeline_integrate_batch(
     session: Session = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    """Poll target for the async batch dispatched by POST above. Item
-    detail is workspace-scoped the same way as everything else in this
-    file, items for targets outside the caller's accessible workspaces
-    (relevant if role/membership changed after the batch was created) are
-    left out of the returned items list."""
+    """Poll a batch only when its entire scope is readable by the caller.
+
+    Counts, labels and template metadata describe the whole batch, so
+    filtering just its items would still disclose inaccessible workspaces.
+    Recheck current membership even for the creator, before stale-job writes.
+    """
     batch = session.get(PipelineIntegrationBatch, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="batch not found")
-    mark_stale_if_needed(session, batch)
-
     ws_ids = accessible_workspace_ids(session, user)
     items = session.exec(
         select(PipelineIntegrationBatchItem).where(PipelineIntegrationBatchItem.batch_id == batch_id)
@@ -931,11 +930,23 @@ def get_bulk_pipeline_integrate_batch(
     target_ids = [i.target_id for i in items]
     targets_by_id = {t.id: t for t in session.exec(select(Target).where(Target.id.in_(target_ids))).all()}
 
+    if ws_ids is not None:
+        if not items or any(
+            item.target_id not in targets_by_id
+            or targets_by_id[item.target_id].workspace_id not in ws_ids
+            for item in items
+        ):
+            raise HTTPException(status_code=404, detail="batch not found")
+        if batch.workflow_template_id is not None:
+            template = session.get(PipelineWorkflowTemplate, batch.workflow_template_id)
+            if not template or template.workspace_id not in ws_ids:
+                raise HTTPException(status_code=404, detail="batch not found")
+
+    mark_stale_if_needed(session, batch)
+
     item_payload = []
     for item in items:
         target = targets_by_id.get(item.target_id)
-        if target and ws_ids is not None and target.workspace_id not in ws_ids:
-            continue
         item_payload.append(
             {
                 "target_id": item.target_id,

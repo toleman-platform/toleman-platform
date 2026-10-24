@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse
 from sqlmodel import Session, select
 
 from app.core.crypto import SecretDecryptionError, decrypt_secret
+from app.core.ssrf_guard import UnsafeScanHostError, assert_safe_scan_host
 from app.models.models import ApiEndpoint, Target
 
 
@@ -135,6 +136,14 @@ def build_scan_urls(
     parsed_base = urlparse(target.api_base_url)
     if parsed_base.scheme not in ("http", "https") or not parsed_base.netloc:
         raise ApiScanConfigError(f"target.api_base_url must be a real http(s) URL, got: {target.api_base_url!r}")
+    # Re-checked here, not just at the admin-only field write in targets.py:
+    # this is the actual dispatch point, and a row written before this
+    # check existed (or a DNS name whose resolution changed since) must not
+    # get a free pass just because it predates the guard.
+    try:
+        assert_safe_scan_host(target.api_base_url)
+    except UnsafeScanHostError as exc:
+        raise ApiScanConfigError(str(exc)) from exc
 
     query = select(ApiEndpoint).where(
         ApiEndpoint.target_id == target.id, ApiEndpoint.branch == target.default_branch

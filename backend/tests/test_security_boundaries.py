@@ -190,7 +190,15 @@ def test_member_cannot_choose_worker_network_destination(client, engine, monkeyp
             monkeypatch.setenv("no_proxy", "")
             with pytest.raises(Exception):
                 runner.clone_repo("https://github.com/acme/repo", "main", proxy_url=url)
-    assert response.status_code == 403, f"destination accepted; outbound canary requests: {requests}"
+    # api_base_url now also fails ssrf_guard's loopback/link-local check
+    # (app/core/ssrf_guard.py), a Pydantic field_validator that runs before
+    # the role-check dependency does, so a DEVELOPER gets 422 (host
+    # rejected) rather than 403 (role rejected) for that field specifically.
+    # Either is the same security property this test exists to pin down:
+    # rejected before commit, zero outbound requests. clone_proxy_url has
+    # no such validator and still goes through the role gate alone.
+    expected = (403, 422) if field == "api_base_url" else (403,)
+    assert response.status_code in expected, f"destination accepted; outbound canary requests: {requests}"
     assert requests == []
 
 

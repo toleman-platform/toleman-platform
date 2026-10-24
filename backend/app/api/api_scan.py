@@ -9,6 +9,7 @@ from app.api.auth import accessible_workspace_ids, current_user, require_workspa
 from app.api.deps import get_session
 from app.core.api_scan_targets import ApiScanConfigError, build_scan_headers, build_scan_urls
 from app.core.crypto import encrypt_secret
+from app.core.ssrf_guard import UnsafeScanHostError, assert_safe_scan_host
 from app.core.tool_usage import is_nuclei_enabled_for_api_scan
 from app.core.async_jobs import create_running_row
 from app.core.staleness import mark_stale_if_needed
@@ -286,6 +287,16 @@ def test_api_scan_credential(
         raise HTTPException(status_code=400, detail=str(exc))
     if not headers:
         raise HTTPException(status_code=400, detail="no credential is configured for this target")
+
+    # Re-checked immediately before the request fires, same reasoning as
+    # build_scan_urls: this call fires on a DEVELOPER-role trigger, not the
+    # admin-only write to api_base_url, so a row written before this guard
+    # existed (or a name whose resolution has since changed) still gets
+    # caught here rather than only at write time.
+    try:
+        assert_safe_scan_host(target.api_base_url)
+    except UnsafeScanHostError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     try:
         response = httpx.get(target.api_base_url, headers=headers, timeout=10, follow_redirects=False)

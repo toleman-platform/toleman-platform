@@ -2,19 +2,10 @@
 app.core.async_jobs's module docstring for why the rest of the
 create-row-then-dispatch pattern was deliberately left alone.
 """
-import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 from app.core.async_jobs import create_running_row
 from app.models.models import Organization, Target, ToolInstallRun, Workspace
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 def test_persists_and_assigns_an_id(engine):

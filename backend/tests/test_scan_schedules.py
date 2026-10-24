@@ -36,8 +36,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
 from app.core import scan_schedules as core
 from app.core.time import utcnow
@@ -51,13 +50,6 @@ from app.models.models import (
     WorkspaceToolConfig,
 )
 from app.tasks import schedule_tasks
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 def _make_workspace(session, name="ws") -> Workspace:

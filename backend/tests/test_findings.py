@@ -1,14 +1,12 @@
 """Tests for GET /api/findings (filtering, search, pagination) and the
 bulk-triage endpoint.
 
-Follows the same in-memory SQLite + dependency_override pattern used in
-tests/test_rate_limit.py, no shared conftest existed for this yet either,
-so a scoped client/engine fixture pair lives here.
+Uses the shared in-memory SQLite engine with a local dependency-override
+client fixture.
 """
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 import json
 
@@ -17,17 +15,6 @@ from app.api.deps import get_session
 from app.core.security import create_session_token, hash_password
 from app.main import app
 from app.models.models import CveEnrichment, Finding, FindingState, Organization, Severity, Target, User, Workspace
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()

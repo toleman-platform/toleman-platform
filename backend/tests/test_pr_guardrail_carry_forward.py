@@ -11,9 +11,7 @@ Boundary mocking follows tests/test_pr_guardrail_multi_tool.py: real dedup,
 policy, and status logic; only the GitHub API, git clone, scanner
 subprocess and outbound HTTP are faked.
 """
-import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
 from app.core import pr_guardrail_executor
 from app.core.time import utcnow
@@ -26,13 +24,6 @@ from app.models.models import (
     Target,
     Workspace,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 def _make_target(engine) -> int:

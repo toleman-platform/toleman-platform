@@ -1,7 +1,6 @@
 """Tests for GET /api/reports/posture (CSV + PDF compliance/audit exports).
 
-Follows the same in-memory SQLite + dependency_override pattern used in
-tests/test_findings.py; no shared conftest exists for this yet either.
+Uses the shared in-memory SQLite engine with a module-local client fixture.
 """
 import csv
 import io
@@ -9,8 +8,7 @@ from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
@@ -41,17 +39,6 @@ from app.models.models import (
     WorkspaceMembership,
     WorkspaceRole,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()

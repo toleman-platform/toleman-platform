@@ -7,8 +7,7 @@ Same in-memory SQLite + dependency_override pattern as tests/test_findings.py.
 """
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
@@ -17,17 +16,6 @@ from app.core.security import create_session_token, hash_password
 from app.core.time import utcnow
 from app.main import app
 from app.models.models import Finding, FindingState, FindingStateLog, Organization, Scan, Severity, Target, User, Workspace
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()

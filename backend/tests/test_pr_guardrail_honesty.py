@@ -25,18 +25,10 @@ introduced by that one PR, even in files it never touched.
 
 import httpx
 import pytest
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session
 
 from app.core import pr_guardrail_executor
 from app.models.models import ApiEndpoint, Organization, PRGuardrailScan, Scan, Target, Workspace
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()

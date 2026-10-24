@@ -2,17 +2,15 @@
 endpoint, Kimi/Moonshot, Ollama, vLLM, LM Studio, etc.) and /api/config's
 handling of the new provider fields.
 
-Follows the same TestClient + in-memory SQLite harness pattern established in
-tests/test_rate_limit.py and tests/test_findings.py (no shared conftest exists
-yet in this repo). The Anthropic SDK call and the openai_compatible httpx call
+Uses the shared in-memory SQLite engine and a local client fixture that
+logs in an administrator. The Anthropic SDK call and the openai_compatible httpx call
 are both mocked here; these tests verify OUR dispatch/request-building/
 response-parsing logic, not that any real vendor endpoint works.
 """
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, select
 
 import app.api.deps as deps_module
 from app.api.deps import get_session
@@ -30,17 +28,6 @@ from app.models.models import (
     WorkspaceMembership,
     WorkspaceRole,
 )
-
-
-@pytest.fixture()
-def engine():
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    SQLModel.metadata.create_all(eng)
-    return eng
 
 
 @pytest.fixture()
